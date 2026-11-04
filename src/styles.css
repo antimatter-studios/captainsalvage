@@ -13,7 +13,13 @@
   --line: rgba(0, 0, 0, 0.09);
   --line-strong: rgba(0, 0, 0, 0.16);
   --accent: #0a6cff;
+  --accent-fill: #0a6cff;
   --on-accent: #ffffff;
+  --selection: #1d1d1f;
+  --on-selection: #ffffff;
+  --on-selection-soft: rgba(255, 255, 255, 0.72);
+  --selection-track: rgba(255, 255, 255, 0.3);
+  --segment-selected: #ffffff;
   --accent-mark: #111318;
   --hover: rgba(0, 0, 0, 0.05);
   --pressed: rgba(0, 0, 0, 0.09);
@@ -44,6 +50,12 @@
     --line: rgba(255, 255, 255, 0.09);
     --line-strong: rgba(255, 255, 255, 0.17);
     --accent: #3b8bff;
+    --accent-fill: #1f6fe5;
+    --selection: #f4f4f6;
+    --on-selection: #17191e;
+    --on-selection-soft: rgba(23, 25, 30, 0.68);
+    --selection-track: rgba(23, 25, 30, 0.25);
+    --segment-selected: #4d515c;
     --accent-mark: #ffffff;
     --hover: rgba(255, 255, 255, 0.07);
     --pressed: rgba(255, 255, 255, 0.12);
@@ -90,7 +102,7 @@ button {
 button:hover:not(:disabled) { filter: brightness(0.97); }
 button:active:not(:disabled) { filter: brightness(0.92); }
 button:disabled { opacity: 0.45; }
-button.primary { background: var(--accent); color: var(--on-accent); font-weight: 550; }
+button.primary { background: var(--accent-fill); color: var(--on-accent); font-weight: 550; }
 input, select, textarea {
   background: var(--surface);
   border: 0;
@@ -174,7 +186,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   gap: 5px;
 }
 .segmented button:hover:not(:disabled) { filter: none; color: var(--ink); }
-.segmented button[aria-selected="true"] { background: var(--raised); color: var(--ink); font-weight: 550; box-shadow: var(--shadow-small); }
+.segmented button[aria-selected="true"] { background: var(--segment-selected); color: var(--ink); font-weight: 550; box-shadow: var(--shadow-small); }
 .explorer .segmented { margin: 0 10px 8px; }
 .explorer .segmented button { padding: 2px 2px; font-size: 11.5px; }
 .panel-body { overflow: auto; flex: 1; min-height: 0; padding: 0 6px 8px; }
@@ -287,12 +299,20 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   white-space: normal;
 }
 .row:hover:not(:disabled) { background: var(--hover); filter: none; }
-.row-selected, .row-selected:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
-.row-selected .row-path, .row-selected .row-size, .row-selected .row-icon, .row-selected .disclosure { color: color-mix(in srgb, var(--on-accent) 78%, transparent); }
-.row-selected .ring { color: var(--on-accent); }
-.row-selected .ring-track { stroke: color-mix(in srgb, var(--on-accent) 30%, transparent); }
+/* The selected row, dark on a light theme and light on a dark one, so it is never in doubt. */
+.row-selected, .row-selected:hover:not(:disabled), .row-cursor, .row-cursor:hover:not(:disabled) { background: var(--selection); color: var(--on-selection); }
+.row-selected .row-path, .row-selected .row-size, .row-selected .row-icon, .row-selected .disclosure,
+.row-cursor .row-path, .row-cursor .row-size, .row-cursor .row-icon, .row-cursor .disclosure { color: var(--on-selection-soft); }
+.row-selected .ring, .row-cursor .ring { color: var(--on-selection); }
+.row-selected .ring-track, .row-cursor .ring-track { stroke: var(--selection-track); }
+.row-selected .row-icon-folder, .row-cursor .row-icon-folder { color: var(--on-selection); }
+/* While the arrow keys move, only one row looks selected. */
+.explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) { background: var(--hover); color: var(--ink); }
+.explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) .row-path,
+.explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) .row-size,
+.explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) .row-icon,
+.explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) .disclosure { color: var(--muted); }
 .explorer-rows:focus, .explorer-rows:focus-visible { outline: none; }
-.row-cursor { box-shadow: inset 0 0 0 2px var(--accent); }
 .row-wrap { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .row-wrap .row { flex: 1; min-width: 0; }
 .basket-check { flex: none; margin: 0 4px 0 0; opacity: 0; width: 14px; height: 14px; }
@@ -303,7 +323,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .row-size { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11.5px; flex: none; }
 .row-icon { flex: none; color: var(--muted); display: flex; }
 .row-icon-folder { color: var(--accent); }
-.row-selected .row-icon-folder { color: var(--on-accent); }
 .disclosure { flex: none; color: var(--muted); display: flex; width: 12px; justify-content: center; transition: transform 120ms ease; }
 .disclosure-open { transform: rotate(90deg); }
 .ring { flex: none; }
@@ -334,7 +353,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .mark-2 { background: var(--mark-2); }
 .mark-3 { background: var(--mark-3); }
 .mark-4 { background: var(--mark-4); }
-.hex-sheet .byte-selected { background: var(--accent); color: var(--on-accent); opacity: 1; border-radius: 3px; }
+.hex-sheet .byte-selected { background: var(--accent-fill); color: var(--on-accent); opacity: 1; border-radius: 3px; }
 .decode { border-top: 0.5px solid var(--line); padding: 7px 14px; min-height: 36px; font-size: 12px; background: var(--window); }
 .decode-line .link { margin-left: 8px; }
 .decode-grid { display: flex; flex-wrap: wrap; gap: 2px 16px; }
@@ -355,6 +374,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .recovery-steps { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 7px; color: var(--ink-2); }
 .recovery-steps li { display: flex; gap: 9px; align-items: center; }
 .recovery-steps svg { color: var(--accent); flex: none; }
+
+.theme-switch { flex: none; }
+.theme-switch button { padding: 3px 7px; }
 
 /* Dragging a column's edge */
 .column-handle { position: absolute; top: 0; bottom: 0; width: 9px; z-index: 20; cursor: col-resize; touch-action: none; outline: none; }
@@ -433,7 +455,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 .inspector-tabs button { position: relative; flex: 1; background: none; box-shadow: none; padding: 4px 0; border-radius: 6px; color: var(--muted); display: flex; justify-content: center; }
 .inspector-tabs button:hover:not(:disabled) { background: var(--hover); color: var(--ink); filter: none; }
 .inspector-tabs button[aria-selected="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
-.tab-badge { position: absolute; top: -3px; right: 18%; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 650; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; }
+.tab-badge { position: absolute; top: -3px; right: 18%; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent-fill); color: var(--on-accent); font-size: 10px; font-weight: 650; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; }
 .details .panel-body { padding: 0 14px 12px; }
 .inspector-title { font-size: 11px; color: var(--muted); padding: 0 14px 5px; }
 .detail { padding: 4px 0; }
@@ -492,7 +514,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 .chat-log { flex: 1; overflow: auto; min-height: 0; padding: 2px 14px 8px; }
 .chat-message { margin-bottom: 12px; }
 .chat-you { display: flex; flex-direction: column; align-items: flex-end; }
-.chat-you .chat-text { background: var(--accent); color: var(--on-accent); padding: 6px 11px; border-radius: 14px 14px 4px 14px; max-width: 88%; }
+.chat-you .chat-text { background: var(--accent-fill); color: var(--on-accent); padding: 6px 11px; border-radius: 14px 14px 4px 14px; max-width: 88%; }
 .chat-error .chat-text { color: var(--critical); }
 .chat-about { color: var(--muted); font-size: 11px; margin-bottom: 3px; max-width: 88%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-text { white-space: pre-wrap; overflow-wrap: anywhere; }

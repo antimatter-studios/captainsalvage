@@ -24,10 +24,11 @@ import { ColumnHandle } from "./components/ColumnHandle";
 import { Details } from "./components/Details";
 import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
-import { Icon } from "./components/icons";
+import { Icon, type IconName } from "./components/icons";
 import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Strips } from "./components/Strips";
 import { bytes, count, duration } from "./format";
+import { onThemeChange } from "./palette";
 
 const STATUS_POLL_MILLIS = 2000;
 /** While a scan runs, the content layers keep filling in at this pace. */
@@ -107,6 +108,40 @@ function Safety({ status }: { status: Status }) {
   );
 }
 
+type ThemeChoice = "system" | "light" | "dark";
+const THEME_CHOICES: { id: ThemeChoice; label: string; icon: IconName }[] = [
+  { id: "system", label: "Match macOS", icon: "auto" },
+  { id: "light", label: "Light", icon: "sun" },
+  { id: "dark", label: "Dark", icon: "moon" },
+];
+
+function ThemeSwitch() {
+  const [choice, setChoice] = useState<ThemeChoice>("system");
+  useEffect(() => {
+    invoke<ThemeChoice>("get_theme").then(setChoice).catch(() => undefined);
+  }, []);
+  return (
+    <div className="segmented theme-switch" role="radiogroup" aria-label="Appearance">
+      {THEME_CHOICES.map((item) => (
+        <button
+          key={item.id}
+          role="radio"
+          aria-checked={choice === item.id}
+          aria-selected={choice === item.id}
+          aria-label={item.label}
+          title={item.label}
+          onClick={() => {
+            setChoice(item.id);
+            void invoke("set_theme", { theme: item.id });
+          }}
+        >
+          <Icon name={item.icon} size={14} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Toolbar({ status, overview, onChanged }: { status: Status | null; overview: Overview; onChanged: () => void }) {
   const scan = status?.scan;
   const fraction = scan ? scan.clustersScanned / scan.totalClusters : 0;
@@ -124,7 +159,7 @@ function Toolbar({ status, overview, onChanged }: { status: Status | null; overv
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="brand">
-        <strong>exFAT Lens</strong>
+        <strong>Captain Salvage</strong>
         <span>{overview.device}, {bytes(overview.geometry.volumeBytes)}</span>
       </div>
       <div className="scan">
@@ -147,6 +182,7 @@ function Toolbar({ status, overview, onChanged }: { status: Status | null; overv
           <button onClick={() => call("start_scan").then(onChanged)}>{scan && scan.clustersScanned > 0 ? "Resume scan" : "Start scan"}</button>
         )
       )}
+      <ThemeSwitch />
       {status && <Safety status={status} />}
     </header>
   );
@@ -179,10 +215,14 @@ export default function App() {
   const [standalone, setStandalone] = useState<BrowseRow | null>(null);
   const [previewInCenter, setPreviewInCenter] = useState<number | null>(null);
   const columns = useColumnWidths();
+  const [, setThemeTick] = useState(0);
   const centerNow = useRef<CenterView>("overview");
   centerNow.current = center;
 
   const bump = useCallback(() => setRevision((value) => value + 1), []);
+
+  // Legends and the overview's bar read their colours while drawing, so redraw them.
+  useEffect(() => onThemeChange(() => setThemeTick((tick) => tick + 1)), []);
 
   const loadBasket = useCallback(() => {
     call<BasketItem[]>("basket_list").then(setBasket).catch(() => undefined);

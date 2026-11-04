@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { mapLayer, type Extent, type Layer, type Lens } from "../api";
 import { count, bytes as formatBytes } from "../format";
-import { colorTable, describeValue, legendFor, rampGradient, SEQUENTIAL_CAPTION } from "../palette";
+import { colorTable, describeValue, legendFor, onThemeChange, rampGradient, SEQUENTIAL_CAPTION } from "../palette";
 
 const MIN_WINDOW_CLUSTERS = 64;
 const WHEEL_ZOOM_STEP = 1.25;
@@ -50,6 +50,10 @@ function Strip(props: StripProps) {
   const [hover, setHover] = useState<{ x: number; cluster: number; parts: { label: string; color?: string; share: number | null }[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragBox, setDragBox] = useState<[number, number] | null>(null);
+  const [themeTick, setThemeTick] = useState(0);
+
+  // The map's colours are painted into a canvas, so a new theme has to repaint it.
+  useEffect(() => onThemeChange(() => setThemeTick((tick) => tick + 1)), []);
 
   useEffect(() => {
     const element = wrapper.current;
@@ -88,7 +92,7 @@ function Strip(props: StripProps) {
     return () => {
       current = false;
     };
-  }, [layer, start, end, floor, lens, revision, width, height]);
+  }, [layer, start, end, floor, lens, revision, width, height, themeTick]);
 
   useEffect(() => {
     const canvas = marks.current;
@@ -114,7 +118,7 @@ function Strip(props: StripProps) {
     if (marker !== null && marker >= start && marker < end) {
       context.fillRect(toX(marker) - ratio / 2, 0, Math.max(ratio, 1.5 * ratio), canvas.height);
     }
-  }, [highlight, marker, start, end, width, height]);
+  }, [highlight, marker, start, end, width, height, themeTick]);
 
   const clusterAt = useCallback(
     (clientX: number) => {

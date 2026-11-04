@@ -7,8 +7,17 @@ function hex(value: string): Rgb {
   return [(number >> 16) & 255, (number >> 8) & 255, number & 255];
 }
 
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
 export function isDark(): boolean {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return window.matchMedia(DARK_QUERY).matches;
+}
+
+/** Calls back when the window's colours change, whether from macOS or the switch. */
+export function onThemeChange(listener: () => void): () => void {
+  const query = window.matchMedia(DARK_QUERY);
+  query.addEventListener("change", listener);
+  return () => query.removeEventListener("change", listener);
 }
 
 // Slot order and steps come from the validated reference palette. The validator
