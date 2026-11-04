@@ -1,9 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
 import { bytes, count, displayPath, percent, VERDICT_LABEL } from "../format";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 
 const PAGE_SIZE = 200;
+/** Holding an arrow key should not open every file it passes. */
+const KEY_SELECT_WAIT_MILLIS = 120;
+const RECENT_KEY_MILLIS = 1000;
+const NAVIGATION_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
+
+/** A folder's click also opens it, so the arrow keys reach these instead. */
+interface FolderActions {
+  isOpen: boolean;
+  setOpen: (open: boolean) => void;
+  select: () => void;
+}
+const folderActions = new WeakMap<Element, FolderActions>();
+
+function depthOf(row: Element): number | null {
+  const text = (row as HTMLElement).dataset.depth;
+  return text === undefined ? null : Number(text);
+}
 
 interface RowProps {
   floor: number;
@@ -28,12 +45,12 @@ function BasketCheck({ checked, label, onChange }: { checked: boolean; label: st
   );
 }
 
-function FileRow({ row, selected, onSelect, showPath, basket, onBasket }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
+function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"]; depth?: number }) {
   const verdict = VERDICT_LABEL[row.verdict] ?? row.verdict;
   const id = row.id as number;
   return (
     <div className="row-wrap">
-    <button className={selected ? "row row-selected" : "row"} onClick={onSelect} title={row.reason}>
+    <button className={selected ? "row row-selected" : "row"} onClick={onSelect} title={row.reason} data-depth={depth}>
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
         <span className="row-name">{row.name}</span>
@@ -78,9 +95,13 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
     <>
       <div className="row-wrap">
       <button
+        ref={(element) => {
+          if (element) folderActions.set(element, { isOpen: open, setOpen, select: () => props.onFolder(row) });
+        }}
         className={props.selectedKey === key ? "row row-selected" : "row"}
         style={{ paddingLeft: 6 + depth * 14 }}
         aria-expanded={open}
+        data-depth={depth}
         title={row.hint ? `Contains: ${row.hint}` : undefined}
         onClick={() => {
           setOpen(!open);
@@ -109,7 +130,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
             <FolderRow key={`f${child.head}`} row={child} depth={depth + 1} props={props} />
           ) : (
             <div key={`e${child.id}`} style={{ paddingLeft: depth * 14 + 17 }}>
-              <FileRow row={child} selected={props.selectedKey === `entry:${child.id}`} onSelect={() => props.onEntry(child)} basket={props.basket} onBasket={props.onBasket} />
+              <FileRow row={child} selected={props.selectedKey === `entry:${child.id}`} onSelect={() => props.onEntry(child)} basket={props.basket} onBasket={props.onBasket} depth={depth + 1} />
             </div>
           ),
         )}
@@ -275,6 +296,63 @@ export function Explorer(props: ExplorerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Page | null>(null);
   const tabs: [ExplorerTab, string][] = [["folders", "Folders"], ["nameless", "Nameless"], ["broken", "Broken"], ["unexplained", "Unexplained"]];
+  const panel = useRef<HTMLDivElement>(null);
+  const selectTimer = useRef<number | undefined>(undefined);
+  const lastKey = useRef(0);
+
+  const clearCursor = () => panel.current?.querySelectorAll(".row-cursor").forEach((row) => row.classList.remove("row-cursor"));
+
+  useEffect(() => {
+    panel.current?.focus({ preventScroll: true });
+    return () => window.clearTimeout(selectTimer.current);
+  }, []);
+
+  // A selection made elsewhere, such as on the map, takes over from the keys.
+  useEffect(() => {
+    if (Date.now() - lastKey.current > RECENT_KEY_MILLIS) clearCursor();
+  }, [props.selectedKey]);
+
+  const moveTo = (row: Element) => {
+    clearCursor();
+    row.classList.add("row-cursor");
+    row.scrollIntoView({ block: "nearest" });
+    window.clearTimeout(selectTimer.current);
+    selectTimer.current = window.setTimeout(() => {
+      const actions = folderActions.get(row);
+      if (actions) actions.select();
+      else (row as HTMLElement).click();
+    }, KEY_SELECT_WAIT_MILLIS);
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (!NAVIGATION_KEYS.has(event.key) || (event.target as HTMLElement).closest("input, select, textarea")) return;
+    const element = panel.current;
+    if (!element) return;
+    const rows = Array.from(element.querySelectorAll("button.row"));
+    if (rows.length === 0) return;
+    // Handled here, so an open preview does not also move to its next file.
+    event.preventDefault();
+    event.stopPropagation();
+    lastKey.current = Date.now();
+    const current = element.querySelector(".row-cursor") ?? element.querySelector(".row-selected");
+    const index = current ? rows.indexOf(current) : -1;
+    const actions = current ? folderActions.get(current) : undefined;
+    const depth = current ? depthOf(current) : null;
+    let next: Element | undefined;
+    if (event.key === "Home") next = rows[0];
+    else if (event.key === "End") next = rows[rows.length - 1];
+    else if (index < 0) next = rows[0];
+    else if (event.key === "ArrowDown") next = rows[index + 1];
+    else if (event.key === "ArrowUp") next = rows[index - 1];
+    else if (event.key === "ArrowRight" && actions) {
+      if (!actions.isOpen) actions.setOpen(true);
+      else if (rows[index + 1] && depth !== null && (depthOf(rows[index + 1]) ?? 0) > depth) next = rows[index + 1];
+    } else if (event.key === "ArrowLeft") {
+      if (actions?.isOpen) actions.setOpen(false);
+      else if (depth !== null) next = rows.slice(0, index).reverse().find((row) => (depthOf(row) ?? depth) < depth);
+    }
+    if (next) moveTo(next);
+  };
 
   async function runSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -308,7 +386,17 @@ export function Explorer(props: ExplorerProps) {
           ))}
         </div>
       )}
-      <div className="panel-body">
+      <div
+        className="panel-body explorer-rows"
+        ref={panel}
+        tabIndex={0}
+        aria-label="Found files. Use the arrow keys to move through them."
+        onKeyDown={onKeyDown}
+        onClick={(event) => {
+          clearCursor();
+          if (!(event.target as HTMLElement).closest("input, select, textarea")) panel.current?.focus({ preventScroll: true });
+        }}
+      >
         {results ? (
           <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} basket={props.basket} onBasket={props.onBasket} />
         ) : (
