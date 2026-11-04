@@ -5,8 +5,8 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use block2::RcBlock;
-use objc2::runtime::{AnyObject, Bool};
 use objc2::msg_send;
+use objc2::runtime::{AnyObject, Bool};
 use objc2_foundation::NSString;
 use std::process::Command;
 use std::ptr::null_mut;
@@ -17,7 +17,9 @@ use tauri::Manager;
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn capture_window(app: &tauri::AppHandle) -> Result<Vec<u8>> {
-    let window = app.get_webview_window("main").context("the app window is not open")?;
+    let window = app
+        .get_webview_window("main")
+        .context("the app window is not open")?;
     let directory = std::env::temp_dir();
     let tiff = directory.join(format!("exfat-lens-capture-{}.tiff", std::process::id()));
     let png = directory.join(format!("exfat-lens-capture-{}.png", std::process::id()));
@@ -51,7 +53,10 @@ pub fn capture_window(app: &tauri::AppHandle) -> Result<Vec<u8>> {
         })
         .map_err(|error| anyhow!("cannot reach the web view: {error}"))?;
 
-    if !receiver.recv_timeout(CAPTURE_TIMEOUT).context("the window did not return a picture")? {
+    if !receiver
+        .recv_timeout(CAPTURE_TIMEOUT)
+        .context("the window did not return a picture")?
+    {
         bail!("the window returned no picture");
     }
     let converted = Command::new("/usr/bin/sips")
@@ -62,7 +67,10 @@ pub fn capture_window(app: &tauri::AppHandle) -> Result<Vec<u8>> {
         .output()
         .context("running sips")?;
     if !converted.status.success() {
-        bail!("sips failed: {}", String::from_utf8_lossy(&converted.stderr));
+        bail!(
+            "sips failed: {}",
+            String::from_utf8_lossy(&converted.stderr)
+        );
     }
     let bytes = std::fs::read(&png)?;
     let _ = std::fs::remove_file(&tiff);

@@ -9,11 +9,12 @@ use crate::content::{
 use crate::exfat::{decode_timestamp, find_sets, EntrySet, FAT_BAD, FAT_END, FIRST_CLUSTER};
 use crate::export::{CopyControl, CopyStatus};
 use crate::map::{
-    to_extents, Extent, IslandRow, MapDb, MapSummary, Overlay, Row, OVERLAY_NOTE, OVERLAY_REGION_LABEL, OVERLAY_STRUCT,
+    to_extents, Extent, IslandRow, MapDb, MapSummary, Overlay, Row, OVERLAY_NOTE,
+    OVERLAY_REGION_LABEL, OVERLAY_STRUCT,
 };
 use crate::resolve::{
-    OWNERSHIP_DIRECTORY, OWNERSHIP_LABELLED, OWNERSHIP_NAMELESS_CHAIN, OWNERSHIP_ONE_ENTRY, OWNERSHIP_SEVERAL_ENTRIES,
-    OWNERSHIP_UNEXPLAINED,
+    OWNERSHIP_DIRECTORY, OWNERSHIP_LABELLED, OWNERSHIP_NAMELESS_CHAIN, OWNERSHIP_ONE_ENTRY,
+    OWNERSHIP_SEVERAL_ENTRIES, OWNERSHIP_UNEXPLAINED,
 };
 use crate::scan::{read_progress, run_scan, ScanOptions, ScanProgress};
 use crate::source::{mount_line, os_denies_writes, BlockSource, FileSource, ReadStats};
@@ -39,7 +40,11 @@ const FIND_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 const FIND_TIME_LIMIT: Duration = Duration::from_secs(90);
 const MIN_RATE_SAMPLE: Duration = Duration::from_secs(3);
 const OWNERSHIP_NAMES: [&str; 6] = [
-    "unexplained", "claimed by one entry", "claimed by several entries", "directory", "nameless FAT chain",
+    "unexplained",
+    "claimed by one entry",
+    "claimed by several entries",
+    "directory",
+    "nameless FAT chain",
     "explained by a hypothesis",
 ];
 
@@ -181,9 +186,13 @@ pub struct Session {
 /// `/dev/rdisk12s2` becomes `/dev/rdisk12`. Anything else has no whole-disk parent.
 pub fn whole_disk_path(path: &Path) -> Option<PathBuf> {
     let text = path.to_str()?;
-    let rest = text.strip_prefix("/dev/rdisk").or_else(|| text.strip_prefix("/dev/disk"))?;
+    let rest = text
+        .strip_prefix("/dev/rdisk")
+        .or_else(|| text.strip_prefix("/dev/disk"))?;
     let (disk, _partition) = rest.split_once('s')?;
-    disk.chars().all(|c| c.is_ascii_digit()).then(|| PathBuf::from(format!("/dev/rdisk{disk}")))
+    disk.chars()
+        .all(|c| c.is_ascii_digit())
+        .then(|| PathBuf::from(format!("/dev/rdisk{disk}")))
 }
 
 /// What the OS currently allows on a device, and exactly what to run to fix it.
@@ -272,7 +281,10 @@ pub fn list_disks(device: Option<&str>) -> Result<String> {
 impl Session {
     pub fn open(path: &Path) -> Result<Arc<Self>> {
         let source = Arc::new(FileSource::open(path).with_context(|| {
-            format!("cannot open {}. Use the disk_access tool to see what needs granting.", path.display())
+            format!(
+                "cannot open {}. Use the disk_access tool to see what needs granting.",
+                path.display()
+            )
         })?);
         let volume = Volume::open(source)?;
         let workspace = Workspace::for_serial(volume.boot.volume_serial)?;
@@ -280,14 +292,20 @@ impl Session {
     }
 
     /// Builds a session around any source, for tests and for disk images.
-    pub fn with_source(path: &Path, source: Arc<dyn BlockSource>, workspace: Workspace) -> Result<Arc<Self>> {
+    pub fn with_source(
+        path: &Path,
+        source: Arc<dyn BlockSource>,
+        workspace: Workspace,
+    ) -> Result<Arc<Self>> {
         Self::assemble(path, Volume::open(source)?, workspace)
     }
 
     fn assemble(path: &Path, volume: Volume, workspace: Workspace) -> Result<Arc<Self>> {
         let baseline = workspace.check_baseline(&volume.structure_hash)?;
         let database = MapDb::open(&workspace.database())?;
-        let next_cluster = database.state_u64("next_cluster")?.max(u64::from(FIRST_CLUSTER)) as u32;
+        let next_cluster = database
+            .state_u64("next_cluster")?
+            .max(u64::from(FIRST_CLUSTER)) as u32;
         Ok(Arc::new(Self {
             path: path.to_path_buf(),
             volume,
@@ -298,13 +316,19 @@ impl Session {
             scan_stop: Arc::new(AtomicBool::new(false)),
             scan_thread: Mutex::new(None),
             scan_error: Arc::new(Mutex::new(None)),
-            rate: Mutex::new(RateSample { at: Instant::now(), next_cluster, bytes_per_second: 0.0 }),
+            rate: Mutex::new(RateSample {
+                at: Instant::now(),
+                next_cluster,
+                bytes_per_second: 0.0,
+            }),
             copy: CopyControl::default(),
         }))
     }
 
     fn lock_database(&self) -> Result<std::sync::MutexGuard<'_, MapDb>> {
-        self.database.lock().map_err(|_| anyhow!("database lock poisoned"))
+        self.database
+            .lock()
+            .map_err(|_| anyhow!("database lock poisoned"))
     }
 
     pub fn with_database<T>(&self, action: impl FnOnce(&MapDb) -> Result<T>) -> Result<T> {
@@ -312,14 +336,21 @@ impl Session {
     }
 
     fn whole_source(&self) -> Result<Arc<FileSource>> {
-        let mut guard = self.whole_disk.lock().map_err(|_| anyhow!("disk lock poisoned"))?;
+        let mut guard = self
+            .whole_disk
+            .lock()
+            .map_err(|_| anyhow!("disk lock poisoned"))?;
         if let Some(source) = guard.as_ref() {
             return Ok(source.clone());
         }
         let path = whole_disk_path(&self.path)
             .ok_or_else(|| anyhow!("{} has no whole-disk device", self.path.display()))?;
         let source = Arc::new(FileSource::open(&path).with_context(|| {
-            format!("cannot open {}. Ask the user to run: sudo chgrp staff {}", path.display(), path.display())
+            format!(
+                "cannot open {}. Ask the user to run: sudo chgrp staff {}",
+                path.display(),
+                path.display()
+            )
         })?);
         *guard = Some(source.clone());
         Ok(source)
@@ -345,11 +376,15 @@ impl Session {
         let database = self.lock_database()?;
         let mut scan = read_progress(&database, &self.volume)?;
         {
-            let mut rate = self.rate.lock().map_err(|_| anyhow!("rate lock poisoned"))?;
+            let mut rate = self
+                .rate
+                .lock()
+                .map_err(|_| anyhow!("rate lock poisoned"))?;
             let elapsed = rate.at.elapsed();
             if elapsed >= MIN_RATE_SAMPLE {
                 let moved = u64::from(scan.next_cluster.saturating_sub(rate.next_cluster));
-                rate.bytes_per_second = (moved * self.volume.boot.cluster_size()) as f64 / elapsed.as_secs_f64();
+                rate.bytes_per_second =
+                    (moved * self.volume.boot.cluster_size()) as f64 / elapsed.as_secs_f64();
                 rate.at = Instant::now();
                 rate.next_cluster = scan.next_cluster;
             }
@@ -368,19 +403,32 @@ impl Session {
             whole_disk: whole_disk_path(&self.path).map(|path| path.display().to_string()),
             os_denies_writes: os_denies_writes(&self.path),
             mounted: mount_line(&self.path),
-            baseline: self.baseline.lock().map_err(|_| anyhow!("baseline lock poisoned"))?.clone(),
+            baseline: self
+                .baseline
+                .lock()
+                .map_err(|_| anyhow!("baseline lock poisoned"))?
+                .clone(),
             reads: self.volume.source().read_stats(),
             scan,
             scan_in_this_app,
             scan_held_elsewhere: !scan_in_this_app && self.scan_lock_held(),
-            scan_error: self.scan_error.lock().map_err(|_| anyhow!("error lock poisoned"))?.clone(),
+            scan_error: self
+                .scan_error
+                .lock()
+                .map_err(|_| anyhow!("error lock poisoned"))?
+                .clone(),
             summary,
             copy: self.copy_status()?,
         })
     }
 
     fn scan_lock_held(&self) -> bool {
-        let Ok(file) = OpenOptions::new().create(true).write(true).truncate(false).open(self.workspace.lock()) else {
+        let Ok(file) = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(self.workspace.lock())
+        else {
             return false;
         };
         match file.try_lock() {
@@ -397,7 +445,10 @@ impl Session {
     pub fn verify_unchanged(&self) -> Result<BaselineCheck> {
         let fresh = Volume::open(self.volume.source().clone())?;
         let check = self.workspace.check_baseline(&fresh.structure_hash)?;
-        *self.baseline.lock().map_err(|_| anyhow!("baseline lock poisoned"))? = check.clone();
+        *self
+            .baseline
+            .lock()
+            .map_err(|_| anyhow!("baseline lock poisoned"))? = check.clone();
         Ok(check)
     }
 
@@ -410,7 +461,10 @@ impl Session {
         if let (Value::Object(main), Value::Object(other)) = (&main_json, &backup_json) {
             for (key, value) in main {
                 if other.get(key) != Some(value) {
-                    differences.insert(key.clone(), json!({"main": value, "backup": other.get(key)}));
+                    differences.insert(
+                        key.clone(),
+                        json!({"main": value, "backup": other.get(key)}),
+                    );
                 }
             }
         }
@@ -461,7 +515,15 @@ impl Session {
     /// Downsamples one layer to `buckets` bytes for drawing. Value meanings:
     /// allocation is 1-3, content is a group, ownership is its value plus one,
     /// and the rest are 0-255 magnitudes.
-    pub fn map_bytes(&self, layer: Layer, start: u32, end: u32, buckets: usize, floor: f64, lens: Option<&Lens>) -> Vec<u8> {
+    pub fn map_bytes(
+        &self,
+        layer: Layer,
+        start: u32,
+        end: u32,
+        buckets: usize,
+        floor: f64,
+        lens: Option<&Lens>,
+    ) -> Vec<u8> {
         let first = start.max(FIRST_CLUSTER);
         let last = end.min(self.volume.boot.last_cluster_exclusive());
         if first >= last || buckets == 0 {
@@ -473,7 +535,9 @@ impl Session {
         (0..buckets)
             .map(|bucket| {
                 let from = first + (span * bucket as f64 / buckets as f64) as u32;
-                let to = (first + (span * (bucket + 1) as f64 / buckets as f64) as u32).max(from + 1).min(last);
+                let to = (first + (span * (bucket + 1) as f64 / buckets as f64) as u32)
+                    .max(from + 1)
+                    .min(last);
                 self.bucket_value(layer, from, to, &maps, floor_byte, lens)
             })
             .collect()
@@ -483,7 +547,17 @@ impl Session {
     /// layers each column is a stack whose bands are proportional to what the
     /// bucket holds, and any category present gets at least one row, so small or
     /// rare things stay visible at every zoom level. Other layers repeat one value.
-    pub fn map_raster(&self, layer: Layer, start: u32, end: u32, buckets: usize, rows: usize, floor: f64, lens: Option<&Lens>) -> Vec<u8> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn map_raster(
+        &self,
+        layer: Layer,
+        start: u32,
+        end: u32,
+        buckets: usize,
+        rows: usize,
+        floor: f64,
+        lens: Option<&Lens>,
+    ) -> Vec<u8> {
         let rows = rows.max(1);
         let mut raster = vec![0u8; buckets * rows];
         let first = start.max(FIRST_CLUSTER);
@@ -496,7 +570,9 @@ impl Session {
         let floor_byte = (floor * 255.0).round() as u8;
         for bucket in 0..buckets {
             let from = first + (span * bucket as f64 / buckets as f64) as u32;
-            let to = (first + (span * (bucket + 1) as f64 / buckets as f64) as u32).max(from + 1).min(last);
+            let to = (first + (span * (bucket + 1) as f64 / buckets as f64) as u32)
+                .max(from + 1)
+                .min(last);
             let indexes = (from - FIRST_CLUSTER) as usize..(to - FIRST_CLUSTER) as usize;
             let column: Vec<u8> = match layer {
                 Layer::Allocation => {
@@ -511,7 +587,10 @@ impl Session {
                     for &class in &maps.classes[indexes] {
                         counts[usize::from(content_group(class))] += 1;
                     }
-                    let ordered: Vec<u32> = CONTENT_STACK_ORDER.iter().map(|&group| counts[usize::from(group)]).collect();
+                    let ordered: Vec<u32> = CONTENT_STACK_ORDER
+                        .iter()
+                        .map(|&group| counts[usize::from(group)])
+                        .collect();
                     stack_column(&ordered, &CONTENT_STACK_ORDER, rows)
                 }
                 Layer::Ownership => {
@@ -519,8 +598,14 @@ impl Session {
                     for &value in &maps.ownership[indexes] {
                         counts[usize::from(value).min(5)] += 1;
                     }
-                    let ordered: Vec<u32> = OWNERSHIP_STACK_ORDER.iter().map(|&value| counts[usize::from(value)]).collect();
-                    let display: Vec<u8> = OWNERSHIP_STACK_ORDER.iter().map(|&value| value + 1).collect();
+                    let ordered: Vec<u32> = OWNERSHIP_STACK_ORDER
+                        .iter()
+                        .map(|&value| counts[usize::from(value)])
+                        .collect();
+                    let display: Vec<u8> = OWNERSHIP_STACK_ORDER
+                        .iter()
+                        .map(|&value| value + 1)
+                        .collect();
                     stack_column(&ordered, &display, rows)
                 }
                 _ => vec![self.bucket_value(layer, from, to, &maps, floor_byte, lens); rows],
@@ -532,7 +617,15 @@ impl Session {
         raster
     }
 
-    fn bucket_value(&self, layer: Layer, from: u32, to: u32, maps: &ClusterMaps, floor: u8, lens: Option<&Lens>) -> u8 {
+    fn bucket_value(
+        &self,
+        layer: Layer,
+        from: u32,
+        to: u32,
+        maps: &ClusterMaps,
+        floor: u8,
+        lens: Option<&Lens>,
+    ) -> u8 {
         let indexes = (from - FIRST_CLUSTER) as usize..(to - FIRST_CLUSTER) as usize;
         let size = (to - from) as usize;
         match layer {
@@ -558,22 +651,42 @@ impl Session {
                 dominant(&counts) + 1
             }
             Layer::Entropy => {
-                let total: u64 = maps.entropy[indexes].iter().map(|&value| u64::from(value)).sum();
+                let total: u64 = maps.entropy[indexes]
+                    .iter()
+                    .map(|&value| u64::from(value))
+                    .sum();
                 (total / size as u64) as u8
             }
             Layer::Confidence => {
                 let best = maps.confidence[indexes].iter().copied().max().unwrap_or(0);
-                if best >= floor.max(1) { best } else { 0 }
+                if best >= floor.max(1) {
+                    best
+                } else {
+                    0
+                }
             }
             Layer::Folders => {
-                let hits = maps.classes[indexes].iter().filter(|&&class| class == CLASS_DIRECTORY).count();
+                let hits = maps.classes[indexes]
+                    .iter()
+                    .filter(|&&class| class == CLASS_DIRECTORY)
+                    .count();
                 let scale = ((1 + hits) as f64).ln() / ((1 + size) as f64).ln();
-                if hits == 0 { 0 } else { (scale * 254.0).round().max(40.0) as u8 }
+                if hits == 0 {
+                    0
+                } else {
+                    (scale * 254.0).round().max(40.0) as u8
+                }
             }
             Layer::Lens => {
                 let Some(lens) = lens else { return 0 };
-                let hits = (from..to).filter(|&cluster| self.lens_matches(lens, cluster, maps)).count();
-                if hits == 0 { 0 } else { ((hits * 254 / size) as u8).max(30) }
+                let hits = (from..to)
+                    .filter(|&cluster| self.lens_matches(lens, cluster, maps))
+                    .count();
+                if hits == 0 {
+                    0
+                } else {
+                    ((hits * 254 / size) as u8).max(30)
+                }
             }
         }
     }
@@ -582,12 +695,27 @@ impl Session {
         let index = (cluster - FIRST_CLUSTER) as usize;
         lens.start_cluster.is_none_or(|start| cluster >= start)
             && lens.end_cluster.is_none_or(|end| cluster < end)
-            && lens.allocation.as_ref().is_none_or(|allowed| allowed.contains(&self.volume.allocation_class(cluster)))
-            && lens.groups.as_ref().is_none_or(|allowed| allowed.contains(&content_group(maps.classes[index])))
-            && lens.ownership.as_ref().is_none_or(|allowed| allowed.contains(&maps.ownership[index]))
-            && lens.entropy_min.is_none_or(|floor| maps.entropy[index] >= floor)
-            && lens.entropy_max.is_none_or(|ceiling| maps.entropy[index] <= ceiling)
-            && lens.confidence_min.is_none_or(|floor| f64::from(maps.confidence[index]) / 255.0 >= floor)
+            && lens
+                .allocation
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&self.volume.allocation_class(cluster)))
+            && lens
+                .groups
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&content_group(maps.classes[index])))
+            && lens
+                .ownership
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&maps.ownership[index]))
+            && lens
+                .entropy_min
+                .is_none_or(|floor| maps.entropy[index] >= floor)
+            && lens
+                .entropy_max
+                .is_none_or(|ceiling| maps.entropy[index] <= ceiling)
+            && lens
+                .confidence_min
+                .is_none_or(|floor| f64::from(maps.confidence[index]) / 255.0 >= floor)
     }
 
     /// Counts for a cluster range under every layer: the bird's-eye numbers.
@@ -649,14 +777,21 @@ impl Session {
         let lookahead_end = self.volume.boot.last_cluster_exclusive();
         let mut search = data.clone();
         if cluster + 1 < lookahead_end {
-            search.extend(self.volume.read_bytes(self.volume.cluster_offset(cluster + 1), 1024)?);
+            search.extend(
+                self.volume
+                    .read_bytes(self.volume.cluster_offset(cluster + 1), 1024)?,
+            );
         }
         let sets = find_sets(&search, data.len(), self.volume.limits());
         let (class, _) = crate::content::classify(&data, sets.iter().any(|set| set.checksum_ok));
         let index = (cluster - FIRST_CLUSTER) as usize;
         let count = self.volume.boot.cluster_count;
-        let ownership = self.workspace.read_cluster_map(&self.workspace.ownership(), count)[index];
-        let confidence = self.workspace.read_cluster_map(&self.workspace.confidence(), count)[index];
+        let ownership = self
+            .workspace
+            .read_cluster_map(&self.workspace.ownership(), count)[index];
+        let confidence = self
+            .workspace
+            .read_cluster_map(&self.workspace.confidence(), count)[index];
         let fat_value = self.volume.fat[cluster as usize];
         let offset = self.volume.cluster_offset(cluster);
         let chain_head = self.volume.chain_head(cluster);
@@ -675,8 +810,14 @@ impl Session {
                 match overlay.kind.as_str() {
                     OVERLAY_NOTE => overlay.target == Some(here),
                     OVERLAY_REGION_LABEL => {
-                        let end = overlay.payload.get("end").and_then(Value::as_i64).unwrap_or(0);
-                        overlay.target.is_some_and(|start| (start..end).contains(&here))
+                        let end = overlay
+                            .payload
+                            .get("end")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0);
+                        overlay
+                            .target
+                            .is_some_and(|start| (start..end).contains(&here))
                     }
                     _ => false,
                 }
@@ -684,19 +825,26 @@ impl Session {
             .cloned()
             .collect();
         let mut structures = Vec::new();
-        for overlay in overlays.iter().filter(|overlay| overlay.kind == OVERLAY_STRUCT) {
-            let Some(base) = overlay.target.map(|value| value as u64) else { continue };
+        for overlay in overlays
+            .iter()
+            .filter(|overlay| overlay.kind == OVERLAY_STRUCT)
+        {
+            let Some(base) = overlay.target.map(|value| value as u64) else {
+                continue;
+            };
             if range.contains(&base) {
                 let fields = self.decode_struct(&overlay.payload, Scope::Partition, base)?;
-                structures.push(json!({"overlay": overlay.id, "note": overlay.note, "fields": fields}));
+                structures
+                    .push(json!({"overlay": overlay.id, "note": overlay.note, "fields": fields}));
             }
         }
 
         Ok(ClusterInfo {
             cluster,
             offset,
-            disk_offset: whole_disk_path(&self.path)
-                .map(|_| self.volume.boot.partition_offset * self.volume.boot.bytes_per_sector() + offset),
+            disk_offset: whole_disk_path(&self.path).map(|_| {
+                self.volume.boot.partition_offset * self.volume.boot.bytes_per_sector() + offset
+            }),
             allocated: self.volume.is_allocated(cluster),
             fat_value,
             fat_meaning: self.fat_meaning(fat_value),
@@ -715,16 +863,37 @@ impl Session {
     }
 
     /// Reads and labels a caller-defined structure, repeated `count` times.
-    pub fn decode_struct(&self, definition: &Value, scope: Scope, base: u64) -> Result<Vec<DecodedField>> {
-        let fields = definition.get("fields").and_then(Value::as_array).context("definition needs a fields array")?;
-        let count = definition.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 4096);
+    pub fn decode_struct(
+        &self,
+        definition: &Value,
+        scope: Scope,
+        base: u64,
+    ) -> Result<Vec<DecodedField>> {
+        let fields = definition
+            .get("fields")
+            .and_then(Value::as_array)
+            .context("definition needs a fields array")?;
+        let count = definition
+            .get("count")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .clamp(1, 4096);
         let mut extent = 0u64;
         for field in fields {
-            let offset = field.get("offset").and_then(Value::as_u64).context("field needs an offset")?;
-            let kind = field.get("type").and_then(Value::as_str).context("field needs a type")?;
+            let offset = field
+                .get("offset")
+                .and_then(Value::as_u64)
+                .context("field needs an offset")?;
+            let kind = field
+                .get("type")
+                .and_then(Value::as_str)
+                .context("field needs a type")?;
             extent = extent.max(offset + field_length(kind, field)?);
         }
-        let stride = definition.get("stride").and_then(Value::as_u64).unwrap_or(extent);
+        let stride = definition
+            .get("stride")
+            .and_then(Value::as_u64)
+            .unwrap_or(extent);
         let total = stride.saturating_mul(count - 1).saturating_add(extent);
         let data = self.read(scope, base, total)?;
         let mut decoded = Vec::with_capacity(fields.len() * count as usize);
@@ -737,7 +906,11 @@ impl Session {
                 let name = field.get("name").and_then(Value::as_str).unwrap_or("?");
                 let start = (origin + offset) as usize;
                 decoded.push(DecodedField {
-                    name: if count > 1 { format!("[{instance}].{name}") } else { name.to_string() },
+                    name: if count > 1 {
+                        format!("[{instance}].{name}")
+                    } else {
+                        name.to_string()
+                    },
                     offset: base + origin + offset,
                     length,
                     kind: kind.to_string(),
@@ -750,7 +923,15 @@ impl Session {
 
     /// Searches for a byte pattern, stopping at the limit or after a time budget.
     /// Pass `next_offset` back as `start` to continue.
-    pub fn find_bytes(&self, pattern: &[u8], scope: Scope, start: u64, end: u64, align: u64, limit: usize) -> Result<FindResult> {
+    pub fn find_bytes(
+        &self,
+        pattern: &[u8],
+        scope: Scope,
+        start: u64,
+        end: u64,
+        align: u64,
+        limit: usize,
+    ) -> Result<FindResult> {
         if pattern.is_empty() {
             bail!("pattern is empty");
         }
@@ -762,20 +943,30 @@ impl Session {
         let mut searched = 0u64;
         while position < end {
             if hits.len() >= limit || started.elapsed() >= FIND_TIME_LIMIT {
-                return Ok(FindResult { hits, next_offset: position, finished: false, bytes_searched: searched });
+                return Ok(FindResult {
+                    hits,
+                    next_offset: position,
+                    finished: false,
+                    bytes_searched: searched,
+                });
             }
             let length = (end - position).min(FIND_CHUNK_BYTES + overlap);
             let data = self.read(scope, position, length)?;
             for (index, window) in data.windows(pattern.len()).enumerate() {
                 let offset = position + index as u64;
-                if window == pattern && offset % align == 0 && hits.len() < limit {
+                if window == pattern && offset.is_multiple_of(align) && hits.len() < limit {
                     hits.push(offset);
                 }
             }
             searched += length;
             position += (length - overlap.min(length.saturating_sub(1))).max(1);
         }
-        Ok(FindResult { hits, next_offset: end, finished: true, bytes_searched: searched })
+        Ok(FindResult {
+            hits,
+            next_offset: end,
+            finished: true,
+            bytes_searched: searched,
+        })
     }
 
     /// Reads the bytes a list of clusters would hold, up to `max_bytes`.
@@ -801,8 +992,12 @@ impl Session {
         let size = self.volume.boot.cluster_size();
         let data = self.read_clusters(clusters, length, u64::MAX)?;
         let report = verify_stream(name, &data);
-        let classes = self.workspace.read_cluster_map(&self.workspace.classes(), self.volume.boot.cluster_count);
-        let entropy = self.workspace.read_cluster_map(&self.workspace.entropy(), self.volume.boot.cluster_count);
+        let classes = self
+            .workspace
+            .read_cluster_map(&self.workspace.classes(), self.volume.boot.cluster_count);
+        let entropy = self
+            .workspace
+            .read_cluster_map(&self.workspace.entropy(), self.volume.boot.cluster_count);
         let extents = to_extents(clusters);
         let mut position = 0u64;
         let profile = extents
@@ -837,7 +1032,9 @@ impl Session {
             length,
             allocated_clusters: clusters
                 .iter()
-                .filter(|&&cluster| self.volume.valid_cluster(cluster) && self.volume.is_allocated(cluster))
+                .filter(|&&cluster| {
+                    self.volume.valid_cluster(cluster) && self.volume.is_allocated(cluster)
+                })
                 .count() as u64,
             report,
             break_locations,
@@ -847,7 +1044,10 @@ impl Session {
 
     /// Runs a read-only SQL query against the map. The connection cannot write.
     pub fn query_map(&self, sql: &str) -> Result<Value> {
-        let connection = Connection::open_with_flags(self.workspace.database(), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let connection = Connection::open_with_flags(
+            self.workspace.database(),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
         connection.execute_batch("PRAGMA query_only = ON;")?;
         connection.busy_timeout(Duration::from_secs(30))?;
         let mut statement = connection.prepare(sql)?;
@@ -867,7 +1067,9 @@ impl Session {
                     ValueRef::Integer(number) => json!(number),
                     ValueRef::Real(number) => json!(number),
                     ValueRef::Text(text) => json!(String::from_utf8_lossy(text)),
-                    ValueRef::Blob(blob) => json!(blob.iter().map(|b| format!("{b:02x}")).collect::<String>()),
+                    ValueRef::Blob(blob) => {
+                        json!(blob.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    }
                 };
                 object.insert(column.clone(), value);
             }
@@ -887,7 +1089,10 @@ impl Session {
         if mount_line(&self.path).is_some() {
             bail!("the volume is mounted, so macOS may write to it. Unmount it before scanning.");
         }
-        let mut slot = self.scan_thread.lock().map_err(|_| anyhow!("scan lock poisoned"))?;
+        let mut slot = self
+            .scan_thread
+            .lock()
+            .map_err(|_| anyhow!("scan lock poisoned"))?;
         if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
             bail!("the scan is already running");
         }
@@ -895,11 +1100,20 @@ impl Session {
             bail!("another process is already scanning this volume");
         }
         self.scan_stop.store(false, Ordering::Relaxed);
-        *self.scan_error.lock().map_err(|_| anyhow!("error lock poisoned"))? = None;
+        *self
+            .scan_error
+            .lock()
+            .map_err(|_| anyhow!("error lock poisoned"))? = None;
         let session = Arc::clone(self);
         *slot = Some(std::thread::spawn(move || {
             let options = ScanOptions::for_volume(&session.volume);
-            if let Err(error) = run_scan(&session.volume, &session.workspace, options, &session.scan_stop, |_| {}) {
+            if let Err(error) = run_scan(
+                &session.volume,
+                &session.workspace,
+                options,
+                &session.scan_stop,
+                |_| {},
+            ) {
                 if let Ok(mut message) = session.scan_error.lock() {
                     *message = Some(format!("{error:#}"));
                 }
@@ -915,7 +1129,9 @@ impl Session {
     /// Reads an entry's stream through any overlay, capped at `max_bytes`.
     pub fn read_entry(&self, id: i64, max_bytes: u64) -> Result<(Row, Vec<u8>)> {
         let database = self.lock_database()?;
-        let row = database.entry(id)?.with_context(|| format!("no entry with id {id}"))?;
+        let row = database
+            .entry(id)?
+            .with_context(|| format!("no entry with id {id}"))?;
         let clusters = database.entry_clusters(&self.volume, &row)?;
         drop(database);
         let limit = row.valid_length.min(row.length);
@@ -924,19 +1140,23 @@ impl Session {
     }
 
     pub fn entropy_map(&self) -> Vec<u8> {
-        self.workspace.read_cluster_map(&self.workspace.entropy(), self.volume.boot.cluster_count)
+        self.workspace
+            .read_cluster_map(&self.workspace.entropy(), self.volume.boot.cluster_count)
     }
 
     pub fn class_map(&self) -> Vec<u8> {
-        self.workspace.read_cluster_map(&self.workspace.classes(), self.volume.boot.cluster_count)
+        self.workspace
+            .read_cluster_map(&self.workspace.classes(), self.volume.boot.cluster_count)
     }
 
     pub fn ownership_map(&self) -> Vec<u8> {
-        self.workspace.read_cluster_map(&self.workspace.ownership(), self.volume.boot.cluster_count)
+        self.workspace
+            .read_cluster_map(&self.workspace.ownership(), self.volume.boot.cluster_count)
     }
 
     pub fn confidence_map(&self) -> Vec<u8> {
-        self.workspace.read_cluster_map(&self.workspace.confidence(), self.volume.boot.cluster_count)
+        self.workspace
+            .read_cluster_map(&self.workspace.confidence(), self.volume.boot.cluster_count)
     }
 }
 
@@ -960,17 +1180,28 @@ fn stack_column(counts: &[u32], values: &[u8], rows: usize) -> Vec<u8> {
     }
     let mut shares: Vec<usize> = counts
         .iter()
-        .map(|&count| if count == 0 { 0 } else { ((u64::from(count) * rows as u64 / total) as usize).max(1) })
+        .map(|&count| {
+            if count == 0 {
+                0
+            } else {
+                ((u64::from(count) * rows as u64 / total) as usize).max(1)
+            }
+        })
         .collect();
     loop {
         let assigned: usize = shares.iter().sum();
         if assigned == rows {
             break;
         }
-        let largest = (0..shares.len()).max_by_key(|&index| counts[index]).unwrap_or(0);
+        let largest = (0..shares.len())
+            .max_by_key(|&index| counts[index])
+            .unwrap_or(0);
         if assigned < rows {
             shares[largest] += 1;
-        } else if let Some(index) = (0..shares.len()).filter(|&index| shares[index] > 1).max_by_key(|&index| shares[index]) {
+        } else if let Some(index) = (0..shares.len())
+            .filter(|&index| shares[index] > 1)
+            .max_by_key(|&index| shares[index])
+        {
             shares[index] -= 1;
         } else {
             // More categories than rows: keep the first ones that fit.
@@ -1023,17 +1254,27 @@ fn decode_field(kind: &str, data: &[u8]) -> Value {
         "u16le" => json!(u16::from_le_bytes([data[0], data[1]])),
         "u16be" => json!(u16::from_be_bytes([data[0], data[1]])),
         "u32le" | "cluster" => json!(le32()),
-        "u32be" => json!(u32::from_be_bytes(data[..4].try_into().expect("four bytes"))),
+        "u32be" => json!(u32::from_be_bytes(
+            data[..4].try_into().expect("four bytes")
+        )),
         "u64le" => json!(le64()),
-        "u64be" => json!(u64::from_be_bytes(data[..8].try_into().expect("eight bytes"))),
+        "u64be" => json!(u64::from_be_bytes(
+            data[..8].try_into().expect("eight bytes")
+        )),
         "exfat_time" => json!(decode_timestamp(le32())),
         "filetime" => json!(filetime_to_iso(le64())),
         "ascii" => json!(String::from_utf8_lossy(data)),
         "utf16le" => {
-            let units: Vec<u16> = data.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+            let units: Vec<u16> = data
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
             json!(String::from_utf16_lossy(&units))
         }
-        _ => json!(data.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+        _ => json!(data
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()),
     }
 }
 
@@ -1048,11 +1289,16 @@ fn filetime_to_iso(value: u64) -> Option<String> {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let day_of_era = z.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_index = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
     let year = year_of_era + era * 400 + i64::from(month <= 2);
     Some(format!(
         "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",

@@ -27,7 +27,14 @@ const MAX_FOLLOW_CLUSTERS: u64 = 100_000;
 const DEFAULT_FIND_LIMIT: u64 = 200;
 const ACTIVITY_DETAIL_CHARS: usize = 300;
 /// Tools called constantly, or only about the window, stay out of the activity log.
-const QUIET_TOOLS: &[&str] = &["status", "get_selection", "set_selection", "activity", "list_overlays", "copy_status"];
+const QUIET_TOOLS: &[&str] = &[
+    "status",
+    "get_selection",
+    "set_selection",
+    "activity",
+    "list_overlays",
+    "copy_status",
+];
 const DEFAULT_REGION_SAMPLES: usize = 64;
 const DEFAULT_MIN_RUN_CLUSTERS: u64 = 64;
 
@@ -44,7 +51,8 @@ fn u64_of(args: &Value, key: &str) -> Option<u64> {
 }
 
 fn need_u64(args: &Value, key: &str) -> Result<u64> {
-    u64_of(args, key).with_context(|| format!("argument {key} is required and must be a non-negative integer"))
+    u64_of(args, key)
+        .with_context(|| format!("argument {key} is required and must be a non-negative integer"))
 }
 
 fn need_u32(args: &Value, key: &str) -> Result<u32> {
@@ -52,11 +60,15 @@ fn need_u32(args: &Value, key: &str) -> Result<u32> {
 }
 
 fn need_i64(args: &Value, key: &str) -> Result<i64> {
-    args.get(key).and_then(Value::as_i64).with_context(|| format!("argument {key} is required and must be an integer"))
+    args.get(key)
+        .and_then(Value::as_i64)
+        .with_context(|| format!("argument {key} is required and must be an integer"))
 }
 
 fn need_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
-    args.get(key).and_then(Value::as_str).with_context(|| format!("argument {key} is required and must be a string"))
+    args.get(key)
+        .and_then(Value::as_str)
+        .with_context(|| format!("argument {key} is required and must be a string"))
 }
 
 fn str_of<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
@@ -72,20 +84,25 @@ fn bool_of(args: &Value, key: &str, default: bool) -> bool {
 }
 
 fn extents_of(args: &Value, key: &str) -> Result<Option<Vec<u32>>> {
-    let Some(value) = args.get(key) else { return Ok(None) };
-    let extents: Vec<Extent> =
-        serde_json::from_value(value.clone()).with_context(|| format!("{key} must be a list of {{first, count}}"))?;
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    let extents: Vec<Extent> = serde_json::from_value(value.clone())
+        .with_context(|| format!("{key} must be a list of {{first, count}}"))?;
     Ok(Some(from_extents(&extents)))
 }
 
 fn parse_hex(text: &str) -> Result<Vec<u8>> {
     let clean: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    if clean.len() % 2 != 0 {
+    if !clean.len().is_multiple_of(2) {
         bail!("hex text has an odd number of digits");
     }
     (0..clean.len())
         .step_by(2)
-        .map(|index| u8::from_str_radix(&clean[index..index + 2], 16).context("hex text holds a non-hex digit"))
+        .map(|index| {
+            u8::from_str_radix(&clean[index..index + 2], 16)
+                .context("hex text holds a non-hex digit")
+        })
         .collect()
 }
 
@@ -104,7 +121,13 @@ pub fn hexdump(data: &[u8], base: u64) -> String {
             }
         }
         out.push(' ');
-        out.extend(row.iter().map(|&byte| if (32..127).contains(&byte) { byte as char } else { '.' }));
+        out.extend(row.iter().map(|&byte| {
+            if (32..127).contains(&byte) {
+                byte as char
+            } else {
+                '.'
+            }
+        }));
         out.push('\n');
     }
     out
@@ -128,7 +151,11 @@ impl Engine {
     }
 
     pub fn screenshot(&self) -> Result<Vec<u8>> {
-        let hook = self.screenshot.read().map_err(|_| anyhow!("screenshot lock poisoned"))?.clone();
+        let hook = self
+            .screenshot
+            .read()
+            .map_err(|_| anyhow!("screenshot lock poisoned"))?
+            .clone();
         hook.context("no app window is available to capture")?()
     }
 
@@ -149,7 +176,10 @@ impl Engine {
             }
         }
         let session = Session::open(&wanted)?;
-        *self.session.write().map_err(|_| anyhow!("session lock poisoned"))? = Some(session.clone());
+        *self
+            .session
+            .write()
+            .map_err(|_| anyhow!("session lock poisoned"))? = Some(session.clone());
         self.emit("volume-opened", json!({"path": path}));
         Ok(session)
     }
@@ -175,12 +205,17 @@ impl Engine {
             if let Ok(session) = self.session() {
                 let mut detail = args.to_string();
                 if tool != "log_finding" && detail.chars().count() > ACTIVITY_DETAIL_CHARS {
-                    detail = detail.chars().take(ACTIVITY_DETAIL_CHARS).collect::<String>() + "…";
+                    detail = detail
+                        .chars()
+                        .take(ACTIVITY_DETAIL_CHARS)
+                        .collect::<String>()
+                        + "…";
                 }
                 if let Err(error) = &result {
                     detail = format!("{detail} failed: {error:#}");
                 }
-                let _ = session.with_database(|database| database.log_activity(author, tool, &detail));
+                let _ =
+                    session.with_database(|database| database.log_activity(author, tool, &detail));
                 self.emit("activity", json!({"tool": tool, "author": author}));
             }
         }
@@ -201,9 +236,16 @@ impl Engine {
                 let session = self.open(need_str(args, "path")?)?;
                 Ok(session.overview())
             }
-            "get_selection" => Ok(self.selection.lock().map_err(|_| anyhow!("selection lock poisoned"))?.clone()),
+            "get_selection" => Ok(self
+                .selection
+                .lock()
+                .map_err(|_| anyhow!("selection lock poisoned"))?
+                .clone()),
             "set_selection" => {
-                *self.selection.lock().map_err(|_| anyhow!("selection lock poisoned"))? = args.clone();
+                *self
+                    .selection
+                    .lock()
+                    .map_err(|_| anyhow!("selection lock poisoned"))? = args.clone();
                 Ok(json!({"ok": true}))
             }
             "ui_eval" => {
@@ -220,7 +262,12 @@ impl Engine {
 
     fn dispatch_with_session(&self, tool: &str, args: &Value, author: &str) -> Result<Value> {
         let session = self.session()?;
-        let page = |args: &Value| (u64_of(args, "offset").unwrap_or(0), u64_of(args, "limit").unwrap_or(DEFAULT_PAGE));
+        let page = |args: &Value| {
+            (
+                u64_of(args, "offset").unwrap_or(0),
+                u64_of(args, "limit").unwrap_or(DEFAULT_PAGE),
+            )
+        };
         match tool {
             "status" => Ok(serde_json::to_value(session.status()?)?),
             "volume_overview" => Ok(session.overview()),
@@ -237,38 +284,47 @@ impl Engine {
             "nameless_chains" => {
                 let (offset, limit) = page(args);
                 let class = u64_of(args, "headClass").map(|value| value as u8);
-                let (rows, total) = session.with_database(|database| database.nameless_chains(offset, limit, class))?;
-                Ok(json!({"chains": rows, "total": total, "clusterSize": session.volume.boot.cluster_size()}))
+                let (rows, total) = session
+                    .with_database(|database| database.nameless_chains(offset, limit, class))?;
+                Ok(
+                    json!({"chains": rows, "total": total, "clusterSize": session.volume.boot.cluster_size()}),
+                )
             }
             "broken_files" => {
                 let (offset, limit) = page(args);
-                Ok(serde_json::to_value(session.with_database(|database| database.broken_files(offset, limit))?)?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.broken_files(offset, limit),
+                )?)?)
             }
             "bridge_candidates" => {
                 let id = need_i64(args, "entryId")?;
                 let limit = u64_of(args, "limit").unwrap_or(20) as usize;
                 let entropy = session.entropy_map();
-                Ok(serde_json::to_value(
-                    session.with_database(|database| database.bridge_candidates(&session.volume, id, &entropy, limit))?,
-                )?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.bridge_candidates(&session.volume, id, &entropy, limit),
+                )?)?)
             }
 
             "roots" => {
                 let (offset, limit) = page(args);
-                Ok(serde_json::to_value(session.with_database(|database| database.roots(offset, limit))?)?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.roots(offset, limit),
+                )?)?)
             }
             "children" => {
                 let (offset, limit) = page(args);
                 let node = need_u32(args, "node")?;
                 let hidden = bool_of(args, "includeHidden", false);
                 let floor = f64_of(args, "minConfidence", 0.0);
-                Ok(serde_json::to_value(
-                    session.with_database(|database| database.children(node, offset, limit, hidden, floor))?,
-                )?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.children(node, offset, limit, hidden, floor),
+                )?)?)
             }
             "node" => {
                 let head = need_u32(args, "head")?;
-                Ok(serde_json::to_value(session.with_database(|database| database.node(head))?)?)
+                Ok(serde_json::to_value(
+                    session.with_database(|database| database.node(head))?,
+                )?)
             }
             "entry" => {
                 let id = need_i64(args, "id")?;
@@ -283,11 +339,15 @@ impl Engine {
                 let query = need_str(args, "query")?;
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
                 let floor = f64_of(args, "minConfidence", 0.0);
-                Ok(serde_json::to_value(session.with_database(|database| database.search(query, limit, floor))?)?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.search(query, limit, floor),
+                )?)?)
             }
             "owners" => {
                 let cluster = need_u32(args, "cluster")?;
-                Ok(serde_json::to_value(session.with_database(|database| database.owners(&session.volume, cluster))?)?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.owners(&session.volume, cluster),
+                )?)?)
             }
 
             "read_bytes" => {
@@ -306,21 +366,35 @@ impl Engine {
                 if bool_of(args, "includeHex", false) {
                     let offset = session.volume.cluster_offset(cluster);
                     let length = u64_of(args, "hexBytes").unwrap_or(512).min(MAX_HEX_BYTES);
-                    info["dump"] = json!(hexdump(&session.read(Scope::Partition, offset, length)?, offset));
+                    info["dump"] = json!(hexdump(
+                        &session.read(Scope::Partition, offset, length)?,
+                        offset
+                    ));
                 }
                 Ok(info)
             }
             "parse_entries" => {
                 let scope = Scope::parse(str_of(args, "scope"))?;
-                let data = session.read(scope, need_u64(args, "offset")?, need_u64(args, "length")?)?;
-                Ok(serde_json::to_value(find_sets(&data, data.len(), session.volume.limits()))?)
+                let data =
+                    session.read(scope, need_u64(args, "offset")?, need_u64(args, "length")?)?;
+                Ok(serde_json::to_value(find_sets(
+                    &data,
+                    data.len(),
+                    session.volume.limits(),
+                ))?)
             }
             "find_bytes" => self.find_bytes(&session, args),
             "follow_chain" => self.follow_chain(&session, args),
             "decode_struct" => {
                 let scope = Scope::parse(str_of(args, "scope"))?;
-                let definition = args.get("definition").context("argument definition is required")?;
-                Ok(serde_json::to_value(session.decode_struct(definition, scope, need_u64(args, "offset")?)?)?)
+                let definition = args
+                    .get("definition")
+                    .context("argument definition is required")?;
+                Ok(serde_json::to_value(session.decode_struct(
+                    definition,
+                    scope,
+                    need_u64(args, "offset")?,
+                )?)?)
             }
 
             "test_stream" => self.test_stream(&session, args),
@@ -329,30 +403,50 @@ impl Engine {
                 let note = need_str(args, "note")?;
                 let payload = args.get("payload").cloned().unwrap_or_else(|| json!({}));
                 let target = args.get("target").and_then(Value::as_i64);
-                let id = session.with_database(|database| database.add_overlay(kind, target, &payload, note, author))?;
-                let summary = if bool_of(args, "resolve", true) { Some(session.resolve()?) } else { None };
+                let id = session.with_database(|database| {
+                    database.add_overlay(kind, target, &payload, note, author)
+                })?;
+                let summary = if bool_of(args, "resolve", true) {
+                    Some(session.resolve()?)
+                } else {
+                    None
+                };
                 self.emit("map-changed", json!({"reason": "overlay", "id": id}));
                 Ok(json!({"id": id, "summary": summary}))
             }
-            "list_overlays" => {
-                Ok(serde_json::to_value(session.with_database(|database| database.overlays(bool_of(args, "onlyActive", false)))?)?)
-            }
+            "list_overlays" => Ok(serde_json::to_value(session.with_database(
+                |database| database.overlays(bool_of(args, "onlyActive", false)),
+            )?)?),
             "set_overlay_active" => {
                 let id = need_i64(args, "id")?;
-                let active = args.get("active").and_then(Value::as_bool).context("argument active is required")?;
-                let found = session.with_database(|database| database.set_overlay_active(id, active))?;
-                let summary = if bool_of(args, "resolve", true) { Some(session.resolve()?) } else { None };
+                let active = args
+                    .get("active")
+                    .and_then(Value::as_bool)
+                    .context("argument active is required")?;
+                let found =
+                    session.with_database(|database| database.set_overlay_active(id, active))?;
+                let summary = if bool_of(args, "resolve", true) {
+                    Some(session.resolve()?)
+                } else {
+                    None
+                };
                 self.emit("map-changed", json!({"reason": "overlay", "id": id}));
                 Ok(json!({"found": found, "summary": summary}))
             }
             "delete_overlay" => {
                 let id = need_i64(args, "id")?;
                 let found = session.with_database(|database| database.delete_overlay(id))?;
-                let summary = if bool_of(args, "resolve", true) { Some(session.resolve()?) } else { None };
+                let summary = if bool_of(args, "resolve", true) {
+                    Some(session.resolve()?)
+                } else {
+                    None
+                };
                 self.emit("map-changed", json!({"reason": "overlay", "id": id}));
                 Ok(json!({"found": found, "summary": summary}))
             }
-            "get_parameters" => Ok(serde_json::to_value(session.with_database(|database| database.params())?)?),
+            "get_parameters" => Ok(serde_json::to_value(
+                session.with_database(|database| database.params())?,
+            )?),
             "set_parameters" => {
                 let current = session.with_database(|database| database.params())?;
                 let mut merged = serde_json::to_value(current)?;
@@ -363,9 +457,14 @@ impl Engine {
                         }
                     }
                 }
-                let params: ResolveParams = serde_json::from_value(merged).context("invalid parameter value")?;
+                let params: ResolveParams =
+                    serde_json::from_value(merged).context("invalid parameter value")?;
                 session.with_database(|database| database.set_params(&params))?;
-                let summary = if bool_of(args, "resolve", true) { Some(session.resolve()?) } else { None };
+                let summary = if bool_of(args, "resolve", true) {
+                    Some(session.resolve()?)
+                } else {
+                    None
+                };
                 self.emit("map-changed", json!({"reason": "parameters"}));
                 Ok(json!({"parameters": params, "summary": summary}))
             }
@@ -382,7 +481,8 @@ impl Engine {
             }
 
             "copy_plan" => {
-                let request: CopyRequest = serde_json::from_value(args.clone()).context("invalid copy request")?;
+                let request: CopyRequest =
+                    serde_json::from_value(args.clone()).context("invalid copy request")?;
                 Ok(serde_json::to_value(session.copy_plan(&request)?)?)
             }
             "copy_start" => {
@@ -390,7 +490,8 @@ impl Engine {
                 if author != AUTHOR_USER {
                     bail!("Only the person using the app can start a copy. Use copy_plan, and ask them to start it.");
                 }
-                let request: CopyRequest = serde_json::from_value(args.clone()).context("invalid copy request")?;
+                let request: CopyRequest =
+                    serde_json::from_value(args.clone()).context("invalid copy request")?;
                 Ok(serde_json::to_value(session.copy_start(request)?)?)
             }
             "copy_stop" => {
@@ -403,9 +504,14 @@ impl Engine {
             "copy_status" => Ok(serde_json::to_value(session.copy_status()?)?),
             "get_salvage_drive" => match session.salvage_drive()? {
                 Some(destination) => {
-                    let request = CopyRequest { destination: destination.clone(), ..CopyRequest::default() };
+                    let request = CopyRequest {
+                        destination: destination.clone(),
+                        ..CopyRequest::default()
+                    };
                     let plan = session.copy_plan(&request)?;
-                    Ok(json!({"destination": destination, "freeBytes": plan.free_bytes, "refused": plan.refused}))
+                    Ok(
+                        json!({"destination": destination, "freeBytes": plan.free_bytes, "refused": plan.refused}),
+                    )
                 }
                 None => Ok(json!({"destination": null})),
             },
@@ -417,7 +523,9 @@ impl Engine {
                 match str_of(args, "destination").filter(|path| !path.trim().is_empty()) {
                     Some(destination) => {
                         let plan = session.set_salvage_drive(destination)?;
-                        Ok(json!({"destination": destination, "freeBytes": plan.free_bytes, "refused": null}))
+                        Ok(
+                            json!({"destination": destination, "freeBytes": plan.free_bytes, "refused": null}),
+                        )
                     }
                     None => {
                         session.clear_salvage_drive()?;
@@ -428,12 +536,22 @@ impl Engine {
             "list_volumes" => Ok(json!(list_volumes(Some(&session.path))?)),
             "unexplained_runs" => {
                 let (offset, limit) = page(args);
-                let minimum = u64_of(args, "minClusters").unwrap_or(DEFAULT_MIN_RUN_CLUSTERS) as u32;
-                Ok(serde_json::to_value(session.unexplained_runs(offset as usize, limit as usize, minimum))?)
+                let minimum =
+                    u64_of(args, "minClusters").unwrap_or(DEFAULT_MIN_RUN_CLUSTERS) as u32;
+                Ok(serde_json::to_value(session.unexplained_runs(
+                    offset as usize,
+                    limit as usize,
+                    minimum,
+                ))?)
             }
             "explain_region" => {
-                let samples = u64_of(args, "samples").map_or(DEFAULT_REGION_SAMPLES, |value| value as usize);
-                session.explain_region(need_u32(args, "startCluster")?, need_u32(args, "endCluster")?, samples)
+                let samples =
+                    u64_of(args, "samples").map_or(DEFAULT_REGION_SAMPLES, |value| value as usize);
+                session.explain_region(
+                    need_u32(args, "startCluster")?,
+                    need_u32(args, "endCluster")?,
+                    samples,
+                )
             }
 
             "start_scan" => {
@@ -447,7 +565,9 @@ impl Engine {
             "activity" => {
                 let after = args.get("afterId").and_then(Value::as_i64).unwrap_or(0);
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
-                Ok(serde_json::to_value(session.with_database(|database| database.activity(after, limit))?)?)
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.activity(after, limit),
+                )?)?)
             }
             "log_finding" => {
                 let text = need_str(args, "text")?;
@@ -462,10 +582,19 @@ impl Engine {
         let last = session.volume.boot.last_cluster_exclusive();
         let start = u64_of(args, "startCluster").unwrap_or(2) as u32;
         let end = u64_of(args, "endCluster").map_or(last, |value| (value as u32).min(last));
-        let buckets = (u64_of(args, "buckets").unwrap_or(64) as usize).clamp(1, MAX_MAP_REGION_BUCKETS);
-        const ALLOCATION: [&str; 3] = ["allocated", "free, FAT chain remains", "free, FAT entry zero"];
+        let buckets =
+            (u64_of(args, "buckets").unwrap_or(64) as usize).clamp(1, MAX_MAP_REGION_BUCKETS);
+        const ALLOCATION: [&str; 3] = [
+            "allocated",
+            "free, FAT chain remains",
+            "free, FAT entry zero",
+        ];
         const OWNERSHIP: [&str; 6] = [
-            "unexplained", "claimed by one entry", "claimed by several entries", "directory", "nameless FAT chain",
+            "unexplained",
+            "claimed by one entry",
+            "claimed by several entries",
+            "directory",
+            "nameless FAT chain",
             "explained by a hypothesis",
         ];
         let allocation = session.map_bytes(Layer::Allocation, start, end, buckets, 0.0, None);
@@ -504,12 +633,16 @@ impl Engine {
         let start = u64_of(args, "start").unwrap_or(0);
         let end = match u64_of(args, "end") {
             Some(end) => end,
-            None if scope == Scope::Partition => session.volume.boot.volume_length * session.volume.boot.bytes_per_sector(),
+            None if scope == Scope::Partition => {
+                session.volume.boot.volume_length * session.volume.boot.bytes_per_sector()
+            }
             None => bail!("end is required when the scope is disk"),
         };
         let align = u64_of(args, "align").unwrap_or(1);
         let limit = u64_of(args, "limit").unwrap_or(DEFAULT_FIND_LIMIT) as usize;
-        Ok(serde_json::to_value(session.find_bytes(&pattern, scope, start, end, align, limit)?)?)
+        Ok(serde_json::to_value(
+            session.find_bytes(&pattern, scope, start, end, align, limit)?,
+        )?)
     }
 
     fn follow_chain(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
@@ -517,7 +650,9 @@ impl Engine {
         if !session.volume.valid_cluster(start) {
             bail!("cluster {start} is outside the volume");
         }
-        let limit = u64_of(args, "max").unwrap_or(MAX_FOLLOW_CLUSTERS).min(MAX_FOLLOW_CLUSTERS);
+        let limit = u64_of(args, "max")
+            .unwrap_or(MAX_FOLLOW_CLUSTERS)
+            .min(MAX_FOLLOW_CLUSTERS);
         let mut clusters = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut current = start;
@@ -534,7 +669,10 @@ impl Engine {
             clusters.push(current);
             current = session.volume.fat[current as usize];
         }
-        let allocated = clusters.iter().filter(|&&cluster| session.volume.is_allocated(cluster)).count();
+        let allocated = clusters
+            .iter()
+            .filter(|&&cluster| session.volume.is_allocated(cluster))
+            .count();
         Ok(json!({
             "start": start,
             "chainHead": session.volume.chain_head(start),
@@ -549,21 +687,31 @@ impl Engine {
 
     fn test_stream(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
         let append = extents_of(args, "appendExtents")?.unwrap_or_default();
-        let (name, mut clusters, default_length) = if let Some(id) = args.get("entryId").and_then(Value::as_i64) {
-            session.with_database(|database| {
-                let row = database.entry(id)?.with_context(|| format!("no entry with id {id}"))?;
-                let clusters = database.entry_clusters(&session.volume, &row)?;
-                Ok((row.name, clusters, row.length))
-            })?
-        } else {
-            let clusters = extents_of(args, "extents")?.context("give either entryId or extents")?;
-            let size = session.volume.boot.cluster_size();
-            (str_of(args, "name").unwrap_or("").to_string(), clusters.clone(), clusters.len() as u64 * size)
-        };
+        let (name, mut clusters, default_length) =
+            if let Some(id) = args.get("entryId").and_then(Value::as_i64) {
+                session.with_database(|database| {
+                    let row = database
+                        .entry(id)?
+                        .with_context(|| format!("no entry with id {id}"))?;
+                    let clusters = database.entry_clusters(&session.volume, &row)?;
+                    Ok((row.name, clusters, row.length))
+                })?
+            } else {
+                let clusters =
+                    extents_of(args, "extents")?.context("give either entryId or extents")?;
+                let size = session.volume.boot.cluster_size();
+                (
+                    str_of(args, "name").unwrap_or("").to_string(),
+                    clusters.clone(),
+                    clusters.len() as u64 * size,
+                )
+            };
         clusters.extend(append);
         let length = u64_of(args, "length").unwrap_or(default_length);
         let name = str_of(args, "name").map_or(name, str::to_string);
-        Ok(serde_json::to_value(session.test_stream(&name, &clusters, length)?)?)
+        Ok(serde_json::to_value(
+            session.test_stream(&name, &clusters, length)?,
+        )?)
     }
 
     /// Whole-disk device path of the open volume, for the window to display.

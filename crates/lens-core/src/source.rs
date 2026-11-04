@@ -110,7 +110,10 @@ pub struct MemorySource {
 
 impl MemorySource {
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data, counters: Counters::default() }
+        Self {
+            data,
+            counters: Counters::default(),
+        }
     }
 }
 
@@ -122,7 +125,10 @@ impl BlockSource for MemorySource {
                 buffer.copy_from_slice(slice);
                 Ok(())
             }
-            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "read past end")),
+            None => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read past end",
+            )),
         };
         self.counters.record(buffer.len(), &result);
         result

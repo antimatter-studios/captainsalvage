@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn now_millis() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[derive(Clone, Debug)]
@@ -41,7 +44,11 @@ impl Workspace {
 
     pub fn for_serial(serial: u32) -> Result<Self> {
         let home = std::env::var_os("HOME").context("HOME is not set")?;
-        Self::at(Path::new(&home).join("Library/Application Support/exfat-lens").join(format!("vol-{serial:08x}")))
+        Self::at(
+            Path::new(&home)
+                .join("Library/Application Support/exfat-lens")
+                .join(format!("vol-{serial:08x}")),
+        )
     }
 
     pub fn dir(&self) -> &Path {
@@ -84,7 +91,8 @@ impl Workspace {
     /// change means something wrote to the boot regions, FAT, bitmap or root.
     pub fn check_baseline(&self, current_hash: &str) -> Result<BaselineCheck> {
         if let Ok(text) = fs::read_to_string(self.baseline()) {
-            let baseline: Baseline = serde_json::from_str(&text).context("parsing baseline.json")?;
+            let baseline: Baseline =
+                serde_json::from_str(&text).context("parsing baseline.json")?;
             return Ok(BaselineCheck {
                 unchanged: baseline.structure_hash == current_hash,
                 first_recording: false,
@@ -93,7 +101,10 @@ impl Workspace {
                 current_hash: current_hash.to_string(),
             });
         }
-        let baseline = Baseline { structure_hash: current_hash.to_string(), recorded_at_millis: now_millis() };
+        let baseline = Baseline {
+            structure_hash: current_hash.to_string(),
+            recorded_at_millis: now_millis(),
+        };
         fs::write(self.baseline(), serde_json::to_string_pretty(&baseline)?)?;
         Ok(BaselineCheck {
             unchanged: true,

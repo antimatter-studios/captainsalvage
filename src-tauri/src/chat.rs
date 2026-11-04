@@ -88,9 +88,18 @@ impl ChatState {
         }
     }
 
-    pub fn send(&self, app: tauri::AppHandle, info: &McpInfo, message: &str, selection: &Value) -> Result<()> {
+    pub fn send(
+        &self,
+        app: tauri::AppHandle,
+        info: &McpInfo,
+        message: &str,
+        selection: &Value,
+    ) -> Result<()> {
         {
-            let mut slot = self.child.lock().map_err(|_| anyhow::anyhow!("chat lock poisoned"))?;
+            let mut slot = self
+                .child
+                .lock()
+                .map_err(|_| anyhow::anyhow!("chat lock poisoned"))?;
             if let Some(child) = slot.as_mut() {
                 if child.try_wait()?.is_none() {
                     bail!("Claude is still answering. Stop it first, or wait for it to finish.");
@@ -104,12 +113,20 @@ impl ChatState {
             serde_json::to_string_pretty(selection)?
         );
         let config = write_client_config(info)?;
-        let working_dir = config.parent().context("config has no parent directory")?.to_path_buf();
+        let working_dir = config
+            .parent()
+            .context("config has no parent directory")?
+            .to_path_buf();
         let mut command = Command::new(find_claude()?);
         command
             .arg("-p")
             .arg(&prompt)
-            .args(["--output-format", "stream-json", "--verbose", "--include-partial-messages"])
+            .args([
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+            ])
             .arg("--strict-mcp-config")
             .arg("--mcp-config")
             .arg(&config)
@@ -122,12 +139,21 @@ impl ChatState {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(id) = self.session_id.lock().map_err(|_| anyhow::anyhow!("chat lock poisoned"))?.as_ref() {
+        if let Some(id) = self
+            .session_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("chat lock poisoned"))?
+            .as_ref()
+        {
             command.arg("--resume").arg(id);
         }
         for (name, _) in std::env::vars_os() {
             let text = name.to_string_lossy();
-            if INHERITED_NAMES.contains(&text.as_ref()) || INHERITED_PREFIXES.iter().any(|prefix| text.starts_with(prefix)) {
+            if INHERITED_NAMES.contains(&text.as_ref())
+                || INHERITED_PREFIXES
+                    .iter()
+                    .any(|prefix| text.starts_with(prefix))
+            {
                 command.env_remove(&name);
             }
         }
@@ -135,7 +161,10 @@ impl ChatState {
         let mut child = command.spawn().context("starting claude")?;
         let stdout = child.stdout.take().context("claude has no stdout")?;
         let stderr = child.stderr.take().context("claude has no stderr")?;
-        *self.child.lock().map_err(|_| anyhow::anyhow!("chat lock poisoned"))? = Some(child);
+        *self
+            .child
+            .lock()
+            .map_err(|_| anyhow::anyhow!("chat lock poisoned"))? = Some(child);
 
         let session_id = self.session_id.clone();
         let child_slot = self.child.clone();
@@ -146,7 +175,9 @@ impl ChatState {
                 text
             });
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
+                let Ok(event) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
                 if let Some(id) = event.get("session_id").and_then(Value::as_str) {
                     if let Ok(mut slot) = session_id.lock() {
                         *slot = Some(id.to_string());
@@ -155,10 +186,15 @@ impl ChatState {
                 let _ = app.emit(EVENT, event);
             }
             let code = child_slot.lock().ok().and_then(|mut slot| {
-                slot.as_mut().and_then(|child| child.wait().ok()).and_then(|status| status.code())
+                slot.as_mut()
+                    .and_then(|child| child.wait().ok())
+                    .and_then(|status| status.code())
             });
             let error_text = error_reader.join().unwrap_or_default();
-            let _ = app.emit(EVENT, json!({"type": "chat-end", "code": code, "stderr": error_text}));
+            let _ = app.emit(
+                EVENT,
+                json!({"type": "chat-end", "code": code, "stderr": error_text}),
+            );
         });
         Ok(())
     }

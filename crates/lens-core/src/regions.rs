@@ -6,8 +6,8 @@
 //! file generations on this disk used smaller units than exFAT's 128 KiB, so a
 //! file's start can sit in the middle of a cluster.
 
-use crate::content::{entropy_bits, signature_class, CLASS_NAMES, GROUP_COUNT, GROUP_NAMES};
 use crate::content::content_group;
+use crate::content::{entropy_bits, signature_class, CLASS_NAMES, GROUP_COUNT, GROUP_NAMES};
 use crate::exfat::{find_sets, FIRST_CLUSTER};
 use crate::resolve::OWNERSHIP_UNEXPLAINED;
 use crate::session::Session;
@@ -42,11 +42,15 @@ pub struct UnexplainedRun {
 }
 
 fn u16_at(data: &[u8], offset: usize) -> Option<usize> {
-    Some(usize::from(u16::from_le_bytes(data.get(offset..offset + 2)?.try_into().ok()?)))
+    Some(usize::from(u16::from_le_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    )))
 }
 
 fn u32_at(data: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(data.get(offset..offset + 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        data.get(offset..offset + 4)?.try_into().ok()?,
+    ))
 }
 
 /// Reads the file name from an NTFS file record, preferring a long name over its
@@ -75,7 +79,10 @@ pub fn ntfs_record_name(record: &[u8]) -> Option<String> {
             let name_length = usize::from(*record.get(content + 0x40)?);
             let namespace = *record.get(content + 0x41)?;
             let bytes = record.get(content + 0x42..content + 0x42 + name_length * 2)?;
-            let units: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+            let units: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
             let name = String::from_utf16_lossy(&units);
             if namespace != NAMESPACE_DOS {
                 return Some(name);
@@ -107,14 +114,20 @@ fn readable_strings(data: &[u8], out: &mut Vec<String>) {
 
 impl Session {
     /// Regions of free space nothing explains, largest first.
-    pub fn unexplained_runs(&self, offset: usize, limit: usize, min_clusters: u32) -> Vec<UnexplainedRun> {
+    pub fn unexplained_runs(
+        &self,
+        offset: usize,
+        limit: usize,
+        min_clusters: u32,
+    ) -> Vec<UnexplainedRun> {
         let cluster_size = self.volume.boot.cluster_size();
         let last = self.volume.boot.last_cluster_exclusive();
         let ownership = self.ownership_map();
         let classes = self.class_map();
         let entropy = self.entropy_map();
         let unexplained = |cluster: u32| {
-            !self.volume.is_allocated(cluster) && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
+            !self.volume.is_allocated(cluster)
+                && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
 
         let mut spans: Vec<(u32, u32)> = Vec::new();
@@ -149,8 +162,11 @@ impl Session {
                         count += 1;
                     }
                 }
-                let (top, top_count) =
-                    groups.iter().enumerate().max_by_key(|(_, &value)| value).map_or((0, 0), |(index, &value)| (index, value));
+                let (top, top_count) = groups
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, &value)| value)
+                    .map_or((0, 0), |(index, &value)| (index, value));
                 UnexplainedRun {
                     start_cluster: start,
                     end_cluster: end,

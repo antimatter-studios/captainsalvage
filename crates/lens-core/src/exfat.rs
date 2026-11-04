@@ -132,10 +132,17 @@ pub fn decode_timestamp(value: u32) -> Option<String> {
     let hour = (value >> 11) & 0x1F;
     let minute = (value >> 5) & 0x3F;
     let second = (value & 0x1F) * 2;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
         return None;
     }
-    Some(format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"))
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"
+    ))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -176,7 +183,11 @@ fn set_checksum(set: &[u8]) -> u16 {
             continue;
         }
         // Deleted sets clear InUse. Restoring it lets their stored checksum validate.
-        let value = if index % ENTRY_SIZE == 0 { byte | 0x80 } else { byte };
+        let value = if index % ENTRY_SIZE == 0 {
+            byte | 0x80
+        } else {
+            byte
+        };
         checksum = checksum.rotate_right(1).wrapping_add(u16::from(value));
     }
     checksum
@@ -213,7 +224,11 @@ pub fn parse_set(data: &[u8], position: usize, limits: Limits) -> Option<EntrySe
         if entry[0] != TYPE_NAME && entry[0] != TYPE_NAME_DELETED {
             return None;
         }
-        units.extend(entry[2..ENTRY_SIZE].chunks_exact(2).map(|pair| u16_at(pair, 0)));
+        units.extend(
+            entry[2..ENTRY_SIZE]
+                .chunks_exact(2)
+                .map(|pair| u16_at(pair, 0)),
+        );
     }
     units.truncate(name_length);
 
@@ -260,7 +275,11 @@ pub fn find_sets(data: &[u8], search_end: usize, limits: Limits) -> Vec<EntrySet
     while position < search_end {
         match parse_set(data, position, limits) {
             Some(set) => {
-                position += if set.checksum_ok { set.slots * ENTRY_SIZE } else { ENTRY_SIZE };
+                position += if set.checksum_ok {
+                    set.slots * ENTRY_SIZE
+                } else {
+                    ENTRY_SIZE
+                };
                 found.push(set);
             }
             None => position += ENTRY_SIZE,

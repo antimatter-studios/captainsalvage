@@ -122,7 +122,10 @@ struct Filesystem {
 }
 
 fn now_millis() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn nearest_existing(path: &Path) -> PathBuf {
@@ -148,7 +151,9 @@ fn filesystem_of(path: &Path) -> Result<Filesystem> {
         info
     };
     // SAFETY: statfs returns a NUL-terminated device name in a fixed buffer.
-    let device = unsafe { CStr::from_ptr(info.f_mntfromname.as_ptr()) }.to_string_lossy().into_owned();
+    let device = unsafe { CStr::from_ptr(info.f_mntfromname.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
     Ok(Filesystem {
         device,
         free_bytes: u64::from(info.f_bavail as u32).max(info.f_bavail) * u64::from(info.f_bsize),
@@ -159,7 +164,9 @@ fn filesystem_of(path: &Path) -> Result<Filesystem> {
 /// `disk5s1` becomes `disk5`.
 fn whole_of(device: &str) -> Option<String> {
     let bare = device.strip_prefix("/dev/").unwrap_or(device);
-    let number = bare.strip_prefix("rdisk").or_else(|| bare.strip_prefix("disk"))?;
+    let number = bare
+        .strip_prefix("rdisk")
+        .or_else(|| bare.strip_prefix("disk"))?;
     let digits: String = number.chars().take_while(char::is_ascii_digit).collect();
     (!digits.is_empty()).then(|| format!("disk{digits}"))
 }
@@ -169,7 +176,9 @@ fn whole_of(device: &str) -> Option<String> {
 pub fn parse_physical_disks(device: &str, info: &str) -> Vec<String> {
     let mut disks: Vec<String> = whole_of(device).into_iter().collect();
     for line in info.lines() {
-        let Some((key, value)) = line.split_once(':') else { continue };
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
         if matches!(key.trim(), "Part of Whole" | "APFS Physical Store") {
             if let Some(whole) = whole_of(value.trim()) {
                 if !disks.contains(&whole) {
@@ -183,13 +192,19 @@ pub fn parse_physical_disks(device: &str, info: &str) -> Vec<String> {
 
 /// Returns why a destination must not be used, if there is a reason. Anything
 /// that cannot be established counts as a reason: this check fails closed.
-pub fn destination_problem(source_whole_disk: Option<&str>, device: &str, info: Option<&str>) -> Option<String> {
+pub fn destination_problem(
+    source_whole_disk: Option<&str>,
+    device: &str,
+    info: Option<&str>,
+) -> Option<String> {
     let source = source_whole_disk?;
     if !device.starts_with("/dev/") {
         return None;
     }
     let Some(info) = info else {
-        return Some(format!("Cannot tell which physical disk {device} is on, so it is refused."));
+        return Some(format!(
+            "Cannot tell which physical disk {device} is on, so it is refused."
+        ));
     };
     parse_physical_disks(device, info).iter().any(|disk| disk == source).then(|| {
         format!(
@@ -200,7 +215,16 @@ pub fn destination_problem(source_whole_disk: Option<&str>, device: &str, info: 
 }
 
 fn sanitize_segment(segment: &str) -> String {
-    let clean: String = segment.chars().map(|c| if c == '/' || c == ':' || c.is_control() { '_' } else { c }).collect();
+    let clean: String = segment
+        .chars()
+        .map(|c| {
+            if c == '/' || c == ':' || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
     let mut trimmed = clean.trim().to_string();
     if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
         trimmed = format!("_{trimmed}");
@@ -222,7 +246,10 @@ pub fn relative_target(path: &str, name: &str) -> PathBuf {
             }
             continue;
         }
-        match segment.strip_prefix("[orphan @").and_then(|rest| rest.strip_suffix(']')) {
+        match segment
+            .strip_prefix("[orphan @")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
             Some(cluster) => target.push(format!("Lost folder {cluster}")),
             None => target.push(sanitize_segment(segment)),
         }
@@ -238,9 +265,14 @@ fn is_partial(row: &Row) -> bool {
 /// Parses an entry's stored date. exFAT dates are local, so this is approximate
 /// by up to the time zone difference, and is used only as the copy's date.
 fn modified_time(text: &str) -> Option<SystemTime> {
-    let digits: Vec<i64> =
-        text.split(|c: char| !c.is_ascii_digit()).filter(|part| !part.is_empty()).filter_map(|part| part.parse().ok()).collect();
-    let [year, month, day, hour, minute, second] = digits[..] else { return None };
+    let digits: Vec<i64> = text
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    let [year, month, day, hour, minute, second] = digits[..] else {
+        return None;
+    };
     let shifted = if month <= 2 { year - 1 } else { year };
     let era = shifted.div_euclid(400);
     let year_of_era = shifted.rem_euclid(400);
@@ -248,7 +280,9 @@ fn modified_time(text: &str) -> Option<SystemTime> {
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     let days = era * 146_097 + day_of_era - 719_468;
     let seconds = days * 86_400 + hour * 3600 + minute * 60 + second;
-    u64::try_from(seconds).ok().map(|value| UNIX_EPOCH + Duration::from_secs(value))
+    u64::try_from(seconds)
+        .ok()
+        .map(|value| UNIX_EPOCH + Duration::from_secs(value))
 }
 
 fn hash_file(path: &Path) -> Result<String> {
@@ -262,7 +296,11 @@ fn hash_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buffer[..count]);
     }
-    Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 /// Picks a path that does not exist yet, so nothing is ever overwritten.
@@ -270,7 +308,10 @@ fn unused_path(path: &Path, id: i64) -> PathBuf {
     if !path.exists() {
         return path.to_path_buf();
     }
-    let stem = path.file_stem().map(|value| value.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let renamed = match path.extension() {
         Some(extension) => format!("{stem} (entry {id}).{}", extension.to_string_lossy()),
         None => format!("{stem} (entry {id})"),
@@ -311,7 +352,10 @@ impl Session {
     /// Remembers a salvage drive for this volume. An unsafe destination is refused
     /// here, so the problem shows when it is chosen and not at copy time.
     pub fn set_salvage_drive(&self, destination: &str) -> Result<CopyPlan> {
-        let request = CopyRequest { destination: destination.to_string(), ..CopyRequest::default() };
+        let request = CopyRequest {
+            destination: destination.to_string(),
+            ..CopyRequest::default()
+        };
         let plan = self.copy_plan(&request)?;
         if let Some(reason) = &plan.refused {
             bail!("{reason}");
@@ -366,15 +410,37 @@ impl Session {
 
         let destination = PathBuf::from(&request.destination);
         let (device, free_bytes, refused) = if request.destination.trim().is_empty() {
-            (None, 0, Some("Choose a destination, or set a salvage drive, first.".to_string()))
+            (
+                None,
+                0,
+                Some("Choose a destination, or set a salvage drive, first.".to_string()),
+            )
         } else if !destination.is_absolute() {
-            (None, 0, Some("The destination must be a full path.".to_string()))
+            (
+                None,
+                0,
+                Some("The destination must be a full path.".to_string()),
+            )
         } else {
             let filesystem = filesystem_of(&destination)?;
-            let bare = filesystem.device.strip_prefix("/dev/").unwrap_or(&filesystem.device).to_string();
-            let info = list_disks(Some(&bare)).ok().filter(|text| !text.trim().is_empty());
-            let problem = destination_problem(self.source_whole_disk().as_deref(), &filesystem.device, info.as_deref())
-                .or_else(|| filesystem.read_only.then(|| "This destination is read-only.".to_string()));
+            let bare = filesystem
+                .device
+                .strip_prefix("/dev/")
+                .unwrap_or(&filesystem.device)
+                .to_string();
+            let info = list_disks(Some(&bare))
+                .ok()
+                .filter(|text| !text.trim().is_empty());
+            let problem = destination_problem(
+                self.source_whole_disk().as_deref(),
+                &filesystem.device,
+                info.as_deref(),
+            )
+            .or_else(|| {
+                filesystem
+                    .read_only
+                    .then(|| "This destination is read-only.".to_string())
+            });
             (Some(filesystem.device), filesystem.free_bytes, problem)
         };
 
@@ -395,7 +461,12 @@ impl Session {
     }
 
     pub fn copy_status(&self) -> Result<CopyStatus> {
-        Ok(self.copy.status.lock().map_err(|_| anyhow!("copy lock poisoned"))?.clone())
+        Ok(self
+            .copy
+            .status
+            .lock()
+            .map_err(|_| anyhow!("copy lock poisoned"))?
+            .clone())
     }
 
     pub fn copy_stop(&self) {
@@ -417,20 +488,33 @@ impl Session {
             bail!("{reason}");
         }
         if !plan.fits {
-            bail!("{} bytes selected, but the destination has only {} bytes free.", plan.bytes, plan.free_bytes);
+            bail!(
+                "{} bytes selected, but the destination has only {} bytes free.",
+                plan.bytes,
+                plan.free_bytes
+            );
         }
         if plan.files == 0 {
             bail!("Nothing to copy: no files match this selection.");
         }
-        let mut slot = self.copy.thread.lock().map_err(|_| anyhow!("copy lock poisoned"))?;
+        let mut slot = self
+            .copy
+            .thread
+            .lock()
+            .map_err(|_| anyhow!("copy lock poisoned"))?;
         if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
             bail!("A copy is already running.");
         }
         self.copy.stop.store(false, Ordering::Relaxed);
         let destination = PathBuf::from(&request.destination);
-        fs::create_dir_all(&destination).with_context(|| format!("creating {}", destination.display()))?;
+        fs::create_dir_all(&destination)
+            .with_context(|| format!("creating {}", destination.display()))?;
         let manifest = destination.join(MANIFEST_NAME);
-        *self.copy.status.lock().map_err(|_| anyhow!("copy lock poisoned"))? = CopyStatus {
+        *self
+            .copy
+            .status
+            .lock()
+            .map_err(|_| anyhow!("copy lock poisoned"))? = CopyStatus {
             state: "running".into(),
             destination: request.destination.clone(),
             manifest: manifest.display().to_string(),
@@ -459,9 +543,17 @@ impl Session {
     }
 
     /// Returns false if stopped early.
-    fn run_copy(&self, request: &CopyRequest, destination: &Path, manifest_path: &Path) -> Result<bool> {
+    fn run_copy(
+        &self,
+        request: &CopyRequest,
+        destination: &Path,
+        manifest_path: &Path,
+    ) -> Result<bool> {
         let mut rows = self.copy_rows(request)?;
-        rows.retain(|row| row.confidence >= request.min_confidence && (request.include_partial || !is_partial(row)));
+        rows.retain(|row| {
+            row.confidence >= request.min_confidence
+                && (request.include_partial || !is_partial(row))
+        });
         // Disk order keeps the head moving forward, which is far faster on a spinning disk.
         rows.sort_by_key(|row| row.first_cluster);
 
@@ -473,7 +565,10 @@ impl Session {
                 }
             }
         }
-        let mut manifest = OpenOptions::new().create(true).append(true).open(manifest_path)?;
+        let mut manifest = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(manifest_path)?;
 
         for row in rows {
             if self.copy.stop.load(Ordering::Relaxed) {
@@ -481,7 +576,8 @@ impl Session {
             }
             let id = row.id.context("entry has no id")?;
             if let Some(previous) = done.get(&id) {
-                let same = fs::metadata(&previous.target).is_ok_and(|metadata| metadata.len() == previous.bytes_written);
+                let same = fs::metadata(&previous.target)
+                    .is_ok_and(|metadata| metadata.len() == previous.bytes_written);
                 if same {
                     self.update_copy(|status| {
                         status.files_skipped += 1;
@@ -507,7 +603,9 @@ impl Session {
                 Ok(None) => return Ok(false),
                 Err(error) => {
                     // One bad file must not end the copy, unless the destination is the problem.
-                    let free = filesystem_of(destination).map(|filesystem| filesystem.free_bytes).unwrap_or(0);
+                    let free = filesystem_of(destination)
+                        .map(|filesystem| filesystem.free_bytes)
+                        .unwrap_or(0);
                     if free < row.length {
                         bail!("The destination is out of space: {error:#}");
                     }
@@ -526,12 +624,18 @@ impl Session {
     fn copy_one(&self, row: &Row, id: i64, destination: &Path) -> Result<Option<ManifestRow>> {
         let clusters = self.with_database(|database| database.entry_clusters(&self.volume, row))?;
         let source_path = row.path.clone().unwrap_or_default();
-        let wanted = unused_path(&destination.join(relative_target(&source_path, &row.name)), id);
+        let wanted = unused_path(
+            &destination.join(relative_target(&source_path, &row.name)),
+            id,
+        );
         let parent = wanted.parent().context("target has no parent")?;
         fs::create_dir_all(parent)?;
         let temporary = parent.join(format!(".exfat-lens-partial-{id}"));
         let _ = fs::remove_file(&temporary);
-        let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
 
         let cluster_size = self.volume.boot.cluster_size();
         let mut hasher = Sha256::new();
@@ -554,7 +658,10 @@ impl Session {
                 run += 1;
             }
             let run_bytes = run as u64 * cluster_size;
-            let data = match self.volume.read_bytes(self.volume.cluster_offset(clusters[index]), run_bytes as usize) {
+            let data = match self.volume.read_bytes(
+                self.volume.cluster_offset(clusters[index]),
+                run_bytes as usize,
+            ) {
                 Ok(data) => data,
                 Err(_) => {
                     let mut pieces = Vec::with_capacity(run_bytes as usize);
@@ -585,7 +692,11 @@ impl Session {
         file.sync_all()?;
         drop(file);
 
-        let sha256: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+        let sha256: String = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         if hash_file(&temporary)? != sha256 {
             let _ = fs::remove_file(&temporary);
             bail!("the copy on the destination does not match what was read, so it was discarded");
@@ -603,7 +714,11 @@ impl Session {
             if report.format == "unknown" {
                 (None, None, None)
             } else {
-                (Some(report.format.clone()), Some(report.valid_fraction), Some(report.breaks.len() as u64))
+                (
+                    Some(report.format.clone()),
+                    Some(report.valid_fraction),
+                    Some(report.breaks.len() as u64),
+                )
             }
         } else {
             (None, None, None)
@@ -643,18 +758,35 @@ impl Session {
 
 /// Mounted volumes that could receive a copy, with how much room each has.
 pub fn list_volumes(source: Option<&Path>) -> Result<Vec<Value>> {
-    let source_whole = source.and_then(whole_disk_path).and_then(|path| whole_of(&path.display().to_string()));
+    let source_whole = source
+        .and_then(whole_disk_path)
+        .and_then(|path| whole_of(&path.display().to_string()));
     let mut volumes = Vec::new();
-    let mut candidates = vec![std::env::var_os("HOME").map(PathBuf::from).context("HOME is not set")?];
+    let mut candidates = vec![std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")?];
     for item in fs::read_dir("/Volumes")?.flatten() {
         candidates.push(item.path());
     }
     for path in candidates {
-        let Ok(filesystem) = filesystem_of(&path) else { continue };
-        let bare = filesystem.device.strip_prefix("/dev/").unwrap_or(&filesystem.device).to_string();
-        let info = list_disks(Some(&bare)).ok().filter(|text| !text.trim().is_empty());
-        let refused = destination_problem(source_whole.as_deref(), &filesystem.device, info.as_deref())
-            .or_else(|| filesystem.read_only.then(|| "This destination is read-only.".to_string()));
+        let Ok(filesystem) = filesystem_of(&path) else {
+            continue;
+        };
+        let bare = filesystem
+            .device
+            .strip_prefix("/dev/")
+            .unwrap_or(&filesystem.device)
+            .to_string();
+        let info = list_disks(Some(&bare))
+            .ok()
+            .filter(|text| !text.trim().is_empty());
+        let refused =
+            destination_problem(source_whole.as_deref(), &filesystem.device, info.as_deref())
+                .or_else(|| {
+                    filesystem
+                        .read_only
+                        .then(|| "This destination is read-only.".to_string())
+                });
         volumes.push(serde_json::json!({
             "path": path,
             "device": filesystem.device,

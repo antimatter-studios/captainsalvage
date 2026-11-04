@@ -22,10 +22,25 @@ pub const CLASS_READ_ERROR: u8 = 18;
 pub const CLASS_COUNT: usize = 19;
 
 pub const CLASS_NAMES: [&str; CLASS_COUNT] = [
-    "not scanned", "zeros", "single-byte fill", "exFAT directory", "text", "binary",
-    "high entropy", "MP3 start", "JPEG start", "PNG start", "GIF start", "video start",
-    "audio start", "PDF start", "archive start", "executable start", "NTFS metadata",
-    "Office (OLE) start", "read error",
+    "not scanned",
+    "zeros",
+    "single-byte fill",
+    "exFAT directory",
+    "text",
+    "binary",
+    "high entropy",
+    "MP3 start",
+    "JPEG start",
+    "PNG start",
+    "GIF start",
+    "video start",
+    "audio start",
+    "PDF start",
+    "archive start",
+    "executable start",
+    "NTFS metadata",
+    "Office (OLE) start",
+    "read error",
 ];
 
 const HIGH_ENTROPY_BITS: f64 = 7.5;
@@ -91,7 +106,10 @@ pub const TEXT_HEAD_MAX_BYTES: usize = 254 * TEXT_HEAD_UNIT as usize;
 /// macOS clears only the rest of the 4 KiB page, and older data stays beyond it.
 pub fn text_head_value(data: &[u8]) -> u8 {
     let probe = &data[..data.len().min(TEXT_HEAD_MAX_BYTES)];
-    let run = probe.iter().take_while(|&&b| b == 9 || b == 10 || b == 13 || b >= 32 && b != 127).count();
+    let run = probe
+        .iter()
+        .take_while(|&&b| b == 9 || b == 10 || b == 13 || b >= 32 && b != 127)
+        .count();
     (run as u64 / TEXT_HEAD_UNIT) as u8 + 1
 }
 
@@ -145,11 +163,18 @@ pub fn classify(data: &[u8], holds_directory_sets: bool) -> (u8, u8) {
         return (class, scaled);
     }
     let probe = &data[..data.len().min(TEXT_PROBE_BYTES)];
-    let printable = probe.iter().filter(|&&b| (9..=13).contains(&b) || (32..127).contains(&b)).count();
+    let printable = probe
+        .iter()
+        .filter(|&&b| (9..=13).contains(&b) || (32..127).contains(&b))
+        .count();
     if printable as f64 / probe.len() as f64 > TEXT_MIN_RATIO {
         return (CLASS_TEXT, scaled);
     }
-    let class = if bits >= HIGH_ENTROPY_BITS { CLASS_HIGH_ENTROPY } else { CLASS_BINARY };
+    let class = if bits >= HIGH_ENTROPY_BITS {
+        CLASS_HIGH_ENTROPY
+    } else {
+        CLASS_BINARY
+    };
     (class, scaled)
 }
 
@@ -161,14 +186,16 @@ pub fn expected_class(name: &str) -> Option<u8> {
         "jpg" | "jpeg" => CLASS_JPEG,
         "png" => CLASS_PNG,
         "gif" => CLASS_GIF,
-        "mp4" | "m4v" | "m4a" | "mov" | "avi" | "mkv" | "webm" | "3gp" | "wmv" | "wma" | "mpg" | "mpeg" => CLASS_VIDEO,
+        "mp4" | "m4v" | "m4a" | "mov" | "avi" | "mkv" | "webm" | "3gp" | "wmv" | "wma" | "mpg"
+        | "mpeg" => CLASS_VIDEO,
         "wav" | "flac" | "ogg" | "mid" | "midi" | "aif" | "aiff" => CLASS_AUDIO,
         "pdf" => CLASS_PDF,
         "zip" | "rar" | "gz" | "tgz" | "7z" | "jar" => CLASS_ARCHIVE,
         "exe" | "dll" => CLASS_EXECUTABLE,
         "doc" | "xls" | "ppt" => CLASS_OLE,
-        "txt" | "md" | "js" | "ts" | "jsx" | "tsx" | "php" | "html" | "htm" | "css" | "json" | "xml"
-        | "yml" | "yaml" | "rb" | "py" | "c" | "h" | "cpp" | "sql" | "sh" | "log" | "ini" | "csv" | "svg" => CLASS_TEXT,
+        "txt" | "md" | "js" | "ts" | "jsx" | "tsx" | "php" | "html" | "htm" | "css" | "json"
+        | "xml" | "yml" | "yaml" | "rb" | "py" | "c" | "h" | "cpp" | "sql" | "sh" | "log"
+        | "ini" | "csv" | "svg" => CLASS_TEXT,
         _ => return None,
     })
 }
@@ -202,7 +229,11 @@ pub fn content_match(expected: Option<u8>, class: u8) -> ContentMatch {
         || class == CLASS_FILL
         || is_signature_class(class)
         || (expected == CLASS_TEXT && class == CLASS_HIGH_ENTROPY);
-    if contradicted { ContentMatch::No } else { ContentMatch::Unknown }
+    if contradicted {
+        ContentMatch::No
+    } else {
+        ContentMatch::Unknown
+    }
 }
 
 /// Fewer groups than classes, so the map can show them as distinct colors.
@@ -220,8 +251,17 @@ pub const GROUP_READ_ERROR: u8 = 10;
 pub const GROUP_COUNT: usize = 11;
 
 pub const GROUP_NAMES: [&str; GROUP_COUNT] = [
-    "not scanned", "empty", "compressed or media data", "text", "audio start", "image start", "video start",
-    "document or archive start", "binary", "exFAT directory", "read error",
+    "not scanned",
+    "empty",
+    "compressed or media data",
+    "text",
+    "audio start",
+    "image start",
+    "video start",
+    "document or archive start",
+    "binary",
+    "exFAT directory",
+    "read error",
 ];
 
 pub fn content_group(class: u8) -> u8 {

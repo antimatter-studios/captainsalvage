@@ -5,9 +5,7 @@
 //! folder's first cluster. When that parent is gone, the folder is an orphan.
 //! `resolve.rs` holds the logic that infers that structure.
 
-use crate::content::{
-    is_signature_class, CLASS_DIRECTORY, CLASS_FILL, CLASS_NAMES, CLASS_ZEROS,
-};
+use crate::content::{is_signature_class, CLASS_DIRECTORY, CLASS_FILL, CLASS_NAMES, CLASS_ZEROS};
 use crate::exfat::EntrySet;
 use crate::resolve::parse_extents_payload;
 use crate::volume::Volume;
@@ -141,7 +139,7 @@ pub struct Overlay {
     pub created_at_millis: u64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ResolveParams {
     /// When a FAT chain ends early, assume the rest of the file is contiguous.
@@ -150,12 +148,6 @@ pub struct ResolveParams {
     pub conflict_tolerance_clusters: u64,
     /// Ignore overlaps between found entries. Clusters in current use still count.
     pub ignore_entry_conflicts: bool,
-}
-
-impl Default for ResolveParams {
-    fn default() -> Self {
-        Self { chain_fallback_contiguous: false, conflict_tolerance_clusters: 0, ignore_entry_conflicts: false }
-    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -181,14 +173,20 @@ pub fn to_extents(clusters: &[u32]) -> Vec<Extent> {
     for &cluster in clusters {
         match extents.last_mut() {
             Some(last) if last.first + last.count == cluster => last.count += 1,
-            _ => extents.push(Extent { first: cluster, count: 1 }),
+            _ => extents.push(Extent {
+                first: cluster,
+                count: 1,
+            }),
         }
     }
     extents
 }
 
 pub fn from_extents(extents: &[Extent]) -> Vec<u32> {
-    extents.iter().flat_map(|extent| extent.first..extent.first.saturating_add(extent.count)).collect()
+    extents
+        .iter()
+        .flat_map(|extent| extent.first..extent.first.saturating_add(extent.count))
+        .collect()
 }
 
 /// Largest contiguous file assumed when looking for owners of a cluster: 16 GiB.
@@ -300,7 +298,11 @@ const FILE_NODE_INDEX: usize = 20;
 fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let is_dir: bool = row.get(18)?;
     Ok(Row {
-        kind: if is_dir { "missing-folder".into() } else { "file".into() },
+        kind: if is_dir {
+            "missing-folder".into()
+        } else {
+            "file".into()
+        },
         id: Some(row.get(0)?),
         name: row.get(1)?,
         length: row.get::<_, i64>(2)? as u64,
@@ -360,12 +362,15 @@ impl MapDb {
 
     fn add_missing_columns(&self) -> Result<()> {
         for (table, column, kind) in ADDED_COLUMNS {
-            let mut statement = self.connection.prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?;
+            let mut statement = self
+                .connection
+                .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?;
             let existing = statement
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<HashSet<String>>>()?;
             if !existing.contains(*column) {
-                self.connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+                self.connection
+                    .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
             }
         }
         Ok(())
@@ -390,7 +395,10 @@ impl MapDb {
             OVERLAY_REGION_LABEL,
         ];
         if !KINDS.contains(&kind) {
-            anyhow::bail!("unknown overlay kind {kind}. Valid kinds: {}", KINDS.join(", "));
+            anyhow::bail!(
+                "unknown overlay kind {kind}. Valid kinds: {}",
+                KINDS.join(", ")
+            );
         }
         self.connection.execute(
             "INSERT INTO overlays (kind, target, payload, note, author, active, created_at_millis) \
@@ -423,15 +431,24 @@ impl MapDb {
     }
 
     pub fn set_overlay_active(&self, id: i64, active: bool) -> Result<bool> {
-        Ok(self.connection.execute("UPDATE overlays SET active = ?2 WHERE id = ?1", params![id, active])? > 0)
+        Ok(self.connection.execute(
+            "UPDATE overlays SET active = ?2 WHERE id = ?1",
+            params![id, active],
+        )? > 0)
     }
 
     pub fn delete_overlay(&self, id: i64) -> Result<bool> {
-        Ok(self.connection.execute("DELETE FROM overlays WHERE id = ?1", [id])? > 0)
+        Ok(self
+            .connection
+            .execute("DELETE FROM overlays WHERE id = ?1", [id])?
+            > 0)
     }
 
     pub fn params(&self) -> Result<ResolveParams> {
-        Ok(self.state("resolve_params")?.and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default())
+        Ok(self
+            .state("resolve_params")?
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default())
     }
 
     pub fn set_params(&self, params: &ResolveParams) -> Result<()> {
@@ -480,12 +497,19 @@ impl MapDb {
     pub fn state(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .connection
-            .query_row("SELECT value FROM scan_state WHERE key = ?1", [key], |row| row.get(0))
+            .query_row(
+                "SELECT value FROM scan_state WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
             .optional()?)
     }
 
     pub fn state_u64(&self, key: &str) -> Result<u64> {
-        Ok(self.state(key)?.and_then(|value| value.parse().ok()).unwrap_or(0))
+        Ok(self
+            .state(key)?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0))
     }
 
     pub fn set_state(&self, key: &str, value: &str) -> Result<()> {
@@ -530,8 +554,9 @@ impl MapDb {
                     set.accessed,
                 ])?;
             }
-            let mut error_insert =
-                transaction.prepare_cached("INSERT OR REPLACE INTO read_errors (cluster, message) VALUES (?1, ?2)")?;
+            let mut error_insert = transaction.prepare_cached(
+                "INSERT OR REPLACE INTO read_errors (cluster, message) VALUES (?1, ?2)",
+            )?;
             for (cluster, message) in errors {
                 error_insert.execute(params![cluster, message])?;
             }
@@ -560,9 +585,13 @@ impl MapDb {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let mut statement = self.connection.prepare("SELECT kind, COUNT(*) FROM nodes GROUP BY 1")?;
+        let mut statement = self
+            .connection
+            .prepare("SELECT kind, COUNT(*) FROM nodes GROUP BY 1")?;
         let nodes_by_kind = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let (nameless_chains, nameless_clusters, broken_nameless_chains): (i64, i64, i64) = self.connection.query_row(
             "SELECT COUNT(*), COALESCE(SUM(length), 0), COALESCE(SUM(end_kind != 'eof'), 0) FROM islands \
@@ -583,12 +612,18 @@ impl MapDb {
     }
 
     pub fn summary(&self) -> Result<Option<MapSummary>> {
-        Ok(self.state("summary")?.and_then(|text| serde_json::from_str(&text).ok()))
+        Ok(self
+            .state("summary")?
+            .and_then(|text| serde_json::from_str(&text).ok()))
     }
 
     /// Top-level folders: the volume root, then orphans with the most data first.
     pub fn roots(&self, offset: u64, limit: u64) -> Result<Page> {
-        let total: i64 = self.connection.query_row("SELECT COUNT(*) FROM nodes WHERE parent IS NULL", [], |r| r.get(0))?;
+        let total: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE parent IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
         let sql = format!(
             "SELECT {NODE_COLUMNS} FROM nodes WHERE parent IS NULL \
              ORDER BY kind = 'root' DESC, bytes DESC, head LIMIT ?1 OFFSET ?2"
@@ -603,37 +638,66 @@ impl MapDb {
                 row.hint = self.hint(head)?;
             }
         }
-        Ok(Page { rows, total: total as u64 })
+        Ok(Page {
+            rows,
+            total: total as u64,
+        })
     }
 
     fn hint(&self, node: u32) -> Result<Option<String>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT name FROM sets WHERE node = ?1 AND checksum_ok = 1 AND verdict != 'rename-residue' LIMIT 3",
         )?;
-        let names = statement.query_map([node], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let names = statement
+            .query_map([node], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok((!names.is_empty()).then(|| names.join(", ")))
     }
 
     /// A folder's children: subfolders and lost folders, then a page of files
     /// at or above the confidence floor.
-    pub fn children(&self, node: u32, offset: u64, limit: u64, include_hidden: bool, min_confidence: f64) -> Result<Page> {
-        let residue = if include_hidden { "" } else { "AND verdict != 'rename-residue'" };
+    pub fn children(
+        &self,
+        node: u32,
+        offset: u64,
+        limit: u64,
+        include_hidden: bool,
+        min_confidence: f64,
+    ) -> Result<Page> {
+        let residue = if include_hidden {
+            ""
+        } else {
+            "AND verdict != 'rename-residue'"
+        };
         let floor = format!("AND COALESCE(confidence, 0) >= {}", min_confidence.max(0.0));
         let hidden = format!("{residue} {floor}");
         let mut rows = Vec::new();
         if offset == 0 {
-            let sql = format!("SELECT {NODE_COLUMNS} FROM nodes WHERE parent = ?1 ORDER BY bytes DESC, name");
+            let sql = format!(
+                "SELECT {NODE_COLUMNS} FROM nodes WHERE parent = ?1 ORDER BY bytes DESC, name"
+            );
             let mut statement = self.connection.prepare_cached(&sql)?;
-            rows.extend(statement.query_map([node], node_row)?.collect::<rusqlite::Result<Vec<_>>>()?);
+            rows.extend(
+                statement
+                    .query_map([node], node_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?,
+            );
             let sql = format!(
                 "SELECT {FILE_COLUMNS} FROM sets WHERE node = ?1 AND is_dir = 1 \
                  AND verdict IN ('folder-missing', 'folder-empty') ORDER BY name"
             );
             let mut statement = self.connection.prepare_cached(&sql)?;
-            rows.extend(statement.query_map([node], file_row)?.collect::<rusqlite::Result<Vec<_>>>()?);
+            rows.extend(
+                statement
+                    .query_map([node], file_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?,
+            );
         }
-        let count_sql = format!("SELECT COUNT(*) FROM sets WHERE node = ?1 AND is_dir = 0 {hidden}");
-        let total: i64 = self.connection.query_row(&count_sql, [node], |row| row.get(0))?;
+        let count_sql =
+            format!("SELECT COUNT(*) FROM sets WHERE node = ?1 AND is_dir = 0 {hidden}");
+        let total: i64 = self
+            .connection
+            .query_row(&count_sql, [node], |row| row.get(0))?;
         let sql = format!(
             "SELECT {FILE_COLUMNS} FROM sets WHERE node = ?1 AND is_dir = 0 {hidden} \
              ORDER BY name LIMIT ?2 OFFSET ?3"
@@ -644,14 +708,19 @@ impl MapDb {
                 .query_map(params![node, limit as i64, offset as i64], file_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?,
         );
-        Ok(Page { rows, total: total as u64 })
+        Ok(Page {
+            rows,
+            total: total as u64,
+        })
     }
 
     pub fn entry(&self, id: i64) -> Result<Option<Row>> {
         let sql = format!("SELECT {FILE_COLUMNS}, node FROM sets WHERE id = ?1");
         let found = self
             .connection
-            .query_row(&sql, [id], |row| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?)))
+            .query_row(&sql, [id], |row| {
+                Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?))
+            })
             .optional()?;
         let Some((mut row, node)) = found else {
             return Ok(None);
@@ -662,7 +731,10 @@ impl MapDb {
 
     pub fn node(&self, head: u32) -> Result<Option<Row>> {
         let sql = format!("SELECT {NODE_COLUMNS} FROM nodes WHERE head = ?1");
-        let found = self.connection.query_row(&sql, [head], node_row).optional()?;
+        let found = self
+            .connection
+            .query_row(&sql, [head], node_row)
+            .optional()?;
         let Some(mut row) = found else {
             return Ok(None);
         };
@@ -683,9 +755,11 @@ impl MapDb {
             }
             let found: Option<(Option<String>, Option<u32>, String)> = self
                 .connection
-                .query_row("SELECT name, parent, kind FROM nodes WHERE head = ?1", [head], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
+                .query_row(
+                    "SELECT name, parent, kind FROM nodes WHERE head = ?1",
+                    [head],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
                 .optional()?;
             let Some((name, parent, kind)) = found else {
                 parts.push(format!("[unresolved @{head}]"));
@@ -703,7 +777,10 @@ impl MapDb {
     }
 
     pub fn search(&self, query: &str, limit: u64, min_confidence: f64) -> Result<Page> {
-        let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
         let pattern = format!("%{escaped}%");
         let sql = format!(
             "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_name, name) LIKE ?1 ESCAPE '\\' \
@@ -725,7 +802,10 @@ impl MapDb {
             }
             rows.push(row);
         }
-        Ok(Page { total: rows.len() as u64, rows })
+        Ok(Page {
+            total: rows.len() as u64,
+            rows,
+        })
     }
 
     fn node_exists(&self, head: u32) -> Result<bool> {
@@ -747,17 +827,22 @@ impl MapDb {
         );
         let mut statement = self.connection.prepare_cached(&sql)?;
         let found = statement
-            .query_map(params![chain_head, cluster.saturating_sub(lookback), cluster], |row| {
-                Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?))
-            })?
+            .query_map(
+                params![chain_head, cluster.saturating_sub(lookback), cluster],
+                |row| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?)),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let cluster_size = volume.boot.cluster_size();
         let mut rows = Vec::new();
         for (mut row, node) in found {
             let contains = if row.no_fat_chain {
-                u64::from(cluster) < u64::from(row.first_cluster) + row.length.div_ceil(cluster_size)
+                u64::from(cluster)
+                    < u64::from(row.first_cluster) + row.length.div_ceil(cluster_size)
             } else {
-                volume.clusters_for(row.first_cluster, row.length, false).clusters.contains(&cluster)
+                volume
+                    .clusters_for(row.first_cluster, row.length, false)
+                    .clusters
+                    .contains(&cluster)
             };
             if contains {
                 row.path = Some(self.path_of(node)?);
@@ -779,8 +864,11 @@ impl MapDb {
     }
 
     pub fn sets_in_cluster(&self, cluster: u32) -> Result<u64> {
-        let count: i64 =
-            self.connection.query_row("SELECT COUNT(*) FROM sets WHERE source_cluster = ?1", [cluster], |r| r.get(0))?;
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM sets WHERE source_cluster = ?1",
+            [cluster],
+            |r| r.get(0),
+        )?;
         Ok(count as u64)
     }
 
@@ -794,15 +882,26 @@ impl MapDb {
             end_kind: row.get(4)?,
             owners: row.get::<_, i64>(5)? as u64,
             head_class,
-            head_class_name: CLASS_NAMES.get(usize::from(head_class)).copied().unwrap_or("unknown").to_string(),
+            head_class_name: CLASS_NAMES
+                .get(usize::from(head_class))
+                .copied()
+                .unwrap_or("unknown")
+                .to_string(),
             mean_entropy: row.get(7)?,
         })
     }
 
     /// Free FAT chains no entry claims, longest first: possibly files whose
     /// entries are gone. `head_class` narrows the list to one content class.
-    pub fn nameless_chains(&self, offset: u64, limit: u64, head_class: Option<u8>) -> Result<(Vec<IslandRow>, u64)> {
-        let filter = head_class.map(|class| format!("AND head_class = {class}")).unwrap_or_default();
+    pub fn nameless_chains(
+        &self,
+        offset: u64,
+        limit: u64,
+        head_class: Option<u8>,
+    ) -> Result<(Vec<IslandRow>, u64)> {
+        let filter = head_class
+            .map(|class| format!("AND head_class = {class}"))
+            .unwrap_or_default();
         let total: i64 = self.connection.query_row(
             &format!("SELECT COUNT(*) FROM islands WHERE owners = 0 AND allocated = 0 {filter}"),
             [],
@@ -853,7 +952,13 @@ impl MapDb {
 
     /// Ranks nameless chains that could continue a file past the end of its
     /// chain. Scores are a guide for investigation, not evidence of a match.
-    pub fn bridge_candidates(&self, volume: &Volume, id: i64, entropy: &[u8], limit: usize) -> Result<Vec<BridgeCandidate>> {
+    pub fn bridge_candidates(
+        &self,
+        volume: &Volume,
+        id: i64,
+        entropy: &[u8],
+        limit: usize,
+    ) -> Result<Vec<BridgeCandidate>> {
         let Some(entry) = self.entry(id)? else {
             anyhow::bail!("no entry with id {id}");
         };
@@ -869,7 +974,9 @@ impl MapDb {
         } else {
             let sum: u64 = clusters
                 .iter()
-                .filter_map(|&cluster| entropy.get((cluster - crate::exfat::FIRST_CLUSTER) as usize))
+                .filter_map(|&cluster| {
+                    entropy.get((cluster - crate::exfat::FIRST_CLUSTER) as usize)
+                })
                 .map(|&value| u64::from(value))
                 .sum();
             Some(sum as f64 / clusters.len() as f64)
@@ -916,13 +1023,16 @@ impl MapDb {
         );
         let mut statement = self.connection.prepare(&sql)?;
         let found = statement
-            .query_map([folder], |row| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?)))?
+            .query_map([folder], |row| {
+                Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let mut paths: std::collections::HashMap<Option<u32>, String> = std::collections::HashMap::new();
+        let mut paths: std::collections::HashMap<Option<u32>, String> =
+            std::collections::HashMap::new();
         let mut rows = Vec::with_capacity(found.len());
         for (mut row, node) in found {
-            if !paths.contains_key(&node) {
-                paths.insert(node, self.path_of(node)?);
+            if let std::collections::hash_map::Entry::Vacant(slot) = paths.entry(node) {
+                slot.insert(self.path_of(node)?);
             }
             row.path = paths.get(&node).cloned();
             rows.push(row);
@@ -931,7 +1041,9 @@ impl MapDb {
     }
 
     pub fn read_error_count(&self) -> Result<u64> {
-        let count: i64 = self.connection.query_row("SELECT COUNT(*) FROM read_errors", [], |r| r.get(0))?;
+        let count: i64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM read_errors", [], |r| r.get(0))?;
         Ok(count as u64)
     }
 }
@@ -945,7 +1057,12 @@ const NOT_FILE_DATA_PENALTY: f64 = 0.05;
 /// Distance, in clusters, at which proximity starts to fall away.
 const PROXIMITY_SCALE: f64 = 16.0;
 
-fn score_bridge(island: IslandRow, tail: u32, remainder: u64, own_entropy: Option<f64>) -> BridgeCandidate {
+fn score_bridge(
+    island: IslandRow,
+    tail: u32,
+    remainder: u64,
+    own_entropy: Option<f64>,
+) -> BridgeCandidate {
     let length = island.length as f64;
     let wanted = remainder as f64;
     let size_fit = if island.length == remainder {
@@ -958,18 +1075,32 @@ fn score_bridge(island: IslandRow, tail: u32, remainder: u64, own_entropy: Optio
     };
     let distance = f64::from(island.head.abs_diff(tail));
     let proximity = 1.0 / (1.0 + (1.0 + distance / PROXIMITY_SCALE).log2());
-    let entropy_fit = own_entropy.map_or(0.5, |own| 1.0 - (own - f64::from(island.mean_entropy)).abs() / 255.0);
-    let penalty = if matches!(island.head_class, CLASS_DIRECTORY | CLASS_ZEROS | CLASS_FILL) {
+    let entropy_fit = own_entropy.map_or(0.5, |own| {
+        1.0 - (own - f64::from(island.mean_entropy)).abs() / 255.0
+    });
+    let penalty = if matches!(
+        island.head_class,
+        CLASS_DIRECTORY | CLASS_ZEROS | CLASS_FILL
+    ) {
         NOT_FILE_DATA_PENALTY
     } else if is_signature_class(island.head_class) {
         STARTS_ANOTHER_FILE_PENALTY
     } else {
         1.0
     };
-    let score = (SIZE_WEIGHT * size_fit + PROXIMITY_WEIGHT * proximity + ENTROPY_WEIGHT * entropy_fit) * penalty;
+    let score =
+        (SIZE_WEIGHT * size_fit + PROXIMITY_WEIGHT * proximity + ENTROPY_WEIGHT * entropy_fit)
+            * penalty;
     let reason = format!(
         "{} clusters for a gap of {remainder}. Head is {} clusters from the file's last cluster. Head holds {}.",
         island.length, distance as u64, island.head_class_name
     );
-    BridgeCandidate { island, score, size_fit, proximity, entropy_fit, reason }
+    BridgeCandidate {
+        island,
+        score,
+        size_fit,
+        proximity,
+        entropy_fit,
+        reason,
+    }
 }

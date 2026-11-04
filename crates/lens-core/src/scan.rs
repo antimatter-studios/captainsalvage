@@ -4,7 +4,9 @@
 //! and an entropy value, and stores any exFAT entry sets it finds. Progress is
 //! committed chunk by chunk, so a scan can stop at any moment and resume later.
 
-use crate::content::{classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES};
+use crate::content::{
+    classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES,
+};
 use crate::exfat::{find_sets, EntrySet, FIRST_CLUSTER};
 use crate::map::MapDb;
 use crate::volume::Volume;
@@ -40,7 +42,9 @@ pub struct ScanOptions {
 
 impl ScanOptions {
     pub fn for_volume(volume: &Volume) -> Self {
-        Self { chunk_clusters: (DEFAULT_CHUNK_BYTES / volume.boot.cluster_size()).max(1) as u32 }
+        Self {
+            chunk_clusters: (DEFAULT_CHUNK_BYTES / volume.boot.cluster_size()).max(1) as u32,
+        }
     }
 }
 
@@ -61,9 +65,13 @@ pub struct ScanProgress {
 
 /// Reads scan progress as recorded in the database.
 pub fn read_progress(database: &MapDb, volume: &Volume) -> Result<ScanProgress> {
-    let next = database.state_u64(STATE_NEXT)?.max(u64::from(FIRST_CLUSTER)) as u32;
+    let next = database
+        .state_u64(STATE_NEXT)?
+        .max(u64::from(FIRST_CLUSTER)) as u32;
     Ok(ScanProgress {
-        status: database.state(STATE_STATUS)?.unwrap_or_else(|| "not-started".into()),
+        status: database
+            .state(STATE_STATUS)?
+            .unwrap_or_else(|| "not-started".into()),
         next_cluster: next,
         total_clusters: volume.boot.cluster_count,
         clusters_scanned: next - FIRST_CLUSTER,
@@ -89,17 +97,27 @@ fn open_map_file(path: &std::path::Path, length: u64) -> Result<File> {
 }
 
 fn is_database_busy(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| match cause.downcast_ref::<rusqlite::Error>() {
-        Some(rusqlite::Error::SqliteFailure(failure, _)) => {
-            matches!(failure.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
-        }
-        _ => false,
-    })
+    error
+        .chain()
+        .any(|cause| match cause.downcast_ref::<rusqlite::Error>() {
+            Some(rusqlite::Error::SqliteFailure(failure, _)) => {
+                matches!(
+                    failure.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+            }
+            _ => false,
+        })
 }
 
 /// Measures text heads for text files found before this map existed. Reads only
 /// the start of each file's first cluster, in disk order.
-fn backfill_text_heads(volume: &Volume, database: &MapDb, text_heads: &File, up_to: u32) -> Result<()> {
+fn backfill_text_heads(
+    volume: &Volume,
+    database: &MapDb,
+    text_heads: &File,
+    up_to: u32,
+) -> Result<()> {
     let mut clusters: Vec<u32> = database
         .file_names_before(up_to)?
         .into_iter()
@@ -113,7 +131,10 @@ fn backfill_text_heads(volume: &Volume, database: &MapDb, text_heads: &File, up_
         // Rounded up to a sector, because raw devices reject smaller reads.
         let length = TEXT_HEAD_MAX_BYTES.next_multiple_of(512);
         if let Ok(data) = volume.read_bytes(volume.cluster_offset(cluster), length) {
-            text_heads.write_all_at(&[text_head_value(&data)], u64::from(cluster - FIRST_CLUSTER))?;
+            text_heads.write_all_at(
+                &[text_head_value(&data)],
+                u64::from(cluster - FIRST_CLUSTER),
+            )?;
         }
     }
     Ok(())
@@ -128,7 +149,11 @@ pub fn run_scan(
     stop: &AtomicBool,
     mut on_progress: impl FnMut(&ScanProgress),
 ) -> Result<ScanProgress> {
-    let lock = OpenOptions::new().create(true).write(true).truncate(false).open(workspace.lock())?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(workspace.lock())?;
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => bail!("another scan is already running on this workspace"),
@@ -144,7 +169,9 @@ pub fn run_scan(
     let cluster_size = volume.boot.cluster_size();
     let last = volume.boot.last_cluster_exclusive();
     let limits = volume.limits();
-    let mut next = database.state_u64(STATE_NEXT)?.max(u64::from(FIRST_CLUSTER)) as u32;
+    let mut next = database
+        .state_u64(STATE_NEXT)?
+        .max(u64::from(FIRST_CLUSTER)) as u32;
     let mut directories = database.state_u64(STATE_DIRECTORIES)?;
     let mut sets_total = database.state_u64(STATE_SETS)?;
     let mut errors_total = database.state_u64(STATE_ERRORS)?;
@@ -184,11 +211,11 @@ pub fn run_scan(
         if volume.source().read_exact_at(offset, &mut buffer).is_err() {
             // Retry one cluster at a time, so one bad spot loses only that cluster.
             buffer.fill(0);
-            for index in 0..count as usize {
+            for (index, cluster_failed) in failed.iter_mut().enumerate() {
                 let start = index * cluster_size as usize;
                 let slice = &mut buffer[start..start + cluster_size as usize];
                 if let Err(error) = volume.source().read_exact_at(offset + start as u64, slice) {
-                    failed[index] = true;
+                    *cluster_failed = true;
                     chunk_errors.push((next + index as u32, error.to_string()));
                 }
             }
@@ -206,7 +233,11 @@ pub fn run_scan(
             let cluster = next + index as u32;
             let start = index * cluster_size as usize;
             let end = start + cluster_size as usize;
-            let sets = find_sets(&buffer[start..buffer.len().min(end + LOOKAHEAD_BYTES as usize)], cluster_size as usize, limits);
+            let sets = find_sets(
+                &buffer[start..buffer.len().min(end + LOOKAHEAD_BYTES as usize)],
+                cluster_size as usize,
+                limits,
+            );
             let holds_directory = sets.iter().any(|set| set.checksum_ok);
             let (class, scaled) = classify(&buffer[start..end], holds_directory);
             class_bytes[index] = class;
@@ -248,7 +279,8 @@ pub fn run_scan(
 
         session_bytes += chunk_bytes;
         let mut progress = read_progress(&database, volume)?;
-        progress.bytes_per_second = session_bytes as f64 / session_start.elapsed().as_secs_f64().max(0.001);
+        progress.bytes_per_second =
+            session_bytes as f64 / session_start.elapsed().as_secs_f64().max(0.001);
         on_progress(&progress);
     }
 

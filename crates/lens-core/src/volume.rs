@@ -1,8 +1,8 @@
 //! A volume's boot regions, FAT and bitmap, loaded into memory for inspection.
 
 use crate::exfat::{
-    boot_checksum, find_bitmap_entry, stored_boot_checksum, BootSector, Limits, BOOT_REGION_SECTORS, FAT_BAD,
-    FAT_END, FIRST_CLUSTER,
+    boot_checksum, find_bitmap_entry, stored_boot_checksum, BootSector, Limits,
+    BOOT_REGION_SECTORS, FAT_BAD, FAT_END, FIRST_CLUSTER,
 };
 use crate::source::BlockSource;
 use anyhow::{bail, Context, Result};
@@ -91,7 +91,9 @@ impl Volume {
         let region_bytes = (BOOT_REGION_SECTORS * BOOT_SECTOR_ASSUMED) as usize;
         let mut main_region = vec![0u8; region_bytes];
         let mut backup_region = vec![0u8; region_bytes];
-        source.read_exact_at(0, &mut main_region).context("reading main boot region")?;
+        source
+            .read_exact_at(0, &mut main_region)
+            .context("reading main boot region")?;
         source
             .read_exact_at(region_bytes as u64, &mut backup_region)
             .context("reading backup boot region")?;
@@ -112,7 +114,10 @@ impl Volume {
         let fat_bytes = u64::from(boot.fat_length) * boot.bytes_per_sector();
         let mut raw_fat = vec![0u8; fat_bytes as usize];
         source
-            .read_exact_at(u64::from(boot.fat_offset) * boot.bytes_per_sector(), &mut raw_fat)
+            .read_exact_at(
+                u64::from(boot.fat_offset) * boot.bytes_per_sector(),
+                &mut raw_fat,
+            )
             .context("reading FAT")?;
         let mut fat: Vec<u32> = raw_fat
             .chunks_exact(4)
@@ -184,7 +189,10 @@ impl Volume {
     }
 
     pub fn limits(&self) -> Limits {
-        Limits { cluster_count: self.boot.cluster_count, cluster_size: self.boot.cluster_size() }
+        Limits {
+            cluster_count: self.boot.cluster_count,
+            cluster_size: self.boot.cluster_size(),
+        }
     }
 
     pub fn valid_cluster(&self, cluster: u32) -> bool {
@@ -218,29 +226,45 @@ impl Volume {
 
     pub fn read_bytes(&self, offset: u64, length: usize) -> Result<Vec<u8>> {
         let mut buffer = vec![0u8; length];
-        self.source.read_exact_at(offset, &mut buffer).with_context(|| format!("reading {length} bytes at {offset}"))?;
+        self.source
+            .read_exact_at(offset, &mut buffer)
+            .with_context(|| format!("reading {length} bytes at {offset}"))?;
         Ok(buffer)
     }
 
     pub fn read_cluster(&self, cluster: u32) -> Result<Vec<u8>> {
-        self.read_bytes(self.cluster_offset(cluster), self.boot.cluster_size() as usize)
+        self.read_bytes(
+            self.cluster_offset(cluster),
+            self.boot.cluster_size() as usize,
+        )
     }
 
     /// Clusters a stream claims. `clusters` is shorter than `needed` when the
     /// chain ends early or the claim runs off the end of the volume.
     pub fn clusters_for(&self, first: u32, length: u64, no_fat_chain: bool) -> StreamClusters {
         let needed = length.div_ceil(self.boot.cluster_size());
-        if needed == 0 || !self.valid_cluster(first) || needed > u64::from(self.boot.cluster_count) {
-            return StreamClusters { clusters: Vec::new(), needed };
+        if needed == 0 || !self.valid_cluster(first) || needed > u64::from(self.boot.cluster_count)
+        {
+            return StreamClusters {
+                clusters: Vec::new(),
+                needed,
+            };
         }
         if no_fat_chain {
-            let end = (u64::from(first) + needed).min(u64::from(self.boot.last_cluster_exclusive()));
-            return StreamClusters { clusters: (first..end as u32).collect(), needed };
+            let end =
+                (u64::from(first) + needed).min(u64::from(self.boot.last_cluster_exclusive()));
+            return StreamClusters {
+                clusters: (first..end as u32).collect(),
+                needed,
+            };
         }
         let mut clusters = Vec::with_capacity(needed.min(1024) as usize);
         let mut seen = HashSet::new();
         let mut current = first;
-        while self.valid_cluster(current) && (clusters.len() as u64) < needed && seen.insert(current) {
+        while self.valid_cluster(current)
+            && (clusters.len() as u64) < needed
+            && seen.insert(current)
+        {
             clusters.push(current);
             current = self.fat[current as usize];
         }
@@ -248,7 +272,14 @@ impl Volume {
     }
 
     /// Reads a stream's bytes, up to `max_bytes`, stopping at its valid length.
-    pub fn read_stream(&self, first: u32, length: u64, valid_length: u64, no_fat_chain: bool, max_bytes: u64) -> Result<Vec<u8>> {
+    pub fn read_stream(
+        &self,
+        first: u32,
+        length: u64,
+        valid_length: u64,
+        no_fat_chain: bool,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>> {
         let limit = length.min(valid_length).min(max_bytes);
         let stream = self.clusters_for(first, length, no_fat_chain);
         let cluster_size = self.boot.cluster_size();
@@ -350,7 +381,13 @@ impl Volume {
             if !self.fat_in_use(head) || targeted[head as usize] != 0 {
                 continue;
             }
-            let mut island = Island { head, tail: head, length: 0, allocated: 0, end: ISLAND_END_JOINS_ANOTHER };
+            let mut island = Island {
+                head,
+                tail: head,
+                length: 0,
+                allocated: 0,
+                end: ISLAND_END_JOINS_ANOTHER,
+            };
             let mut current = head;
             while self.valid_cluster(current) && !visited[current as usize] {
                 visited[current as usize] = true;

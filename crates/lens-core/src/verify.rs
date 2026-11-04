@@ -34,14 +34,21 @@ pub struct VerifyReport {
 impl VerifyReport {
     fn finish(mut self, total: usize) -> Self {
         self.bytes_examined = total as u64;
-        self.valid_fraction = if total == 0 { 0.0 } else { self.valid_bytes as f64 / total as f64 };
+        self.valid_fraction = if total == 0 {
+            0.0
+        } else {
+            self.valid_bytes as f64 / total as f64
+        };
         self
     }
 }
 
 /// Chooses a walker from the file's signature, falling back to the name.
 pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
-    let extension = name.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase()).unwrap_or_default();
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
     if data.starts_with(PNG_SIGNATURE) || extension == "png" {
         return verify_png(data);
     }
@@ -56,7 +63,9 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
     }
     VerifyReport {
         format: "unknown".into(),
-        notes: vec!["No structural walker for this type. Use entropy and class profiles instead.".into()],
+        notes: vec![
+            "No structural walker for this type. Use entropy and class profiles instead.".into(),
+        ],
         ..VerifyReport::default()
     }
     .finish(data.len())
@@ -75,12 +84,26 @@ fn mpeg_frame_length(header: &[u8]) -> Option<usize> {
     if version == 1 || layer != 1 || bitrate_index == 0 || bitrate_index == 15 || rate_index == 3 {
         return None;
     }
-    const BITRATES_V1: [usize; 16] = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
-    const BITRATES_V2: [usize; 16] = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0];
+    const BITRATES_V1: [usize; 16] = [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
+    ];
+    const BITRATES_V2: [usize; 16] = [
+        0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
+    ];
     const RATES_V1: [usize; 3] = [44100, 48000, 32000];
     let is_v1 = version == 3;
-    let bitrate = if is_v1 { BITRATES_V1[bitrate_index] } else { BITRATES_V2[bitrate_index] } * 1000;
-    let divisor = if version == 0 { 4 } else if version == 2 { 2 } else { 1 };
+    let bitrate = if is_v1 {
+        BITRATES_V1[bitrate_index]
+    } else {
+        BITRATES_V2[bitrate_index]
+    } * 1000;
+    let divisor = if version == 0 {
+        4
+    } else if version == 2 {
+        2
+    } else {
+        1
+    };
     let rate = RATES_V1[rate_index] / divisor;
     let coefficient = if is_v1 { 144 } else { 72 };
     Some(coefficient * bitrate / rate + padding)
@@ -88,10 +111,15 @@ fn mpeg_frame_length(header: &[u8]) -> Option<usize> {
 
 /// Walks MPEG frames, resynchronising after a break and recording its offset.
 pub fn verify_mp3(data: &[u8]) -> VerifyReport {
-    let mut report = VerifyReport { format: "mp3".into(), ..VerifyReport::default() };
+    let mut report = VerifyReport {
+        format: "mp3".into(),
+        ..VerifyReport::default()
+    };
     let mut position = 0;
     if data.starts_with(b"ID3") && data.len() >= ID3_HEADER_BYTES {
-        let size = data[6..10].iter().fold(0usize, |total, &byte| (total << 7) | usize::from(byte & 0x7F));
+        let size = data[6..10].iter().fold(0usize, |total, &byte| {
+            (total << 7) | usize::from(byte & 0x7F)
+        });
         position = ID3_HEADER_BYTES + size;
         report.valid_bytes += position.min(data.len()) as u64;
         report.notes.push(format!("ID3v2 tag of {size} bytes."));
@@ -142,7 +170,11 @@ fn crc32(chunks: &[&[u8]]) -> u32 {
         for &byte in *chunk {
             crc ^= u32::from(byte);
             for _ in 0..8 {
-                crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
             }
         }
     }
@@ -151,7 +183,10 @@ fn crc32(chunks: &[&[u8]]) -> u32 {
 
 /// Walks PNG chunks and checks each chunk's CRC.
 pub fn verify_png(data: &[u8]) -> VerifyReport {
-    let mut report = VerifyReport { format: "png".into(), ..VerifyReport::default() };
+    let mut report = VerifyReport {
+        format: "png".into(),
+        ..VerifyReport::default()
+    };
     if !data.starts_with(PNG_SIGNATURE) {
         report.breaks.push(0);
         report.notes.push("PNG signature is missing.".into());
@@ -160,18 +195,24 @@ pub fn verify_png(data: &[u8]) -> VerifyReport {
     report.valid_bytes = PNG_SIGNATURE.len() as u64;
     let mut position = PNG_SIGNATURE.len();
     while position + 12 <= data.len() {
-        let length = u32::from_be_bytes(data[position..position + 4].try_into().expect("four bytes")) as usize;
+        let length =
+            u32::from_be_bytes(data[position..position + 4].try_into().expect("four bytes"))
+                as usize;
         let kind = &data[position + 4..position + 8];
         let end = position + 12 + length;
         if end > data.len() {
             report.breaks.push(position as u64);
-            report.notes.push(format!("Chunk at {position} claims {length} bytes, past the end of the data."));
+            report.notes.push(format!(
+                "Chunk at {position} claims {length} bytes, past the end of the data."
+            ));
             return report.finish(data.len());
         }
         let stored = u32::from_be_bytes(data[end - 4..end].try_into().expect("four bytes"));
         if crc32(&[kind, &data[position + 8..end - 4]]) != stored {
             report.breaks.push(position as u64);
-            report.notes.push(format!("CRC mismatch in chunk at {position}."));
+            report
+                .notes
+                .push(format!("CRC mismatch in chunk at {position}."));
             return report.finish(data.len());
         }
         report.units += 1;
@@ -188,7 +229,10 @@ pub fn verify_png(data: &[u8]) -> VerifyReport {
 /// Walks JPEG markers to the scan data, then checks that the entropy-coded
 /// segment holds only legal marker bytes up to the end-of-image marker.
 pub fn verify_jpeg(data: &[u8]) -> VerifyReport {
-    let mut report = VerifyReport { format: "jpeg".into(), ..VerifyReport::default() };
+    let mut report = VerifyReport {
+        format: "jpeg".into(),
+        ..VerifyReport::default()
+    };
     if !data.starts_with(b"\xff\xd8") {
         report.breaks.push(0);
         report.notes.push("JPEG start marker is missing.".into());
@@ -199,7 +243,9 @@ pub fn verify_jpeg(data: &[u8]) -> VerifyReport {
     while position + 2 <= data.len() {
         if data[position] != 0xFF {
             report.breaks.push(position as u64);
-            report.notes.push(format!("Expected a marker at {position}."));
+            report
+                .notes
+                .push(format!("Expected a marker at {position}."));
             return report.finish(data.len());
         }
         let marker = data[position + 1];
@@ -262,8 +308,13 @@ fn le32(data: &[u8], offset: usize) -> u32 {
 /// byte of the member's contents, so unlike a structure walk it also sees small
 /// corruption inside a file. Reassemblies can be judged by it with real confidence.
 pub fn verify_zip(data: &[u8]) -> VerifyReport {
-    let mut report = VerifyReport { format: "zip".into(), ..VerifyReport::default() };
-    let search_from = data.len().saturating_sub(ZIP_MAX_COMMENT_BYTES + ZIP_END_MIN_BYTES);
+    let mut report = VerifyReport {
+        format: "zip".into(),
+        ..VerifyReport::default()
+    };
+    let search_from = data
+        .len()
+        .saturating_sub(ZIP_MAX_COMMENT_BYTES + ZIP_END_MIN_BYTES);
     let Some(end) = data[search_from..]
         .windows(4)
         .rposition(|window| window == ZIP_END_SIGNATURE)
@@ -271,7 +322,9 @@ pub fn verify_zip(data: &[u8]) -> VerifyReport {
         .filter(|&position| position + ZIP_END_MIN_BYTES <= data.len())
     else {
         report.breaks.push(data.len() as u64);
-        report.notes.push("The zip's central directory was not found, so its end is missing or damaged.".into());
+        report.notes.push(
+            "The zip's central directory was not found, so its end is missing or damaged.".into(),
+        );
         return report.finish(data.len());
     };
     report.reached_end = true;
@@ -281,9 +334,13 @@ pub fn verify_zip(data: &[u8]) -> VerifyReport {
     let mut valid = 0u64;
     let mut compressed_total = 0u64;
     for _ in 0..members {
-        if data.get(position..position + 4) != Some(ZIP_CENTRAL_SIGNATURE) || position + ZIP_CENTRAL_HEADER_BYTES > data.len() {
+        if data.get(position..position + 4) != Some(ZIP_CENTRAL_SIGNATURE)
+            || position + ZIP_CENTRAL_HEADER_BYTES > data.len()
+        {
             report.breaks.push(position as u64);
-            report.notes.push(format!("The central directory breaks at byte {position}."));
+            report
+                .notes
+                .push(format!("The central directory breaks at byte {position}."));
             report.reached_end = false;
             break;
         }
@@ -295,7 +352,8 @@ pub fn verify_zip(data: &[u8]) -> VerifyReport {
         let comment_length = le16(data, position + 32);
         let local = le32(data, position + 42) as usize;
         let name_end = (position + ZIP_CENTRAL_HEADER_BYTES + name_length).min(data.len());
-        let name = String::from_utf8_lossy(&data[position + ZIP_CENTRAL_HEADER_BYTES..name_end]).into_owned();
+        let name = String::from_utf8_lossy(&data[position + ZIP_CENTRAL_HEADER_BYTES..name_end])
+            .into_owned();
         position += ZIP_CENTRAL_HEADER_BYTES + name_length + extra_length + comment_length;
         report.units += 1;
         compressed_total += compressed as u64;
@@ -307,11 +365,14 @@ pub fn verify_zip(data: &[u8]) -> VerifyReport {
             }
             _ => None,
         };
-        let member_ok = body.is_some_and(|bytes| match method as u16 {
+        let member_ok = body.is_some_and(|bytes| match method {
             ZIP_METHOD_STORED => crc32(&[bytes]) == crc,
             ZIP_METHOD_DEFLATED => {
                 let mut inflated = Vec::new();
-                DeflateDecoder::new(bytes).read_to_end(&mut inflated).is_ok() && crc32(&[&inflated]) == crc
+                DeflateDecoder::new(bytes)
+                    .read_to_end(&mut inflated)
+                    .is_ok()
+                    && crc32(&[&inflated]) == crc
             }
             _ => false,
         });
@@ -330,9 +391,19 @@ pub fn verify_zip(data: &[u8]) -> VerifyReport {
             }
         }
     }
-    report.notes.insert(0, format!("{} of {members} members pass their CRC.", members as u64 - failed));
+    report.notes.insert(
+        0,
+        format!(
+            "{} of {members} members pass their CRC.",
+            members as u64 - failed
+        ),
+    );
     let mut finished = report.finish(data.len());
     finished.valid_bytes = valid;
-    finished.valid_fraction = if compressed_total == 0 { 1.0 } else { valid as f64 / compressed_total as f64 };
+    finished.valid_fraction = if compressed_total == 0 {
+        1.0
+    } else {
+        valid as f64 / compressed_total as f64
+    };
     finished
 }

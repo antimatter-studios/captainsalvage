@@ -6,15 +6,16 @@
 //! so a hypothesis can be applied, examined and withdrawn at no cost to the disk.
 
 use crate::content::{
-    content_match, expected_class, text_head_match, ContentMatch, CLASS_DIRECTORY, CLASS_NAMES, CLASS_TEXT, CLASS_ZEROS,
+    content_match, expected_class, text_head_match, ContentMatch, CLASS_DIRECTORY, CLASS_NAMES,
+    CLASS_TEXT, CLASS_ZEROS,
 };
 use crate::exfat::FIRST_CLUSTER;
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
-    OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL, VERDICT_DAMAGED,
-    VERDICT_EMPTY,
-    VERDICT_FOLDER, VERDICT_FOLDER_EMPTY, VERDICT_FOLDER_MISSING, VERDICT_INTACT, VERDICT_LIVE,
-    VERDICT_OVERWRITTEN, VERDICT_PARTIAL, VERDICT_PLAUSIBLE, VERDICT_RESIDUE,
+    OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
+    VERDICT_DAMAGED, VERDICT_EMPTY, VERDICT_FOLDER, VERDICT_FOLDER_EMPTY, VERDICT_FOLDER_MISSING,
+    VERDICT_INTACT, VERDICT_LIVE, VERDICT_OVERWRITTEN, VERDICT_PARTIAL, VERDICT_PLAUSIBLE,
+    VERDICT_RESIDUE,
 };
 use crate::volume::{StreamClusters, Volume};
 use crate::workspace::Workspace;
@@ -81,12 +82,23 @@ struct Assessment {
 
 impl Assessment {
     fn plain(verdict: &'static str, reason: impl Into<String>, confidence: f64) -> Self {
-        Self { verdict, reason: reason.into(), confidence, needed: 0, found: 0, allocated: 0, conflict: 0 }
+        Self {
+            verdict,
+            reason: reason.into(),
+            confidence,
+            needed: 0,
+            found: 0,
+            allocated: 0,
+            conflict: 0,
+        }
     }
 }
 
 fn payload_u32(payload: &serde_json::Value, key: &str) -> Option<u32> {
-    payload.get(key).and_then(serde_json::Value::as_u64).map(|value| value as u32)
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .map(|value| value as u32)
 }
 
 /// Parses a `file_extents` overlay payload into a cluster list.
@@ -97,12 +109,25 @@ pub fn parse_extents_payload(payload: &serde_json::Value) -> Option<Vec<u32>> {
 
 /// Applies each active accept_entry overlay to the in-memory entries. Returns
 /// the corrections, which are stored beside the raw values for display.
-fn apply_entry_overlays(sets: &mut [LoadedSet], overlays: &[Overlay]) -> Vec<(i64, serde_json::Value)> {
-    let positions: HashMap<i64, usize> = sets.iter().enumerate().map(|(index, set)| (set.id, index)).collect();
+fn apply_entry_overlays(
+    sets: &mut [LoadedSet],
+    overlays: &[Overlay],
+) -> Vec<(i64, serde_json::Value)> {
+    let positions: HashMap<i64, usize> = sets
+        .iter()
+        .enumerate()
+        .map(|(index, set)| (set.id, index))
+        .collect();
     let mut corrections = Vec::new();
-    for overlay in overlays.iter().rev().filter(|overlay| overlay.kind == OVERLAY_ACCEPT_ENTRY) {
+    for overlay in overlays
+        .iter()
+        .rev()
+        .filter(|overlay| overlay.kind == OVERLAY_ACCEPT_ENTRY)
+    {
         let Some(id) = overlay.target else { continue };
-        let Some(&index) = positions.get(&id) else { continue };
+        let Some(&index) = positions.get(&id) else {
+            continue;
+        };
         let set = &mut sets[index];
         let payload = &overlay.payload;
         set.accepted = true;
@@ -116,7 +141,10 @@ fn apply_entry_overlays(sets: &mut [LoadedSet], overlays: &[Overlay]) -> Vec<(i6
         if let Some(length) = payload.get("length").and_then(serde_json::Value::as_u64) {
             set.length = length;
         }
-        if let Some(no_fat) = payload.get("noFatChain").and_then(serde_json::Value::as_bool) {
+        if let Some(no_fat) = payload
+            .get("noFatChain")
+            .and_then(serde_json::Value::as_bool)
+        {
             set.no_fat_chain = no_fat;
         }
         if let Some(is_dir) = payload.get("isDir").and_then(serde_json::Value::as_bool) {
@@ -138,14 +166,26 @@ impl Streams<'_> {
     /// Returns the claim, and how many trailing clusters were assumed, not known.
     fn claim(&self, set: &LoadedSet) -> (StreamClusters, u64) {
         if let Some(clusters) = self.overrides.get(&set.id) {
-            let needed = set.length.div_ceil(self.volume.boot.cluster_size()).max(clusters.len() as u64);
-            return (StreamClusters { clusters: clusters.clone(), needed }, 0);
+            let needed = set
+                .length
+                .div_ceil(self.volume.boot.cluster_size())
+                .max(clusters.len() as u64);
+            return (
+                StreamClusters {
+                    clusters: clusters.clone(),
+                    needed,
+                },
+                0,
+            );
         }
-        let mut stream = self.volume.clusters_for(set.first_cluster, set.length, set.no_fat_chain);
+        let mut stream = self
+            .volume
+            .clusters_for(set.first_cluster, set.length, set.no_fat_chain);
         let mut assumed = 0;
         if self.params.chain_fallback_contiguous && !stream.clusters.is_empty() {
             let mut next = stream.clusters[stream.clusters.len() - 1] + 1;
-            while (stream.clusters.len() as u64) < stream.needed && self.volume.valid_cluster(next) {
+            while (stream.clusters.len() as u64) < stream.needed && self.volume.valid_cluster(next)
+            {
                 stream.clusters.push(next);
                 next += 1;
                 assumed += 1;
@@ -158,7 +198,12 @@ impl Streams<'_> {
 fn counts_as_file(verdict: &str) -> bool {
     matches!(
         verdict,
-        VERDICT_LIVE | VERDICT_INTACT | VERDICT_PLAUSIBLE | VERDICT_PARTIAL | VERDICT_OVERWRITTEN | VERDICT_DAMAGED
+        VERDICT_LIVE
+            | VERDICT_INTACT
+            | VERDICT_PLAUSIBLE
+            | VERDICT_PARTIAL
+            | VERDICT_OVERWRITTEN
+            | VERDICT_DAMAGED
     )
 }
 
@@ -187,7 +232,10 @@ fn break_cycles(parent: &mut HashMap<u32, Option<u32>>) {
 }
 
 /// Labels each node: the root, reachable from it, attached to an orphan, or an orphan.
-fn classify_nodes(parent: &HashMap<u32, Option<u32>>, root_head: u32) -> HashMap<u32, &'static str> {
+fn classify_nodes(
+    parent: &HashMap<u32, Option<u32>>,
+    root_head: u32,
+) -> HashMap<u32, &'static str> {
     let mut kinds = HashMap::with_capacity(parent.len());
     for (&node, &up) in parent {
         let mut current = node;
@@ -228,12 +276,19 @@ impl Context<'_> {
         if expected != Some(CLASS_TEXT) || !self.volume.valid_cluster(set.first_cluster) {
             return (content_match(expected, class), held);
         }
-        let head = self.text_heads.get((set.first_cluster - FIRST_CLUSTER) as usize).copied().unwrap_or(0);
+        let head = self
+            .text_heads
+            .get((set.first_cluster - FIRST_CLUSTER) as usize)
+            .copied()
+            .unwrap_or(0);
         if head != 0 {
             return match text_head_match(head, set.length) {
                 ContentMatch::Yes => (ContentMatch::Yes, "readable text".to_string()),
                 ContentMatch::No => (ContentMatch::No, "not text in its first bytes".to_string()),
-                ContentMatch::Unknown => (ContentMatch::Unknown, "only partly readable text".to_string()),
+                ContentMatch::Unknown => (
+                    ContentMatch::Unknown,
+                    "only partly readable text".to_string(),
+                ),
             };
         }
         if set.length < self.volume.boot.cluster_size() {
@@ -248,17 +303,32 @@ impl Context<'_> {
 
     fn class_at(&self, cluster: u32) -> u8 {
         if self.volume.valid_cluster(cluster) {
-            self.classes.get((cluster - FIRST_CLUSTER) as usize).copied().unwrap_or(0)
+            self.classes
+                .get((cluster - FIRST_CLUSTER) as usize)
+                .copied()
+                .unwrap_or(0)
         } else {
             0
         }
     }
 
     fn assess_folder(&self, set: &LoadedSet, trust: f64) -> Assessment {
-        let prefix = if set.checksum_ok { "" } else { "Entry checksum failed, but it points at a real directory. " };
+        let prefix = if set.checksum_ok {
+            ""
+        } else {
+            "Entry checksum failed, but it points at a real directory. "
+        };
         if self.node_heads.contains(&set.first_cluster) {
-            let confidence = if set.checksum_ok { trust } else { TRUST_DAMAGED_CONFIRMED };
-            return Assessment::plain(VERDICT_FOLDER, format!("{prefix}Folder contents found."), confidence);
+            let confidence = if set.checksum_ok {
+                trust
+            } else {
+                TRUST_DAMAGED_CONFIRMED
+            };
+            return Assessment::plain(
+                VERDICT_FOLDER,
+                format!("{prefix}Folder contents found."),
+                confidence,
+            );
         }
         let class = self.class_at(set.first_cluster);
         if class == CLASS_ZEROS {
@@ -278,10 +348,24 @@ impl Context<'_> {
         )
     }
 
-    fn assess_file(&self, set: &LoadedSet, stream: &StreamClusters, assumed: u64, node_kind: Option<&str>) -> Assessment {
+    fn assess_file(
+        &self,
+        set: &LoadedSet,
+        stream: &StreamClusters,
+        assumed: u64,
+        node_kind: Option<&str>,
+    ) -> Assessment {
         let found = stream.clusters.len() as u64;
-        let allocated = stream.clusters.iter().filter(|&&c| self.volume.is_allocated(c)).count() as u64;
-        let overlapping = stream.clusters.iter().filter(|&&c| self.claims[c as usize] > 1).count() as u64;
+        let allocated = stream
+            .clusters
+            .iter()
+            .filter(|&&c| self.volume.is_allocated(c))
+            .count() as u64;
+        let overlapping = stream
+            .clusters
+            .iter()
+            .filter(|&&c| self.claims[c as usize] > 1)
+            .count() as u64;
         let conflict = if self.params.ignore_entry_conflicts {
             0
         } else {
@@ -303,7 +387,11 @@ impl Context<'_> {
             && found == stream.needed
             && allocated == found
         {
-            return build(VERDICT_LIVE, "Visible in the current filesystem.".into(), 1.0);
+            return build(
+                VERDICT_LIVE,
+                "Visible in the current filesystem.".into(),
+                1.0,
+            );
         }
 
         let (content, held) = self.content_of(set);
@@ -321,9 +409,21 @@ impl Context<'_> {
             ContentMatch::Unknown => CONTENT_INCONCLUSIVE,
             ContentMatch::No => CONTENT_CONTRADICTS,
         };
-        let coverage = if stream.needed == 0 { 0.0 } else { found as f64 / stream.needed as f64 };
-        let clean = if found == 0 { 0.0 } else { 1.0 - ((allocated + conflict) as f64 / found as f64).min(1.0) };
-        let guessed = if assumed > 0 { CHAIN_GUESSED_PENALTY } else { 1.0 };
+        let coverage = if stream.needed == 0 {
+            0.0
+        } else {
+            found as f64 / stream.needed as f64
+        };
+        let clean = if found == 0 {
+            0.0
+        } else {
+            1.0 - ((allocated + conflict) as f64 / found as f64).min(1.0)
+        };
+        let guessed = if assumed > 0 {
+            CHAIN_GUESSED_PENALTY
+        } else {
+            1.0
+        };
         let confidence = trust * coverage * clean * content_factor * guessed;
 
         let mut sentences = Vec::new();
@@ -333,28 +433,41 @@ impl Context<'_> {
             sentences.push("Entry checksum failed, so its fields may be damaged.".to_string());
         }
         if assumed > 0 {
-            sentences.push(format!("Last {assumed} clusters are assumed contiguous, because the FAT chain ends early."));
+            sentences.push(format!(
+                "Last {assumed} clusters are assumed contiguous, because the FAT chain ends early."
+            ));
         }
         let verdict = if found == 0 {
             sentences.push("First cluster is outside the volume.".to_string());
             VERDICT_PARTIAL
         } else if found < stream.needed {
-            sentences.push(format!("FAT chain ends early: {found} of {} clusters reachable.", stream.needed));
+            sentences.push(format!(
+                "FAT chain ends early: {found} of {} clusters reachable.",
+                stream.needed
+            ));
             VERDICT_PARTIAL
         } else if allocated > 0 {
-            sentences.push(format!("{allocated} of {found} clusters are in use by current files."));
+            sentences.push(format!(
+                "{allocated} of {found} clusters are in use by current files."
+            ));
             VERDICT_PARTIAL
         } else if conflict > 0 {
-            sentences.push(format!("{conflict} of {found} clusters are also claimed by other entries."));
+            sentences.push(format!(
+                "{conflict} of {found} clusters are also claimed by other entries."
+            ));
             VERDICT_PARTIAL
         } else {
             match content {
                 ContentMatch::Yes => {
-                    sentences.push(format!("Clusters free and unclaimed. First cluster is {held}, matching the name."));
+                    sentences.push(format!(
+                        "Clusters free and unclaimed. First cluster is {held}, matching the name."
+                    ));
                     VERDICT_INTACT
                 }
                 ContentMatch::No => {
-                    sentences.push(format!("First cluster holds {held}, which contradicts the name."));
+                    sentences.push(format!(
+                        "First cluster holds {held}, which contradicts the name."
+                    ));
                     VERDICT_OVERWRITTEN
                 }
                 ContentMatch::Unknown => {
@@ -365,7 +478,11 @@ impl Context<'_> {
                 }
             }
         };
-        let verdict = if set.checksum_ok { verdict } else { VERDICT_DAMAGED };
+        let verdict = if set.checksum_ok {
+            verdict
+        } else {
+            VERDICT_DAMAGED
+        };
         build(verdict, sentences.join(" "), confidence)
     }
 }
@@ -389,17 +506,33 @@ impl MapDb {
             .filter(|overlay| overlay.kind == OVERLAY_FILE_EXTENTS)
             .filter_map(|overlay| Some((overlay.target?, parse_extents_payload(&overlay.payload)?)))
             .collect();
-        let streams = Streams { volume, params, overrides };
-        let root_head = volume.root_clusters.first().copied().unwrap_or(volume.boot.root_cluster);
+        let streams = Streams {
+            volume,
+            params,
+            overrides,
+        };
+        let root_head = volume
+            .root_clusters
+            .first()
+            .copied()
+            .unwrap_or(volume.boot.root_cluster);
 
         // Clusters holding at least one trustworthy entry set are real directories.
-        let found: HashSet<u32> = sets.iter().filter(|set| set.checksum_ok).map(|set| set.source_cluster).collect();
+        let found: HashSet<u32> = sets
+            .iter()
+            .filter(|set| set.checksum_ok)
+            .map(|set| set.source_cluster)
+            .collect();
 
         // A damaged folder entry still counts if it points at a real directory.
         // Trustworthy entries rank first, so they win any disagreement.
         let mut folder_sets: Vec<&LoadedSet> = sets
             .iter()
-            .filter(|set| set.is_dir && set.length > 0 && (set.checksum_ok || found.contains(&set.first_cluster)))
+            .filter(|set| {
+                set.is_dir
+                    && set.length > 0
+                    && (set.checksum_ok || found.contains(&set.first_cluster))
+            })
             .collect();
         folder_sets.sort_by(|a, b| {
             b.checksum_ok
@@ -412,8 +545,13 @@ impl MapDb {
         for &cluster in &volume.root_clusters {
             head_of.insert(cluster, root_head);
         }
-        for overlay in overlays.iter().filter(|overlay| overlay.kind == OVERLAY_DIRECTORY_CLUSTER) {
-            if let (Some(cluster), Some(folder)) = (overlay.target, payload_u32(&overlay.payload, "head")) {
+        for overlay in overlays
+            .iter()
+            .filter(|overlay| overlay.kind == OVERLAY_DIRECTORY_CLUSTER)
+        {
+            if let (Some(cluster), Some(folder)) =
+                (overlay.target, payload_u32(&overlay.payload, "head"))
+            {
                 head_of.insert(cluster as u32, folder);
             }
         }
@@ -441,7 +579,8 @@ impl MapDb {
                 } else {
                     0
                 };
-                set.length > 0 && content_match(expected_class(&set.name), class) == ContentMatch::Yes
+                set.length > 0
+                    && content_match(expected_class(&set.name), class) == ContentMatch::Yes
             };
             if confirmed {
                 node_heads.insert(head(set.source_cluster));
@@ -449,7 +588,8 @@ impl MapDb {
         }
 
         // Each node takes its name and parent from the best entry pointing at it.
-        let mut parent: HashMap<u32, Option<u32>> = node_heads.iter().map(|&node| (node, None)).collect();
+        let mut parent: HashMap<u32, Option<u32>> =
+            node_heads.iter().map(|&node| (node, None)).collect();
         let mut names: HashMap<u32, &LoadedSet> = HashMap::new();
         for set in &folder_sets {
             if set.first_cluster == root_head || !node_heads.contains(&set.first_cluster) {
@@ -469,8 +609,14 @@ impl MapDb {
         // A folder_parent overlay outranks whatever the entries say.
         let mut name_overrides: HashMap<u32, String> = HashMap::new();
         let mut linked_by_overlay: HashSet<u32> = HashSet::new();
-        for overlay in overlays.iter().rev().filter(|overlay| overlay.kind == OVERLAY_FOLDER_PARENT) {
-            let Some(folder) = overlay.target.map(|value| value as u32) else { continue };
+        for overlay in overlays
+            .iter()
+            .rev()
+            .filter(|overlay| overlay.kind == OVERLAY_FOLDER_PARENT)
+        {
+            let Some(folder) = overlay.target.map(|value| value as u32) else {
+                continue;
+            };
             node_heads.insert(folder);
             let new_parent = payload_u32(&overlay.payload, "parent");
             if let Some(value) = new_parent {
@@ -479,7 +625,11 @@ impl MapDb {
             }
             parent.insert(folder, new_parent);
             linked_by_overlay.insert(folder);
-            if let Some(name) = overlay.payload.get("name").and_then(serde_json::Value::as_str) {
+            if let Some(name) = overlay
+                .payload
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+            {
                 name_overrides.insert(folder, name.to_string());
             }
         }
@@ -496,18 +646,27 @@ impl MapDb {
                 ownership[(cluster - FIRST_CLUSTER) as usize] = OWNERSHIP_DIRECTORY;
             }
         }
-        let in_use_first: HashSet<u32> =
-            sets.iter().filter(|set| !set.is_dir && set.checksum_ok && set.in_use).map(|set| set.first_cluster).collect();
+        let in_use_first: HashSet<u32> = sets
+            .iter()
+            .filter(|set| !set.is_dir && set.checksum_ok && set.in_use)
+            .map(|set| set.first_cluster)
+            .collect();
         let mut claimed_first: HashSet<u32> = HashSet::new();
-        for set in sets.iter().filter(|set| !set.is_dir && set.checksum_ok && set.length > 0) {
+        for set in sets
+            .iter()
+            .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0)
+        {
             if claimed_first.insert(set.first_cluster) {
                 let (stream, _) = streams.claim(set);
                 for cluster in stream.clusters {
                     let index = (cluster - FIRST_CLUSTER) as usize;
                     claims[cluster as usize] = claims[cluster as usize].saturating_add(1);
                     if ownership[index] != OWNERSHIP_DIRECTORY {
-                        ownership[index] =
-                            if claims[cluster as usize] > 1 { OWNERSHIP_SEVERAL_ENTRIES } else { OWNERSHIP_ONE_ENTRY };
+                        ownership[index] = if claims[cluster as usize] > 1 {
+                            OWNERSHIP_SEVERAL_ENTRIES
+                        } else {
+                            OWNERSHIP_ONE_ENTRY
+                        };
                     }
                 }
             }
@@ -556,7 +715,9 @@ impl MapDb {
             } else {
                 let (stream, assumed) = streams.claim(set);
                 let assessment = context.assess_file(set, &stream, assumed, node_kind);
-                let scaled = (assessment.confidence * CONFIDENCE_SCALE).round().min(CONFIDENCE_SCALE) as u8;
+                let scaled = (assessment.confidence * CONFIDENCE_SCALE)
+                    .round()
+                    .min(CONFIDENCE_SCALE) as u8;
                 for cluster in &stream.clusters {
                     let index = (*cluster - FIRST_CLUSTER) as usize;
                     confidence_map[index] = confidence_map[index].max(scaled);
@@ -601,7 +762,8 @@ impl MapDb {
             for _ in 0..island.length {
                 let index = (current - FIRST_CLUSTER) as usize;
                 sum += u64::from(entropy[index]);
-                if owners == 0 && island.allocated == 0 && ownership[index] == OWNERSHIP_UNEXPLAINED {
+                if owners == 0 && island.allocated == 0 && ownership[index] == OWNERSHIP_UNEXPLAINED
+                {
                     ownership[index] = OWNERSHIP_NAMELESS_CHAIN;
                 }
                 current = volume.fat[current as usize];
@@ -610,10 +772,21 @@ impl MapDb {
                 }
             }
             let head_class = classes[(island.head - FIRST_CLUSTER) as usize];
-            island_rows.push((island, owners, head_class, (sum / island.length.max(1)) as i64));
+            island_rows.push((
+                island,
+                owners,
+                head_class,
+                (sum / island.length.max(1)) as i64,
+            ));
         }
-        for overlay in overlays.iter().filter(|overlay| overlay.kind == OVERLAY_REGION_LABEL) {
-            let (Some(start), Some(end)) = (overlay.target, payload_u32(&overlay.payload, "end")) else { continue };
+        for overlay in overlays
+            .iter()
+            .filter(|overlay| overlay.kind == OVERLAY_REGION_LABEL)
+        {
+            let (Some(start), Some(end)) = (overlay.target, payload_u32(&overlay.payload, "end"))
+            else {
+                continue;
+            };
             let last = volume.boot.last_cluster_exclusive();
             for cluster in (start.max(i64::from(FIRST_CLUSTER)) as u32)..end.min(last) {
                 let index = (cluster - FIRST_CLUSTER) as usize;
@@ -638,8 +811,13 @@ impl MapDb {
                     id,
                     payload.get("name").and_then(serde_json::Value::as_str),
                     payload_u32(payload, "firstCluster"),
-                    payload.get("length").and_then(serde_json::Value::as_u64).map(|value| value as i64),
-                    payload.get("noFatChain").and_then(serde_json::Value::as_bool),
+                    payload
+                        .get("length")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|value| value as i64),
+                    payload
+                        .get("noFatChain")
+                        .and_then(serde_json::Value::as_bool),
                     payload.get("isDir").and_then(serde_json::Value::as_bool),
                 ])?;
             }
@@ -670,7 +848,10 @@ impl MapDb {
             for &node in &node_heads {
                 let total = cumulative.get(&node).copied().unwrap_or_default();
                 let set = names.get(&node);
-                let name = name_overrides.get(&node).cloned().or_else(|| set.map(|value| value.name.clone()));
+                let name = name_overrides
+                    .get(&node)
+                    .cloned()
+                    .or_else(|| set.map(|value| value.name.clone()));
                 let link = if linked_by_overlay.contains(&node) {
                     LINK_OVERLAY
                 } else {
@@ -713,11 +894,16 @@ impl MapDb {
         }
         transaction.commit()?;
         let total_millis = started.elapsed().as_millis();
-        self.set_state("resolve_timing_millis", &format!("computed {computed_millis}, total {total_millis}"))?;
+        self.set_state(
+            "resolve_timing_millis",
+            &format!("computed {computed_millis}, total {total_millis}"),
+        )?;
 
         // Directory clusters are as trustworthy as the entries that found them.
         for &cluster in &found {
-            if volume.valid_cluster(cluster) && classes[(cluster - FIRST_CLUSTER) as usize] == CLASS_DIRECTORY {
+            if volume.valid_cluster(cluster)
+                && classes[(cluster - FIRST_CLUSTER) as usize] == CLASS_DIRECTORY
+            {
                 confidence_map[(cluster - FIRST_CLUSTER) as usize] = CONFIDENCE_SCALE as u8;
             }
         }

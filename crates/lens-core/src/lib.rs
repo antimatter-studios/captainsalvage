@@ -1,9 +1,9 @@
 //! Read-only forensic analysis of damaged exFAT volumes.
 
 pub mod content;
+pub mod engine;
 pub mod exfat;
 pub mod export;
-pub mod engine;
 pub mod map;
 pub mod mcp;
 pub mod regions;

@@ -150,8 +150,16 @@ fn base64(data: &[u8]) -> String {
             | u32::from(group.get(2).copied().unwrap_or(0));
         out.push(ALPHABET[(value >> 18) as usize & 63] as char);
         out.push(ALPHABET[(value >> 12) as usize & 63] as char);
-        out.push(if group.len() > 1 { ALPHABET[(value >> 6) as usize & 63] as char } else { '=' });
-        out.push(if group.len() > 2 { ALPHABET[value as usize & 63] as char } else { '=' });
+        out.push(if group.len() > 1 {
+            ALPHABET[(value >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if group.len() > 2 {
+            ALPHABET[value as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -171,8 +179,15 @@ pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
     Some(match method {
         "initialize" => {
-            let requested = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(DEFAULT_VERSION);
-            let version = if SUPPORTED_VERSIONS.contains(&requested) { requested } else { DEFAULT_VERSION };
+            let requested = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(DEFAULT_VERSION);
+            let version = if SUPPORTED_VERSIONS.contains(&requested) {
+                requested
+            } else {
+                DEFAULT_VERSION
+            };
             rpc_result(
                 id,
                 json!({
@@ -187,11 +202,18 @@ pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
         "tools/list" => rpc_result(id, json!({"tools": tool_definitions()})),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             if name == SCREENSHOT_TOOL {
                 let result = match engine.screenshot() {
-                    Ok(png) => json!({"content": [{"type": "image", "data": base64(&png), "mimeType": "image/png"}]}),
-                    Err(error) => json!({"content": [{"type": "text", "text": format!("{error:#}")}], "isError": true}),
+                    Ok(png) => {
+                        json!({"content": [{"type": "image", "data": base64(&png), "mimeType": "image/png"}]})
+                    }
+                    Err(error) => {
+                        json!({"content": [{"type": "text", "text": format!("{error:#}")}], "isError": true})
+                    }
                 };
                 return Some(rpc_result(id, result));
             }
@@ -199,7 +221,9 @@ pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
                 Ok(value) => json!({
                     "content": [{"type": "text", "text": serde_json::to_string_pretty(&value).unwrap_or_default()}],
                 }),
-                Err(error) => json!({"content": [{"type": "text", "text": format!("{error:#}")}], "isError": true}),
+                Err(error) => {
+                    json!({"content": [{"type": "text", "text": format!("{error:#}")}], "isError": true})
+                }
             };
             rpc_result(id, result)
         }
@@ -243,7 +267,11 @@ fn origin_allowed(origin: &str) -> bool {
 }
 
 fn header_value<'a>(request: &'a tiny_http::Request, name: &'static str) -> Option<&'a str> {
-    request.headers().iter().find(|header| header.field.equiv(name)).map(|header| header.value.as_str())
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv(name))
+        .map(|header| header.value.as_str())
 }
 
 fn respond_status(request: tiny_http::Request, code: u16, text: &str) {
@@ -268,7 +296,12 @@ fn serve_one(engine: &Engine, token: &str, mut request: tiny_http::Request) {
     }
 
     let mut body = String::new();
-    if request.as_reader().take(MAX_BODY_BYTES).read_to_string(&mut body).is_err() {
+    if request
+        .as_reader()
+        .take(MAX_BODY_BYTES)
+        .read_to_string(&mut body)
+        .is_err()
+    {
         return respond_status(request, 400, "body is not valid UTF-8");
     }
     let Ok(message) = serde_json::from_str::<Value>(&body) else {
@@ -276,15 +309,21 @@ fn serve_one(engine: &Engine, token: &str, mut request: tiny_http::Request) {
     };
     let reply = match &message {
         Value::Array(batch) => {
-            let replies: Vec<Value> = batch.iter().filter_map(|item| handle_message(engine, item)).collect();
-            (!replies.is_empty()).then(|| Value::Array(replies))
+            let replies: Vec<Value> = batch
+                .iter()
+                .filter_map(|item| handle_message(engine, item))
+                .collect();
+            (!replies.is_empty()).then_some(Value::Array(replies))
         }
         single => handle_message(engine, single),
     };
     match reply {
         Some(value) => {
-            let content_type = tiny_http::Header::from_bytes("Content-Type", "application/json").expect("valid header");
-            let _ = request.respond(tiny_http::Response::from_string(value.to_string()).with_header(content_type));
+            let content_type = tiny_http::Header::from_bytes("Content-Type", "application/json")
+                .expect("valid header");
+            let _ = request.respond(
+                tiny_http::Response::from_string(value.to_string()).with_header(content_type),
+            );
         }
         None => respond_status(request, 202, ""),
     }
@@ -296,10 +335,21 @@ pub fn start(engine: Arc<Engine>) -> Result<McpInfo> {
     let server = tiny_http::Server::http(("127.0.0.1", PREFERRED_PORT))
         .or_else(|_| tiny_http::Server::http(("127.0.0.1", 0)))
         .map_err(|error| anyhow!("cannot start the MCP server: {error}"))?;
-    let port = server.server_addr().to_ip().context("server has no IP address")?.port();
+    let port = server
+        .server_addr()
+        .to_ip()
+        .context("server has no IP address")?
+        .port();
     let token = load_or_create_token()?;
-    let info = McpInfo { url: format!("http://127.0.0.1:{port}/mcp"), token: token.clone(), port };
-    write_private(&config_dir()?.join("mcp.json"), &serde_json::to_string_pretty(&info)?)?;
+    let info = McpInfo {
+        url: format!("http://127.0.0.1:{port}/mcp"),
+        token: token.clone(),
+        port,
+    };
+    write_private(
+        &config_dir()?.join("mcp.json"),
+        &serde_json::to_string_pretty(&info)?,
+    )?;
 
     let server = Arc::new(server);
     for _ in 0..WORKER_THREADS {

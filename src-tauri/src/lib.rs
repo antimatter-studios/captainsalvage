@@ -24,14 +24,17 @@ struct AppState {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support/exfat-lens"))
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support/exfat-lens"))
 }
 
 fn text_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> anyhow::Result<T> + Send + 'static) -> Result<T, String> {
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(text_error)?
@@ -39,12 +42,18 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> anyhow::Result<T> + 
 }
 
 #[tauri::command]
-async fn engine_call(state: State<'_, AppState>, tool: String, args: Value) -> Result<Value, String> {
+async fn engine_call(
+    state: State<'_, AppState>,
+    tool: String,
+    args: Value,
+) -> Result<Value, String> {
     let engine = state.engine.clone();
     blocking(move || {
         let result = engine.call(&tool, &args, AUTHOR_USER)?;
         if tool == "open_volume" {
-            if let (Some(dir), Some(path)) = (config_dir(), args.get("path").and_then(Value::as_str)) {
+            if let (Some(dir), Some(path)) =
+                (config_dir(), args.get("path").and_then(Value::as_str))
+            {
                 let _ = std::fs::write(dir.join(LAST_DEVICE_FILE), path);
             }
         }
@@ -75,7 +84,11 @@ async fn map_layer(
 }
 
 #[tauri::command]
-async fn read_raw(state: State<'_, AppState>, offset: u64, length: u64) -> Result<Response, String> {
+async fn read_raw(
+    state: State<'_, AppState>,
+    offset: u64,
+    length: u64,
+) -> Result<Response, String> {
     if length > MAX_READ_BYTES {
         return Err(format!("read of {length} bytes is over the limit"));
     }
@@ -87,7 +100,8 @@ async fn read_raw(state: State<'_, AppState>, offset: u64, length: u64) -> Resul
 #[tauri::command]
 async fn read_entry_bytes(state: State<'_, AppState>, id: i64) -> Result<Response, String> {
     let engine = state.engine.clone();
-    let bytes = blocking(move || Ok(engine.session()?.read_entry(id, MAX_PREVIEW_BYTES)?.1)).await?;
+    let bytes =
+        blocking(move || Ok(engine.session()?.read_entry(id, MAX_PREVIEW_BYTES)?.1)).await?;
     Ok(Response::new(bytes))
 }
 
@@ -111,8 +125,12 @@ fn chat_send(
     message: String,
     selection: Value,
 ) -> Result<(), String> {
-    let info = state.mcp.clone().ok_or("the MCP server is not running, so Claude has no tools")?;
-    chat.send(app, &info, &message, &selection).map_err(|error| format!("{error:#}"))
+    let info = state
+        .mcp
+        .clone()
+        .ok_or("the MCP server is not running, so Claude has no tools")?;
+    chat.send(app, &info, &message, &selection)
+        .map_err(|error| format!("{error:#}"))
 }
 
 #[tauri::command]
@@ -170,7 +188,11 @@ pub fn run() {
                     let _ = opener.open(&path);
                 }
             });
-            app.manage(AppState { engine, mcp: info, mcp_error: error });
+            app.manage(AppState {
+                engine,
+                mcp: info,
+                mcp_error: error,
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
