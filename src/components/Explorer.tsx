@@ -267,6 +267,7 @@ export interface ExplorerProps extends RowProps {
   onRegion: (run: UnexplainedRun) => void;
   classNames: string[];
   clusterSize: number;
+  handle: React.ReactNode;
 }
 
 export function Explorer(props: ExplorerProps) {
@@ -283,6 +284,7 @@ export function Explorer(props: ExplorerProps) {
 
   return (
     <nav className="explorer" aria-label="Found files">
+      {props.handle}
       <form className="sidebar-search" onSubmit={runSearch}>
         <Icon name="search" size={14} />
         <input

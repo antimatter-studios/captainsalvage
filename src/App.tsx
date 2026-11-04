@@ -17,8 +17,10 @@ import {
   type Status,
   type UnexplainedRun,
 } from "./api";
+import { useColumnWidths } from "./columns";
 import { BrowseView, type BrowseScope } from "./components/BrowseView";
 import { Chat } from "./components/Chat";
+import { ColumnHandle } from "./components/ColumnHandle";
 import { Details } from "./components/Details";
 import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
@@ -176,6 +178,7 @@ export default function App() {
   const [browseScope, setBrowseScope] = useState<BrowseScope | null>(null);
   const [standalone, setStandalone] = useState<BrowseRow | null>(null);
   const [previewInCenter, setPreviewInCenter] = useState<number | null>(null);
+  const columns = useColumnWidths();
   const centerNow = useRef<CenterView>("overview");
   centerNow.current = center;
 
@@ -428,7 +431,10 @@ export default function App() {
   const selectedKey = entry ? `entry:${entry.row.id}` : folder ? `folder:${folder.head}` : chain ? `chain:${chain.head}` : region ? `region:${region.startCluster}` : null;
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}
+    >
       <div className="sidebar-drag" data-tauri-drag-region />
       <Toolbar status={status} overview={overview} onChanged={bump} />
       <Strips
@@ -461,6 +467,7 @@ export default function App() {
         onBasket={changeBasket}
         classNames={overview.classNames}
         clusterSize={overview.geometry.clusterSize}
+        handle={<ColumnHandle label="Resize the sidebar" edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
       />
       <div className="center-stack">
         <div className="center-tabs">
@@ -505,6 +512,7 @@ export default function App() {
         )}
       </div>
       <div className="side">
+        <ColumnHandle label="Resize the details panel" edge="right-panel" onWidth={columns.setRight} onReset={columns.resetRight} />
         <Details
           overview={overview}
           status={status}
