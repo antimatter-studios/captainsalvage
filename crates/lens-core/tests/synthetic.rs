@@ -1321,6 +1321,35 @@ fn copy_out_never_overwrites_and_a_repeat_run_skips_what_is_done() {
 }
 
 #[test]
+fn a_resumed_copy_only_needs_space_for_what_is_not_there_yet() {
+    let (engine, session, dir) = engine_with_volume("resume-space");
+    let destination = copy_destination("resume-space");
+    let track_id = call(&engine, "search", json!({"query": "track.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    let request = json!({"destination": destination, "entryIds": [track_id]});
+
+    let before = call(&engine, "copy_plan", request.clone());
+    let wanted = before["bytes"].as_u64().expect("bytes");
+    assert!(wanted > 0);
+    assert_eq!(before["alreadyCopiedBytes"], 0);
+
+    copy_and_wait(&engine, &session, request.clone());
+    let after = call(&engine, "copy_plan", request.clone());
+    assert_eq!(after["bytes"].as_u64().expect("bytes"), wanted);
+    assert_eq!(after["alreadyCopiedBytes"].as_u64().expect("bytes"), wanted);
+
+    // A file removed from the destination has to be copied again, so it needs space again.
+    let row = &manifest_rows(&destination)[0];
+    std::fs::remove_file(row["target"].as_str().expect("target")).expect("remove");
+    let removed = call(&engine, "copy_plan", request);
+    assert_eq!(removed["alreadyCopiedBytes"], 0);
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(destination);
+}
+
+#[test]
 fn only_the_person_can_start_or_stop_a_copy() {
     let (engine, _session, dir) = engine_with_volume("consent");
     let args = json!({"destination": copy_destination("consent"), "folders": [20]});
