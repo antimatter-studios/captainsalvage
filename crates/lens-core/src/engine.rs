@@ -6,6 +6,7 @@ use crate::content::GROUP_NAMES;
 use crate::exfat::find_sets;
 use crate::export::{list_volumes, CopyRequest};
 use crate::map::{from_extents, to_extents, Extent, ResolveParams};
+use crate::media::MediaServer;
 use crate::script::{run_script, DEFAULT_TIMEOUT_SECONDS};
 use crate::session::{disk_access_report, list_disks, whole_disk_path, Layer, Scope, Session};
 use anyhow::{anyhow, bail, Context, Result};
@@ -48,6 +49,7 @@ pub struct Engine {
     selection: Mutex<Value>,
     sink: RwLock<Option<UiSink>>,
     screenshot: RwLock<Option<ScreenshotHook>>,
+    media: RwLock<Option<Arc<MediaServer>>>,
 }
 
 fn u64_of(args: &Value, key: &str) -> Option<u64> {
@@ -145,6 +147,12 @@ impl Engine {
     pub fn set_ui_sink(&self, sink: UiSink) {
         if let Ok(mut slot) = self.sink.write() {
             *slot = Some(sink);
+        }
+    }
+
+    pub fn set_media(&self, media: Arc<MediaServer>) {
+        if let Ok(mut slot) = self.media.write() {
+            *slot = Some(media);
         }
     }
 
@@ -346,6 +354,17 @@ impl Engine {
                 Ok(serde_json::to_value(session.with_database(
                     |database| database.search(query, limit, floor),
                 )?)?)
+            }
+            "media_check" => {
+                let id = need_i64(args, "id")?;
+                let start = f64_of(args, "at", 0.0);
+                let media = self
+                    .media
+                    .read()
+                    .map_err(|_| anyhow!("media lock poisoned"))?
+                    .clone()
+                    .context("the media port did not start")?;
+                Ok(serde_json::to_value(media.check(id, start))?)
             }
             "browse_types" => {
                 let folder = u64_of(args, "folder").map(|head| head as u32);

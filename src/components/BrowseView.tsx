@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   call,
+  convertedUrl,
   entryUrl,
+  mediaInfo,
   readEntryRange,
   thumbUrl,
   type BrowseGroup,
   type BrowsePage,
   type BrowseRow,
   type BrowseSort,
+  type MediaInfo,
   type TypeTotal,
 } from "../api";
 import { bytes, count, percent, stamp, VERDICT_LABEL } from "../format";
@@ -29,9 +32,13 @@ const HEX_COLUMNS = 16;
 
 const NO_THUMBNAIL = new Set(["heic", "heif"]);
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
-const VIDEO_EXTENSIONS = new Set(["mp4", "m4v", "mov", "webm", "3gp"]);
-const UNPLAYABLE_VIDEO = new Set(["avi", "mkv", "wmv", "mpg", "mpeg", "flv"]);
-const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "ogg", "m4a", "aac", "aif", "aiff"]);
+/** The window plays these itself. Anything inside them it can't play falls back to ffmpeg. */
+const NATIVE_VIDEO = new Set(["mp4", "m4v", "mov", "webm", "3gp"]);
+const NATIVE_AUDIO = new Set(["mp3", "wav", "flac", "m4a", "aac", "aif", "aiff"]);
+/** Only ffmpeg can play these. */
+const CONVERTED_VIDEO = new Set(["avi", "mkv", "wmv", "mpg", "mpeg", "flv", "asf", "vob", "m2ts", "divx", "rm", "rmvb", "ogv"]);
+const CONVERTED_AUDIO = new Set(["wma", "ogg", "opus"]);
+const INSTALL_COMMAND = "brew install ffmpeg";
 
 export interface BrowseScope {
   head: number;
@@ -154,17 +161,58 @@ function RawPreview({ row, note }: { row: BrowseRow; note?: string }) {
   );
 }
 
+/** Plays a file directly if the window can, and through ffmpeg if it can't. */
+function Player({ row, audio, native, media }: { row: BrowseRow; audio: boolean; native: boolean; media: MediaInfo | null }) {
+  const [converting, setConverting] = useState(!native);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setConverting(!native);
+    setFailed(false);
+  }, [row.id, native]);
+  const extension = extensionOf(row.name);
+
+  if (failed) {
+    return <RawPreview row={row} note="This file would not play, so its clusters may be wrong or damaged. Its first bytes are below." />;
+  }
+  if (converting && !media) {
+    return <p className="preview-message preview-wait muted">Checking for ffmpeg.</p>;
+  }
+  if (converting && !media?.available) {
+    return <RawPreview row={row} note={`The window can't play this ${extension ? `.${extension} ` : ""}file by itself. To play it here, install ffmpeg with ${INSTALL_COMMAND}, then open this file again. Everything else works without it.`} />;
+  }
+  const source = converting && media ? convertedUrl(media, row.id) : entryUrl(row.id);
+  const onError = () => {
+    if (converting) setFailed(true);
+    else setConverting(true);
+  };
+  return (
+    <div className={audio ? "preview-stage preview-audio" : "preview-stage"}>
+      {audio && <Icon name="music" size={48} />}
+      {audio
+        ? <audio key={source} controls preload="metadata" src={source} onError={onError} />
+        : <video key={source} controls preload="metadata" src={source} onError={onError} />}
+      {converting && <p className="preview-converting muted">Converted by ffmpeg as it plays. Nothing is saved.</p>}
+    </div>
+  );
+}
+
 function PreviewBody({ row }: { row: BrowseRow }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [media, setMedia] = useState<MediaInfo | null>(null);
   useEffect(() => {
     setFailed(false);
     setLoaded(false);
+    // Asked each time, so ffmpeg installed a minute ago is found.
+    mediaInfo().then(setMedia).catch(() => setMedia(null));
   }, [row.id]);
   const extension = extensionOf(row.name);
 
-  if (UNPLAYABLE_VIDEO.has(extension)) {
-    return <RawPreview row={row} note={`This window can't play .${extension} files. Add it to the basket to open it in another player.`} />;
+  if (NATIVE_VIDEO.has(extension) || CONVERTED_VIDEO.has(extension)) {
+    return <Player row={row} audio={false} native={NATIVE_VIDEO.has(extension)} media={media} />;
+  }
+  if (NATIVE_AUDIO.has(extension) || CONVERTED_AUDIO.has(extension)) {
+    return <Player row={row} audio native={NATIVE_AUDIO.has(extension)} media={media} />;
   }
   if (failed) {
     return <RawPreview row={row} note="This file would not open here, so its clusters may be wrong or damaged. Its first bytes are below." />;
@@ -174,17 +222,6 @@ function PreviewBody({ row }: { row: BrowseRow }) {
       <div className="preview-stage">
         {!loaded && <p className="preview-loading muted">Reading from the disk.</p>}
         <img key={row.id} src={entryUrl(row.id)} alt={row.name} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
-      </div>
-    );
-  }
-  if (VIDEO_EXTENSIONS.has(extension)) {
-    return <div className="preview-stage"><video key={row.id} controls preload="metadata" src={entryUrl(row.id)} onError={() => setFailed(true)} /></div>;
-  }
-  if (AUDIO_EXTENSIONS.has(extension)) {
-    return (
-      <div className="preview-stage preview-audio">
-        <Icon name="music" size={48} />
-        <audio key={row.id} controls preload="metadata" src={entryUrl(row.id)} onError={() => setFailed(true)} />
       </div>
     );
   }
@@ -264,9 +301,14 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   const [error, setError] = useState<string | null>(null);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [scroll, setScroll] = useState({ top: 0, width: 0, height: 0 });
+  const [hasFfmpeg, setHasFfmpeg] = useState(false);
   const scroller = useRef<HTMLDivElement | null>(null);
   const requested = useRef<Set<number>>(new Set());
   const folder = scope?.head;
+
+  useEffect(() => {
+    mediaInfo().then((media) => setHasFfmpeg(Boolean(media?.available))).catch(() => undefined);
+  }, [revision, group]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setText(typed), SEARCH_WAIT_MILLIS);
@@ -323,7 +365,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
     return () => observer.disconnect();
   }, []);
 
-  const showImages = group === "photos";
+  const showImages = group === "photos" || (group === "videos" && hasFfmpeg);
   const tileHeight = showImages ? PHOTO_TILE_HEIGHT : FILE_TILE_HEIGHT;
   const columns = Math.max(1, Math.floor((scroll.width - TILE_GAP) / (TILE_WIDTH + TILE_GAP)));
   const tileWidth = Math.floor((scroll.width - TILE_GAP * (columns + 1)) / columns);

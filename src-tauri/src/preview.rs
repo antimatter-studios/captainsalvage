@@ -6,6 +6,7 @@
 
 use lens_core::browse::{content_type, parse_range, Thumb};
 use lens_core::engine::Engine;
+use lens_core::media::MediaServer;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::http::{header, Request, Response, StatusCode};
@@ -31,13 +32,14 @@ pub struct ThumbQueue {
 }
 
 impl ThumbQueue {
-    pub fn start(engine: Arc<Engine>) -> Self {
+    pub fn start(engine: Arc<Engine>, media: Option<Arc<MediaServer>>) -> Self {
         let queue = Self {
             shared: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
         };
         for _ in 0..THUMB_WORKERS {
             let shared = queue.shared.clone();
             let engine = engine.clone();
+            let media = media.clone();
             std::thread::spawn(move || loop {
                 let job = {
                     let Ok(mut waiting) = shared.0.lock() else {
@@ -54,7 +56,8 @@ impl ThumbQueue {
                         waiting = next;
                     }
                 };
-                job.responder.respond(thumb_answer(&engine, job.id));
+                job.responder
+                    .respond(thumb_answer(&engine, media.as_deref(), job.id));
             });
         }
         queue
@@ -91,10 +94,18 @@ fn plain(status: StatusCode, text: &str) -> Answer {
         .unwrap_or_default()
 }
 
-fn thumb_answer(engine: &Engine, id: i64) -> Answer {
-    let thumb = engine
-        .session()
-        .and_then(|session| session.entry_thumbnail(id));
+fn thumb_answer(engine: &Engine, media: Option<&MediaServer>, id: i64) -> Answer {
+    let frame = |id: i64| match media {
+        Some(media) => media.frame(id),
+        None => anyhow::bail!("the media port did not start"),
+    };
+    let installed = media.is_some_and(|media| media.tools().is_some());
+    let thumb = engine.session().and_then(|session| {
+        session.entry_thumbnail_using(
+            id,
+            installed.then_some(&frame as &dyn Fn(i64) -> anyhow::Result<Vec<u8>>),
+        )
+    });
     match thumb {
         Ok(Thumb::Image(image)) => builder(StatusCode::OK)
             .header(header::CONTENT_TYPE, "image/jpeg")

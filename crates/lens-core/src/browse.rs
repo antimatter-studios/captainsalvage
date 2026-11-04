@@ -21,6 +21,8 @@ const THUMB_QUALITY: u8 = 80;
 const MAX_THUMB_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_THUMB_CACHE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_PAGE_ROWS: u64 = 1000;
+/// Thumbnails and a playing film read at the same time, so one is not enough.
+const MAX_OPEN_STREAMS: usize = 8;
 /// A failed thumbnail still takes a place in the cache, so it counts for this much.
 const FAILED_THUMB_COST: usize = 256;
 pub const SORT_BEST: &str = "best";
@@ -48,14 +50,15 @@ pub const TYPE_GROUPS: &[TypeGroup] = &[
         id: "videos",
         label: "Videos",
         extensions: &[
-            "mp4", "m4v", "mov", "avi", "mkv", "webm", "wmv", "mpg", "mpeg", "3gp", "flv",
+            "mp4", "m4v", "mov", "avi", "mkv", "webm", "wmv", "mpg", "mpeg", "3gp", "flv", "asf",
+            "vob", "m2ts", "divx", "rm", "rmvb", "ogv",
         ],
     },
     TypeGroup {
         id: "music",
         label: "Music",
         extensions: &[
-            "mp3", "wav", "flac", "ogg", "m4a", "aac", "wma", "aif", "aiff", "mid", "midi",
+            "mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aif", "aiff", "mid", "midi",
         ],
     },
     TypeGroup {
@@ -87,6 +90,17 @@ fn group_index(name: &str) -> u8 {
         .iter()
         .position(|group| group.extensions.contains(&extension.as_str()))
         .map_or(GROUP_OTHER, |index| index as u8)
+}
+
+/// Files this app cannot decode into a picture by itself.
+pub fn needs_ffmpeg_thumbnail(name: &str) -> bool {
+    let extension = extension_of(name);
+    extension == "heic"
+        || extension == "heif"
+        || TYPE_GROUPS
+            .iter()
+            .find(|group| group.id == "videos")
+            .is_some_and(|group| group.extensions.contains(&extension.as_str()))
 }
 
 /// What the window should treat this file as, going by its name.
@@ -259,7 +273,7 @@ pub(crate) struct BrowseCache {
     index: Option<Arc<BrowseIndex>>,
     folder: Option<(u32, Arc<HashSet<i64>>)>,
     list: Option<(BrowseQuery, Option<SystemTime>, Arc<Vec<u32>>)>,
-    stream: Option<Arc<EntryStream>>,
+    streams: VecDeque<Arc<EntryStream>>,
     thumbs: ThumbCache,
 }
 
@@ -479,7 +493,7 @@ impl Session {
     fn entry_stream(&self, id: i64, reuse: bool) -> Result<Arc<EntryStream>> {
         if reuse {
             let cache = self.lock_browse()?;
-            if let Some(stream) = cache.stream.as_ref().filter(|stream| stream.id == id) {
+            if let Some(stream) = cache.streams.iter().find(|stream| stream.id == id) {
                 return Ok(stream.clone());
             }
         }
@@ -499,7 +513,12 @@ impl Session {
             name: row.name,
             clusters,
         });
-        self.lock_browse()?.stream = Some(stream.clone());
+        let mut cache = self.lock_browse()?;
+        cache.streams.retain(|known| known.id != id);
+        cache.streams.push_back(stream.clone());
+        if cache.streams.len() > MAX_OPEN_STREAMS {
+            cache.streams.pop_front();
+        }
         Ok(stream)
     }
 
@@ -581,8 +600,30 @@ impl Session {
 
     /// A small image of an entry, decoded from its real bytes, so damage shows.
     pub fn entry_thumbnail(&self, id: i64) -> Result<Thumb> {
+        self.entry_thumbnail_using(id, None)
+    }
+
+    /// As `entry_thumbnail`. Videos and HEIC need ffmpeg, which is passed in when installed.
+    pub fn entry_thumbnail_using(
+        &self,
+        id: i64,
+        frame: Option<&dyn Fn(i64) -> Result<Vec<u8>>>,
+    ) -> Result<Thumb> {
         if let Some(thumb) = self.lock_browse()?.thumbs.items.get(&id) {
             return Ok(thumb.clone());
+        }
+        let (_, name) = self.entry_total(id)?;
+        if needs_ffmpeg_thumbnail(&name) {
+            // Not remembered without ffmpeg, so installing it works without a restart.
+            let Some(frame) = frame else {
+                return Ok(Thumb::Failed("ffmpeg is not installed".into()));
+            };
+            let thumb = match frame(id) {
+                Ok(image) => Thumb::Image(Arc::new(image)),
+                Err(error) => Thumb::Failed(format!("{error:#}")),
+            };
+            self.lock_browse()?.thumbs.insert(id, thumb.clone());
+            return Ok(thumb);
         }
         let range = self.read_entry_range(id, 0, MAX_THUMB_SOURCE_BYTES)?;
         let thumb = if range.total > MAX_THUMB_SOURCE_BYTES {
