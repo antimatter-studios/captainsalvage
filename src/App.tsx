@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   call,
   type BasketItem,
+  type BrowseRow,
   type ClusterInfo,
   type DiskAccess,
   type Extent,
@@ -16,6 +17,7 @@ import {
   type Status,
   type UnexplainedRun,
 } from "./api";
+import { BrowseView, type BrowseScope } from "./components/BrowseView";
 import { Chat } from "./components/Chat";
 import { Details } from "./components/Details";
 import { Explorer } from "./components/Explorer";
@@ -30,6 +32,12 @@ const STATUS_POLL_MILLIS = 2000;
 const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 /** While a scan runs, the tree and totals are rebuilt from what it has found. */
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
+
+type CenterView = "overview" | "browse" | "bytes";
+
+function asBrowseRow(row: Row): BrowseRow {
+  return { ...row, id: row.id as number };
+}
 
 function OpenVolume({ initialPath, failure, onOpen }: { initialPath: string; failure: string | null; onOpen: (path: string) => void }) {
   const [path, setPath] = useState(initialPath);
@@ -164,6 +172,11 @@ export default function App() {
   const [byteRange, setByteRange] = useState<[number, number] | null>(null);
   const [basket, setBasket] = useState<BasketItem[]>([]);
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
+  const [center, setCenter] = useState<CenterView>("overview");
+  const [browseScope, setBrowseScope] = useState<BrowseScope | null>(null);
+  const [standalone, setStandalone] = useState<BrowseRow | null>(null);
+  const centerNow = useRef<CenterView>("overview");
+  centerNow.current = center;
 
   const bump = useCallback(() => setRevision((value) => value + 1), []);
 
@@ -227,21 +240,43 @@ export default function App() {
     return () => clearInterval(timer);
   }, [scanning, bump]);
 
-  const showCluster = useCallback((target: number) => {
+  const moveHexTo = useCallback((target: number) => {
     setCluster(target);
     setByteRange(null);
   }, []);
 
-  const selectEntry = useCallback(async (row: Row) => {
-    if (row.id === null) return;
-    const result = await call<{ entry: Row; extents: Extent[] }>("entry", { id: row.id });
+  const showCluster = useCallback((target: number) => {
+    moveHexTo(target);
+    setStandalone(null);
+    setCenter("bytes");
+  }, [moveHexTo]);
+
+  /** Selects a file for the details and for Claude, without changing what the middle shows. */
+  const noteEntry = useCallback(async (id: number) => {
+    const result = await call<{ entry: Row; extents: Extent[] }>("entry", { id });
     setEntry({ row: result.entry, extents: result.extents });
     setFolder(null);
     setChain(null);
     setRegion(null);
     setHighlight(result.extents);
-    if (result.entry.firstCluster >= 2) showCluster(result.entry.firstCluster);
-  }, [showCluster]);
+    if (result.entry.firstCluster >= 2) moveHexTo(result.entry.firstCluster);
+    return result.entry;
+  }, [moveHexTo]);
+
+  const selectEntry = useCallback(async (row: Row) => {
+    if (row.id === null) return;
+    await noteEntry(row.id);
+    setCenter("bytes");
+  }, [noteEntry]);
+
+  /** A file picked in the sidebar opens as itself, unless the bytes are already showing. */
+  const openEntry = useCallback(async (row: Row) => {
+    if (row.id === null) return;
+    const full = await noteEntry(row.id);
+    if (centerNow.current === "bytes") return;
+    setStandalone(asBrowseRow(full));
+    setCenter("browse");
+  }, [noteEntry]);
 
   const selectFolder = useCallback(async (row: Row) => {
     const head = row.head ?? row.firstCluster;
@@ -251,8 +286,24 @@ export default function App() {
     setChain(null);
     setRegion(null);
     setHighlight([{ first: head, count: 1 }]);
-    showCluster(head);
-  }, [showCluster]);
+    moveHexTo(head);
+    setCenter("bytes");
+  }, [moveHexTo]);
+
+  /** A folder picked in the sidebar shows its files, unless the bytes are already showing. */
+  const openFolder = useCallback(async (row: Row) => {
+    const head = row.head ?? row.firstCluster;
+    const full = (await call<Row | null>("node", { head })) ?? row;
+    setFolder(full);
+    setEntry(null);
+    setChain(null);
+    setRegion(null);
+    setHighlight([{ first: head, count: 1 }]);
+    moveHexTo(head);
+    setStandalone(null);
+    setBrowseScope({ head, name: full.name || `Lost folder ${count(head)}` });
+    if (centerNow.current !== "bytes") setCenter("browse");
+  }, [moveHexTo]);
 
   const selectChain = useCallback(async (item: IslandRow) => {
     setChain(item);
@@ -263,6 +314,17 @@ export default function App() {
     setHighlight(result.extents);
     showCluster(item.head);
   }, [showCluster]);
+
+  const previewEntry = useCallback((row: Row) => {
+    setStandalone(asBrowseRow(row));
+    setCenter("browse");
+  }, []);
+
+  const browseFolder = useCallback((row: Row) => {
+    setBrowseScope({ head: row.head ?? row.firstCluster, name: row.name || `Lost folder ${count(row.head ?? row.firstCluster)}` });
+    setStandalone(null);
+    setCenter("browse");
+  }, []);
 
   const selectRegion = useCallback((run: UnexplainedRun) => {
     setRegion(run);
@@ -390,8 +452,8 @@ export default function App() {
         floor={floor}
         revision={revision}
         selectedKey={selectedKey}
-        onEntry={selectEntry}
-        onFolder={selectFolder}
+        onEntry={openEntry}
+        onFolder={openFolder}
         onChain={selectChain}
         onRegion={selectRegion}
         basket={basketKeys}
@@ -399,22 +461,47 @@ export default function App() {
         classNames={overview.classNames}
         clusterSize={overview.geometry.clusterSize}
       />
-      {cluster === null ? (
-        <RecoveryOverview overview={overview} status={status} revision={revision} />
-      ) : (
-        <HexView
-          cluster={cluster}
-          info={info}
-          infoError={infoError}
-          clusterSize={overview.geometry.clusterSize}
-          heapOffset={overview.geometry.heapOffset}
-          lastCluster={overview.geometry.clusterCount + 2}
-          byteRange={byteRange}
-          onByteRange={setByteRange}
-          onGo={showCluster}
-          onClose={() => setCluster(null)}
-        />
-      )}
+      <div className="center-stack">
+        <div className="center-tabs">
+          <div className="segmented" role="tablist">
+            <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>Overview</button>
+            <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>Browse files</button>
+            <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>Bytes</button>
+          </div>
+        </div>
+        {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} />}
+        {center === "browse" && (
+          <BrowseView
+            floor={floor}
+            revision={revision}
+            scope={browseScope}
+            onScopeClear={() => setBrowseScope(null)}
+            standalone={standalone}
+            onStandaloneClose={() => setStandalone(null)}
+            basket={basketKeys}
+            onBasket={changeBasket}
+            onSelect={(row) => void noteEntry(row.id)}
+            onBytes={showCluster}
+          />
+        )}
+        {center === "bytes" && cluster !== null && (
+          <HexView
+            cluster={cluster}
+            info={info}
+            infoError={infoError}
+            clusterSize={overview.geometry.clusterSize}
+            heapOffset={overview.geometry.heapOffset}
+            lastCluster={overview.geometry.clusterCount + 2}
+            byteRange={byteRange}
+            onByteRange={setByteRange}
+            onGo={showCluster}
+            onClose={() => {
+              setCluster(null);
+              setCenter("overview");
+            }}
+          />
+        )}
+      </div>
       <div className="side">
         <Details
           overview={overview}
@@ -433,6 +520,8 @@ export default function App() {
           floor={floor}
           basket={basket}
           onBasket={changeBasket}
+          onPreview={previewEntry}
+          onBrowseFolder={browseFolder}
         />
         <Chat selection={selection} />
       </div>

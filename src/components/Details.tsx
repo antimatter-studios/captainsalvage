@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import {
   call,
-  readEntryBytes,
   type ActivityItem,
   type BasketItem,
   type ClusterInfo,
@@ -20,13 +19,6 @@ import {
 } from "../api";
 import { bytes, clock, count, displayPath, percent, stamp, VERDICT_LABEL } from "../format";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
-
-const PREVIEW_TYPES: Record<string, string> = {
-  mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", flac: "audio/flac", m4a: "audio/mp4",
-  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", bmp: "image/bmp", webp: "image/webp",
-  mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm",
-};
-const MAX_TEXT_PREVIEW = 64 * 1024;
 
 const OVERLAY_LABEL: Record<string, string> = {
   accept_entry: "Accept a damaged entry",
@@ -48,40 +40,16 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function EntryDetails({ row, extents, onCluster, inBasket, onCopy }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void }) {
-  const [preview, setPreview] = useState<{ type: string; url?: string; text?: string } | null>(null);
+function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void }) {
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const id = row.id as number;
-  const extension = row.name.split(".").pop()?.toLowerCase() ?? "";
 
   useEffect(() => {
-    setPreview(null);
     setReport(null);
     setError(null);
   }, [id]);
-
-  useEffect(() => () => {
-    if (preview?.url) URL.revokeObjectURL(preview.url);
-  }, [preview]);
-
-  async function loadPreview() {
-    setBusy("preview");
-    setError(null);
-    try {
-      const data = await readEntryBytes(id);
-      const type = PREVIEW_TYPES[extension];
-      if (type) {
-        setPreview({ type, url: URL.createObjectURL(new Blob([data.slice()], { type })) });
-      } else {
-        setPreview({ type: "text", text: new TextDecoder("utf-8", { fatal: false }).decode(data.subarray(0, MAX_TEXT_PREVIEW)) });
-      }
-    } catch (reason) {
-      setError(String(reason));
-    }
-    setBusy(null);
-  }
 
   async function runTest() {
     setBusy("test");
@@ -106,7 +74,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy }: { row: Row;
       {row.kind === "file" && row.length > 0 && (
         <div className="detail-actions">
           <button className="primary" onClick={onCopy}>{inBasket ? "In your basket" : "Add to basket"}</button>
-          <button onClick={loadPreview} disabled={busy !== null}>{busy === "preview" ? "Loading" : "Preview"}</button>
+          <button onClick={() => onPreview(row)}>Preview</button>
           <button onClick={runTest} disabled={busy !== null}>{busy === "test" ? "Testing" : "Test format"}</button>
         </div>
       )}
@@ -130,10 +98,6 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy }: { row: Row;
         )}
       </dl>
       {error && <p className="warn">{error}</p>}
-      {preview?.url && preview.type.startsWith("audio") && <audio controls src={preview.url} className="preview" />}
-      {preview?.url && preview.type.startsWith("image") && <img src={preview.url} alt={row.name} className="preview" />}
-      {preview?.url && preview.type.startsWith("video") && <video controls src={preview.url} className="preview" />}
-      {preview?.text !== undefined && <pre className="preview-text">{preview.text}</pre>}
       {report && (
         <div className="test-report">
           <strong>{report.report.format === "unknown" ? "No format walker for this type" : `${report.report.format.toUpperCase()} structure: ${percent(report.report.validFraction)} valid`}</strong>
@@ -189,7 +153,7 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
   );
 }
 
-function FolderDetails({ row, inBasket, onCopy }: { row: Row; inBasket: boolean; onCopy: () => void }) {
+function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket: boolean; onCopy: () => void; onBrowse: (row: Row) => void }) {
   return (
     <div className="detail">
       <h3 className="detail-name">{row.name || `Folder with no name, at cluster ${count(row.firstCluster)}`}</h3>
@@ -205,6 +169,7 @@ function FolderDetails({ row, inBasket, onCopy }: { row: Row; inBasket: boolean;
       </dl>
       <div className="detail-actions">
         <button className="primary" onClick={onCopy}>{inBasket ? "In your basket" : "Add folder to basket"}</button>
+        <button onClick={() => onBrowse(row)}>Browse files</button>
       </div>
     </div>
   );
@@ -694,10 +659,12 @@ export interface DetailsProps {
   floor: number;
   basket: BasketItem[];
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
+  onPreview: (row: Row) => void;
+  onBrowseFolder: (row: Row) => void;
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket } = props;
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onBrowseFolder } = props;
   const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
   const [tab, setTab] = useState<Tab>("selected");
   useEffect(() => {
@@ -733,6 +700,7 @@ export function Details(props: DetailsProps) {
                 extents={entry.extents}
                 onCluster={onCluster}
                 inBasket={inBasket("entry", entry.row.id)}
+                onPreview={onPreview}
                 onCopy={() => {
                   if (entry.row.id !== null) onBasket("entry", entry.row.id, true);
                   setTab("copy");
@@ -743,6 +711,7 @@ export function Details(props: DetailsProps) {
               <FolderDetails
                 row={folder}
                 inBasket={inBasket("folder", folder.head)}
+                onBrowse={onBrowseFolder}
                 onCopy={() => {
                   onBasket("folder", folder.head ?? folder.firstCluster, true);
                   setTab("copy");

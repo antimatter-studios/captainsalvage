@@ -1021,6 +1021,77 @@ impl MapDb {
     }
 
     /// Every file in a folder and the folders beneath it, with its path.
+    /// Every file worth browsing, in the smallest form that can sort and group them.
+    pub fn browse_scan(&self) -> Result<Vec<crate::browse::BrowseScanRow>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, COALESCE(o_name, name), COALESCE(o_length, length), COALESCE(confidence, 0), modified \
+             FROM sets WHERE COALESCE(o_is_dir, is_dir) = 0 AND COALESCE(o_length, length) > 0 \
+             AND COALESCE(verdict, '') != 'rename-residue'",
+        )?;
+        let found = statement
+            .query_map([], |row| {
+                Ok(crate::browse::BrowseScanRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    length: row.get::<_, i64>(2)? as u64,
+                    confidence: row.get(3)?,
+                    modified: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(found)
+    }
+
+    /// Ids of entries whose name contains this text.
+    pub fn browse_ids_named(&self, text: &str) -> Result<std::collections::HashSet<i64>> {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM sets WHERE COALESCE(o_name, name) LIKE ?1 ESCAPE '\\'")?;
+        let found = statement
+            .query_map([format!("%{escaped}%")], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(found)
+    }
+
+    /// The rows for one page of a browse list, by id.
+    pub fn browse_rows(
+        &self,
+        ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, crate::browse::BrowseRow>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT id, COALESCE(o_name, name), COALESCE(o_length, length), COALESCE(verdict, ''), \
+             COALESCE(confidence, 0), COALESCE(o_first, first_cluster), modified, in_use \
+             FROM sets WHERE id IN ({list})"
+        ))?;
+        let found = statement
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                Ok((
+                    id,
+                    crate::browse::BrowseRow {
+                        id,
+                        name: row.get(1)?,
+                        length: row.get::<_, i64>(2)? as u64,
+                        verdict: row.get(3)?,
+                        confidence: row.get(4)?,
+                        first_cluster: row.get(5)?,
+                        modified: row.get(6)?,
+                        in_use: row.get(7)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(found)
+    }
+
     pub fn files_under(&self, folder: u32) -> Result<Vec<Row>> {
         let sql = format!(
             "WITH RECURSIVE tree(head) AS ( \

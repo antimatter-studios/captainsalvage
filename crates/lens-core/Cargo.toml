@@ -14,6 +14,7 @@ path = "src/bin/lens-scan.rs"
 [dependencies]
 anyhow = "1.0.104"
 flate2 = "1.1.10"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
 rhai = { version = "1.27.0", features = ["serde", "sync"] }
 rusqlite = { version = "0.41.1", features = ["bundled"] }

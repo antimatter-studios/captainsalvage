@@ -1321,6 +1321,142 @@ fn copy_out_never_overwrites_and_a_repeat_run_skips_what_is_done() {
 }
 
 #[test]
+fn files_can_be_browsed_by_type_without_copying() {
+    let (engine, _session, dir) = engine_with_volume("browse");
+    let types = call(&engine, "browse_types", json!({}));
+    let count_of = |group: &str| {
+        types
+            .as_array()
+            .expect("types")
+            .iter()
+            .find(|item| item["group"] == group)
+            .expect("group")["files"]
+            .as_u64()
+            .expect("files")
+    };
+    assert!(count_of("photos") >= 2);
+    assert_eq!(count_of("music"), 5);
+
+    let photos = call(&engine, "browse_files", json!({"group": "photos"}));
+    let rows = photos["rows"].as_array().expect("rows");
+    assert_eq!(rows.len() as u64, photos["total"].as_u64().expect("total"));
+    assert!(rows.iter().any(|row| row["name"] == "photo.jpg"));
+    // Best first, and the leftovers of a rename are not offered as files.
+    let scores: Vec<f64> = rows
+        .iter()
+        .map(|row| row["confidence"].as_f64().expect("score"))
+        .collect();
+    assert!(scores.windows(2).all(|pair| pair[0] >= pair[1]));
+    let music = call(&engine, "browse_files", json!({"group": "music"}));
+    assert_eq!(music["rows"].as_array().expect("rows").len(), 5);
+
+    let named = call(
+        &engine,
+        "browse_files",
+        json!({"group": "photos", "text": "reused"}),
+    );
+    assert_eq!(named["rows"][0]["name"], "reused.jpg");
+    assert_eq!(named["total"], 1);
+    let picky = call(
+        &engine,
+        "browse_files",
+        json!({"group": "photos", "minConfidence": 2.0}),
+    );
+    assert_eq!(picky["total"], 0);
+    let names_in = |folder: u32| -> Vec<String> {
+        call(
+            &engine,
+            "browse_files",
+            json!({"group": "music", "folder": folder}),
+        )["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["name"].as_str().expect("name").to_string())
+            .collect()
+    };
+    let in_lost_folder = names_in(20);
+    assert!(in_lost_folder.iter().any(|name| name == "track.mp3"));
+    assert!(!in_lost_folder.iter().any(|name| name == "keep.mp3"));
+    assert_eq!(names_in(5), ["keep.mp3"]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_preview_reads_any_range_of_a_file_from_its_clusters() {
+    let (engine, session, dir) = engine_with_volume("range");
+    let id = call(&engine, "search", json!({"query": "track.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    let whole = session.read_entry(id, u64::MAX).expect("read").1;
+    assert!(whole.len() > 2);
+
+    let (total, name) = session.entry_total(id).expect("total");
+    assert_eq!(total, whole.len() as u64);
+    assert_eq!(name, "track.mp3");
+    let middle = whole.len() as u64 / 2;
+    for (start, length) in [(0, 1), (1, 7), (middle - 1, 3), (0, total), (total - 1, 50)] {
+        let part = session.read_entry_range(id, start, length).expect("range");
+        let end = (start + length).min(total) as usize;
+        assert_eq!(part.data, whole[start as usize..end], "{start}+{length}");
+        assert_eq!(part.total, total);
+    }
+    assert!(session
+        .read_entry_range(id, total, 10)
+        .expect("range")
+        .data
+        .is_empty());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn byte_ranges_are_read_the_way_players_send_them() {
+    use lens_core::browse::parse_range;
+    assert_eq!(parse_range("bytes=0-1", 100), Some((0, 2)));
+    assert_eq!(parse_range("bytes=10-", 100), Some((10, 90)));
+    assert_eq!(parse_range("bytes=-20", 100), Some((80, 20)));
+    assert_eq!(parse_range("bytes=90-500", 100), Some((90, 10)));
+    assert_eq!(parse_range("bytes=100-", 100), None);
+    assert_eq!(parse_range("bytes=5-2", 100), None);
+    assert_eq!(parse_range("bytes=0-1", 0), None);
+    assert_eq!(parse_range("items=0-1", 100), None);
+}
+
+#[test]
+fn thumbnails_are_decoded_from_real_bytes_and_damage_fails_plainly() {
+    use lens_core::browse::{make_thumbnail, Thumb};
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(600, 300, image::Rgb([200, 40, 40]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("encode");
+    let small = make_thumbnail(&png).expect("thumbnail");
+    assert_eq!(&small[..2], &[0xff, 0xd8], "a JPEG");
+    let decoded = image::load_from_memory(&small).expect("decode");
+    assert_eq!((decoded.width(), decoded.height()), (256, 128));
+
+    assert!(make_thumbnail(b"this is not an image").is_err());
+    assert!(make_thumbnail(&png[..png.len() / 2]).is_err());
+
+    // The test volume's photo holds noise, not an image. It says so, and it stays known.
+    let (engine, session, dir) = engine_with_volume("thumbs");
+    let id = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    assert!(matches!(
+        session.entry_thumbnail(id).expect("thumb"),
+        Thumb::Failed(_)
+    ));
+    assert!(matches!(
+        session.entry_thumbnail(id).expect("thumb"),
+        Thumb::Failed(_)
+    ));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_resumed_copy_only_needs_space_for_what_is_not_there_yet() {
     let (engine, session, dir) = engine_with_volume("resume-space");
     let destination = copy_destination("resume-space");

@@ -181,6 +181,7 @@ pub struct Session {
     scan_error: Arc<Mutex<Option<String>>>,
     rate: Mutex<RateSample>,
     pub(crate) copy: CopyControl,
+    pub(crate) browse: Mutex<crate::browse::BrowseCache>,
 }
 
 /// `/dev/rdisk12s2` becomes `/dev/rdisk12`. Anything else has no whole-disk parent.
@@ -322,6 +323,7 @@ impl Session {
                 bytes_per_second: 0.0,
             }),
             copy: CopyControl::default(),
+            browse: Mutex::default(),
         }))
     }
 
