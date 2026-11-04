@@ -176,4 +176,4 @@ Bugs, ideas and progress are all in the
 
 ## License
 
-All rights reserved, for now. No license has been chosen yet.
+MIT. See [LICENSE](LICENSE).
