@@ -326,3 +326,44 @@ export async function readRaw(offset: number, length: number): Promise<Uint8Arra
 export async function readEntryBytes(id: number): Promise<Uint8Array> {
   return new Uint8Array(await invoke<ArrayBuffer>("read_entry_bytes", { id }));
 }
+
+export type BrowseGroup = "photos" | "videos" | "music" | "documents" | "archives" | "other";
+export type BrowseSort = "best" | "largest" | "newest";
+
+export interface TypeTotal {
+  group: BrowseGroup;
+  label: string;
+  files: number;
+  bytes: number;
+  likelyGoodFiles: number;
+  likelyGoodBytes: number;
+}
+
+export interface BrowseRow {
+  id: number;
+  name: string;
+  length: number;
+  verdict: string;
+  confidence: number;
+  firstCluster: number;
+  modified: string | null;
+  inUse: boolean;
+}
+
+export interface BrowsePage {
+  rows: BrowseRow[];
+  total: number;
+}
+
+/** Read live from the disk as the window needs it. Nothing is copied. */
+export function entryUrl(id: number): string {
+  return `lens://localhost/entry/${id}`;
+}
+
+export function thumbUrl(id: number, attempt = 0): string {
+  return `lens://localhost/thumb/${id}${attempt > 0 ? `?try=${attempt}` : ""}`;
+}
+
+export async function readEntryRange(id: number, start: number, length: number): Promise<Uint8Array> {
+  return new Uint8Array(await invoke<ArrayBuffer>("read_entry_range", { id, start, length }));
+}

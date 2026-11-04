@@ -1,6 +1,7 @@
 //! The single entry point for every action, from the app or from MCP.
 
 use crate::basket::BasketOptions;
+use crate::browse::BrowseQuery;
 use crate::content::GROUP_NAMES;
 use crate::exfat::find_sets;
 use crate::export::{list_volumes, CopyRequest};
@@ -35,6 +36,8 @@ const QUIET_TOOLS: &[&str] = &[
     "activity",
     "list_overlays",
     "copy_status",
+    "browse_types",
+    "browse_files",
 ];
 const DEFAULT_REGION_SAMPLES: usize = 64;
 const DEFAULT_MIN_RUN_CLUSTERS: u64 = 64;
@@ -343,6 +346,37 @@ impl Engine {
                 Ok(serde_json::to_value(session.with_database(
                     |database| database.search(query, limit, floor),
                 )?)?)
+            }
+            "browse_types" => {
+                let folder = u64_of(args, "folder").map(|head| head as u32);
+                let floor = f64_of(args, "minConfidence", 0.0);
+                Ok(serde_json::to_value(session.browse_types(folder, floor)?)?)
+            }
+            "browse_files" => {
+                let query = BrowseQuery {
+                    group: args
+                        .get("group")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    folder: u64_of(args, "folder").map(|head| head as u32),
+                    min_confidence: f64_of(args, "minConfidence", 0.0),
+                    sort: args
+                        .get("sort")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    text: args
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                };
+                let offset = u64_of(args, "offset").unwrap_or(0);
+                let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
+                Ok(serde_json::to_value(
+                    session.browse_files(&query, offset, limit)?,
+                )?)
             }
             "owners" => {
                 let cluster = need_u32(args, "cluster")?;

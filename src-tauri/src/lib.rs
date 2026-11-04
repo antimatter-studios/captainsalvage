@@ -2,6 +2,7 @@
 
 mod capture;
 mod chat;
+mod preview;
 
 use chat::ChatState;
 use lens_core::engine::{Engine, AUTHOR_USER};
@@ -17,8 +18,12 @@ use tauri::{Emitter, Manager, State};
 const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
 const LAST_DEVICE_FILE: &str = "last-device";
 
+/// Longest piece of a file the window reads at once as text.
+const MAX_TEXT_READ_BYTES: u64 = 1024 * 1024;
+
 struct AppState {
     engine: Arc<Engine>,
+    thumbs: preview::ThumbQueue,
     mcp: Option<McpInfo>,
     mcp_error: Option<String>,
 }
@@ -105,6 +110,24 @@ async fn read_entry_bytes(state: State<'_, AppState>, id: i64) -> Result<Respons
     Ok(Response::new(bytes))
 }
 
+#[tauri::command]
+async fn read_entry_range(
+    state: State<'_, AppState>,
+    id: i64,
+    start: u64,
+    length: u64,
+) -> Result<Response, String> {
+    let engine = state.engine.clone();
+    let part = blocking(move || {
+        Ok(engine
+            .session()?
+            .read_entry_range(id, start, length.min(MAX_TEXT_READ_BYTES))?
+            .data)
+    })
+    .await?;
+    Ok(Response::new(part))
+}
+
 /// Connection details the window shows so other MCP clients can connect.
 #[tauri::command]
 fn mcp_info(state: State<'_, AppState>) -> Value {
@@ -146,6 +169,23 @@ fn chat_reset(chat: State<'_, ChatState>) {
 pub fn run() {
     tauri::Builder::default()
         .manage(ChatState::default())
+        .register_asynchronous_uri_scheme_protocol("lens", |context, request, responder| {
+            let app = context.app_handle();
+            match app.try_state::<AppState>() {
+                Some(state) => preview::handle(
+                    state.engine.clone(),
+                    state.thumbs.clone(),
+                    request,
+                    responder,
+                ),
+                None => responder.respond(
+                    tauri::http::Response::builder()
+                        .status(tauri::http::StatusCode::SERVICE_UNAVAILABLE)
+                        .body(Vec::new())
+                        .unwrap_or_default(),
+                ),
+            }
+        })
         .setup(|app| {
             let engine = Engine::new();
             let handle = app.handle().clone();
@@ -189,6 +229,7 @@ pub fn run() {
                 }
             });
             app.manage(AppState {
+                thumbs: preview::ThumbQueue::start(engine.clone()),
                 engine,
                 mcp: info,
                 mcp_error: error,
@@ -200,6 +241,7 @@ pub fn run() {
             map_layer,
             read_raw,
             read_entry_bytes,
+            read_entry_range,
             mcp_info,
             last_device,
             chat_send,
