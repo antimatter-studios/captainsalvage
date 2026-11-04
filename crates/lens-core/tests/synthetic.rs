@@ -1630,3 +1630,198 @@ fn a_salvage_drive_is_remembered_used_by_default_and_only_the_person_can_set_it(
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(destination);
 }
+
+#[test]
+fn the_basket_keeps_its_order_copies_in_it_and_removes_overlaps() {
+    let (engine, session, dir) = engine_with_volume("basket");
+    let destination = copy_destination("basket");
+    let song = call(&engine, "search", json!({"query": "song.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    let photo = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+
+    call(
+        &engine,
+        "basket_add",
+        json!({"kind": "entry", "target": photo}),
+    );
+    call(
+        &engine,
+        "basket_add",
+        json!({"kind": "entry", "target": song}),
+    );
+    // Its song is also inside this folder, so it must only be copied once.
+    let items = call(
+        &engine,
+        "basket_add",
+        json!({"kind": "folder", "target": 21}),
+    );
+    assert_eq!(items.as_array().expect("items").len(), 3);
+    call(
+        &engine,
+        "basket_add",
+        json!({"kind": "folder", "target": 21}),
+    );
+    assert_eq!(
+        call(&engine, "basket_list", json!({}))
+            .as_array()
+            .expect("items")
+            .len(),
+        3,
+        "adding twice changes nothing"
+    );
+    assert!(engine
+        .call(
+            "basket_add",
+            &json!({"kind": "entry", "target": 999_999}),
+            AUTHOR_CLAUDE
+        )
+        .is_err());
+    assert!(engine
+        .call(
+            "basket_add",
+            &json!({"kind": "disk", "target": 1}),
+            AUTHOR_CLAUDE
+        )
+        .is_err());
+
+    // Reorder, and confirm the order survives a new database connection.
+    let last_id = items[2]["id"].as_i64().expect("id");
+    let moved = call(
+        &engine,
+        "basket_move",
+        json!({"id": last_id, "position": 0}),
+    );
+    assert_eq!(moved[0]["kind"], "folder");
+    assert_eq!(moved[1]["name"], "photo.jpg");
+    assert_eq!(moved[2]["name"], "song.mp3");
+    let reopened = MapDb::open(&session.workspace.database()).expect("database");
+    assert_eq!(reopened.basket_items().expect("items")[0].kind, "folder");
+
+    let plan = call(&engine, "basket_plan", json!({"destination": destination}));
+    assert_eq!(plan["files"], 2, "overlaps count once: {plan}");
+
+    // Only the person can start it, and an AI may fill it.
+    assert!(engine
+        .call(
+            "basket_start",
+            &json!({"destination": destination}),
+            AUTHOR_CLAUDE
+        )
+        .is_err());
+    assert!(!tool_definitions()
+        .iter()
+        .any(|tool| tool["name"] == "basket_start"));
+    engine
+        .call("basket_start", &json!({"destination": destination}), "you")
+        .expect("start");
+    loop {
+        let status = session.copy_status().expect("status");
+        if status.state != "running" {
+            assert_eq!(status.state, "finished", "{status:?}");
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let rows = manifest_rows(&destination);
+    assert_eq!(rows.len(), 2, "each file is copied once");
+    assert_eq!(
+        rows[0]["name"], "song.mp3",
+        "the folder at the top of the basket went first"
+    );
+    assert_eq!(rows[1]["name"], "photo.jpg");
+
+    call(&engine, "basket_remove", json!({"id": last_id}));
+    assert_eq!(
+        call(&engine, "basket_list", json!({}))
+            .as_array()
+            .expect("items")
+            .len(),
+        2
+    );
+    call(&engine, "basket_clear", json!({}));
+    assert!(call(&engine, "basket_list", json!({}))
+        .as_array()
+        .expect("items")
+        .is_empty());
+    assert!(
+        engine
+            .call("basket_start", &json!({"destination": destination}), "you")
+            .is_err(),
+        "an empty basket has nothing to start"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(destination);
+}
+
+#[test]
+fn another_process_can_see_a_copy_and_ask_it_to_stop() {
+    let (engine, session, dir) = engine_with_volume("processes");
+    let destination = copy_destination("processes");
+    // A second session on the same workspace stands in for the app's window.
+    let window = Session::with_source(
+        Path::new("/test/image"),
+        Arc::new(MemorySource::new(build_volume())),
+        Workspace::at(&dir).expect("workspace"),
+    )
+    .expect("second session");
+    assert_eq!(window.copy_status().expect("status").state, "");
+
+    let status = copy_and_wait(
+        &engine,
+        &session,
+        json!({"destination": destination, "folders": [20]}),
+    );
+    assert_eq!(status.state, "finished");
+    let seen = window.copy_status().expect("status");
+    assert_eq!(
+        seen.state, "finished",
+        "the window sees a copy it did not start"
+    );
+    assert_eq!(seen.files_done, status.files_done);
+    assert_eq!(
+        seen.bytes_done, status.bytes_total,
+        "progress adds up to the total: {seen:?}"
+    );
+
+    // A stop request from the window is noticed by the copying process.
+    window.copy_stop();
+    let stored = session
+        .with_database(|database| database.state("copy_stop_requested"))
+        .expect("state");
+    assert_eq!(stored.as_deref(), Some("1"));
+    let second = copy_destination("processes-2");
+    let next = copy_and_wait(
+        &engine,
+        &session,
+        json!({"destination": second, "folders": [21]}),
+    );
+    assert_eq!(
+        next.state, "finished",
+        "starting a new copy clears an old stop request"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(destination);
+    let _ = std::fs::remove_dir_all(second);
+}
+
+#[test]
+fn a_recorded_copy_that_stopped_reporting_is_not_shown_as_running() {
+    let (_engine, session, dir) = engine_with_volume("stale");
+    let old = lens_core::export::CopyStatus {
+        state: "running".into(),
+        updated_at_millis: 1000,
+        ..Default::default()
+    };
+    session
+        .with_database(|database| {
+            database.set_state("copy_status", &serde_json::to_string(&old).expect("json"))
+        })
+        .expect("state");
+    assert_eq!(session.copy_status().expect("status").state, "stopped");
+    let _ = std::fs::remove_dir_all(dir);
+}

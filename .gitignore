@@ -12,3 +12,4 @@ src-tauri/icons/ios/
 # Never commit these, and never copy them into tests, docs or issues.
 diag-baseline/
 docs/findings.md
+target-dev/

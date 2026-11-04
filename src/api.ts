@@ -90,6 +90,21 @@ export interface CopyPlan {
   byVerdict: Record<string, number>;
 }
 
+export interface BasketItem {
+  id: number;
+  kind: "entry" | "folder";
+  target: number;
+  position: number;
+  name: string;
+  path: string | null;
+  files: number;
+  bytes: number;
+  likelyGoodBytes: number;
+  verdict: string;
+  confidence: number;
+  missing: boolean;
+}
+
 export interface VolumeChoice {
   path: string;
   device: string;

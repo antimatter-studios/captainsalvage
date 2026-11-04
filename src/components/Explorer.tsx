@@ -11,11 +11,28 @@ interface RowProps {
   selectedKey: string | null;
   onEntry: (row: Row) => void;
   onFolder: (row: Row) => void;
+  basket: Set<string>;
+  onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
 }
 
-function FileRow({ row, selected, onSelect, showPath }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean }) {
-  const verdict = VERDICT_LABEL[row.verdict] ?? row.verdict;
+function BasketCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange: (add: boolean) => void }) {
   return (
+    <input
+      className="basket-check"
+      type="checkbox"
+      checked={checked}
+      aria-label={label}
+      title={checked ? "In the recovery basket" : "Add to the recovery basket"}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  );
+}
+
+function FileRow({ row, selected, onSelect, showPath, basket, onBasket }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
+  const verdict = VERDICT_LABEL[row.verdict] ?? row.verdict;
+  const id = row.id as number;
+  return (
+    <div className="row-wrap">
     <button className={selected ? "row row-selected" : "row"} onClick={onSelect} title={row.reason}>
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
@@ -25,6 +42,10 @@ function FileRow({ row, selected, onSelect, showPath }: { row: Row; selected: bo
       <span className="row-size">{row.kind === "file" ? bytes(row.length) : ""}</span>
       <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={`${verdict}, confidence ${percent(row.confidence)}`} />
     </button>
+    {row.kind === "file" && row.length > 0 && (
+      <BasketCheck checked={basket.has(`entry:${id}`)} label={`Add ${row.name} to the recovery basket`} onChange={(add) => onBasket("entry", id, add)} />
+    )}
+    </div>
   );
 }
 
@@ -51,10 +72,11 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
     };
   }, [open, head, loaded, props.floor, props.revision]);
 
-  const name = row.name || (row.nodeKind === "root" ? "Volume root" : `Lost folder, cluster ${count(head)}`);
+  const name = row.name || (row.nodeKind === "root" ? "Volume root" : `Lost folder ${count(head)}`);
   const key = `folder:${head}`;
   return (
     <>
+      <div className="row-wrap">
       <button
         className={props.selectedKey === key ? "row row-selected" : "row"}
         style={{ paddingLeft: 6 + depth * 14 }}
@@ -76,6 +98,10 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
           <ConfidenceRing value={row.linkConfidence} tone="tone-serious" label={`Link to its parent folder: confidence ${percent(row.linkConfidence)}`} />
         ) : null}
       </button>
+      {row.nodeKind !== "root" && (
+        <BasketCheck checked={props.basket.has(`folder:${head}`)} label={`Add ${name} to the recovery basket`} onChange={(add) => props.onBasket("folder", head, add)} />
+      )}
+      </div>
       {open && error && <div className="empty" style={{ paddingLeft: 20 + depth * 14 }}>{error}</div>}
       {open &&
         children?.rows.map((child) =>
@@ -83,7 +109,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
             <FolderRow key={`f${child.head}`} row={child} depth={depth + 1} props={props} />
           ) : (
             <div key={`e${child.id}`} style={{ paddingLeft: depth * 14 + 17 }}>
-              <FileRow row={child} selected={props.selectedKey === `entry:${child.id}`} onSelect={() => props.onEntry(child)} />
+              <FileRow row={child} selected={props.selectedKey === `entry:${child.id}`} onSelect={() => props.onEntry(child)} basket={props.basket} onBasket={props.onBasket} />
             </div>
           ),
         )}
@@ -162,7 +188,7 @@ function Nameless({ onChain, selectedKey, revision, classNames, clusterSize }: {
   );
 }
 
-function Broken({ onEntry, selectedKey, revision }: { onEntry: (row: Row) => void; selectedKey: string | null; revision: number }) {
+function Broken({ onEntry, selectedKey, revision, basket, onBasket }: { onEntry: (row: Row) => void; selectedKey: string | null; revision: number; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   useEffect(() => {
     let current = true;
@@ -176,7 +202,7 @@ function Broken({ onEntry, selectedKey, revision }: { onEntry: (row: Row) => voi
       <p className="hint">Files whose FAT chain ends before their length says it should. Most missing data first.</p>
       {rows && rows.length === 0 && <div className="empty">No broken chains found so far.</div>}
       {rows?.map((row) => (
-        <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} />
+        <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} basket={basket} onBasket={onBasket} />
       ))}
     </>
   );
@@ -213,7 +239,7 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   );
 }
 
-function SearchResults({ page, onEntry, onFolder, selectedKey }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null }) {
+function SearchResults({ page, onEntry, onFolder, selectedKey, basket, onBasket }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
   if (page.rows.length === 0) return <div className="empty">No names match. The scan may not have reached them yet.</div>;
   return (
     <>
@@ -227,7 +253,7 @@ function SearchResults({ page, onEntry, onFolder, selectedKey }: { page: Page; o
             </span>
           </button>
         ) : (
-          <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} />
+          <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} basket={basket} onBasket={onBasket} />
         ),
       )}
     </>
@@ -282,12 +308,12 @@ export function Explorer(props: ExplorerProps) {
       )}
       <div className="panel-body">
         {results ? (
-          <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} />
+          <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} basket={props.basket} onBasket={props.onBasket} />
         ) : (
           <>
             {tab === "folders" && <Folders {...props} />}
             {tab === "nameless" && <Nameless onChain={props.onChain} selectedKey={props.selectedKey} revision={props.revision} classNames={props.classNames} clusterSize={props.clusterSize} />}
-            {tab === "broken" && <Broken onEntry={props.onEntry} selectedKey={props.selectedKey} revision={props.revision} />}
+            {tab === "broken" && <Broken onEntry={props.onEntry} selectedKey={props.selectedKey} revision={props.revision} basket={props.basket} onBasket={props.onBasket} />}
             {tab === "unexplained" && <Unexplained onRegion={props.onRegion} selectedKey={props.selectedKey} revision={props.revision} />}
           </>
         )}

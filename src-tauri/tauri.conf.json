@@ -29,7 +29,8 @@
             "sidebar"
           ],
           "state": "followsWindowActiveState"
-        }
+        },
+        "dragDropEnabled": false
       }
     ],
     "security": {
