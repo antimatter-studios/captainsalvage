@@ -1,0 +1,5 @@
+# Declarations read by github-guard. Read as data, never executed.
+[paths]
+	# Evidence from a real disk: never commit these, even with `git add -f`.
+	private = diag-baseline
+	private = docs/findings.md
