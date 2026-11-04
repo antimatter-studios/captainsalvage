@@ -11,6 +11,51 @@ finds, and helps you get your files back, without ever writing to the disk.
 > on one real damaged volume plus synthetic test volumes. It is not released yet.
 > The code and app window still use the working name, exFAT Lens.
 
+## Development so far
+
+Each version gets new screenshots, taken from the real damaged test disk. File names
+on that disk are private, so they are blurred.
+
+### Latest
+
+The overview says what has been found, and the map shows what explains every part of
+the disk. Blue is claimed by a named file, orange is a FAT chain with no name yet, and
+grey is not explained yet.
+
+![Recovery overview, with a large figure for data found by name above a breakdown of the disk](media/v3/overview.png)
+
+Pick any file to read its bytes, see why it got its score, and copy it out. This film's
+header shows a healthy AVI file, in 3,032 pieces with none missing.
+
+![A lost film selected, with its hex dump and confidence details](media/v3/file-and-bytes.png)
+
+Select anything and ask Claude, who checks with the same tools the app uses.
+
+![Claude answering a question about the selected cluster in the chat sidebar](media/v3/ask-claude.png)
+
+Copy out checks the destination, and refuses the disk being recovered.
+
+![The Copy out tab, with its destination, salvage drive and confidence floor](media/v3/copy-out.png)
+
+The Unexplained list zooms the map to free space nothing accounts for yet.
+
+![An unexplained region selected, zoomed on the map, with its bytes showing an MP4 header](media/v3/unexplained-region.png)
+
+It follows your Mac's dark mode too.
+
+![The recovery overview in dark mode](media/v3/overview-dark.png)
+
+### Earlier versions
+
+The first version looked like this. It worked, but the map hid the 32 GB in use,
+because each column showed only its largest category.
+
+![The first version, with a mostly blue map and plain grey panels](media/v1/first-version.png)
+
+Next, each map column became a stack showing its real mix, so small things stay visible.
+
+![The second version, whose map shows a dark band of in-use data among the blue](media/v2/proportional-map.png)
+
 ## What makes it different
 
 Most tools give a yes or no. A checksum fails, so the file is gone. Captain Salvage
@@ -99,6 +144,15 @@ A scan reads the whole partition once, and can stop and resume at any time.
 ```sh
 cargo test -p lens-core
 ```
+
+### Screenshots
+
+```sh
+scripts/take-screenshots.py media/v4
+```
+
+This drives a second copy of the app off screen, with file names blurred. Look at every
+image before committing it, because bytes and chat answers can still hold names.
 
 ## Using it from an MCP client
 
