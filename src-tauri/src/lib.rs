@@ -18,6 +18,8 @@ use tauri::{Emitter, Manager, State};
 /// Longest stream the window may load to preview a file.
 const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
 const LAST_DEVICE_FILE: &str = "last-device";
+const THEME_FILE: &str = "theme";
+const THEME_SYSTEM: &str = "system";
 
 /// Longest piece of a file the window reads at once as text.
 const MAX_TEXT_READ_BYTES: u64 = 1024 * 1024;
@@ -148,6 +150,36 @@ fn last_device() -> Option<String> {
     Some(text.trim().to_string()).filter(|path| !path.is_empty())
 }
 
+/// `None` follows macOS. The window's appearance drives the sidebar's translucency, the
+/// page's colours and native controls together, so they can never disagree.
+fn window_theme(name: &str) -> Option<tauri::Theme> {
+    match name {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+fn get_theme() -> String {
+    config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join(THEME_FILE)).ok())
+        .map(|text| text.trim().to_string())
+        .filter(|name| window_theme(name).is_some())
+        .unwrap_or_else(|| THEME_SYSTEM.to_string())
+}
+
+#[tauri::command]
+fn set_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_theme(window_theme(&theme)).map_err(text_error)?;
+    }
+    if let Some(dir) = config_dir() {
+        std::fs::write(dir.join(THEME_FILE), &theme).map_err(text_error)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn chat_send(
     app: tauri::AppHandle,
@@ -226,6 +258,12 @@ pub fn run() {
                     }
                 }
             }
+            if let Some(window) = app.get_webview_window("main") {
+                let saved = window_theme(&get_theme());
+                if saved.is_some() && std::env::var_os("LENS_TEST_DARK").is_none() {
+                    let _ = window.set_theme(saved);
+                }
+            }
             let capture_handle = app.handle().clone();
             engine.set_screenshot_hook(Arc::new(move || capture::capture_window(&capture_handle)));
 
@@ -258,6 +296,8 @@ pub fn run() {
             media_info,
             mcp_info,
             last_device,
+            get_theme,
+            set_theme,
             chat_send,
             chat_cancel,
             chat_reset,

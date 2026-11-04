@@ -25,7 +25,7 @@ from pathlib import Path
 CONFIG = Path.home() / "Library/Application Support/exfat-lens"
 BINARY = Path(os.environ.get(
     "LENS_BINARY",
-    Path(__file__).resolve().parent.parent / "target/release/bundle/macos/exFAT Lens.app/Contents/MacOS/exfat-lens",
+    Path(__file__).resolve().parent.parent / "target/release/bundle/macos/Captain Salvage.app/Contents/MacOS/exfat-lens",
 ))
 OUTPUT_WIDTH = "1600"
 HIDE_NAMES = """
