@@ -18,6 +18,7 @@ import {
   type VolumeChoice,
 } from "../api";
 import { bytes, clock, count, displayPath, percent, stamp, VERDICT_LABEL } from "../format";
+import { InlinePreview } from "./BrowseView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
 
 const OVERLAY_LABEL: Record<string, string> = {
@@ -40,7 +41,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void }) {
+function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, previewElsewhere }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean }) {
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +67,16 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview }: 
     <div className="detail">
       <h3 className="detail-name">{row.name}</h3>
       {row.path !== null && <div className="muted detail-path">{displayPath(row.path)}</div>}
+      {row.kind === "file" && !previewElsewhere && (
+        <InlinePreview
+          key={id}
+          id={id}
+          name={row.name}
+          length={row.length}
+          complete={row.clustersFound >= row.clustersNeeded}
+          onOpen={() => onPreview(row)}
+        />
+      )}
       <div className="verdict-line">
         <span className={`verdict-chip ${verdictTone(row.verdict)}`}>{VERDICT_LABEL[row.verdict] ?? row.verdict}</span>
         <span className="confidence-text">Confidence {percent(row.confidence)}</span>
@@ -74,7 +85,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview }: 
       {row.kind === "file" && row.length > 0 && (
         <div className="detail-actions">
           <button className="primary" onClick={onCopy}>{inBasket ? "In your basket" : "Add to basket"}</button>
-          <button onClick={() => onPreview(row)}>Preview</button>
+          <button onClick={() => onPreview(row)}>Open large</button>
           <button onClick={runTest} disabled={busy !== null}>{busy === "test" ? "Testing" : "Test format"}</button>
         </div>
       )}
@@ -661,10 +672,11 @@ export interface DetailsProps {
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
   onPreview: (row: Row) => void;
   onBrowseFolder: (row: Row) => void;
+  previewInCenter: number | null;
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onBrowseFolder } = props;
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onBrowseFolder, previewInCenter } = props;
   const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
   const [tab, setTab] = useState<Tab>("selected");
   useEffect(() => {
@@ -701,6 +713,7 @@ export function Details(props: DetailsProps) {
                 onCluster={onCluster}
                 inBasket={inBasket("entry", entry.row.id)}
                 onPreview={onPreview}
+                previewElsewhere={previewInCenter === entry.row.id}
                 onCopy={() => {
                   if (entry.row.id !== null) onBasket("entry", entry.row.id, true);
                   setTab("copy");

@@ -128,7 +128,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .app {
   height: 100%;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) clamp(350px, 26vw, 460px);
+  grid-template-columns: 300px minmax(640px, 1.1fr) minmax(420px, 1fr);
   grid-template-rows: 52px auto minmax(0, 1fr);
   grid-template-areas: "side top top" "side map map" "side center inspector";
 }
@@ -406,7 +406,16 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .preview-foot { flex: none; padding: 5px 12px; font-size: 11.5px; border-top: 0.5px solid var(--line); }
 
 /* Inspector */
-.side { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.25fr) minmax(0, 1fr); min-height: 0; min-width: 0; background: var(--window); }
+.inline-preview { display: block; width: 100%; margin: 10px 0 4px; border-radius: 8px; }
+.inline-waiting { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.inline-image { padding: 0; background: var(--hover); box-shadow: none; overflow: hidden; }
+.inline-image:hover:not(:disabled) { filter: none; }
+.inline-image img { display: block; width: 100%; max-height: 380px; object-fit: contain; }
+video.inline-preview { max-height: 380px; background: #000; }
+.inline-frame { height: 380px; border: 0; background: var(--hover); }
+.inline-text { max-height: 260px; overflow: auto; padding: 9px 10px; font: 400 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--line); user-select: text; -webkit-user-select: text; }
+.inline-note { margin: 10px 0 4px; font-size: 12px; }
+.side { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.7fr) minmax(0, 1fr); min-height: 0; min-width: 0; background: var(--window); }
 .details { display: flex; flex-direction: column; min-height: 0; border-bottom: 0.5px solid var(--line-strong); }
 .inspector-tabs { display: flex; gap: 1px; padding: 7px 10px 6px; }
 .inspector-tabs button { position: relative; flex: 1; background: none; box-shadow: none; padding: 4px 0; border-radius: 6px; color: var(--muted); display: flex; justify-content: center; }
