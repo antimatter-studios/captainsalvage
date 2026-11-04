@@ -291,6 +291,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .row-selected .row-path, .row-selected .row-size, .row-selected .row-icon, .row-selected .disclosure { color: color-mix(in srgb, var(--on-accent) 78%, transparent); }
 .row-selected .ring { color: var(--on-accent); }
 .row-selected .ring-track { stroke: color-mix(in srgb, var(--on-accent) 30%, transparent); }
+.explorer-rows:focus, .explorer-rows:focus-visible { outline: none; }
+.row-cursor { box-shadow: inset 0 0 0 2px var(--accent); }
 .row-wrap { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .row-wrap .row { flex: 1; min-width: 0; }
 .basket-check { flex: none; margin: 0 4px 0 0; opacity: 0; width: 14px; height: 14px; }
