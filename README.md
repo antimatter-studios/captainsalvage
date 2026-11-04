@@ -110,7 +110,7 @@ scripts.
 ## Distribution
 
 The aim is the Mac App Store, but **the current design cannot ship there**. See
-[#1](https://github.com/antimatter-studios/captain-salvage/issues/1). In short, store apps
+[#1](https://github.com/antimatter-studios/captainsalvage/issues/1). In short, store apps
 must be sandboxed and cannot ask for root, and this app reads raw devices, runs the `claude`
 command and uses a private window API. A build signed and notarized for direct download
 does not have these limits.
@@ -118,7 +118,7 @@ does not have these limits.
 ## Roadmap
 
 Bugs, ideas and progress are all in the
-[issue tracker](https://github.com/antimatter-studios/captain-salvage/issues).
+[issue tracker](https://github.com/antimatter-studios/captainsalvage/issues).
 
 ## License
 
