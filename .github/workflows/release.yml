@@ -1,0 +1,103 @@
+name: release
+
+# Pushing a version tag builds, tests and publishes that version. Its notes list only
+# the pull requests merged since the previous tag. Running this by hand is a dry run:
+# everything except publishing, with the app kept as an artifact for a week.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+# Every job reads, and one job writes. The writing job checks nothing out and runs
+# nothing from the repository. Actions are pinned to commits, because a tag can move.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build and test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: check the tag
+        if: github.event_name == 'push'
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "$GITHUB_REF_NAME is not on main" >&2
+            exit 1
+          }
+          python3 scripts/release.py check "$GITHUB_REF_NAME"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
+        with:
+          toolchain: 1.95.0
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: install ffmpeg, so its tests run instead of being skipped
+        run: brew install ffmpeg
+      - name: test the release tool
+        run: python3 scripts/test_release.py
+      - name: formatting
+        run: cargo fmt --all --check
+      - name: type check and build the window
+        run: npm run build
+      - name: lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test -p lens-core --locked
+      - name: build the app
+        run: npx tauri build --bundles app
+      - name: package it
+        run: |
+          label="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_EVENT_NAME" = push ] || label="dry-run"
+          name="Captain-Salvage-$label-macos-arm64.zip"
+          mkdir out
+          ditto -c -k --keepParent "target/release/bundle/macos/Captain Salvage.app" "out/$name"
+          (cd out && shasum -a 256 "$name" > "$name.sha256")
+      - name: write the release notes
+        run: |
+          python3 scripts/release.py notes --to "$GITHUB_SHA" > release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+          cp release-notes.md out/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: out/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: out
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "Captain Salvage ${GITHUB_REF_NAME#v}" \
+            --notes-file out/release-notes.md \
+            out/*.zip out/*.sha256
