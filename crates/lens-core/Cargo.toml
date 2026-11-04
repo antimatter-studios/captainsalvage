@@ -1,0 +1,22 @@
+[package]
+name = "lens-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "lens-scan"
+path = "src/bin/lens-scan.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+flate2 = "1.1.10"
+libc = "0.2.191"
+rhai = { version = "1.27.0", features = ["serde", "sync"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tiny_http = "0.12.0"
