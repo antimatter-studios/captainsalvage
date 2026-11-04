@@ -1,5 +1,6 @@
 //! The single entry point for every action, from the app or from MCP.
 
+use crate::basket::BasketOptions;
 use crate::content::GROUP_NAMES;
 use crate::exfat::find_sets;
 use crate::export::{list_volumes, CopyRequest};
@@ -502,6 +503,46 @@ impl Engine {
                 Ok(json!({"stopRequested": true}))
             }
             "copy_status" => Ok(serde_json::to_value(session.copy_status()?)?),
+            "basket_list" => Ok(serde_json::to_value(session.basket_items()?)?),
+            "basket_add" => {
+                let kind = need_str(args, "kind")?;
+                let target = need_i64(args, "target")?;
+                session.with_database(|database| database.basket_add(kind, target))?;
+                self.emit("basket-changed", json!({}));
+                Ok(serde_json::to_value(session.basket_items()?)?)
+            }
+            "basket_remove" => {
+                let id = need_i64(args, "id")?;
+                session.with_database(|database| database.basket_remove(id))?;
+                self.emit("basket-changed", json!({}));
+                Ok(serde_json::to_value(session.basket_items()?)?)
+            }
+            "basket_move" => {
+                let id = need_i64(args, "id")?;
+                let position = need_u64(args, "position")? as usize;
+                session.basket_move(id, position)?;
+                self.emit("basket-changed", json!({}));
+                Ok(serde_json::to_value(session.basket_items()?)?)
+            }
+            "basket_clear" => {
+                session.with_database(|database| database.basket_clear())?;
+                self.emit("basket-changed", json!({}));
+                Ok(json!({"cleared": true}))
+            }
+            "basket_plan" => {
+                let options: BasketOptions =
+                    serde_json::from_value(args.clone()).context("invalid basket options")?;
+                Ok(serde_json::to_value(session.basket_plan(&options)?)?)
+            }
+            "basket_start" => {
+                // Writing files is the person's decision. An AI can fill the basket, but not start it.
+                if author != AUTHOR_USER {
+                    bail!("Only the person using the app can start copying. Add to the basket, and ask them to start it.");
+                }
+                let options: BasketOptions =
+                    serde_json::from_value(args.clone()).context("invalid basket options")?;
+                Ok(serde_json::to_value(session.basket_start(&options)?)?)
+            }
             "get_salvage_drive" => match session.salvage_drive()? {
                 Some(destination) => {
                     let request = CopyRequest {

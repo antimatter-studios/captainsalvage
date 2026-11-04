@@ -1,5 +1,6 @@
 //! Read-only forensic analysis of damaged exFAT volumes.
 
+pub mod basket;
 pub mod content;
 pub mod engine;
 pub mod exfat;

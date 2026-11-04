@@ -55,7 +55,7 @@ export function RecoveryOverview({ overview, status, revision }: { overview: Ove
             ? `found by name so far, in ${count(namedFiles)} files${complete ? "." : `, with ${percent(scanned)} of the disk scanned.`}`
             : "Files appear here once the scan has found their folders."}
         </p>
-        <p className="recovery-note">These are estimates until a file is tested or opened. Use Copy out to get what matters to safety.</p>
+        <p className="recovery-note">These are estimates until a file is tested or opened. Add what matters to your basket to get it to safety.</p>
 
         {segments.length > 0 && (
           <>

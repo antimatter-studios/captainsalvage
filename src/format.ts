@@ -22,7 +22,7 @@ export function percent(fraction: number): string {
 /** Shows a map path in the same words as the sidebar. */
 export function displayPath(path: string | null): string {
   if (!path) return "/";
-  return path.replace(/\[orphan @(\d+)\]/g, (_, cluster: string) => `Lost folder, cluster ${Number(cluster).toLocaleString("en-US")}`);
+  return path.replace(/\[orphan @(\d+)\]/g, (_, cluster: string) => `Lost folder ${Number(cluster).toLocaleString("en-US")}`);
 }
 
 export function hexOffset(value: number): string {

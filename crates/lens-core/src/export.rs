@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const MANIFEST_NAME: &str = "exfat-lens-manifest.jsonl";
 const MAX_RUN_BYTES: u64 = 8 * 1024 * 1024;
@@ -33,6 +33,12 @@ const MAX_FORMAT_CHECK_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NAME_BYTES: usize = 240;
 const LARGEST_SHOWN: usize = 10;
 const STATE_SALVAGE_DRIVE: &str = "salvage_destination";
+const STATE_COPY_STATUS: &str = "copy_status";
+const STATE_COPY_STOP: &str = "copy_stop_requested";
+const COPY_REPORT_INTERVAL: Duration = Duration::from_secs(1);
+/// A copy that has said nothing for this long is no longer running. A single
+/// read on a busy disk can take seconds, so this allows plenty of room.
+const COPY_STALE_MILLIS: u64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -63,8 +69,8 @@ pub struct CopyPlan {
     pub by_verdict: HashMap<String, u64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct CopyStatus {
     pub state: String,
     pub destination: String,
@@ -88,6 +94,8 @@ pub struct CopyControl {
     status: Mutex<CopyStatus>,
     stop: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
+    last_saved: Mutex<Option<Instant>>,
+    last_stop_check: Mutex<Option<Instant>>,
 }
 
 /// One manifest line: what happened to one file.
@@ -460,29 +468,113 @@ impl Session {
         })
     }
 
+    /// The newest copy this volume knows about, whichever process is running it. A
+    /// copy recorded as running that has stopped reporting is shown as stopped.
     pub fn copy_status(&self) -> Result<CopyStatus> {
-        Ok(self
+        let own = self
             .copy
             .status
             .lock()
             .map_err(|_| anyhow!("copy lock poisoned"))?
-            .clone())
+            .clone();
+        let mut stored: CopyStatus = self
+            .with_database(|database| database.state(STATE_COPY_STATUS))?
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        if stored.state == "running"
+            && now_millis().saturating_sub(stored.updated_at_millis) > COPY_STALE_MILLIS
+        {
+            stored.state = "stopped".into();
+        }
+        Ok(if own.updated_at_millis >= stored.updated_at_millis {
+            own
+        } else {
+            stored
+        })
     }
 
+    /// Asks the running copy to stop, including one in another process.
     pub fn copy_stop(&self) {
         self.copy.stop.store(true, Ordering::Relaxed);
+        let _ = self.with_database(|database| database.set_state(STATE_COPY_STOP, "1"));
+    }
+
+    fn should_stop(&self) -> bool {
+        if self.copy.stop.load(Ordering::Relaxed) {
+            return true;
+        }
+        let Ok(mut checked) = self.copy.last_stop_check.lock() else {
+            return false;
+        };
+        if checked.is_some_and(|at| at.elapsed() < COPY_REPORT_INTERVAL) {
+            return false;
+        }
+        *checked = Some(Instant::now());
+        drop(checked);
+        let requested = self
+            .with_database(|database| database.state(STATE_COPY_STOP))
+            .ok()
+            .flatten()
+            .is_some_and(|value| value == "1");
+        if requested {
+            self.copy.stop.store(true, Ordering::Relaxed);
+        }
+        requested
     }
 
     fn update_copy(&self, change: impl FnOnce(&mut CopyStatus)) {
-        if let Ok(mut status) = self.copy.status.lock() {
-            change(&mut status);
-            status.updated_at_millis = now_millis();
+        let Ok(mut status) = self.copy.status.lock() else {
+            return;
+        };
+        change(&mut status);
+        status.updated_at_millis = now_millis();
+        let snapshot = status.clone();
+        drop(status);
+        self.save_copy_status(&snapshot);
+    }
+
+    /// Records progress where the app's window can read it, at most once a second
+    /// while running, so it adds almost nothing to the copy's own work.
+    fn save_copy_status(&self, status: &CopyStatus) {
+        let Ok(mut saved) = self.copy.last_saved.lock() else {
+            return;
+        };
+        let running = status.state == "running";
+        if running && saved.is_some_and(|at| at.elapsed() < COPY_REPORT_INTERVAL) {
+            return;
+        }
+        *saved = Some(Instant::now());
+        drop(saved);
+        if let Ok(text) = serde_json::to_string(status) {
+            let _ = self.with_database(|database| database.set_state(STATE_COPY_STATUS, &text));
         }
     }
 
     /// Starts copying on a background thread.
     pub fn copy_start(self: &Arc<Self>, request: CopyRequest) -> Result<CopyPlan> {
-        let request = self.with_destination(&request)?;
+        self.copy_start_groups(vec![request])
+    }
+
+    /// Starts copying several selections, one after another. Within each one,
+    /// files are read in disk order. A file in more than one is copied once.
+    pub fn copy_start_groups(self: &Arc<Self>, groups: Vec<CopyRequest>) -> Result<CopyPlan> {
+        let first = groups.first().context("nothing to copy")?;
+        let mut request = self.with_destination(first)?;
+        let groups: Vec<CopyRequest> = groups
+            .iter()
+            .map(|group| CopyRequest {
+                destination: request.destination.clone(),
+                ..group.clone()
+            })
+            .collect();
+        request.entry_ids = groups
+            .iter()
+            .flat_map(|group| group.entry_ids.clone())
+            .collect();
+        request.folders = groups
+            .iter()
+            .flat_map(|group| group.folders.clone())
+            .collect();
         let plan = self.copy_plan(&request)?;
         if let Some(reason) = &plan.refused {
             bail!("{reason}");
@@ -506,6 +598,7 @@ impl Session {
             bail!("A copy is already running.");
         }
         self.copy.stop.store(false, Ordering::Relaxed);
+        self.with_database(|database| database.set_state(STATE_COPY_STOP, "0"))?;
         let destination = PathBuf::from(&request.destination);
         fs::create_dir_all(&destination)
             .with_context(|| format!("creating {}", destination.display()))?;
@@ -526,7 +619,14 @@ impl Session {
         };
         let session = Arc::clone(self);
         *slot = Some(std::thread::spawn(move || {
-            let outcome = session.run_copy(&request, &destination, &manifest);
+            let mut seen = HashSet::new();
+            let mut outcome = Ok(true);
+            for group in &groups {
+                outcome = session.run_copy(group, &destination, &manifest, &mut seen);
+                if !matches!(outcome, Ok(true)) {
+                    break;
+                }
+            }
             session.update_copy(|status| {
                 status.current.clear();
                 match outcome {
@@ -548,11 +648,13 @@ impl Session {
         request: &CopyRequest,
         destination: &Path,
         manifest_path: &Path,
+        seen: &mut HashSet<i64>,
     ) -> Result<bool> {
         let mut rows = self.copy_rows(request)?;
         rows.retain(|row| {
             row.confidence >= request.min_confidence
                 && (request.include_partial || !is_partial(row))
+                && row.id.is_some_and(|id| seen.insert(id))
         });
         // Disk order keeps the head moving forward, which is far faster on a spinning disk.
         rows.sort_by_key(|row| row.first_cluster);
@@ -571,7 +673,7 @@ impl Session {
             .open(manifest_path)?;
 
         for row in rows {
-            if self.copy.stop.load(Ordering::Relaxed) {
+            if self.should_stop() {
                 return Ok(false);
             }
             let id = row.id.context("entry has no id")?;
@@ -593,7 +695,8 @@ impl Session {
                     manifest.flush()?;
                     self.update_copy(|status| {
                         status.files_done += 1;
-                        status.bytes_done += row.length;
+                        // The rest of a file whose chain ended early, so the total still adds up.
+                        status.bytes_done += row.length.saturating_sub(result.bytes_written);
                         status.bad_clusters += result.unreadable_clusters;
                         if result.status != "complete" {
                             status.files_partial += 1;
@@ -644,7 +747,7 @@ impl Session {
         let valid = row.valid_length.min(row.length);
         let mut index = 0;
         while index < clusters.len() && written < row.length {
-            if self.copy.stop.load(Ordering::Relaxed) {
+            if self.should_stop() {
                 drop(file);
                 let _ = fs::remove_file(&temporary);
                 return Ok(None);
@@ -688,6 +791,7 @@ impl Session {
             hasher.update(&chunk);
             written += take as u64;
             index += run;
+            self.update_copy(|status| status.bytes_done += take as u64);
         }
         file.sync_all()?;
         drop(file);

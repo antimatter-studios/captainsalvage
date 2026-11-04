@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   call,
+  type BasketItem,
   type ClusterInfo,
   type DiskAccess,
   type Extent,
@@ -27,6 +28,8 @@ import { bytes, count, duration } from "./format";
 const STATUS_POLL_MILLIS = 2000;
 /** While a scan runs, the content layers keep filling in at this pace. */
 const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
+/** While a scan runs, the tree and totals are rebuilt from what it has found. */
+const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
 function OpenVolume({ initialPath, failure, onOpen }: { initialPath: string; failure: string | null; onOpen: (path: string) => void }) {
   const [path, setPath] = useState(initialPath);
@@ -159,9 +162,22 @@ export default function App() {
   const [region, setRegion] = useState<UnexplainedRun | null>(null);
   const [highlight, setHighlight] = useState<Extent[]>([]);
   const [byteRange, setByteRange] = useState<[number, number] | null>(null);
+  const [basket, setBasket] = useState<BasketItem[]>([]);
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
 
   const bump = useCallback(() => setRevision((value) => value + 1), []);
+
+  const loadBasket = useCallback(() => {
+    call<BasketItem[]>("basket_list").then(setBasket).catch(() => undefined);
+  }, []);
+
+  const changeBasket = useCallback((kind: "entry" | "folder", target: number, add: boolean) => {
+    const existing = basket.find((item) => item.kind === kind && item.target === target);
+    if (add && !existing) void call("basket_add", { kind, target });
+    if (!add && existing) void call("basket_remove", { id: existing.id });
+  }, [basket]);
+
+  const basketKeys = useMemo(() => new Set(basket.map((item) => `${item.kind}:${item.target}`)), [basket]);
 
   const open = useCallback(async (path: string) => {
     setFailure(null);
@@ -200,6 +216,14 @@ export default function App() {
   useEffect(() => {
     if (!scanning) return;
     const timer = setInterval(bump, MAP_REFRESH_DURING_SCAN_MILLIS);
+    return () => clearInterval(timer);
+  }, [scanning, bump]);
+
+  useEffect(() => {
+    if (!scanning) return;
+    const rebuild = () => void call("resolve").then(bump).catch(() => undefined);
+    rebuild();
+    const timer = setInterval(rebuild, REBUILD_DURING_SCAN_MILLIS);
     return () => clearInterval(timer);
   }, [scanning, bump]);
 
@@ -264,6 +288,7 @@ export default function App() {
   useEffect(() => {
     const stops = [
       listen("lens-map-changed", bump),
+      listen("lens-basket-changed", loadBasket),
       listen("lens-activity", () => setActivityRevision((value) => value + 1)),
       listen<{ kind: string; value?: number; start?: number; end?: number }>("lens-focus", async ({ payload }) => {
         if (payload.kind === "cluster" && payload.value !== undefined) {
@@ -289,7 +314,11 @@ export default function App() {
     return () => {
       stops.forEach((stop) => stop.then((unlisten) => unlisten()));
     };
-  }, [bump, pickCluster, selectEntry, selectFolder]);
+  }, [bump, loadBasket, pickCluster, selectEntry, selectFolder]);
+
+  useEffect(() => {
+    if (overview) loadBasket();
+  }, [overview, revision, loadBasket]);
 
   useEffect(() => {
     if (cluster === null) return;
@@ -365,6 +394,8 @@ export default function App() {
         onFolder={selectFolder}
         onChain={selectChain}
         onRegion={selectRegion}
+        basket={basketKeys}
+        onBasket={changeBasket}
         classNames={overview.classNames}
         clusterSize={overview.geometry.clusterSize}
       />
@@ -400,6 +431,8 @@ export default function App() {
           onChanged={bump}
           tabRequest={tabRequest}
           floor={floor}
+          basket={basket}
+          onBasket={changeBasket}
         />
         <Chat selection={selection} />
       </div>
