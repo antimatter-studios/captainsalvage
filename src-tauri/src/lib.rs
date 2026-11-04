@@ -7,6 +7,7 @@ mod preview;
 use chat::ChatState;
 use lens_core::engine::{Engine, AUTHOR_USER};
 use lens_core::mcp::{self, McpInfo};
+use lens_core::media::{MediaInfo, MediaServer};
 use lens_core::session::{Layer, Lens, Scope, MAX_READ_BYTES};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ const MAX_TEXT_READ_BYTES: u64 = 1024 * 1024;
 struct AppState {
     engine: Arc<Engine>,
     thumbs: preview::ThumbQueue,
+    media: Option<Arc<MediaServer>>,
     mcp: Option<McpInfo>,
     mcp_error: Option<String>,
 }
@@ -128,6 +130,12 @@ async fn read_entry_range(
     Ok(Response::new(part))
 }
 
+/// Whether ffmpeg is installed, and where the window's player can reach converted files.
+#[tauri::command]
+fn media_info(state: State<'_, AppState>) -> Option<MediaInfo> {
+    state.media.as_ref().map(|media| media.info())
+}
+
 /// Connection details the window shows so other MCP clients can connect.
 #[tauri::command]
 fn mcp_info(state: State<'_, AppState>) -> Value {
@@ -228,8 +236,13 @@ pub fn run() {
                     let _ = opener.open(&path);
                 }
             });
+            let media = MediaServer::start(engine.clone()).ok();
+            if let Some(media) = &media {
+                engine.set_media(media.clone());
+            }
             app.manage(AppState {
-                thumbs: preview::ThumbQueue::start(engine.clone()),
+                thumbs: preview::ThumbQueue::start(engine.clone(), media.clone()),
+                media,
                 engine,
                 mcp: info,
                 mcp_error: error,
@@ -242,6 +255,7 @@ pub fn run() {
             read_raw,
             read_entry_bytes,
             read_entry_range,
+            media_info,
             mcp_info,
             last_device,
             chat_send,

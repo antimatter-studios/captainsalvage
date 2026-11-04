@@ -364,6 +364,23 @@ export function thumbUrl(id: number, attempt = 0): string {
   return `lens://localhost/thumb/${id}${attempt > 0 ? `?try=${attempt}` : ""}`;
 }
 
+export interface MediaInfo {
+  available: boolean;
+  encoder: string | null;
+  baseUrl: string;
+  token: string;
+}
+
+/** Null if the media port did not start. `available` says whether ffmpeg is installed. */
+export function mediaInfo(): Promise<MediaInfo | null> {
+  return invoke<MediaInfo | null>("media_info");
+}
+
+/** Converted by ffmpeg as it plays, a few seconds at a time. Nothing is saved. */
+export function convertedUrl(media: MediaInfo, id: number): string {
+  return `${media.baseUrl}/hls/${id}/index.m3u8?t=${media.token}`;
+}
+
 export async function readEntryRange(id: number, start: number, length: number): Promise<Uint8Array> {
   return new Uint8Array(await invoke<ArrayBuffer>("read_entry_range", { id, start, length }));
 }

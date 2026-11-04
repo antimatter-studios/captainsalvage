@@ -1456,6 +1456,182 @@ fn thumbnails_are_decoded_from_real_bytes_and_damage_fails_plainly() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A short real video made by ffmpeg, or `None` where ffmpeg is not installed.
+fn sample_video(label: &str) -> Option<(lens_core::media::Tools, PathBuf)> {
+    let tools = lens_core::media::detect_tools()?;
+    let path = std::env::temp_dir().join(format!("lens-{}-{label}.avi", std::process::id()));
+    let made = std::process::Command::new(&tools.ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+        ])
+        .arg("testsrc=duration=8:size=320x240:rate=10")
+        .args(["-f", "lavfi", "-i", "sine=duration=8"])
+        .args(["-c:v", "mpeg4", "-c:a", "mp3", "-shortest"])
+        .arg(&path)
+        .status()
+        .ok()?;
+    made.success().then_some((tools, path))
+}
+
+#[test]
+fn ffmpeg_is_found_where_it_is_and_missing_is_a_plain_answer() {
+    use lens_core::media::find_tool;
+    let dir = std::env::temp_dir().join(format!("lens-tools-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    assert_eq!(find_tool("ffmpeg", std::slice::from_ref(&dir)), None);
+    std::fs::write(dir.join("ffmpeg"), b"").expect("write");
+    assert_eq!(
+        find_tool("ffmpeg", std::slice::from_ref(&dir)),
+        Some(dir.join("ffmpeg"))
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_playlist_covers_the_whole_file_in_short_pieces() {
+    use lens_core::media::{playlist, SEGMENT_SECONDS};
+    let text = playlist(SEGMENT_SECONDS * 2.0 + 1.5, "secret");
+    assert!(text.starts_with("#EXTM3U"));
+    assert!(text.trim_end().ends_with("#EXT-X-ENDLIST"));
+    assert!(text.contains("#EXTINF:1.500,"));
+    assert!(text.contains("seg2.ts?t=secret"));
+    assert!(!text.contains("seg3.ts"));
+}
+
+#[test]
+fn conversion_only_ever_writes_to_a_pipe() {
+    use lens_core::media::{frame_command, segment_command, Probe, Tools};
+    let tools = Tools {
+        ffmpeg: "ffmpeg".into(),
+        ffprobe: "ffprobe".into(),
+        encoder: "libx264".into(),
+    };
+    let found = Probe {
+        duration: 60.0,
+        has_video: true,
+        has_audio: true,
+    };
+    for command in [
+        segment_command(&tools, "http://127.0.0.1:1/file/1", &found, 6.0, 6.0),
+        frame_command(&tools, "http://127.0.0.1:1/file/1", 6.0),
+    ] {
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args.last().map(String::as_str), Some("pipe:1"), "{args:?}");
+        assert!(!args.iter().any(|arg| arg == "-y"), "{args:?}");
+        // One input, and a damaged file can't make ffmpeg open anything but that port.
+        let whitelist = args
+            .iter()
+            .position(|arg| arg == "-protocol_whitelist")
+            .expect("whitelist");
+        assert_eq!(args[whitelist + 1], "http,tcp");
+    }
+}
+
+#[test]
+fn ffmpeg_converts_a_real_video_when_it_is_installed() {
+    use lens_core::media::{frame_command, probe, segment_command, spawn_output};
+    use std::io::Read;
+    let Some((tools, path)) = sample_video("convert") else {
+        eprintln!("ffmpeg is not installed, so this test has nothing to check");
+        return;
+    };
+    let input = path.to_string_lossy().into_owned();
+    let found = probe(&tools, &input).expect("probe");
+    assert!(found.has_video && found.has_audio);
+    assert!((found.duration - 8.0).abs() < 1.0, "{}", found.duration);
+
+    let mut piece = Vec::new();
+    spawn_output(segment_command(&tools, &input, &found, 6.0, 2.0))
+        .expect("start")
+        .read_to_end(&mut piece)
+        .expect("read");
+    assert!(piece.len() > 188, "{} bytes", piece.len());
+    assert_eq!(piece[0], 0x47, "MPEG-TS packets start with a sync byte");
+
+    let mut image = Vec::new();
+    spawn_output(frame_command(&tools, &input, 1.0))
+        .expect("start")
+        .read_to_end(&mut image)
+        .expect("read");
+    assert_eq!(&image[..2], &[0xff, 0xd8], "a JPEG");
+
+    assert!(probe(&tools, "/does/not/exist.avi").is_err());
+    let _ = std::fs::remove_file(path);
+}
+
+/// A bare HTTP request, because the test should see exactly what the port answers.
+fn local_get(port: &str, path: &str, range: Option<&str>) -> (u16, Vec<u8>) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}")).expect("connect");
+    let extra = range
+        .map(|text| format!("Range: {text}\r\n"))
+        .unwrap_or_default();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\n{extra}Connection: close\r\n\r\n"
+    )
+    .expect("send");
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).expect("read");
+    let split = reply
+        .windows(4)
+        .position(|part| part == b"\r\n\r\n")
+        .expect("headers");
+    let head = String::from_utf8_lossy(&reply[..split]).into_owned();
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .expect("status")
+        .parse()
+        .expect("number");
+    (status, reply[split + 4..].to_vec())
+}
+
+#[test]
+fn the_media_port_needs_its_token_and_serves_exact_ranges() {
+    use lens_core::media::MediaServer;
+    let (engine, session, dir) = engine_with_volume("port");
+    let media = MediaServer::start(engine.clone()).expect("start");
+    let info = media.info();
+    let port = info.base_url.rsplit(':').next().expect("port").to_string();
+    assert!(info.base_url.starts_with("http://127.0.0.1:"));
+    assert_eq!(info.token.len(), 64);
+
+    let id = call(&engine, "search", json!({"query": "track.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    let whole = session.read_entry(id, u64::MAX).expect("read").1;
+
+    assert_eq!(local_get(&port, &format!("/file/{id}"), None).0, 403);
+    assert_eq!(
+        local_get(&port, &format!("/file/{id}?t=wrong"), None).0,
+        403
+    );
+
+    let path = format!("/file/{id}?t={}", info.token);
+    let (status, body) = local_get(&port, &path, None);
+    assert_eq!(status, 200);
+    assert_eq!(body, whole);
+    let (status, body) = local_get(&port, &path, Some("bytes=5-14"));
+    assert_eq!(status, 206);
+    assert_eq!(body, whole[5..15]);
+    let past = format!("bytes={}-", whole.len());
+    assert_eq!(local_get(&port, &path, Some(&past)).0, 416);
+    let unknown = format!("/nothing/{id}?t={}", info.token);
+    assert_eq!(local_get(&port, &unknown, None).0, 404);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn a_resumed_copy_only_needs_space_for_what_is_not_there_yet() {
     let (engine, session, dir) = engine_with_volume("resume-space");

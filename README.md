@@ -169,6 +169,13 @@ must be sandboxed and cannot ask for root, and this app reads raw devices, runs 
 command and uses a private window API. A build signed and notarized for direct download
 does not have these limits.
 
+## Playing more formats
+
+The window plays common formats by itself. Install [ffmpeg](https://ffmpeg.org) with
+`brew install ffmpeg` and the app finds it and also plays AVI, MKV, MPG, FLV, WMV, WMA and
+others, converting them as they play. It also shows a frame from each video in the grid.
+ffmpeg is optional, is not bundled, and nothing it converts is saved.
+
 ## Roadmap
 
 Bugs, ideas and progress are all in the
