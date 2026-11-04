@@ -20,6 +20,15 @@ const LAYERS: { id: Layer; label: string; help: string }[] = [
   { id: "lens", label: "Lens", help: "Clusters matching the current lens" },
 ];
 
+/** A notched arrowhead, pointing down. Flipped by its class to point up from below. */
+function MarkerArrow({ below, left }: { below?: boolean; left: string }) {
+  return (
+    <svg className={below ? "strip-arrow strip-arrow-below" : "strip-arrow"} style={{ left }} viewBox="0 0 12 8" aria-hidden="true">
+      <path d="M0 0 L6 8 L12 0 L6 2.5 Z" />
+    </svg>
+  );
+}
+
 interface StripProps {
   layer: Layer;
   start: number;
@@ -213,6 +222,12 @@ function Strip(props: StripProps) {
       >
         <canvas ref={base} className="strip-base" />
         <canvas ref={marks} className="strip-marks" />
+        {marker !== null && marker >= start && marker < end && (
+          <>
+            <MarkerArrow left={`${((marker - start) / span) * 100}%`} />
+            <MarkerArrow below left={`${((marker - start) / span) * 100}%`} />
+          </>
+        )}
         {box && (
           <div
             className="strip-window"
