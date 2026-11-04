@@ -175,6 +175,7 @@ export default function App() {
   const [center, setCenter] = useState<CenterView>("overview");
   const [browseScope, setBrowseScope] = useState<BrowseScope | null>(null);
   const [standalone, setStandalone] = useState<BrowseRow | null>(null);
+  const [previewInCenter, setPreviewInCenter] = useState<number | null>(null);
   const centerNow = useRef<CenterView>("overview");
   centerNow.current = center;
 
@@ -482,6 +483,7 @@ export default function App() {
             onBasket={changeBasket}
             onSelect={(row) => void noteEntry(row.id)}
             onBytes={showCluster}
+            onPreviewShown={setPreviewInCenter}
           />
         )}
         {center === "bytes" && cluster !== null && (
@@ -522,6 +524,7 @@ export default function App() {
           onBasket={changeBasket}
           onPreview={previewEntry}
           onBrowseFolder={browseFolder}
+          previewInCenter={previewInCenter}
         />
         <Chat selection={selection} />
       </div>

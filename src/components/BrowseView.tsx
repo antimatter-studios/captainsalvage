@@ -39,6 +39,9 @@ const NATIVE_AUDIO = new Set(["mp3", "wav", "flac", "m4a", "aac", "aif", "aiff"]
 const CONVERTED_VIDEO = new Set(["avi", "mkv", "wmv", "mpg", "mpeg", "flv", "asf", "vob", "m2ts", "divx", "rm", "rmvb", "ogv"]);
 const CONVERTED_AUDIO = new Set(["wma", "ogg", "opus"]);
 const INSTALL_COMMAND = "brew install ffmpeg";
+const MAX_INLINE_IMAGE_BYTES = 64 * 1024 * 1024;
+const INLINE_TEXT_BYTES = 16 * 1024;
+const PDF_MAGIC = "%PDF-";
 
 export interface BrowseScope {
   head: number;
@@ -231,6 +234,90 @@ function PreviewBody({ row }: { row: BrowseRow }) {
   return <RawPreview row={row} />;
 }
 
+/**
+ * The preview in the details panel. It shows itself only once a file has all its
+ * clusters and has really loaded, so what appears here is known to work.
+ */
+export function InlinePreview({ id, name, length, complete, onOpen }: {
+  id: number;
+  name: string;
+  length: number;
+  complete: boolean;
+  onOpen: () => void;
+}) {
+  const extension = extensionOf(name);
+  const isImage = IMAGE_EXTENSIONS.has(extension);
+  const isVideo = NATIVE_VIDEO.has(extension) || CONVERTED_VIDEO.has(extension);
+  const isAudio = NATIVE_AUDIO.has(extension) || CONVERTED_AUDIO.has(extension);
+  const native = NATIVE_VIDEO.has(extension) || NATIVE_AUDIO.has(extension);
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [converting, setConverting] = useState(!native);
+  const [media, setMedia] = useState<MediaInfo | null | undefined>(undefined);
+  const [text, setText] = useState<string | null>(null);
+  const [isPdf, setIsPdf] = useState(false);
+
+  useEffect(() => {
+    if (!complete) return;
+    let current = true;
+    if (isVideo || isAudio) {
+      mediaInfo().then((value) => current && setMedia(value)).catch(() => current && setMedia(null));
+    } else if (!isImage) {
+      readEntryRange(id, 0, INLINE_TEXT_BYTES)
+        .then((data) => {
+          if (!current) return;
+          const head = new TextDecoder("latin1").decode(data.subarray(0, PDF_MAGIC.length));
+          if (extension === "pdf") setIsPdf(head === PDF_MAGIC);
+          else if (looksLikeText(data)) setText(new TextDecoder("utf-8", { fatal: false }).decode(data));
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      current = false;
+    };
+  }, [id, complete, isVideo, isAudio, isImage, extension]);
+
+  if (!complete || length === 0) return null;
+
+  const onPlayerError = () => {
+    if (!converting) setConverting(true);
+    else setFailed(true);
+  };
+  const shown = ready ? "" : "inline-waiting";
+
+  if (failed) {
+    return <p className="inline-note tone-serious">This would not open, so its clusters may be wrong or damaged.</p>;
+  }
+  if (isImage) {
+    return (
+      <button className={`inline-preview inline-image ${shown}`} onClick={onOpen} title="Open large">
+        <img
+          src={length > MAX_INLINE_IMAGE_BYTES ? thumbUrl(id) : entryUrl(id)}
+          alt={name}
+          draggable={false}
+          onLoad={() => setReady(true)}
+          onError={() => setFailed(true)}
+        />
+      </button>
+    );
+  }
+  if (isVideo || isAudio) {
+    if (media === undefined) return null;
+    if (converting && !media?.available) {
+      return <p className="inline-note muted">Install ffmpeg to play this here: {INSTALL_COMMAND}</p>;
+    }
+    const source = converting && media ? convertedUrl(media, id) : entryUrl(id);
+    return isVideo ? (
+      <video key={source} className={`inline-preview ${shown}`} controls preload="metadata" src={source} onLoadedMetadata={() => setReady(true)} onError={onPlayerError} />
+    ) : (
+      <audio key={source} className={`inline-preview ${shown}`} controls preload="metadata" src={source} onLoadedMetadata={() => setReady(true)} onError={onPlayerError} />
+    );
+  }
+  if (isPdf) return <iframe className="inline-preview inline-frame" src={entryUrl(id)} title={name} />;
+  if (text !== null) return <pre className="inline-preview inline-text">{text}</pre>;
+  return null;
+}
+
 function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket, onBytes }: {
   row: BrowseRow;
   position: number | null;
@@ -279,7 +366,7 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
   );
 }
 
-export function BrowseView({ floor, revision, scope, onScopeClear, standalone, onStandaloneClose, basket, onBasket, onSelect, onBytes }: {
+export function BrowseView({ floor, revision, scope, onScopeClear, standalone, onStandaloneClose, basket, onBasket, onSelect, onBytes, onPreviewShown }: {
   floor: number;
   revision: number;
   scope: BrowseScope | null;
@@ -290,6 +377,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
   onSelect: (row: BrowseRow) => void;
   onBytes: (cluster: number) => void;
+  onPreviewShown: (id: number | null) => void;
 }) {
   const [types, setTypes] = useState<TypeTotal[] | null>(null);
   const [group, setGroup] = useState<BrowseGroup>("photos");
@@ -447,6 +535,11 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
 
   const label = types?.find((item) => item.group === group)?.label.toLowerCase() ?? "files";
   const previewRow = standalone ?? openRow ?? null;
+  const previewId = previewRow?.id ?? null;
+  useEffect(() => {
+    onPreviewShown(previewId);
+    return () => onPreviewShown(null);
+  }, [previewId, onPreviewShown]);
 
   return (
     <section className="center-panel browse" aria-label="Browse files">
