@@ -56,6 +56,8 @@ pub struct CopyRequest {
 pub struct CopyPlan {
     pub files: u64,
     pub bytes: u64,
+    /// The part of `bytes` a previous run already put on the destination.
+    pub already_copied_bytes: u64,
     pub destination: String,
     pub destination_device: Option<String>,
     pub free_bytes: u64,
@@ -121,6 +123,23 @@ pub struct ManifestRow {
     pub format_valid_fraction: Option<f64>,
     pub format_breaks: Option<u64>,
     pub copied_at_millis: u64,
+}
+
+/// What earlier runs recorded, by entry id. A missing manifest means nothing is done.
+fn read_manifest(path: &Path) -> HashMap<i64, ManifestRow> {
+    let mut done = HashMap::new();
+    if let Ok(file) = File::open(path) {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            if let Ok(row) = serde_json::from_str::<ManifestRow>(&line) {
+                done.insert(row.id, row);
+            }
+        }
+    }
+    done
+}
+
+fn still_on_destination(previous: &ManifestRow) -> bool {
+    fs::metadata(&previous.target).is_ok_and(|metadata| metadata.len() == previous.bytes_written)
 }
 
 struct Filesystem {
@@ -451,14 +470,30 @@ impl Session {
             });
             (Some(filesystem.device), filesystem.free_bytes, problem)
         };
+        // A resumed copy skips these, and they already count against the free space.
+        let already_copied_bytes = if destination.is_absolute() {
+            let done = read_manifest(&destination.join(MANIFEST_NAME));
+            selected
+                .iter()
+                .filter(|row| {
+                    row.id
+                        .and_then(|id| done.get(&id))
+                        .is_some_and(still_on_destination)
+                })
+                .map(|row| row.length)
+                .sum()
+        } else {
+            0
+        };
 
         Ok(CopyPlan {
             files: selected.len() as u64,
             bytes,
+            already_copied_bytes,
             destination: request.destination.clone(),
             destination_device: device,
             free_bytes,
-            fits: bytes <= free_bytes,
+            fits: bytes.saturating_sub(already_copied_bytes) <= free_bytes,
             refused,
             below_floor,
             skipped_partial,
@@ -659,14 +694,7 @@ impl Session {
         // Disk order keeps the head moving forward, which is far faster on a spinning disk.
         rows.sort_by_key(|row| row.first_cluster);
 
-        let mut done: HashMap<i64, ManifestRow> = HashMap::new();
-        if let Ok(file) = File::open(manifest_path) {
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                if let Ok(row) = serde_json::from_str::<ManifestRow>(&line) {
-                    done.insert(row.id, row);
-                }
-            }
-        }
+        let done = read_manifest(manifest_path);
         let mut manifest = OpenOptions::new()
             .create(true)
             .append(true)
@@ -677,16 +705,12 @@ impl Session {
                 return Ok(false);
             }
             let id = row.id.context("entry has no id")?;
-            if let Some(previous) = done.get(&id) {
-                let same = fs::metadata(&previous.target)
-                    .is_ok_and(|metadata| metadata.len() == previous.bytes_written);
-                if same {
-                    self.update_copy(|status| {
-                        status.files_skipped += 1;
-                        status.bytes_done += row.length;
-                    });
-                    continue;
-                }
+            if done.get(&id).is_some_and(still_on_destination) {
+                self.update_copy(|status| {
+                    status.files_skipped += 1;
+                    status.bytes_done += row.length;
+                });
+                continue;
             }
             self.update_copy(|status| status.current = row.name.clone());
             match self.copy_one(&row, id, destination) {
