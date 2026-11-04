@@ -1,0 +1,49 @@
+name: CI
+
+# The app reads macOS-only filesystem details, so everything runs on macOS. On a private
+# repository these minutes count ten times, so documentation-only changes skip this.
+on:
+  pull_request:
+    paths-ignore: ["**.md", "media/**", "LICENSE"]
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "media/**", "LICENSE"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: CI
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
+        with:
+          toolchain: 1.95.0
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: test the release tool
+        run: python3 scripts/test_release.py
+      - name: type check and build the window
+        run: npm run build
+      - name: formatting
+        run: cargo fmt --all --check
+      - name: lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test -p lens-core --locked
