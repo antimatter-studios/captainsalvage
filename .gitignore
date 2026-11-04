@@ -13,3 +13,4 @@ src-tauri/icons/ios/
 diag-baseline/
 docs/findings.md
 target-dev/
+__pycache__/
