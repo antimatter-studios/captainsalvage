@@ -1,0 +1,100 @@
+const PATHS = {
+  folder: "M3 7.5A2.5 2.5 0 0 1 5.5 5h3.6l2 2.2h7.4A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z",
+  file: "M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h5",
+  document: "M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h5M8.5 13h7M8.5 17h7",
+  film: "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 4v16M16 4v16M3 9h5M3 15h5M16 9h5M16 15h5",
+  music: "M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+  image: "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM3 16l5-5 4 4 3-3 6 6M15.5 8.5h.01",
+  archive: "M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM3 4h18v4H3zM10 12h4",
+  code: "M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14",
+  link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  broken: "M9 7l1-1a4 4 0 0 1 5.7 5.7M15 17l-1 1a4 4 0 0 1-5.7-5.7M4 4l16 16",
+  question: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1 1-1.1 1.8M12 17h.01",
+  shield: "M12 3l7.5 3v5.5c0 4.6-3.1 8-7.5 9.5-4.4-1.5-7.5-4.9-7.5-9.5zM9 12l2.2 2.2L15.5 10",
+  alert: "M12 4l9 16H3zM12 10v4.5M12 17.5h.01",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5",
+  chevronRight: "M9 6l6 6-6 6",
+  chevronLeft: "M15 6l-6 6 6 6",
+  info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01",
+  download: "M12 4v11M7.5 11L12 15.5 16.5 11M4 20h16",
+  disk: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  bulb: "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.7 10.7c.5.4.7 1 .7 1.6V16h6v-.7c0-.6.2-1.2.7-1.6A6 6 0 0 0 12 3z",
+  aperture: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3l4 7M21 12h-8M16.5 20l-4-7M7.5 20l4-7M3 12h8M7.5 4l4 7",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3.5 2",
+  plug: "M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5",
+  send: "M12 19V5M6 11l6-6 6 6",
+  stop: "M7 7h10v10H7z",
+  close: "M6 6l12 12M18 6L6 18",
+  grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
+} as const;
+
+export type IconName = keyof typeof PATHS;
+
+export function Icon({ name, size = 16, className }: { name: IconName; size?: number; className?: string }) {
+  return (
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={PATHS[name]} />
+    </svg>
+  );
+}
+
+const EXTENSION_ICONS: Record<string, IconName> = {
+  mp4: "film", m4v: "film", mov: "film", avi: "film", mkv: "film", webm: "film", wmv: "film", mpg: "film", mpeg: "film", "3gp": "film",
+  mp3: "music", wav: "music", flac: "music", ogg: "music", m4a: "music", aac: "music", wma: "music", mid: "music", midi: "music", aif: "music", aiff: "music",
+  jpg: "image", jpeg: "image", png: "image", gif: "image", bmp: "image", webp: "image", tif: "image", tiff: "image", heic: "image", svg: "image",
+  zip: "archive", rar: "archive", gz: "archive", tgz: "archive", "7z": "archive", tar: "archive", iso: "archive", dmg: "archive", jar: "archive",
+  js: "code", ts: "code", jsx: "code", tsx: "code", php: "code", py: "code", rb: "code", c: "code", h: "code", cpp: "code", java: "code", go: "code", rs: "code", sh: "code", css: "code", html: "code", htm: "code", json: "code", xml: "code", yml: "code", yaml: "code", sql: "code",
+  pdf: "document", doc: "document", docx: "document", xls: "document", xlsx: "document", ppt: "document", pptx: "document", txt: "document", md: "document", rtf: "document",
+};
+
+export function fileIcon(name: string): IconName {
+  const extension = name.includes(".") ? name.split(".").pop()?.toLowerCase() ?? "" : "";
+  return EXTENSION_ICONS[extension] ?? "file";
+}
+
+const VERDICT_TONES: Record<string, string> = {
+  live: "tone-neutral",
+  "likely-intact": "tone-good",
+  plausible: "tone-info",
+  partial: "tone-warning",
+  "damaged-entry": "tone-serious",
+  overwritten: "tone-critical",
+  "folder-missing": "tone-critical",
+};
+
+export function verdictTone(verdict: string): string {
+  return VERDICT_TONES[verdict] ?? "tone-neutral";
+}
+
+const RING_RADIUS = 6;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+
+/** A small ring whose filled share is a confidence score. */
+export function ConfidenceRing({ value, tone, label }: { value: number; tone: string; label: string }) {
+  return (
+    <svg className={`ring ${tone}`} width={16} height={16} viewBox="0 0 16 16" role="img" aria-label={label}>
+      <title>{label}</title>
+      <circle className="ring-track" cx={8} cy={8} r={RING_RADIUS} />
+      <circle
+        className="ring-value"
+        cx={8}
+        cy={8}
+        r={RING_RADIUS}
+        strokeDasharray={`${Math.max(value, 0.02) * RING_LENGTH} ${RING_LENGTH}`}
+        transform="rotate(-90 8 8)"
+      />
+    </svg>
+  );
+}
