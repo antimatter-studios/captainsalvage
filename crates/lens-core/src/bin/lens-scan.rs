@@ -24,7 +24,7 @@ fn run_tool(device: &str, arguments: &[String]) -> Result<()> {
     let engine = Engine::new();
     engine.open(device)?;
     let result = engine.call(tool, &args, AUTHOR_USER)?;
-    if tool == "copy_start" {
+    if tool == "copy_start" || tool == "basket_start" {
         let session = engine.session()?;
         while session.copy_status()?.state == "running" {
             std::thread::sleep(Duration::from_millis(250));
