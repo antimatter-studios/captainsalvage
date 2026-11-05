@@ -1853,6 +1853,148 @@ fn a_file_is_judged_by_its_contents_before_its_name() {
     );
 }
 
+const SAMPLE_DISK_INFO: &str = "
+   Device Identifier:         disk12s2
+   Device Node:               /dev/disk12s2
+   Whole:                     No
+   Part of Whole:             disk12
+
+   Volume Name:               Untitled
+   Mounted:                   No
+
+   File System Personality:   ExFAT
+
+   Disk Size:                 590.7 GB (590744649728 Bytes) (exactly 1153798144 512-Byte-Units)
+   Device Location:           External
+   Volume UUID:               52D6C729-7E3F-310C-9073-7142E9EA7C05
+";
+
+#[test]
+fn the_start_screen_reads_what_diskutil_says() {
+    use lens_core::startup::{parse_partitions, parse_volume};
+    let list = "/dev/disk12 (external, physical):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:     FDisk_partition_scheme                        *2.0 TB     disk12
+   1:               Windows_NTFS seagate_2tb             1.4 TB     disk12s1
+   2:               Windows_NTFS Untitled                590.7 GB   disk12s2
+";
+    assert_eq!(parse_partitions(list), ["disk12s1", "disk12s2"]);
+
+    let volume = parse_volume(SAMPLE_DISK_INFO).expect("volume");
+    assert_eq!(volume.device, "/dev/rdisk12s2");
+    assert_eq!(volume.whole_disk, "/dev/rdisk12");
+    assert_eq!(volume.name, "Untitled");
+    assert_eq!(volume.bytes, 590_744_649_728);
+    assert_eq!(volume.format, "ExFAT");
+    assert!(volume.external && volume.can_open);
+    assert_eq!(volume.mount_point, None);
+
+    let mounted = SAMPLE_DISK_INFO.replace(
+        "Mounted:                   No",
+        "Mounted:                   Yes\n   Mount Point:               /Volumes/Untitled",
+    );
+    assert_eq!(
+        parse_volume(&mounted)
+            .expect("volume")
+            .mount_point
+            .as_deref(),
+        Some("/Volumes/Untitled")
+    );
+
+    // Another format can be seen but not opened.
+    let ntfs = SAMPLE_DISK_INFO.replace("ExFAT", "NTFS");
+    assert!(!parse_volume(&ntfs).expect("volume").can_open);
+    // A damaged volume may show no format at all, and that is exactly what this app is for.
+    let unknown = SAMPLE_DISK_INFO.replace(
+        "File System Personality:   ExFAT",
+        "File System Personality:   Not applicable (no file system)",
+    );
+    let unknown = parse_volume(&unknown).expect("volume");
+    assert_eq!(unknown.format, "Unknown");
+    assert!(unknown.can_open);
+
+    assert!(parse_volume("Could not find disk: x").is_none());
+    let efi = SAMPLE_DISK_INFO.replace("Untitled", "EFI");
+    assert!(parse_volume(&efi).is_none());
+    // An APFS container has no format of its own to show, and would otherwise look openable.
+    let container = format!("{SAMPLE_DISK_INFO}   Partition Type:            Apple_APFS\n");
+    assert!(parse_volume(&container).is_none());
+    // The type a damaged volume on this disk really has must still come through.
+    let windows = format!("{SAMPLE_DISK_INFO}   Partition Type:            Windows_NTFS\n");
+    assert!(parse_volume(&windows).is_some());
+}
+
+/// Disk numbers change on every attach, so a volume must be known by its UUID alone.
+#[test]
+fn a_volume_is_recognised_by_uuid_under_any_disk_number() {
+    use lens_core::startup::{join_known, known_volumes, parse_volume, write_record, VolumeRecord};
+    let root = std::env::temp_dir().join(format!("lens-known-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (workspace, _) = (
+        Workspace::at(root.join("vol-db8aa101")).expect("workspace"),
+        (),
+    );
+    write_record(
+        workspace.dir(),
+        &VolumeRecord {
+            uuid: Some("52D6C729-7E3F-310C-9073-7142E9EA7C05".into()),
+            name: "Untitled".into(),
+            bytes: 590_744_649_728,
+            last_opened_millis: 1000,
+        },
+    );
+    // A folder with no record is not listed, and neither is a stray file.
+    Workspace::at(root.join("vol-00000000")).expect("workspace");
+    std::fs::write(root.join("last-device"), "/dev/rdisk12s2").expect("write");
+
+    let known = known_volumes(&root);
+    assert_eq!(known.len(), 1);
+    assert!(!known[0].scanned);
+
+    let renumbered = SAMPLE_DISK_INFO.replace("disk12", "disk19");
+    let report = join_known(
+        vec![parse_volume(&renumbered).expect("volume")],
+        known.clone(),
+    );
+    assert_eq!(report.volumes[0].device, "/dev/rdisk19s2");
+    assert_eq!(report.volumes[0].known.as_ref(), Some(&known[0]));
+    assert!(report.elsewhere.is_empty());
+
+    // What is recognised comes first, then what can be opened, whatever the disk numbers.
+    let ntfs = parse_volume(
+        &SAMPLE_DISK_INFO
+            .replace("ExFAT", "NTFS")
+            .replace("52D6C729", "BBBBBBBB"),
+    )
+    .expect("volume");
+    let fresh = parse_volume(&SAMPLE_DISK_INFO.replace("52D6C729", "CCCCCCCC")).expect("volume");
+    let ours = parse_volume(&renumbered).expect("volume");
+    let order = join_known(vec![ntfs, fresh, ours], known.clone());
+    let names: Vec<_> = order
+        .volumes
+        .iter()
+        .map(|v| (v.known.is_some(), v.can_open))
+        .collect();
+    assert_eq!(names, [(true, true), (false, true), (false, false)]);
+
+    // A different volume on the same disk number is not mistaken for it.
+    let other = SAMPLE_DISK_INFO.replace("52D6C729", "AAAAAAAA");
+    let report = join_known(vec![parse_volume(&other).expect("volume")], known.clone());
+    assert!(report.volumes[0].known.is_none());
+    assert_eq!(report.elsewhere.len(), 1);
+
+    // Nor does a volume with no UUID match a record with none.
+    let no_uuid = SAMPLE_DISK_INFO.replace(
+        "   Volume UUID:               52D6C729-7E3F-310C-9073-7142E9EA7C05\n",
+        "",
+    );
+    let mut blank = known[0].clone();
+    blank.record.uuid = None;
+    let report = join_known(vec![parse_volume(&no_uuid).expect("volume")], vec![blank]);
+    assert!(report.volumes[0].known.is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A scanned volume whose disk can be pulled out from under it.
 fn engine_with_unpluggable_disk(
     label: &str,

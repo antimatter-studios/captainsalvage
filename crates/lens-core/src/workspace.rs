@@ -42,13 +42,14 @@ impl Workspace {
         Ok(Self { dir })
     }
 
-    pub fn for_serial(serial: u32) -> Result<Self> {
+    /// The folder that holds one workspace per volume.
+    pub fn root() -> Result<PathBuf> {
         let home = std::env::var_os("HOME").context("HOME is not set")?;
-        Self::at(
-            Path::new(&home)
-                .join("Library/Application Support/exfat-lens")
-                .join(format!("vol-{serial:08x}")),
-        )
+        Ok(Path::new(&home).join("Library/Application Support/exfat-lens"))
+    }
+
+    pub fn for_serial(serial: u32) -> Result<Self> {
+        Self::at(Self::root()?.join(format!("vol-{serial:08x}")))
     }
 
     pub fn dir(&self) -> &Path {

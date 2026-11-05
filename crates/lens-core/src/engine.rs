@@ -44,6 +44,7 @@ const QUIET_TOOLS: &[&str] = &[
     "file_tests_status",
     "mount_history",
     "disk_access",
+    "startup_disks",
     "zip_contents",
     "zip_member_check",
 ];
@@ -252,6 +253,15 @@ impl Engine {
                 Ok(disk_access_report(&path))
             }
             "list_disks" => Ok(json!({"output": list_disks(str_of(args, "device"))?})),
+            "startup_disks" => {
+                let internal = args
+                    .get("includeInternal")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                Ok(serde_json::to_value(crate::startup::startup_report(
+                    internal,
+                )?)?)
+            }
             "open_volume" => {
                 let session = self.open(need_str(args, "path")?)?;
                 Ok(session.overview())

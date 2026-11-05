@@ -75,6 +75,34 @@ export interface DiskWrites {
   sinceOpen: WriteCounter;
 }
 
+export interface KnownVolume {
+  record: { uuid: string | null; name: string; bytes: number; lastOpenedMillis: number };
+  scanned: boolean;
+  filesFound: number;
+  bytesFound: number;
+  filesPassed: number;
+  filesDamaged: number;
+}
+
+export interface StartupVolume {
+  device: string;
+  wholeDisk: string;
+  name: string;
+  bytes: number;
+  format: string;
+  external: boolean;
+  mountPoint: string | null;
+  uuid: string | null;
+  canOpen: boolean;
+  readable: boolean;
+  known: KnownVolume | null;
+}
+
+export interface StartupReport {
+  volumes: StartupVolume[];
+  elsewhere: KnownVolume[];
+}
+
 export interface ZipMember {
   index: number;
   path: string;

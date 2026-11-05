@@ -27,6 +27,7 @@ import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
 import { Icon, type IconName } from "./components/icons";
 import { RecoveryOverview } from "./components/RecoveryOverview";
+import { StartScreen } from "./components/StartScreen";
 import { isZipName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, duration } from "./format";
@@ -43,49 +44,6 @@ const DISK_ACCESS_CHECK_MS = 3000;
 
 function asBrowseRow(row: Row): BrowseRow {
   return { ...row, id: row.id as number };
-}
-
-function OpenVolume({ initialPath, failure, onOpen }: { initialPath: string; failure: string | null; onOpen: (path: string) => void }) {
-  const [path, setPath] = useState(initialPath);
-  const [access, setAccess] = useState<DiskAccess | null>(null);
-  const [disks, setDisks] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (failure && path) call<DiskAccess>("disk_access", { path }).then(setAccess).catch(() => undefined);
-  }, [failure, path]);
-
-  return (
-    <main className="open">
-      <h1>Open a damaged exFAT volume</h1>
-      <p>This app only reads. It opens the device read-only, and nothing in it can write to the disk.</p>
-      <p className="open-warning">
-        macOS can write to the disk without this app. It mounts a volume as soon as its disk is plugged in, and writes to it while it stays mounted. If the volume is mounted now, unmount it straight away: <code>diskutil unmountDisk /dev/diskN</code>. Do not run First Aid on it.
-      </p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          onOpen(path.trim());
-        }}
-      >
-        <label className="field">
-          <span>Partition device or disk image</span>
-          <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/dev/rdisk12s2" spellCheck={false} />
-        </label>
-        <div className="detail-actions">
-          <button className="primary" type="submit" disabled={!path.trim()}>Open volume</button>
-          <button
-            type="button"
-            onClick={() => call<{ output: string }>("list_disks").then((result) => setDisks(result.output))}
-          >
-            List disks
-          </button>
-        </div>
-      </form>
-      {failure && <p className="warn">{failure}</p>}
-      {access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)}
-      {disks && <pre className="preview-text">{disks}</pre>}
-    </main>
-  );
 }
 
 /** Says plainly that the disk has gone, so failed reads are not taken for damaged files. */
@@ -199,7 +157,7 @@ function ThemeSwitch() {
   );
 }
 
-function Toolbar({ status, overview, onChanged }: { status: Status | null; overview: Overview; onChanged: () => void }) {
+function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void }) {
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => undefined);
@@ -224,7 +182,7 @@ function Toolbar({ status, overview, onChanged }: { status: Status | null; overv
           <strong>Captain Salvage</strong>
           {version && <span className="brand-version">v{version}</span>}
         </div>
-        <span>{overview.device}, {bytes(overview.geometry.volumeBytes)}</span>
+        <span>{overview.device}, {bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>Change disk</button></span>
       </div>
       <div className="scan">
         <div className="scan-text" title={scan ? `${count(scan.directoryClusters)} directory clusters and ${count(scan.setsFound)} entries found so far` : undefined}>{scanText}</div>
@@ -258,6 +216,7 @@ function Toolbar({ status, overview, onChanged }: { status: Status | null; overv
 export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [startPath, setStartPath] = useState<string | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [layer, setLayer] = useState<Layer>("ownership");
@@ -310,6 +269,16 @@ export default function App() {
       const result = await call<Overview>("open_volume", { path });
       setOverview(result);
       setView([2, result.geometry.clusterCount + 2]);
+      setChoosing(false);
+      setEntry(null);
+      setFolder(null);
+      setChain(null);
+      setRegion(null);
+      setStandalone(null);
+      setBrowseScope(null);
+      setCluster(null);
+      setCenter("overview");
+      bump();
     } catch (reason) {
       setFailure(String(reason));
     }
@@ -318,8 +287,8 @@ export default function App() {
   useEffect(() => {
     invoke<string | null>("last_device")
       .then((path) => {
-        if (path) void open(path);
-        else setStartPath("");
+        // Never reopens by itself: disk numbers change, so the same path can be another disk.
+        setStartPath(path && !path.startsWith("/dev/") ? path : "");
       })
       .catch(() => setStartPath(""));
   }, [open]);
@@ -542,9 +511,16 @@ export default function App() {
     void call("set_selection", { selection, layer, mapView: { startCluster: view[0], endCluster: view[1] }, focusFloor: floor, lens, hexCluster: cluster });
   }, [overview, selection, layer, view, floor, lens, cluster]);
 
-  if (!overview) {
-    if (startPath === null) return <main className="open"><p>Opening.</p></main>;
-    return <OpenVolume initialPath={startPath} failure={failure} onOpen={open} />;
+  if (!overview || choosing) {
+    return (
+      <StartScreen
+        imagePath={startPath ?? ""}
+        failure={failure}
+        onOpen={(path) => void open(path)}
+        onBack={overview ? () => setChoosing(false) : undefined}
+        themeSwitch={<ThemeSwitch />}
+      />
+    );
   }
 
   const zipEntry = entry && entry.row.kind === "file" && isZipName(entry.row.name) ? entry.row : null;
@@ -556,7 +532,7 @@ export default function App() {
       style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}
     >
       <div className="sidebar-drag" data-tauri-drag-region />
-      <Toolbar status={status} overview={overview} onChanged={bump} />
+      <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} />
       <Strips
         layer={layer}
         onLayer={(next) => {
