@@ -15,7 +15,6 @@ const SOUNDING_COUNT = 46;
 const SOUNDING_CLEAR_RADIUS = 96;
 const METRES_PER_PIXEL = 1 / 26;
 /** The brand and the promises sit over the chart here, so no figures may land under them. */
-const DEFAULT_DISK_SLEEP_MINUTES = 10;
 const TEXT_CLEAR_TOP = 225;
 const TEXT_CLEAR_BOTTOM = 770;
 /** Nor under the wreck's label, which runs out to the right of it. */
@@ -73,56 +72,6 @@ function Chart({ label, detail }: { label: string; detail: string }) {
       <text x={WRECK_X + 38} y={WRECK_Y - 3} className="start-wreck-label">{label}</text>
       <text x={WRECK_X + 38} y={WRECK_Y + 15} className="start-wreck-detail">{detail}</text>
     </svg>
-  );
-}
-
-/** What stops the drops and remounts doing harm, and how to undo all of it afterwards. */
-function KeepSafe({ volumes, diskSleep }: { volumes: StartupVolume[]; diskSleep: number | null }) {
-  const drives = new Set(volumes.filter((volume) => volume.canOpen && volume.external).map((volume) => volume.wholeDisk));
-  const onDrive = volumes.filter((volume) => drives.has(volume.wholeDisk) && volume.fstabLine && volume.uuid);
-  if (onDrive.length === 0) return null;
-  const waiting = onDrive.filter((volume) => !volume.protected);
-  const names = onDrive.map((volume) => volume.name || "unnamed volume").join(" and ");
-  const sleepsNever = diskSleep === 0;
-  const restoreSleep = diskSleep && diskSleep > 0 ? diskSleep : DEFAULT_DISK_SLEEP_MINUTES;
-  return (
-    <section className="start-safe">
-      <h3>Keep this disk safe</h3>
-      <p>A damaged disk can drop off and come back. Each time, macOS may mount it and write to it, so set this up before you start.</p>
-
-      <div className={waiting.length === 0 ? "start-step start-step-done" : "start-step"}>
-        <span className="start-step-mark" aria-hidden="true">{waiting.length === 0 ? "✓" : "○"}</span>
-        <div className="start-step-body">
-          {waiting.length === 0 ? (
-            <p><strong>macOS will not mount {names}.</strong> After the next reconnect, check that it stayed unmounted.</p>
-          ) : (
-            <>
-              <p><strong>Stop macOS mounting {names}.</strong> Run this in Terminal. It has not been proven on a damaged disk yet, so after the next reconnect, check that it stayed unmounted.</p>
-              {waiting.map((volume) => <Command key={volume.device} text={`printf '\\n%s\\n' '${volume.fstabLine}' | sudo tee -a /etc/fstab`} />)}
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className={sleepsNever ? "start-step start-step-done" : "start-step"}>
-        <span className="start-step-mark" aria-hidden="true">{sleepsNever ? "✓" : "○"}</span>
-        <div className="start-step-body">
-          {sleepsNever ? (
-            <p><strong>macOS will not put disks to sleep.</strong> A drive's own firmware still may.</p>
-          ) : (
-            <>
-              <p><strong>Keep disks awake when this app is closed too.</strong> While it is open, it already stops macOS putting disks to sleep. A drive's own firmware still may.</p>
-              <Command text="sudo pmset -a disksleep 0" />
-            </>
-          )}
-        </div>
-      </div>
-
-      <h4>To go back to normal afterwards</h4>
-      {onDrive.map((volume) => <Command key={volume.device} text={`sudo sed -i '' '/^UUID=${volume.uuid} /d' /etc/fstab`} />)}
-      <Command text={`sudo pmset -a disksleep ${restoreSleep}`} />
-      <p className="start-safe-after">Then reconnect the disk, and macOS mounts it as usual.</p>
-    </section>
   );
 }
 
@@ -285,8 +234,6 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
             <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>Open</button>
           </form>
         </section>
-
-        <KeepSafe volumes={volumes} diskSleep={report?.diskSleepMinutes ?? null} />
 
         {report && volumes.length === 0 && (
           <p className="start-warning">
