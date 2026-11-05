@@ -41,6 +41,8 @@ const STATE_FAILED: &str = "failed";
 /// Image types with no format walker. JPEG and PNG have strong walkers, and walking one
 /// costs a small part of decoding it, which matters across hundreds of thousands of files.
 const DECODE_ONLY_EXTENSIONS: &[&str] = &["gif", "bmp", "webp", "tif", "tiff"];
+/// Walker formats that a decoder can also read.
+const PICTURE_FORMATS: &[&str] = &["jpeg", "png"];
 
 /// What one file's bytes turned out to be.
 #[derive(Clone, Debug, PartialEq)]
@@ -87,13 +89,20 @@ pub fn judge(name: &str, data: &[u8]) -> Judgement {
         };
     }
     let report = verify_stream(name, data);
-    let decode_error = needs_decoding(name)
-        .then(|| make_decode_check(data).err())
-        .map(|error| error.map(|e| format!("{e:#}")));
-    let decoded = decode_error.as_ref().map(Option::is_none);
     let has_walker = report.format != "unknown";
     let valid = has_walker.then_some(report.valid_fraction);
     let first_break = report.breaks.first().copied();
+    let walk_failed = has_walker
+        && (report.valid_fraction < PASS_VALID_FRACTION
+            || !report.reached_end
+            || first_break.is_some());
+    // A picture that fails its walk can still show most of itself, so a decoder gives a
+    // second opinion. Only failures pay for it, which keeps the test fast.
+    let picture_failed = walk_failed && PICTURE_FORMATS.contains(&report.format.as_str());
+    let decode_error = (needs_decoding(name) || picture_failed)
+        .then(|| make_decode_check(data).err())
+        .map(|error| error.map(|e| format!("{e:#}")));
+    let decoded = decode_error.as_ref().map(Option::is_none);
     let format = if has_walker {
         report.format.clone()
     } else {
@@ -110,6 +119,27 @@ pub fn judge(name: &str, data: &[u8]) -> Judgement {
             note: "There is no test for this file type yet.".into(),
         };
     }
+    if walk_failed {
+        let label = report.format.to_uppercase();
+        let percent = (report.valid_fraction * 100.0).floor();
+        let place = match first_break {
+            Some(offset) => format!(", and it breaks at byte {offset}"),
+            None => ", and the file stops before its end".to_string(),
+        };
+        let opens = match decoded {
+            Some(true) => " It still opens as a picture, so some of it may be fine.",
+            Some(false) => " It will not open as a picture.",
+            None => "",
+        };
+        return Judgement {
+            outcome: OUTCOME_DAMAGED,
+            format,
+            valid_fraction: valid,
+            first_break,
+            decoded,
+            note: format!("Tested: {percent}% of its {label} structure is valid{place}.{opens}"),
+        };
+    }
     if let Some(Some(error)) = &decode_error {
         return Judgement {
             outcome: OUTCOME_DAMAGED,
@@ -118,25 +148,6 @@ pub fn judge(name: &str, data: &[u8]) -> Judgement {
             first_break,
             decoded,
             note: format!("Tested: it would not decode as an image ({error})."),
-        };
-    }
-    if has_walker
-        && (report.valid_fraction < PASS_VALID_FRACTION
-            || !report.reached_end
-            || first_break.is_some())
-    {
-        let label = report.format.to_uppercase();
-        let percent = (report.valid_fraction * 100.0).floor();
-        let place = first_break.map_or_else(String::new, |offset| {
-            format!(", and it breaks at byte {offset}")
-        });
-        return Judgement {
-            outcome: OUTCOME_DAMAGED,
-            format,
-            valid_fraction: valid,
-            first_break,
-            decoded,
-            note: format!("Tested: {percent}% of its {label} structure is valid{place}."),
         };
     }
     let label = format.to_uppercase();

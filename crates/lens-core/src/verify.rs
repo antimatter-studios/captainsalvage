@@ -16,12 +16,13 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 const JPEG_MAX_ZERO_RUN: usize = 4096;
 const JPEG_FIRST_RESTART: u8 = 0xD0;
 const JPEG_RESTART_COUNT: u8 = 8;
+/// Every marker a JPEG uses is this or above, so a lower byte after 0xFF is not a marker.
+const JPEG_LOWEST_MARKER: u8 = 0xC0;
 const PDF_SIGNATURE: &[u8] = b"%PDF-";
 const OLE_SIGNATURE: &[u8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1";
-/// Office and similar documents that are zip files inside.
-const ZIP_EXTENSIONS: &[&str] = &[
-    "zip", "docx", "xlsx", "pptx", "odt", "pages", "numbers", "key",
-];
+/// Office and similar documents that are zip files inside. A Keynote .key is one too, but
+/// .key is also the usual name for a key in text form, so only its signature can route it.
+const ZIP_EXTENSIONS: &[&str] = &["zip", "docx", "xlsx", "pptx", "odt", "pages", "numbers"];
 const TEXT_EXTENSIONS: &[&str] = &["txt", "md", "csv", "rtf"];
 /// Bytes from the end of a PDF to look for its pointer to the cross-reference table.
 const PDF_TAIL_BYTES: usize = 2048;
@@ -278,14 +279,15 @@ pub fn verify_jpeg(data: &[u8]) -> VerifyReport {
     let mut position = 2;
     report.units = 1;
     while position + 2 <= data.len() {
-        if data[position] != 0xFF {
+        let marker = data[position + 1];
+        if data[position] != 0xFF || (marker != 0xFF && marker < JPEG_LOWEST_MARKER) {
             report.breaks.push(position as u64);
             report
                 .notes
                 .push(format!("Expected a marker at {position}."));
+            report.valid_bytes = position as u64;
             return report.finish(data.len());
         }
-        let marker = data[position + 1];
         if marker == 0xD9 {
             position += 2;
             // Some cameras add a second image, such as a preview, right after the first.
