@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type { Selection } from "../api";
 import { count } from "../format";
-import { t } from "../i18n";
+import { fromEngine, t } from "../i18n";
 import { Icon } from "./icons";
 
 interface ToolCall {
@@ -152,7 +152,7 @@ export function Chat({ selection }: { selection: Selection }) {
         )}
         {messages.map((message, index) => (
           <div key={index} className={`chat-message chat-${message.role}`}>
-            {message.about && <div className="chat-about">About: {message.about}</div>}
+            {message.about && <div className="chat-about">{t("About: {subject}", { subject: message.about })}</div>}
             {message.tools.length > 0 && (
               <ul className="chat-tools">
                 {message.tools.map((tool, inner) => (
@@ -160,7 +160,7 @@ export function Chat({ selection }: { selection: Selection }) {
                 ))}
               </ul>
             )}
-            {message.text && <div className="chat-text"><Formatted text={message.text} /></div>}
+            {message.text && <div className="chat-text"><Formatted text={message.role === "error" ? fromEngine(message.text) : message.text} /></div>}
           </div>
         ))}
         {busy && <div className="chat-busy">{t("Investigating")}</div>}

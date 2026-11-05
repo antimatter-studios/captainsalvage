@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
-import { locale, t } from "../i18n";
+import { fromEngine, locale, t } from "../i18n";
 import { Command } from "./Command";
 
 const CHART_WIDTH = 640;
@@ -188,9 +188,9 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
           <button onClick={() => look(internal)} disabled={looking}>{looking ? t("Looking") : t("Check again")}</button>
         </div>
 
-        {lookError && <p className="warn">{lookError}</p>}
-        {failure && <p className="warn">{failure}</p>}
-        {access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)}
+        {lookError && <p className="warn">{fromEngine(lookError)}</p>}
+        {failure && <p className="warn">{fromEngine(failure)}</p>}
+        {access?.instructions.map((text) => <p key={text} className="instruction">{fromEngine(text)}</p>)}
 
         {volumes.length > 0 ? (
           <ul className="start-volumes">

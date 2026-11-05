@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readRaw, type ClusterInfo, type EntrySet } from "../api";
 import { count, hexOffset, stamp } from "../format";
-import { t } from "../i18n";
+import { fromEngine, t } from "../i18n";
 import { Icon } from "./icons";
 
 const BYTES_PER_ROW = 16;
@@ -178,7 +178,7 @@ export function HexView({ cluster, info, infoError, clusterSize, heapOffset, las
         <div className="hex-nav">
           <button className="icon-button" disabled={cluster <= 2} onClick={() => onGo(cluster - 1)} title={t("The cluster just before this one on disk")} aria-label={t("Previous cluster")}><Icon name="chevronLeft" size={15} /></button>
           <button className="icon-button" disabled={cluster + 1 >= lastCluster} onClick={() => onGo(cluster + 1)} title={t("The cluster just after this one on disk")} aria-label={t("Next cluster")}><Icon name="chevronRight" size={15} /></button>
-          <button disabled={nextByFat === null} onClick={() => nextByFat !== null && onGo(nextByFat)} title={info?.fatMeaning}>{t("Follow FAT")}</button>
+          <button disabled={nextByFat === null} onClick={() => nextByFat !== null && onGo(nextByFat)} title={fromEngine(info?.fatMeaning)}>{t("Follow FAT")}</button>
           <button disabled={!info || info.chainHead === cluster} onClick={() => info && onGo(info.chainHead)} title={t("Go to the start of this chain")}>{t("Chain start")}</button>
           <form onSubmit={submitJump}>
             <input value={jump} onChange={(event) => setJump(event.target.value)} placeholder={t("Cluster, or 0x offset")} aria-label={t("Go to cluster or offset")} />
@@ -187,11 +187,11 @@ export function HexView({ cluster, info, infoError, clusterSize, heapOffset, las
         </div>
       </div>
       <div ref={scroller} className="hex-scroll" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)} tabIndex={0} aria-label={t("Hex dump")}>
-        {error && <div className="empty">{error}</div>}
+        {error && <div className="empty">{fromEngine(error)}</div>}
         <div className="hex-sheet" style={{ height: rows * ROW_HEIGHT }}>{visible}</div>
       </div>
       <div className="decode">
-        {infoError && <div className="decode-line warn">{infoError}</div>}
+        {infoError && <div className="decode-line warn">{fromEngine(infoError)}</div>}
         {setAtSelection && (
           <div className="decode-line">
             <span>{setAtSelection.checksumOk ? t("Entry") : t("Damaged entry")}{setAtSelection.inUse ? "" : t(", marked deleted")}:</span>{" "}

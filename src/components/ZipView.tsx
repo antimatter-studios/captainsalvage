@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from "react";
 import { call, type ZipListing, type ZipMember, type ZipMemberCheck } from "../api";
 import { bytes, count, stamp } from "../format";
-import { t } from "../i18n";
+import { fromEngine, t } from "../i18n";
 import { fileIcon, Icon } from "./icons";
 
 const ROW_HEIGHT = 28;
@@ -94,9 +94,9 @@ const METHODS: Record<number, string> = { 0: "stored", 8: "Deflate", 9: "Deflate
 function CheckMark({ check, damagedInside }: { check?: ZipMemberCheck; damagedInside?: number }) {
   if (damagedInside) return <span className="zip-mark zip-mark-bad" title={`${count(damagedInside)} damaged inside`}>{count(damagedInside)} !</span>;
   if (!check) return <span className="zip-mark" />;
-  if (check.status === "intact") return <span className="zip-mark zip-mark-good" title={check.note}>✓</span>;
-  if (check.status === "damaged") return <span className="zip-mark zip-mark-bad" title={check.note}>!</span>;
-  return <span className="zip-mark zip-mark-unknown" title={check.note}>?</span>;
+  if (check.status === "intact") return <span className="zip-mark zip-mark-good" title={fromEngine(check.note)}>✓</span>;
+  if (check.status === "damaged") return <span className="zip-mark zip-mark-bad" title={fromEngine(check.note)}>!</span>;
+  return <span className="zip-mark zip-mark-unknown" title={fromEngine(check.note)}>?</span>;
 }
 
 /** What a zip holds, as a tree, read live from the disk. */
@@ -241,9 +241,9 @@ export function ZipView({ id, name, onBack }: { id: number; name: string; onBack
         )}
       </div>
 
-      {error && <p className="warn zip-message">{error}</p>}
+      {error && <p className="warn zip-message">{fromEngine(error)}</p>}
       {!listing && !error && <p className="muted zip-message">{t("Reading the zip from the disk.")}</p>}
-      {listing?.note && <p className="zip-note">{listing.note}</p>}
+      {listing?.note && <p className="zip-note">{fromEngine(listing.note)}</p>}
       {checks.size > 0 && (
         <p className="zip-summary">
           <span className="zip-mark-good">{t("{count} intact", { count: count(intact) })}</span>, <span className={damaged.size > 0 ? "zip-mark-bad" : undefined}>{t("{count} damaged", { count: count(damaged.size) })}</span>
@@ -306,7 +306,7 @@ export function ZipView({ id, name, onBack }: { id: number; name: string; onBack
               {`, ${METHODS[selected.member.method] === "stored" ? t("stored") : METHODS[selected.member.method] ?? t("method {number}", { number: selected.member.method })}`}
               {selected.member.encrypted && t(", encrypted")}
             </span>
-            {checks.get(selected.member.index) && <span>{checks.get(selected.member.index)?.note}</span>}
+            {checks.get(selected.member.index) && <span>{fromEngine(checks.get(selected.member.index)?.note)}</span>}
           </div>
           <button disabled={checking !== null} onClick={() => { const index = selected.member?.index; if (index !== undefined) checkOne(index).catch((reason) => setError(String(reason))); }}>{t("Check this file")}</button>
         </div>

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { ENGINE_TEXT, SYSTEM_TEXT } from "./engineText";
 import de from "./locales/de";
 import es from "./locales/es";
 import fr from "./locales/fr";
@@ -52,6 +53,69 @@ export function t(text: string, values?: Record<string, string | number>): strin
   const chosen = DICTIONARIES[current][text] ?? text;
   if (!values) return chosen;
   return chosen.replace(/\{(\w+)\}/g, (whole, name: string) => (name in values ? String(values[name]) : whole));
+}
+
+interface EnginePattern {
+  template: string;
+  pattern: RegExp;
+  names: string[];
+}
+
+let enginePatterns: EnginePattern[] | null = null;
+
+/** The engine's templates as patterns, the most specific first, built once. */
+function patterns(): EnginePattern[] {
+  if (enginePatterns) return enginePatterns;
+  const literal = (template: string) => template.replace(/\{\w+\}/g, "").length;
+  enginePatterns = [...ENGINE_TEXT, ...SYSTEM_TEXT]
+    .filter((template) => /\{\w+\}/.test(template))
+    .map((template) => {
+      const names: string[] = [];
+      const source = template
+        .split(/(\{\w+\})/)
+        .map((part) => {
+          const placeholder = /^\{(\w+)\}$/.exec(part);
+          if (placeholder) {
+            names.push(placeholder[1]);
+            return "(.+?)";
+          }
+          return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        })
+        .join("");
+      return { template, pattern: new RegExp(`^${source}$`, "s"), names };
+    })
+    .sort((a, b) => literal(b.template) - literal(a.template));
+  return enginePatterns;
+}
+
+/** One sentence, name or part of an error, translated, or null when it is not known. */
+function translatePart(part: string): string | null {
+  const table = DICTIONARIES[current];
+  if (table[part] !== undefined) return table[part];
+  for (const { template, pattern, names } of patterns()) {
+    const match = pattern.exec(part);
+    if (!match) continue;
+    const translated = table[template];
+    if (translated === undefined) return null;
+    // A value such as a content name is translated too, when it is one the engine uses.
+    const values = Object.fromEntries(names.map((name, index) => [name, table[match[index + 1]] ?? match[index + 1]]));
+    return translated.replace(/\{(\w+)\}/g, (whole, name: string) => values[name] ?? whole);
+  }
+  return null;
+}
+
+/**
+ * Shows text the engine wrote in the window's language. The engine writes English sentences,
+ * often several joined, and errors whose parts are joined by ": ". Each sentence is matched
+ * against src/engineText.ts, then each part of it, and anything unknown stays as it is.
+ */
+export function fromEngine(text: string | null | undefined): string {
+  if (!text) return text ?? "";
+  if (current === "en") return text;
+  return text
+    .split(/(?<=[.!?])\s+(?=[A-Z])/)
+    .map((sentence) => translatePart(sentence) ?? sentence.split(": ").map((part) => translatePart(part) ?? part).join(": "))
+    .join(" ");
 }
 
 const LanguageContext = createContext<{ language: Language; choose: (language: Language) => void }>({

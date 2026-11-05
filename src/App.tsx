@@ -32,7 +32,7 @@ import { StartScreen } from "./components/StartScreen";
 import { isZipName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, decimal, duration, lostFolderName } from "./format";
-import { LANGUAGES, locale, t, useLanguage } from "./i18n";
+import { fromEngine, LANGUAGES, locale, t, useLanguage } from "./i18n";
 import { onThemeChange } from "./palette";
 import appIcon from "../src-tauri/icons/64x64.png";
 
@@ -85,7 +85,7 @@ function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) =
               <Command text={`sudo chgrp staff ${unreadable.join(" ")}`} />
             </>
           ) : (
-            access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)
+            access?.instructions.map((text) => <p key={text} className="instruction">{fromEngine(text)}</p>)
           )}
           <button className="primary" disabled={!access?.ready} onClick={() => onOpen(back.device)}>{t("Open it again")}</button>
         </>
@@ -280,7 +280,7 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
         <div className="scan-bar" role="progressbar" aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
           <div className="scan-fill" style={{ width: `${fraction * 100}%` }} />
         </div>
-        {status?.scanError && <div className="warn">{status.scanError}</div>}
+        {status?.scanError && <div className="warn">{fromEngine(status.scanError)}</div>}
       </div>
       <div className="toolbar-spacer" data-tauri-drag-region />
       {status?.fileTests.state === "running" && (
