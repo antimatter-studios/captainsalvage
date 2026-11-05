@@ -20,11 +20,21 @@ someone using the app, and title it to match.
   merging if the work changed, because the squash commit takes its subject from the title.
 - Never set a version by hand. 1.0.0 and other named versions are the owner's decision.
 
+## Changelog entries are fragments
+
+A pull request never edits `CHANGELOG.md`. A `feat` or `fix` branch adds one file,
+`changelog.d/<branch>.md`. The pre-commit hook writes the first one from what is staged, using an
+agent for the wording, and leaves alone a file you wrote. Read it before opening the pull request,
+because it only saw the branch's first commit. Run `scripts/install-hooks.sh` once per clone.
+
+A refused commit says what to fix. Do what it says, and do not use `--no-verify` to get past it.
+
 ## Cutting a release
 
-1. Run `scripts/release.py prepare`. It picks the version from what has merged.
-2. Merge that as a pull request titled `chore(release): vX.Y.Z`.
-3. On an up-to-date `main`, run `git tag vX.Y.Z` and push the tag.
+Run `scripts/create-release`. It shows what would go out and stops for a yes, then opens the release
+pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `main` and pushes.
 
-Tags are pushed from a clone, so github-guard's `git-changelog` hook checks each one first. The
-tag starts the release pipeline, and the pipeline never creates a tag.
+- Only the owner decides when to release. Do not start one unless they asked.
+- Show them the list it prints, verbatim, and wait for their answer before passing
+  `--contents-approved`.
+- The tag starts the release pipeline, and the pipeline never creates a tag.
