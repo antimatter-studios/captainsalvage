@@ -22,10 +22,18 @@ function depthOf(row: Element): number | null {
   return text === undefined ? null : Number(text);
 }
 
+/** A selected row looks selected. The open folder keeps a quieter mark when something else is. */
+function rowClass(key: string, selectedKey: string | null, openKey: string | null): string {
+  if (selectedKey === key) return "row row-selected";
+  return openKey === key ? "row row-open" : "row";
+}
+
 interface RowProps {
   floor: number;
   revision: number;
   selectedKey: string | null;
+  /** The folder whose files are showing. It stays marked while other things are selected. */
+  openKey: string | null;
   onEntry: (row: Row) => void;
   onFolder: (row: Row) => void;
   basket: Set<string>;
@@ -98,7 +106,8 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         ref={(element) => {
           if (element) folderActions.set(element, { isOpen: open, setOpen, select: () => props.onFolder(row) });
         }}
-        className={props.selectedKey === key ? "row row-selected" : "row"}
+        className={rowClass(key, props.selectedKey, props.openKey)}
+        aria-current={props.openKey === key ? "true" : undefined}
         style={{ paddingLeft: 6 + depth * 14 }}
         aria-expanded={open}
         data-depth={depth}
@@ -260,13 +269,18 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   );
 }
 
-function SearchResults({ page, onEntry, onFolder, selectedKey, basket, onBasket }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
+function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, onBasket }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; openKey: string | null; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
   if (page.rows.length === 0) return <div className="empty">No names match. The scan may not have reached them yet.</div>;
   return (
     <>
       {page.rows.map((row) =>
         row.kind === "folder" ? (
-          <button key={row.id} className="row" onClick={() => onFolder(row)}>
+          <button
+            key={row.id}
+            className={rowClass(`folder:${row.head ?? row.firstCluster}`, selectedKey, openKey)}
+            aria-current={openKey === `folder:${row.head ?? row.firstCluster}` ? "true" : undefined}
+            onClick={() => onFolder(row)}
+          >
             <span className="row-icon row-icon-folder"><Icon name="folder" /></span>
             <span className="row-main">
               <span className="row-name">{row.name}</span>
@@ -398,7 +412,7 @@ export function Explorer(props: ExplorerProps) {
         }}
       >
         {results ? (
-          <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} basket={props.basket} onBasket={props.onBasket} />
+          <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} openKey={props.openKey} basket={props.basket} onBasket={props.onBasket} />
         ) : (
           <>
             {tab === "folders" && <Folders {...props} />}
