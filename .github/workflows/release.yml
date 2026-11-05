@@ -58,7 +58,7 @@ jobs:
       - name: test
         run: cargo test -p lens-core --locked
       - name: build the app
-        run: npx tauri build --bundles app
+        run: python3 scripts/release.py build
       - name: package it
         run: |
           label="${GITHUB_REF_NAME#v}"

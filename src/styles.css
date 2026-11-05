@@ -203,6 +203,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .brand { display: flex; flex-direction: column; line-height: 1.2; flex: none; pointer-events: none; }
 .brand strong { font-size: 13.5px; font-weight: 650; }
 .brand span { font-size: 11px; color: var(--muted); }
+.brand-name { display: flex; align-items: baseline; gap: 6px; }
+.brand .brand-version { font-variant-numeric: tabular-nums; }
 .scan { flex: 1; min-width: 180px; max-width: 520px; pointer-events: none; }
 .scan-text { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scan-bar { height: 4px; background: var(--hover); border-radius: 4px; overflow: hidden; margin-top: 4px; }

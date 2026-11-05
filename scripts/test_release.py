@@ -40,6 +40,24 @@ class Notes(unittest.TestCase):
         self.assertEqual(release.render_notes([]), release.NO_CHANGES + "\n")
 
 
+class Versions(unittest.TestCase):
+    def test_the_patch_counts_commits_since_the_release(self):
+        self.assertEqual(release.build_version("0.2.0", "v0.2.0", 0), "0.2.0")
+        self.assertEqual(release.build_version("0.2.0", "v0.2.0", 7), "0.2.7")
+
+    def test_before_any_release_the_patch_stays_zero(self):
+        self.assertEqual(release.build_version("0.1.0", None, 0), "0.1.0")
+
+    def test_a_prepared_release_not_yet_tagged_starts_at_zero(self):
+        self.assertEqual(release.build_version("0.3.0", "v0.2.0", 5), "0.3.0")
+
+    def test_each_release_raises_the_minor_and_resets_the_patch(self):
+        self.assertEqual(release.next_release_version("0.2.0", "v0.2.0"), "0.3.0")
+
+    def test_the_first_release_uses_the_number_it_has(self):
+        self.assertEqual(release.next_release_version("0.1.0", None), "0.1.0")
+
+
 class Files(unittest.TestCase):
     SECTIONS = [(f"[0.{n}.0] — 2026-01-01", "### Added\n\n- A thing") for n in range(12, 0, -1)]
 
