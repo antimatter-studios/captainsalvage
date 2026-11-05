@@ -1,3 +1,3 @@
 ### Added
 
-- **The window can be shown in English, French, German, or Spanish.** Choose your language and see the app’s messages and controls in it.
+- **The window can be shown in French, German or Spanish.** A switch beside the light and dark switch chooses the language, and the choice is kept. Some messages from the disk analysis are still in English.
