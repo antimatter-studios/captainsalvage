@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const IOREG: &str = "/usr/sbin/ioreg";
-const DISKUTIL: &str = "/usr/sbin/diskutil";
+pub(crate) const DISKUTIL: &str = "/usr/sbin/diskutil";
 const VOLUME_UUID_FIELD: &str = "Volume UUID:";
 const DEVICE_NODE_FIELD: &str = "Device Node:";
 const MOUNTED_FIELD: &str = "Mounted:";
@@ -167,7 +167,7 @@ pub struct DiskReturn {
     pub mounted: bool,
 }
 
-fn info_field<'a>(info: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn info_field<'a>(info: &'a str, name: &str) -> Option<&'a str> {
     info.lines()
         .find_map(|line| line.trim().strip_prefix(name))
         .map(str::trim)
@@ -187,7 +187,7 @@ pub fn parse_disk_return(info: &str) -> Option<DiskReturn> {
     })
 }
 
-fn diskutil_info(target: &str) -> Option<String> {
+pub(crate) fn diskutil_info(target: &str) -> Option<String> {
     let output = Command::new(DISKUTIL)
         .args(["info", target])
         .output()

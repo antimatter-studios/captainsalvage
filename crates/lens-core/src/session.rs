@@ -309,7 +309,9 @@ impl Session {
         })?);
         let volume = Volume::open(source)?;
         let workspace = Workspace::for_serial(volume.boot.volume_serial)?;
-        Self::assemble(path, volume, workspace)
+        let session = Self::assemble(path, volume, workspace)?;
+        crate::startup::remember_volume(&session.workspace, path);
+        Ok(session)
     }
 
     /// Builds a session around any source, for tests and for disk images.

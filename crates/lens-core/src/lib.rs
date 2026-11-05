@@ -18,6 +18,7 @@ pub mod scan;
 pub mod script;
 pub mod session;
 pub mod source;
+pub mod startup;
 pub mod verify;
 pub mod volume;
 pub mod workspace;

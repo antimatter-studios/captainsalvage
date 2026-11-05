@@ -151,6 +151,10 @@ checked it. Some files will not come back.
 
 ## Running it
 
+The app opens on a start screen, and never reopens a disk by itself, because disk numbers
+change on each attach and the same path can be a different disk. Choose the damaged disk
+there. A volume you have opened before is recognised by its UUID, with what was found on it.
+
 You need macOS, Rust and Node.js.
 
 ```sh
