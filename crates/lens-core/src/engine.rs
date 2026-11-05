@@ -43,6 +43,7 @@ const QUIET_TOOLS: &[&str] = &[
     "file_copies",
     "file_tests_status",
     "mount_history",
+    "disk_access",
     "zip_contents",
     "zip_member_check",
 ];
@@ -189,7 +190,8 @@ impl Engine {
     pub fn open(&self, path: &str) -> Result<Arc<Session>> {
         let wanted = PathBuf::from(path);
         if let Ok(current) = self.session() {
-            if current.path == wanted {
+            // A disk that came back with the same number needs a new handle: the old one is dead.
+            if current.path == wanted && !current.volume.source().is_gone() {
                 return Ok(current);
             }
         }
@@ -392,6 +394,14 @@ impl Engine {
                 )?)?)
             }
             "mount_history" => Ok(serde_json::to_value(session.mount_history()?)?),
+            // Only for driving the window in a test: never offered, and refused otherwise.
+            "test_disconnect" => {
+                if std::env::var_os("LENS_TEST_UI").is_none() {
+                    bail!("this is only for testing");
+                }
+                session.volume.source().simulate_disconnect();
+                Ok(json!({"ok": true}))
+            }
             "zip_contents" => {
                 let id = need_i64(args, "id")?;
                 Ok(serde_json::to_value(session.zip_contents(id)?)?)

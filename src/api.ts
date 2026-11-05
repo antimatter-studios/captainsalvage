@@ -59,6 +59,9 @@ export interface Status {
   copy: CopyStatus;
   fileTests: FileTestStatus;
   writes: DiskWrites;
+  diskGone: boolean;
+  diskBack: { device: string; mounted: boolean } | null;
+  keepAwake: boolean;
 }
 
 export interface WriteCounter {

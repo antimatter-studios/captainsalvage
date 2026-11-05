@@ -593,6 +593,7 @@ impl Session {
     /// Starts copying several selections, one after another. Within each one,
     /// files are read in disk order. A file in more than one is copied once.
     pub fn copy_start_groups(self: &Arc<Self>, groups: Vec<CopyRequest>) -> Result<CopyPlan> {
+        self.require_disk()?;
         let first = groups.first().context("nothing to copy")?;
         let mut request = self.with_destination(first)?;
         let groups: Vec<CopyRequest> = groups
@@ -728,6 +729,8 @@ impl Session {
                     });
                 }
                 Ok(None) => return Ok(false),
+                // Every file after this one would fail the same way.
+                Err(error) if self.volume.source().is_gone() => return Err(error),
                 Err(error) => {
                     // One bad file must not end the copy, unless the destination is the problem.
                     let free = filesystem_of(destination)
@@ -804,6 +807,11 @@ impl Session {
                     pieces
                 }
             };
+            if let Err(error) = self.require_disk() {
+                drop(file);
+                let _ = fs::remove_file(&temporary);
+                return Err(error);
+            }
             let take = (row.length - written).min(run_bytes) as usize;
             let mut chunk = data[..take].to_vec();
             // Bytes past the valid length are undefined on disk, and read as zeros.

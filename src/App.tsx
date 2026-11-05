@@ -39,6 +39,7 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
 type CenterView = "overview" | "browse" | "bytes" | "zip";
+const DISK_ACCESS_CHECK_MS = 3000;
 
 function asBrowseRow(row: Row): BrowseRow {
   return { ...row, id: row.id as number };
@@ -87,15 +88,51 @@ function OpenVolume({ initialPath, failure, onOpen }: { initialPath: string; fai
   );
 }
 
+/** Says plainly that the disk has gone, so failed reads are not taken for damaged files. */
+function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) => void }) {
+  const back = status.diskBack;
+  const [access, setAccess] = useState<DiskAccess | null>(null);
+  useEffect(() => {
+    setAccess(null);
+    if (!back || back.mounted) return;
+    const check = () => {
+      call<DiskAccess>("disk_access", { path: back.device }).then(setAccess).catch(() => undefined);
+    };
+    check();
+    const timer = window.setInterval(check, DISK_ACCESS_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [back?.device, back?.mounted]);
+
+  return (
+    <div className="disk-gone" role="alert">
+      <strong>The disk has been disconnected.</strong>
+      {!back && <p>Files cannot be read until it is back, so a file that will not open now is not necessarily damaged. If you plug it back in, macOS may mount it and write to it.</p>}
+      {back?.mounted && (
+        <p>It is back as {back.device}, and macOS has mounted it, so macOS may be writing to it. Unmount it now: <code>diskutil unmount {back.device.replace("/dev/rdisk", "/dev/disk")}</code></p>
+      )}
+      {back && !back.mounted && (
+        <>
+          <p>It is back as {back.device}, and it is not mounted.</p>
+          {access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)}
+          <button className="primary" disabled={!access?.ready} onClick={() => onOpen(back.device)}>Open it again</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** One calm chip while the disk is safe. Any problem turns it red and opens the list. */
 function Safety({ status }: { status: Status }) {
   const { now: counted, sinceOpen } = status.writes;
+  const mountedAgain = status.diskBack?.mounted ?? false;
   const baselineDate = new Date(status.baseline.recordedAtMillis).toLocaleDateString();
   const checks = [
+    { good: !status.diskGone, text: "The disk is connected", danger: "The disk has been disconnected" },
     { good: status.osDeniesWrites, text: "The OS denies writes to this device", danger: "This account has write permission on the device" },
-    { good: status.mounted === null, text: "The volume is not mounted", danger: "Mounted, so macOS may write to it. Unmount it now" },
+    { good: status.mounted === null && !mountedAgain, text: status.diskGone ? "The volume is not mounted, as far as can be seen" : "The volume is not mounted", danger: "Mounted, so macOS may write to it. Unmount it now" },
     { good: status.baseline.unchanged, text: `Boot, FAT, bitmap and root are unchanged since ${baselineDate}`, danger: `Structures have changed since the baseline of ${baselineDate}` },
     { good: status.reads.errors === 0, text: "No read errors", danger: `${count(status.reads.errors)} read errors` },
+    { good: status.keepAwake, text: "macOS will not put disks to sleep while this app is open", danger: "macOS may put this disk to sleep, and it can drop off when woken" },
     ...(counted
       ? [{
           good: sinceOpen.operations === 0,
@@ -553,6 +590,7 @@ export default function App() {
         handle={<ColumnHandle label="Resize the sidebar" edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
       />
       <div className="center-stack">
+        {status?.diskGone && <DiskGone status={status} onOpen={(path) => void open(path).then(bump)} />}
         <div className="center-tabs">
           <div className="segmented" role="tablist">
             <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>Overview</button>

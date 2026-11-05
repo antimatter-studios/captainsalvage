@@ -232,6 +232,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            lens_core::mount::keep_disks_awake();
             let engine = Engine::new();
             let handle = app.handle().clone();
             let allow_test_scripts = std::env::var_os("LENS_TEST_UI").is_some();

@@ -334,7 +334,13 @@ impl Session {
             {
                 std::thread::sleep(QUIET_CHECK);
             }
-            let part = self.read_entry_range(candidate.id, 0, candidate.length)?;
+            let part = match self.read_entry_range(candidate.id, 0, candidate.length) {
+                Ok(part) => part,
+                Err(error) => {
+                    self.with_database(|database| database.save_file_tests(&waiting))?;
+                    return Err(error);
+                }
+            };
             let judgement = judge(&candidate.name, &part.data);
             let sha256: String = Sha256::digest(&part.data)
                 .iter()

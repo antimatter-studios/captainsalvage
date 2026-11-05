@@ -12,7 +12,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Raw macOS devices reject requests that are not aligned to the sector size.
 const DEVICE_ALIGNMENT: u64 = 512;
@@ -28,6 +28,18 @@ pub struct ReadStats {
 pub trait BlockSource: Send + Sync {
     fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()>;
     fn read_stats(&self) -> ReadStats;
+    /// True once the device itself has gone, as opposed to one bad spot on it. Nothing it
+    /// returned after that says anything about the data, so nothing may be judged by it.
+    fn is_gone(&self) -> bool {
+        false
+    }
+    /// For testing the window against a real device: acts as if it has been unplugged.
+    fn simulate_disconnect(&self) {}
+}
+
+/// A disconnected disk answers an open handle with these. A bad sector gives `EIO` instead.
+pub fn means_device_gone(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::ENXIO | libc::ENODEV))
 }
 
 #[derive(Default)]
@@ -35,6 +47,7 @@ struct Counters {
     bytes: AtomicU64,
     operations: AtomicU64,
     errors: AtomicU64,
+    gone: AtomicBool,
 }
 
 impl Counters {
@@ -44,8 +57,11 @@ impl Counters {
             Ok(()) => {
                 self.bytes.fetch_add(length as u64, Ordering::Relaxed);
             }
-            Err(_) => {
+            Err(error) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
+                if means_device_gone(error) {
+                    self.gone.store(true, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -81,6 +97,9 @@ impl FileSource {
 
 impl BlockSource for FileSource {
     fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
+        if self.is_gone() {
+            return Err(io::Error::from_raw_os_error(libc::ENXIO));
+        }
         let requested_end = offset + buffer.len() as u64;
         let start = offset - offset % DEVICE_ALIGNMENT;
         let end = requested_end.div_ceil(DEVICE_ALIGNMENT) * DEVICE_ALIGNMENT;
@@ -100,12 +119,21 @@ impl BlockSource for FileSource {
     fn read_stats(&self) -> ReadStats {
         self.counters.snapshot()
     }
+
+    fn is_gone(&self) -> bool {
+        self.counters.gone.load(Ordering::Relaxed)
+    }
+
+    fn simulate_disconnect(&self) {
+        self.counters.gone.store(true, Ordering::Relaxed);
+    }
 }
 
 /// In-memory source, used to test against synthetic volumes.
 pub struct MemorySource {
     data: Vec<u8>,
     counters: Counters,
+    reads_left: AtomicU64,
 }
 
 impl MemorySource {
@@ -113,14 +141,31 @@ impl MemorySource {
         Self {
             data,
             counters: Counters::default(),
+            reads_left: AtomicU64::new(u64::MAX),
         }
+    }
+
+    /// Behaves from now on as a disk that has been unplugged does.
+    pub fn disconnect(&self) {
+        self.counters.gone.store(true, Ordering::Relaxed);
+    }
+
+    /// Lets this many more reads through, then behaves as an unplugged disk does.
+    pub fn disconnect_after_reads(&self, reads: u64) {
+        self.reads_left.store(reads, Ordering::Relaxed);
     }
 }
 
 impl BlockSource for MemorySource {
     fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
         let start = offset as usize;
+        match self.reads_left.load(Ordering::Relaxed) {
+            0 => self.disconnect(),
+            u64::MAX => {}
+            left => self.reads_left.store(left - 1, Ordering::Relaxed),
+        }
         let result = match self.data.get(start..start + buffer.len()) {
+            _ if self.is_gone() => Err(io::Error::from_raw_os_error(libc::ENXIO)),
             Some(slice) => {
                 buffer.copy_from_slice(slice);
                 Ok(())
@@ -136,6 +181,10 @@ impl BlockSource for MemorySource {
 
     fn read_stats(&self) -> ReadStats {
         self.counters.snapshot()
+    }
+
+    fn is_gone(&self) -> bool {
+        self.counters.gone.load(Ordering::Relaxed)
     }
 }
 

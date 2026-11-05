@@ -2,12 +2,20 @@
 //! attached, and writes to it while it is mounted, which can happen before this app opens.
 
 use crate::session::whole_disk_path;
+use crate::source::BlockSource;
 use serde::Serialize;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const IOREG: &str = "/usr/sbin/ioreg";
+const DISKUTIL: &str = "/usr/sbin/diskutil";
+const VOLUME_UUID_FIELD: &str = "Volume UUID:";
+const DEVICE_NODE_FIELD: &str = "Device Node:";
+const MOUNTED_FIELD: &str = "Mounted:";
+const PROBE_BYTES: usize = 512;
+const CAFFEINATE: &str = "/usr/bin/caffeinate";
 const STATISTICS_LINE: &str = "\"Statistics\" = {";
 const OPERATIONS_FIELD: &str = "\"Operations (Write)\"=";
 const BYTES_FIELD: &str = "\"Bytes (Write)\"=";
@@ -113,6 +121,122 @@ impl WriteWatch {
             self.checked = Instant::now();
         }
         DiskWrites::between(self.at_open, self.latest)
+    }
+}
+
+static KEEP_AWAKE: Mutex<Option<Child>> = Mutex::new(None);
+
+/// Stops macOS putting disks to sleep for as long as this process lives. A damaged old disk
+/// can drop off USB when woken, and then macOS mounts it again and writes to it. This writes
+/// nothing, and it ends by itself with the app. A drive's own firmware may still sleep.
+pub fn keep_disks_awake() {
+    let Ok(mut held) = KEEP_AWAKE.lock() else {
+        return;
+    };
+    if held
+        .as_mut()
+        .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+    {
+        return;
+    }
+    *held = Command::new(CAFFEINATE)
+        .args(["-m", "-w", &std::process::id().to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok();
+}
+
+pub fn disks_kept_awake() -> bool {
+    KEEP_AWAKE
+        .lock()
+        .ok()
+        .and_then(|mut held| {
+            held.as_mut()
+                .map(|child| matches!(child.try_wait(), Ok(None)))
+        })
+        .unwrap_or(false)
+}
+
+/// Where a disconnected volume turned up again. Disk numbers change on each attach.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskReturn {
+    pub device: String,
+    pub mounted: bool,
+}
+
+fn info_field<'a>(info: &'a str, name: &str) -> Option<&'a str> {
+    info.lines()
+        .find_map(|line| line.trim().strip_prefix(name))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+pub fn parse_volume_uuid(info: &str) -> Option<String> {
+    info_field(info, VOLUME_UUID_FIELD).map(str::to_string)
+}
+
+/// Reads where a volume is from `diskutil info`, by the raw path this app reads it through.
+pub fn parse_disk_return(info: &str) -> Option<DiskReturn> {
+    let node = info_field(info, DEVICE_NODE_FIELD)?;
+    Some(DiskReturn {
+        device: node.replacen("/dev/disk", "/dev/rdisk", 1),
+        mounted: info_field(info, MOUNTED_FIELD) == Some("Yes"),
+    })
+}
+
+fn diskutil_info(target: &str) -> Option<String> {
+    let output = Command::new(DISKUTIL)
+        .args(["info", target])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Notices a disk that has gone even while nothing is reading it, and looks for its volume
+/// coming back. A reconnected disk gets a new number, so a check by the old path would say
+/// "not mounted" about a volume macOS has just mounted somewhere else.
+pub(crate) struct ReturnWatch {
+    uuid: Option<String>,
+    checked: Option<Instant>,
+    back: Option<DiskReturn>,
+}
+
+impl ReturnWatch {
+    pub(crate) fn open(path: &Path) -> Self {
+        let uuid = whole_disk_path(path)
+            .and_then(|_| diskutil_info(path.to_str()?))
+            .as_deref()
+            .and_then(parse_volume_uuid);
+        Self {
+            uuid,
+            checked: None,
+            back: None,
+        }
+    }
+
+    pub(crate) fn report(&mut self, source: &dyn BlockSource) -> (bool, Option<DiskReturn>) {
+        if self
+            .checked
+            .is_none_or(|checked| checked.elapsed() >= CHECK_INTERVAL)
+        {
+            self.checked = Some(Instant::now());
+            // Only reading tells: a device node can outlive its disk while it is held open.
+            let mut sector = [0u8; PROBE_BYTES];
+            let _ = source.read_exact_at(0, &mut sector);
+            self.back = None;
+            if source.is_gone() {
+                self.back = self
+                    .uuid
+                    .as_deref()
+                    .and_then(diskutil_info)
+                    .as_deref()
+                    .and_then(parse_disk_return);
+            }
+        }
+        (source.is_gone(), self.back.clone())
     }
 }
 
