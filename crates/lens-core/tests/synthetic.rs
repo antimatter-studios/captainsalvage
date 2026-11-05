@@ -1825,6 +1825,64 @@ fn a_file_is_judged_by_its_contents_before_its_name() {
         judge("a.png", b"not a picture at all").outcome,
         OUTCOME_DAMAGED
     );
+
+    // A .key is a Keynote document or a key in text form, and only the bytes can tell.
+    assert_eq!(
+        judge("server.key", b"-----BEGIN SAMPLE-----\nabc\n").outcome,
+        OUTCOME_UNTESTED
+    );
+    assert_eq!(
+        judge("slides.key", b"PK\x03\x04 and nothing after it").outcome,
+        OUTCOME_DAMAGED
+    );
+}
+
+#[test]
+fn a_damaged_jpeg_is_described_by_what_survives() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED};
+    let image_data: Vec<u8> = (0..60_000u32).map(|n| (n % 251) as u8 + 1).collect();
+    let scan_start = sample_jpeg(b"", b"").len() - 2;
+
+    // Nothing below 0xC0 is a marker, so the break is at those bytes and not somewhere later.
+    let mut illegal = image_data.clone();
+    illegal[30_000..30_002].copy_from_slice(b"\xff\x75");
+    let hit = judge("a.jpg", &sample_jpeg(&illegal, b""));
+    assert_eq!(hit.outcome, OUTCOME_DAMAGED);
+    assert_eq!(hit.first_break, Some((scan_start + 30_000) as u64));
+    assert!(hit.note.contains("50% of its JPEG"), "{}", hit.note);
+
+    // A legal marker that leads nowhere still counts what came before it.
+    let mut stray = image_data.clone();
+    stray[30_000..30_004].copy_from_slice(b"\xff\xe1\x00\x10");
+    let hit = judge("a.jpg", &sample_jpeg(&stray, b""));
+    assert_eq!(hit.outcome, OUTCOME_DAMAGED);
+    assert!(hit.valid_fraction.unwrap() > 0.4, "{}", hit.note);
+
+    // A file that only stops early has no break to report, and says what it does have.
+    let whole = sample_jpeg(&image_data, b"");
+    let cut = judge("a.jpg", &whole[..whole.len() / 2]);
+    assert_eq!(cut.first_break, None);
+    assert!(cut.note.contains("stops before its end"), "{}", cut.note);
+}
+
+#[test]
+fn a_damaged_picture_says_whether_it_still_opens() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED};
+    let jpeg = encoded_image(image::ImageFormat::Jpeg);
+
+    // Everything but the end marker is there, so a viewer can still show it.
+    let no_end = judge("a.jpg", &jpeg[..jpeg.len() - 2]);
+    assert_eq!(no_end.outcome, OUTCOME_DAMAGED);
+    assert_eq!(no_end.decoded, Some(true), "{}", no_end.note);
+    assert!(no_end.note.contains("still opens"), "{}", no_end.note);
+
+    let noise = judge("a.jpg", &vec![0x5a; 4096]);
+    assert_eq!(noise.outcome, OUTCOME_DAMAGED);
+    assert_eq!(noise.decoded, Some(false), "{}", noise.note);
+    assert!(noise.note.contains("will not open"), "{}", noise.note);
+
+    // A whole picture never pays for a decode: that is what keeps the test fast.
+    assert_eq!(judge("a.jpg", &jpeg).decoded, None);
 }
 
 #[test]
