@@ -27,6 +27,7 @@ import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
 import { Icon, type IconName } from "./components/icons";
 import { RecoveryOverview } from "./components/RecoveryOverview";
+import { Command } from "./components/Command";
 import { StartScreen } from "./components/StartScreen";
 import { isZipName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
@@ -60,18 +61,30 @@ function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) =
     const timer = window.setInterval(check, DISK_ACCESS_CHECK_MS);
     return () => window.clearInterval(timer);
   }, [back?.device, back?.mounted]);
+  // Devices that are there but this account cannot read. One command fixes them all.
+  const unreadable = access?.devices.filter((device) => device.exists && !device.readable).map((device) => device.path) ?? [];
 
   return (
     <div className="disk-gone" role="alert">
       <strong>The disk has been disconnected.</strong>
       {!back && <p>Files cannot be read until it is back, so a file that will not open now is not necessarily damaged. If you plug it back in, macOS may mount it and write to it.</p>}
       {back?.mounted && (
-        <p>It is back as {back.device}, and macOS has mounted it, so macOS may be writing to it. Unmount it now: <code>diskutil unmount {back.device.replace("/dev/rdisk", "/dev/disk")}</code></p>
+        <>
+          <p>It is back as {back.device}, and macOS has mounted it, so macOS may be writing to it. Unmount it now, in Terminal:</p>
+          <Command text={`diskutil unmount ${back.device.replace("/dev/rdisk", "/dev/disk")}`} />
+        </>
       )}
       {back && !back.mounted && (
         <>
           <p>It is back as {back.device}, and it is not mounted.</p>
-          {access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)}
+          {unreadable.length > 0 ? (
+            <>
+              <p>To read it again, give this account read-only access in Terminal. It lasts until the disk is reconnected.</p>
+              <Command text={`sudo chgrp staff ${unreadable.join(" ")}`} />
+            </>
+          ) : (
+            access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)
+          )}
           <button className="primary" disabled={!access?.ready} onClick={() => onOpen(back.device)}>Open it again</button>
         </>
       )}

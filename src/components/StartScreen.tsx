@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
+import { Command } from "./Command";
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 900;
@@ -15,7 +16,6 @@ const SOUNDING_CLEAR_RADIUS = 96;
 const METRES_PER_PIXEL = 1 / 26;
 /** The brand and the promises sit over the chart here, so no figures may land under them. */
 const DEFAULT_DISK_SLEEP_MINUTES = 10;
-const COPIED_MESSAGE_MS = 1500;
 const TEXT_CLEAR_TOP = 225;
 const TEXT_CLEAR_BOTTOM = 770;
 /** Nor under the wreck's label, which runs out to the right of it. */
@@ -73,22 +73,6 @@ function Chart({ label, detail }: { label: string; detail: string }) {
       <text x={WRECK_X + 38} y={WRECK_Y - 3} className="start-wreck-label">{label}</text>
       <text x={WRECK_X + 38} y={WRECK_Y + 15} className="start-wreck-detail">{detail}</text>
     </svg>
-  );
-}
-
-function Command({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), COPIED_MESSAGE_MS);
-    });
-  };
-  return (
-    <div className="start-command">
-      <code>{text}</code>
-      <button onClick={copy}>{copied ? "Copied" : "Copy"}</button>
-    </div>
   );
 }
 
