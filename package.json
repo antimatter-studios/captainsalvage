@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "app": "python3 scripts/release.py build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

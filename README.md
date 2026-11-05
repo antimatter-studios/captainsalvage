@@ -112,8 +112,8 @@ You need macOS, Rust and Node.js.
 
 ```sh
 npm install
-npx tauri build --bundles app
-open "target/release/bundle/macos/exFAT Lens.app"
+npm run app
+open "target/release/bundle/macos/Captain Salvage.app"
 ```
 
 **First, keep the damaged volume unmounted, and don't run First Aid or `fsck` on it.**
@@ -212,9 +212,11 @@ Each version is on the [releases page](https://github.com/antimatter-studios/cap
 built and tested by GitHub Actions. Its notes list only the pull requests merged into it.
 Builds are for Apple Silicon and are not signed yet, so macOS asks you to approve the app the first time.
 
+**Version numbers:** each GitHub release raises the minor number and resets the patch to 0. Between releases, the patch counts the commits merged since the last one, so `0.2.3` is three merges after `0.2.0`. Build with `npm run app` to get the right number. When to reach `1.0.0` has not been decided.
+
 To cut one:
 
-1. Run `scripts/release.py prepare 0.2.0`, which sets the version everywhere and moves the notes into `CHANGELOG.md` and this file.
+1. Run `scripts/release.py prepare`, which picks the next minor version, sets it everywhere and moves the notes into `CHANGELOG.md` and this file. To choose a number, such as `1.0.0`, pass it.
 2. Merge that as a pull request titled `chore(release): v0.2.0`.
 3. Tag the merge on `main` with `v0.2.0` and push the tag. The pipeline does the rest.
 
