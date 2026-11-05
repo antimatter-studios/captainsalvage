@@ -295,8 +295,12 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 ## Releases
 
 Each version is on the [releases page](https://github.com/antimatter-studios/captainsalvage/releases),
-built and tested by GitHub Actions. Its notes list only the pull requests merged into it.
-Builds are for Apple Silicon and are not signed yet, so macOS asks you to approve the app the first time.
+built and tested by GitHub Actions, with its notes from `CHANGELOG.md`.
+
+Releases after v0.2.0 have no build attached, because the app will be sold and anything on
+GitHub can be downloaded by anyone who can read the repository. Builds will go to private storage.
+To build one yourself, run `python3 scripts/release.py build`. Builds are for Apple Silicon and are
+not signed yet, so macOS asks you to approve the app the first time.
 
 **Version numbers** follow what was merged since the last release:
 
