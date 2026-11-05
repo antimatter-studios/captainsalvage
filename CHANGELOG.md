@@ -6,8 +6,14 @@ writes this file.
 
 ## [Unreleased]
 
+No pull requests merged yet.
+
+## [0.1.0] — 2026-11-05
+
 ### Added
 
+- Show the version, counting builds and releases ([#38](https://github.com/antimatter-studios/captainsalvage/pull/38))
+- Mark the selected spot on the map with arrows ([#37](https://github.com/antimatter-studios/captainsalvage/pull/37))
 - Name the app Captain Salvage and add a light and dark switch ([#35](https://github.com/antimatter-studios/captainsalvage/pull/35))
 - Navigate the sidebar with the arrow keys ([#34](https://github.com/antimatter-studios/captainsalvage/pull/34))
 - Drag the edges of the middle column to resize it ([#33](https://github.com/antimatter-studios/captainsalvage/pull/33))
@@ -25,3 +31,7 @@ writes this file.
 
 - Name Chris Thomas as the copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
 - License the project under MIT ([#28](https://github.com/antimatter-studios/captainsalvage/pull/28))
+
+### Other
+
+- Add a changelog, CI and a release pipeline ([#36](https://github.com/antimatter-studios/captainsalvage/pull/36))
