@@ -186,7 +186,7 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 No pull requests merged yet.
 
-### 0.1.0 — 2026-11-05
+### v0.1.0 — 2026-11-05
 
 **Added**
 

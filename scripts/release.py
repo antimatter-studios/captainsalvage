@@ -103,7 +103,7 @@ def readme_block(sections, limit=README_VERSIONS):
         "",
     ]
     for heading, body in sections[:limit]:
-        lines.append(f"### {heading.replace('[', '').replace(']', '')}")
+        lines.append("### " + re.sub(r"^\[(\d[^\]]*)\]", r"v\1", heading).replace("[", "").replace("]", ""))
         lines.append("")
         lines.append(re.sub(r"^### (.+)$", r"**\1**", body, flags=re.MULTILINE))
         lines.append("")
@@ -263,7 +263,7 @@ def command_check(args):
             problems.append(f"{name} says {found}")
     if not any(heading.startswith(f"[{version}]") for heading, _ in read_sections()):
         problems.append(f"CHANGELOG.md has no section for {version}")
-    if f"### {version}" not in README.read_text():
+    if f"### v{version}" not in README.read_text():
         problems.append(f"README.md has no section for {version}")
     if problems:
         raise SystemExit(f"{args.tag} does not match the repository: " + "; ".join(problems))
