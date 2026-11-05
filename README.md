@@ -93,6 +93,12 @@ macOS can, though, and that can happen before the app is open. See
   and not proof.
 - After a scan, the Overview lists each date the volume's `.Spotlight-V100` and `.fseventsd`
   folders changed, as a record of when macOS last wrote there.
+- While the app is open, macOS is told not to put disks to sleep. A damaged old disk can
+  drop off USB when woken, and each return lets macOS mount it and write to it again. A
+  drive's own firmware may still sleep.
+- If the disk is disconnected, the app says so, and stops scans, file tests and copies
+  instead of treating failed reads as damage. When the volume comes back under a new disk
+  number, the app finds it and warns if macOS has mounted it.
 - Copy out refuses any destination on the disk being recovered, including through
   an APFS container, and refuses if it cannot tell which disk a destination is on.
 - Copy out never overwrites a file. Each copy is hashed as it is read, then hashed

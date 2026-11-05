@@ -9,6 +9,7 @@ use crate::content::{
 };
 use crate::exfat::{find_sets, EntrySet, FIRST_CLUSTER};
 use crate::map::MapDb;
+use crate::session::DISK_GONE;
 use crate::volume::Volume;
 use crate::workspace::{now_millis, Workspace};
 use anyhow::{bail, Context, Result};
@@ -233,6 +234,12 @@ pub fn run_scan(
                     chunk_errors.push((next + index as u32, error.to_string()));
                 }
             }
+        }
+        // Nothing here is a bad spot. Marking these clusters would spoil a good map, and a
+        // later resume could not undo it.
+        if volume.source().is_gone() {
+            database.set_state(STATE_STATUS, "paused")?;
+            bail!(DISK_GONE);
         }
 
         let mut found: Vec<(u32, EntrySet)> = Vec::new();

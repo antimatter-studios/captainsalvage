@@ -12,7 +12,7 @@ use crate::map::{
     to_extents, Extent, IslandRow, MapDb, MapSummary, Overlay, Row, OVERLAY_NOTE,
     OVERLAY_REGION_LABEL, OVERLAY_STRUCT,
 };
-use crate::mount::{DiskWrites, MountHistory, WriteWatch};
+use crate::mount::{DiskReturn, DiskWrites, MountHistory, ReturnWatch, WriteWatch};
 use crate::resolve::{
     OWNERSHIP_DIRECTORY, OWNERSHIP_LABELLED, OWNERSHIP_NAMELESS_CHAIN, OWNERSHIP_ONE_ENTRY,
     OWNERSHIP_SEVERAL_ENTRIES, OWNERSHIP_UNEXPLAINED,
@@ -40,6 +40,8 @@ const MAX_QUERY_ROWS: usize = 5000;
 const FIND_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 const FIND_TIME_LIMIT: Duration = Duration::from_secs(90);
 const MIN_RATE_SAMPLE: Duration = Duration::from_secs(3);
+pub(crate) const DISK_GONE: &str =
+    "The disk has been disconnected, so nothing can be read from it.";
 const OWNERSHIP_NAMES: [&str; 6] = [
     "unexplained",
     "claimed by one entry",
@@ -109,6 +111,9 @@ pub struct Status {
     pub copy: CopyStatus,
     pub file_tests: crate::filetest::FileTestStatus,
     pub writes: DiskWrites,
+    pub disk_gone: bool,
+    pub disk_back: Option<DiskReturn>,
+    pub keep_awake: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -187,6 +192,7 @@ pub struct Session {
     pub(crate) browse: Mutex<crate::browse::BrowseCache>,
     pub(crate) file_tests: FileTestControl,
     writes: Mutex<WriteWatch>,
+    returns: Mutex<ReturnWatch>,
     pub(crate) zip: Mutex<Option<(i64, Arc<crate::archive::ZipListing>)>>,
 }
 
@@ -340,6 +346,7 @@ impl Session {
             browse: Mutex::default(),
             file_tests: FileTestControl::default(),
             writes: Mutex::new(WriteWatch::open(path)),
+            returns: Mutex::new(ReturnWatch::open(path)),
             zip: Mutex::new(None),
         }))
     }
@@ -392,6 +399,11 @@ impl Session {
     }
 
     pub fn status(&self) -> Result<Status> {
+        let (disk_gone, disk_back) = self
+            .returns
+            .lock()
+            .map_err(|_| anyhow!("disk watch lock poisoned"))?
+            .report(self.volume.source().as_ref());
         let database = self.lock_database()?;
         let mut scan = read_progress(&database, &self.volume)?;
         {
@@ -444,7 +456,19 @@ impl Session {
                 .lock()
                 .map_err(|_| anyhow!("write counter lock poisoned"))?
                 .report(),
+            disk_gone,
+            disk_back,
+            keep_awake: crate::mount::disks_kept_awake(),
         })
+    }
+
+    /// Refuses to go on once the disk has gone, because what failed reads leave behind says
+    /// nothing about the files. A single bad spot is different, and never comes here.
+    pub(crate) fn require_disk(&self) -> Result<()> {
+        if self.volume.source().is_gone() {
+            bail!(DISK_GONE);
+        }
+        Ok(())
     }
 
     /// The dates the volume's own system folders changed, as evidence of earlier mounts.

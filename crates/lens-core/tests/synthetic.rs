@@ -7,7 +7,7 @@ use lens_core::map::MapDb;
 use lens_core::mcp::{handle_message, tool_definitions};
 use lens_core::scan::{read_progress, run_scan, ScanOptions};
 use lens_core::session::{whole_disk_path, Layer, Lens, Session};
-use lens_core::source::MemorySource;
+use lens_core::source::{BlockSource, MemorySource};
 use lens_core::verify::{verify_mp3, verify_png};
 use lens_core::volume::{Volume, ALLOC_ALLOCATED, ALLOC_FREE_FAT, ALLOC_FREE_ZERO};
 use lens_core::workspace::Workspace;
@@ -1850,6 +1850,248 @@ fn a_file_is_judged_by_its_contents_before_its_name() {
     assert_eq!(
         judge("slides.key", b"PK\x03\x04 and nothing after it").outcome,
         OUTCOME_DAMAGED
+    );
+}
+
+/// A scanned volume whose disk can be pulled out from under it.
+fn engine_with_unpluggable_disk(
+    label: &str,
+) -> (Arc<Engine>, Arc<Session>, Arc<MemorySource>, PathBuf) {
+    let (workspace, dir) = temp_workspace(label);
+    let source = Arc::new(MemorySource::new(build_volume()));
+    let session =
+        Session::with_source(Path::new("/test/image"), source.clone(), workspace).expect("session");
+    scan(&session.volume, &session.workspace);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    (engine, session, source, dir)
+}
+
+fn id_named(engine: &Engine, name: &str) -> i64 {
+    call(engine, "search", json!({"query": name}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id")
+}
+
+/// Found on a real disk: it dropped off USB, and every file then failed to open with
+/// nothing to say why, while reads returned zeros and the status looked like damage.
+#[test]
+fn a_disconnected_disk_is_reported_and_files_are_not_read_as_zeros() {
+    let (engine, session, source, dir) = engine_with_unpluggable_disk("gone-read");
+    let id = id_named(&engine, "keep.mp3");
+    assert_eq!(
+        &session.read_entry_range(id, 0, 4).unwrap().data,
+        b"ID3\x04"
+    );
+    assert_eq!(call(&engine, "status", json!({}))["diskGone"], false);
+
+    source.disconnect();
+    let error = session
+        .read_entry_range(id, 0, 4)
+        .err()
+        .expect("an error, not zeros");
+    assert!(format!("{error:#}").contains("disconnected"), "{error:#}");
+    let status = call(&engine, "status", json!({}));
+    assert_eq!(status["diskGone"], true);
+    assert!(status["diskBack"].is_null());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Found by unplugging a real device in a test: a disk can come back with the same number.
+#[test]
+fn opening_a_disconnected_disk_again_does_not_return_the_dead_session() {
+    let (engine, session, source, dir) = engine_with_unpluggable_disk("gone-reopen");
+    let path = session.path.display().to_string();
+    assert!(Arc::ptr_eq(&engine.open(&path).expect("open"), &session));
+    source.disconnect();
+    // This path is not a real file, so a fresh open fails, which proves one was attempted.
+    assert!(engine.open(&path).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_disk_that_goes_during_file_tests_marks_nothing_as_damaged() {
+    let (engine, session, source, dir) = engine_with_unpluggable_disk("gone-tests");
+    let id = id_named(&engine, "photo.jpg");
+    let before = call(&engine, "entry", json!({"id": id}))["entry"]["verdict"].clone();
+
+    source.disconnect();
+    call(&engine, "file_tests_start", json!({"groups": ["photos"]}));
+    let status = wait_for_file_tests(&session);
+    assert_eq!(status.state, "failed");
+    assert!(status.error.unwrap_or_default().contains("disconnected"));
+    assert_eq!(status.damaged, 0);
+    assert!(call(&engine, "file_test", json!({"id": id})).is_null());
+    assert_eq!(
+        call(&engine, "entry", json!({"id": id}))["entry"]["verdict"],
+        before
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_disk_that_goes_during_a_scan_leaves_the_map_alone() {
+    let (workspace, dir) = temp_workspace("gone-scan");
+    let source = Arc::new(MemorySource::new(build_volume()));
+    let session =
+        Session::with_source(Path::new("/test/image"), source.clone(), workspace).expect("session");
+    source.disconnect();
+    let stop = AtomicBool::new(false);
+    let error = run_scan(
+        &session.volume,
+        &session.workspace,
+        ScanOptions { chunk_clusters: 16 },
+        &stop,
+        |_| {},
+    )
+    .expect_err("the scan stops");
+    assert!(format!("{error:#}").contains("disconnected"), "{error:#}");
+    let database = MapDb::open(&session.workspace.database()).expect("map");
+    let progress = lens_core::scan::read_progress(&database, &session.volume).expect("progress");
+    assert_eq!(progress.read_errors, 0);
+    assert_eq!(progress.clusters_scanned, 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_disk_that_goes_during_a_copy_stops_it_and_leaves_no_file_of_zeros() {
+    let (engine, session, source, dir) = engine_with_unpluggable_disk("gone-copy");
+    let destination = copy_destination("gone");
+    let request = json!({"destination": destination, "folders": [20]});
+
+    // The planning a copy does first is allowed through, and the disk goes as it starts.
+    let before = source.read_stats().operations;
+    call(&engine, "copy_plan", request.clone());
+    source.disconnect_after_reads(source.read_stats().operations - before);
+    let status = copy_and_wait(&engine, &session, request.clone());
+    assert_eq!(status.state, "failed", "{status:?}");
+    assert!(status.error.unwrap_or_default().contains("disconnected"));
+    assert_eq!(status.files_done, 0);
+    let copied: Vec<_> = walk_files(&destination)
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name != lens_core::export::MANIFEST_NAME)
+        })
+        .collect();
+    assert!(copied.is_empty(), "{copied:?}");
+
+    // A new copy is refused with the real reason, not "nothing to copy".
+    let refused = engine
+        .call("copy_start", &request, "you")
+        .expect_err("refused");
+    assert!(
+        format!("{refused:#}").contains("disconnected"),
+        "{refused:#}"
+    );
+    let _ = std::fs::remove_dir_all(destination);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn walk_files(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .flat_map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_files(&path)
+            } else {
+                vec![path]
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn disks_are_kept_awake_once_and_only_when_asked() {
+    use lens_core::mount::{disks_kept_awake, keep_disks_awake};
+    keep_disks_awake();
+    assert!(disks_kept_awake());
+    // A second call must not leave a second process behind.
+    keep_disks_awake();
+    assert!(disks_kept_awake());
+}
+
+#[test]
+fn a_test_disconnect_is_refused_outside_a_test_run() {
+    let (engine, _session, dir) = engine_with_volume("no-test-tool");
+    assert!(!tool_definitions()
+        .iter()
+        .any(|tool| tool.to_string().contains("test_disconnect")));
+    if std::env::var_os("LENS_TEST_UI").is_none() {
+        assert!(engine
+            .call("test_disconnect", &json!({}), AUTHOR_CLAUDE)
+            .is_err());
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn only_a_lost_device_counts_as_gone() {
+    use lens_core::source::means_device_gone;
+    assert!(means_device_gone(&std::io::Error::from_raw_os_error(
+        libc::ENXIO
+    )));
+    assert!(means_device_gone(&std::io::Error::from_raw_os_error(
+        libc::ENODEV
+    )));
+    // A bad spot on a disk that is still there must keep reading the rest of the file.
+    assert!(!means_device_gone(&std::io::Error::from_raw_os_error(
+        libc::EIO
+    )));
+    assert!(!means_device_gone(&std::io::Error::from(
+        std::io::ErrorKind::UnexpectedEof
+    )));
+
+    let source = MemorySource::new(vec![0u8; 512]);
+    let mut past_the_end = [0u8; 512];
+    assert!(source.read_exact_at(4096, &mut past_the_end).is_err());
+    assert!(!source.is_gone());
+}
+
+#[test]
+fn a_volume_is_found_again_under_a_new_disk_number() {
+    use lens_core::mount::{parse_disk_return, parse_volume_uuid, DiskReturn};
+    // As diskutil printed it for a real volume, unmounted and then mounted.
+    let unmounted = "
+   Device Identifier:         disk14s2
+   Device Node:               /dev/disk14s2
+   Whole:                     No
+   Part of Whole:             disk14
+
+   Volume Name:               Untitled
+   Mounted:                   No
+
+   File System Personality:   ExFAT
+   Volume UUID:               52D6C729-7E3F-310C-9073-7142E9EA7C05
+";
+    assert_eq!(
+        parse_volume_uuid(unmounted).as_deref(),
+        Some("52D6C729-7E3F-310C-9073-7142E9EA7C05")
+    );
+    assert_eq!(
+        parse_disk_return(unmounted),
+        Some(DiskReturn {
+            device: "/dev/rdisk14s2".into(),
+            mounted: false
+        })
+    );
+    let mounted = unmounted.replace(
+        "Mounted:                   No",
+        "Mounted:                   Yes",
+    );
+    assert!(parse_disk_return(&mounted).expect("found").mounted);
+
+    // What diskutil prints for something it cannot find.
+    let missing = "Could not find disk: 00000000-0000-0000-0000-000000000000\n";
+    assert_eq!(parse_disk_return(missing), None);
+    assert_eq!(parse_volume_uuid(missing), None);
+    assert_eq!(
+        parse_disk_return("   Device Identifier:         \n   Device Node:               \n"),
+        None
     );
 }
 

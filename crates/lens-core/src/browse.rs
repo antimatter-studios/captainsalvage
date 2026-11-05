@@ -634,6 +634,7 @@ impl Session {
 
     /// Reads part of a file from the disk, through the same clusters a copy would use.
     pub fn read_entry_range(&self, id: i64, start: u64, length: u64) -> Result<EntryRange> {
+        self.require_disk()?;
         let stream = self.entry_stream(id, start > 0)?;
         let total = stream.total;
         let end = start.saturating_add(length).min(total);
@@ -658,6 +659,9 @@ impl Session {
                 position += run as u64 * size;
                 index += run;
             }
+            // The zeros that stand in for unreadable clusters are not this file's contents
+            // if the disk left while they were being read.
+            self.require_disk()?;
             // Bytes past the valid length are undefined on disk, and read as zeros.
             if end > stream.valid {
                 let keep = stream.valid.saturating_sub(start) as usize;
