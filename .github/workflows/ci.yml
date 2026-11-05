@@ -37,8 +37,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: test the release tool
-        run: python3 scripts/test_release.py
+      - name: test the release tools
+        run: |
+          python3 scripts/test_release.py
+          bash scripts/test_changelog_fragment.sh
+          bash scripts/test_create_release.sh
+      - name: unreleased changes are fragments
+        run: bash scripts/changelog-check.sh
       - name: type check and build the window
         run: npm run build
       - name: formatting

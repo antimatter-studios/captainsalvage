@@ -5,25 +5,27 @@ Release notes list the pull requests merged into a release, and nothing else. Th
 come from git history: this repository squashes every pull request into one commit
 whose subject is the pull request's title, ending in (#number).
 
-    scripts/release.py notes [--from REF] [--to REF]   print the notes for a range
-    scripts/release.py sync                            refresh [Unreleased] and the README
-    scripts/release.py prepare [VERSION]               start a release: bump and move notes
+    scripts/release.py notes [--from REF] [--to REF]   print pull requests for a range
+    scripts/release.py sync                            rebuild the README's list from CHANGELOG.md
+    scripts/release.py prepare [VERSION]               gather the fragments and set the version
+    scripts/release.py contents [VERSION]              print the next version and what is in it
+    scripts/release.py section VERSION                 print a version's CHANGELOG.md section
     scripts/release.py check v0.2.0                    fail unless a tag matches the files
     scripts/release.py version                         print this build's version
     scripts/release.py build                           build the app with that version
 
+scripts/create-release is what you run to cut a release: it calls these.
+
 Version numbers follow what was merged since the last tag. A new feature raises the minor
 number and resets the patch. A fix raises the patch. Anything else moves nothing. Several
-merges take the largest of these, once. So prepare picks the number, and a build shows the
-number that code would be released as.
+merges take the largest of these, once. So the number is worked out, and a build shows the
+number that code would be released as. Going to 1.0.0 is a deliberate choice: name it.
 
-A release is cut on purpose: prepare it, merge that as a pull request, then tag the merge on
-main and push the tag. The tag is what starts the pipeline, and the pipeline never makes one.
-Going to 1.0.0 is a deliberate choice: name it to prepare.
+Unreleased changes are fragments in changelog.d/. A release gathers them into CHANGELOG.md, and
+the README's list is a copy of the newest versions there, so the two cannot disagree.
 """
 
 import argparse
-import datetime
 import json
 import re
 import subprocess
@@ -201,14 +203,28 @@ def latest_tag():
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def subjects_since(tag):
-    span = f"{tag}..HEAD" if tag else "HEAD"
+def subjects_since(tag, ref="HEAD"):
+    span = f"{tag}..{ref}" if tag else ref
     return git("log", "--first-parent", "--format=%s", span).splitlines()
 
 
 def current_version():
     tag = latest_tag()
     return next_version(manifest_version(), tag, subjects_since(tag))
+
+
+def version_at(ref):
+    """The next version going by what is on a branch, whatever is checked out."""
+    done = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", ref],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    tag = done.stdout.strip() if done.returncode == 0 else None
+    manifest = json.loads(git("show", f"{ref}:src-tauri/tauri.conf.json"))["version"]
+    subjects = subjects_since(tag, ref)
+    return (*next_version(manifest, tag, subjects), subjects)
 
 
 def git(*args):
@@ -236,13 +252,10 @@ def read_sections():
     return split_sections(CHANGELOG.read_text()) if CHANGELOG.exists() else []
 
 
-def write_all(sections):
-    CHANGELOG.write_text(join_changelog(sections))
-    README.write_text(replace_readme_block(README.read_text(), readme_block(sections)))
-
-
-def unreleased_body():
-    return render_notes(pulls_between(latest_tag(), "HEAD")).strip()
+def write_readme():
+    """The README's list is a copy of the newest versions in CHANGELOG.md."""
+    versions = [item for item in read_sections() if item[0] != UNRELEASED]
+    README.write_text(replace_readme_block(README.read_text(), readme_block(versions)))
 
 
 def command_notes(args):
@@ -252,8 +265,27 @@ def command_notes(args):
 
 
 def command_sync(_):
-    released = [item for item in read_sections() if item[0] != UNRELEASED]
-    write_all([(UNRELEASED, unreleased_body()), *released])
+    write_readme()
+
+
+def command_contents(args):
+    version, release, subjects = version_at("origin/main")
+    if args.version:
+        version = args.version.removeprefix("v")
+    elif not release:
+        raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
+    print(version)
+    for subject in subjects:
+        print(subject)
+
+
+def command_section(args):
+    version = args.version.removeprefix("v")
+    for heading, body in read_sections():
+        if heading.startswith(f"[{version}]"):
+            print(body)
+            return
+    raise SystemExit(f"CHANGELOG.md has no section for {version}")
 
 
 def command_version(_):
@@ -274,18 +306,12 @@ def command_prepare(args):
         version, release = current_version()
         if not release:
             raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
-    released = [item for item in read_sections() if item[0] != UNRELEASED]
-    if any(heading.startswith(f"[{version}]") for heading, _ in released):
-        raise SystemExit(f"CHANGELOG.md already has {version}")
-    today = datetime.date.today().isoformat()
-    section = (f"[{version}] — {today}", unreleased_body())
-    write_all([(UNRELEASED, NO_CHANGES), section, *released])
+    subprocess.run(["bash", str(ROOT / "scripts/changelog-gather.sh"), version], cwd=ROOT, check=True)
+    write_readme()
     names = [*CARGO_MANIFESTS, *JSON_MANIFESTS, "Cargo.lock", "package-lock.json"]
     new = set_versions({name: (ROOT / name).read_text() for name in names}, version)
     for name, text in new.items():
         (ROOT / name).write_text(text)
-    print(f"Prepared {version}. Open a pull request titled: chore(release): v{version}")
-    print(f"After it merges: git tag v{version} on main, then push the tag.")
 
 
 def command_check(args):
@@ -322,6 +348,12 @@ def main():
     check = commands.add_parser("check")
     check.add_argument("tag")
     check.set_defaults(run=command_check)
+    contents = commands.add_parser("contents")
+    contents.add_argument("version", nargs="?")
+    contents.set_defaults(run=command_contents)
+    section = commands.add_parser("section")
+    section.add_argument("version")
+    section.set_defaults(run=command_section)
     commands.add_parser("version").set_defaults(run=command_version)
     commands.add_parser("build").set_defaults(run=command_build)
     args = parser.parse_args()

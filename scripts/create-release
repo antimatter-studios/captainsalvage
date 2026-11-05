@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+#
+# Cut a release, in two stages, because main only takes pull requests.
+#
+#   scripts/create-release [VERSION] [--dry-run] [--contents-approved]
+#       Shows what would go out, then opens the release pull request. The version comes from
+#       what merged since the last tag, unless you name one, such as 1.0.0.
+#
+#   scripts/create-release --tag vX.Y.Z [--contents-approved]
+#       After that pull request has merged, tags main and pushes the tag. github-guard checks
+#       the tag as it goes, and the tag starts the pipeline, which builds and publishes.
+#
+# This runs on your machine because a release is a deliberate act, and the pipeline only uses
+# what is committed. It calls no agent: the entries were written and reviewed in their own pull
+# requests, so running it twice on the same history gives the same release.
+#
+# FOR AN AGENT RUNNING THIS ON SOMEONE'S BEHALF. This prints the release's contents and stops
+# for a yes. That list is for the person accountable for the release. Show it to them verbatim,
+# wait for their answer, and only then continue with --contents-approved. Do not pass that flag
+# to get past the question, do not shorten the list, and do not decide for them that it looks
+# right. Do not start a release unless they asked for one.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT"
+PYTHON="${PYTHON:-python3}"
+FILES=(CHANGELOG.md README.md crates/lens-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
+    package.json Cargo.lock package-lock.json)
+
+VERSION=""; TAG=""; DRY_RUN=false; APPROVED=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tag) TAG="${2:-}"; [ -n "$TAG" ] || { echo "create-release: --tag needs a version" >&2; exit 2; }; shift 2 ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --contents-approved) APPROVED=true; shift ;;
+        -h|--help) awk 'NR>1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -*) echo "create-release: unknown option $1" >&2; exit 2 ;;
+        *) VERSION="${1#v}"; shift ;;
+    esac
+done
+
+# Every check runs and every failure is reported, so one pass fixes the machine rather than one
+# failure at a time. Nothing here changes anything except fetching.
+FAILURES=()
+need() { command -v "$1" >/dev/null 2>&1 || FAILURES+=("$1 is not installed."); }
+finish_preflight() {
+    [ "${#FAILURES[@]}" -eq 0 ] && return 0
+    echo "create-release: fix these first, and nothing has changed:" >&2
+    printf '  - %s\n' "${FAILURES[@]}" >&2
+    exit 1
+}
+common_checks() {
+    need git; need gh; need "$PYTHON"
+    [ "$(git rev-parse --is-shallow-repository)" = "true" ] &&
+        FAILURES+=("this is a shallow clone, so the history is not here. Run: git fetch --unshallow")
+    [ -z "$(git status --porcelain --untracked-files=no)" ] ||
+        FAILURES+=("the working tree has uncommitted changes. Commit or stash them first.")
+    git fetch --quiet --tags origin main 2>/dev/null ||
+        FAILURES+=("could not fetch from origin, so what is on main is unknown. Check your connection and SSH keys.")
+    if command -v gh >/dev/null 2>&1; then
+        gh auth status >/dev/null 2>&1 || FAILURES+=("gh is not logged in. Run: gh auth login")
+    fi
+}
+
+# Stops for a yes, unless it has already been given.
+ask() {
+    if [ "$APPROVED" = "true" ]; then return 0; fi
+    if [ ! -t 0 ]; then
+        echo >&2
+        echo "create-release: stopped for a yes. Show the list above to the person releasing, and" >&2
+        echo "when they agree, run this again with --contents-approved." >&2
+        exit 3
+    fi
+    printf '%s [y/N] ' "$1"
+    read -r answer
+    case "$answer" in y|Y|yes|YES) ;; *) echo "Stopped. Nothing has changed."; exit 0 ;; esac
+}
+
+stage_tag() {
+    local version="${TAG#v}" tag="v${TAG#v}"
+    common_checks
+    finish_preflight
+    [ "$(git symbolic-ref --quiet --short HEAD || true)" = "main" ] ||
+        FAILURES+=("this is not main. Run: git switch main && git pull --ff-only")
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
+        FAILURES+=("main is not what is on GitHub. Run: git pull --ff-only")
+    case "$(git log -1 --format=%s origin/main)" in
+        "chore(release): $tag"*) ;;
+        *) FAILURES+=("the newest commit on main is not this release's. Has its pull request merged?") ;;
+    esac
+    if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null; then
+        FAILURES+=("$tag already exists.")
+    fi
+    "$PYTHON" scripts/release.py check "$tag" >/dev/null 2>&1 ||
+        FAILURES+=("the files on main do not match $tag. Run: $PYTHON scripts/release.py check $tag")
+    finish_preflight
+
+    echo "Publishing $tag from $(git log -1 --format='%h %s' HEAD)"
+    echo
+    "$PYTHON" scripts/release.py section "$version"
+    echo
+    ask "Tag and publish $tag?"
+    git tag -a "$tag" -m "Captain Salvage $version"
+    # A guard can refuse the push. Leaving the tag behind would make the next try say it exists.
+    if ! git push origin "$tag"; then
+        git tag -d "$tag" >/dev/null
+        echo "create-release: the push was refused, so $tag is not published and the local tag is removed." >&2
+        echo "Fix what it reported above, then run this again." >&2
+        exit 1
+    fi
+    echo
+    echo "Pushed $tag. The pipeline now builds and publishes it:"
+    gh run list --workflow release.yml --limit 1 --json url --jq '.[0].url' 2>/dev/null || true
+}
+
+stage_cut() {
+    common_checks
+    finish_preflight
+    local contents next
+    if ! contents="$("$PYTHON" scripts/release.py contents ${VERSION:+"$VERSION"} 2>&1)"; then
+        echo "create-release: $contents" >&2
+        exit 1
+    fi
+    next="$(printf '%s\n' "$contents" | sed -n 1p)"
+    local tag="v$next" branch="release/v$next"
+    git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null && FAILURES+=("$tag already exists.")
+    git rev-parse --quiet --verify "refs/heads/$branch" >/dev/null &&
+        FAILURES+=("the branch $branch already exists. Finish it, or delete it and start again.")
+    bash scripts/changelog-check.sh >/dev/null 2>&1 ||
+        FAILURES+=("a fragment is malformed. Run: bash scripts/changelog-check.sh")
+    # What goes out is what is on main, not what happens to be in this checkout.
+    local fragments
+    fragments="$(git ls-tree -r --name-only origin/main -- changelog.d | grep -v '^changelog.d/README.md$' | grep '\.md$' || true)"
+    [ -n "$fragments" ] || FAILURES+=("changelog.d/ on main has no fragments, so this release would have nothing to say.")
+    finish_preflight
+
+    echo "Release $tag"
+    echo
+    echo "Pull requests since the last tag:"
+    printf '%s\n' "$contents" | sed -n '2,$p' | sed 's/^/  /'
+    echo
+    echo "Entries it will say:"
+    printf '%s\n' "$fragments" | while IFS= read -r path; do
+        git show "origin/main:$path" | sed 's/^/  /'
+        echo
+    done
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "Dry run: nothing has changed."
+        exit 0
+    fi
+    ask "Open the release pull request for $tag?"
+
+    git switch --quiet -c "$branch" origin/main
+    "$PYTHON" scripts/release.py prepare "$next"
+    git add -- "${FILES[@]}"
+    git commit --quiet -m "chore(release): $tag"
+    git push --quiet -u origin "$branch"
+    gh pr create --base main --head "$branch" --title "chore(release): $tag" \
+        --body "$("$PYTHON" scripts/release.py section "$next")"
+    echo
+    echo "When that has merged, finish the release:"
+    echo "  git switch main && git pull --ff-only"
+    echo "  scripts/create-release --tag $tag"
+}
+
+if [ -n "$TAG" ]; then
+    stage_tag
+else
+    stage_cut
+fi
