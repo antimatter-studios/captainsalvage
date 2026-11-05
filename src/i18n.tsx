@@ -64,8 +64,9 @@ export function useLanguage() {
 }
 
 /**
- * Holds the chosen language above the whole window. Changing it renders everything again, so
- * every `t` call, wherever it is, picks up the new language.
+ * Holds the chosen language above the whole window. App reads it with useLanguage, so changing
+ * it draws App and everything in it again, and every `t` call picks up the new language. Words
+ * kept in a useMemo need the language among its dependencies.
  */
 export function LanguageRoot({ initial, children }: { initial: Language; children: ReactNode }) {
   const [language, setLanguage] = useState(initial);

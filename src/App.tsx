@@ -306,6 +306,8 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
 }
 
 export default function App() {
+  // The window's root takes the language from here, so changing it draws everything again.
+  useLanguage();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [startPath, setStartPath] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);

@@ -14,7 +14,7 @@ import {
   type TypeTotal,
 } from "../api";
 import { bytes, count, percent, stamp, verdictLabel } from "../format";
-import { t } from "../i18n";
+import { t, useLanguage } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 import { isZipName } from "./ZipView";
 
@@ -515,6 +515,8 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
     });
   }, [columns, tileHeight]);
 
+  // The tiles are kept between draws, so their words must be redrawn when the language changes.
+  const { language } = useLanguage();
   const tiles = useMemo(() => {
     if (total === null || scroll.width === 0) return [];
     const out: React.ReactNode[] = [];
@@ -544,7 +546,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
       }
     }
     return out;
-  }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, rowAt, showImages, openIndex, basket, open, onBasket]);
+  }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, rowAt, showImages, openIndex, basket, open, onBasket, language]);
 
   const previewRow = standalone ?? openRow ?? null;
   const previewId = previewRow?.id ?? null;
