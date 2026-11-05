@@ -68,10 +68,14 @@ class Files(unittest.TestCase):
     def test_the_readme_keeps_ten_versions_and_links_to_the_rest(self):
         block = release.readme_block(self.SECTIONS)
         self.assertEqual(block.count("\n### "), 10)
-        self.assertIn("### 0.12.0 — 2026-01-01", block)
-        self.assertNotIn("### 0.2.0", block)
+        self.assertIn("### v0.12.0 — 2026-01-01", block)
+        self.assertNotIn("### v0.2.0", block)
         self.assertIn("CHANGELOG.md", block)
         self.assertIn("**Added**", block)
+
+    def test_unreleased_has_no_version_mark(self):
+        block = release.readme_block([("[Unreleased]", "Nothing yet.")])
+        self.assertIn("### Unreleased", block)
 
     def test_the_readme_changes_only_between_its_markers(self):
         old = f"before\n{release.README_START}\nold\n{release.README_END}\nafter\n"
