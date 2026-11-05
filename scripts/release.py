@@ -6,20 +6,23 @@ come from git history: this repository squashes every pull request into one comm
 whose subject is the pull request's title, ending in (#number).
 
     scripts/release.py notes [--from REF] [--to REF]   print the notes for a range
-    scripts/release.py sync                            refresh [Unreleased] and the README
-    scripts/release.py prepare [VERSION]               start a release: bump and move notes
-    scripts/release.py check v0.2.0                    fail unless a tag matches the files
+    scripts/release.py sync                            rewrite the changelog from the tags
+    scripts/release.py prepare VERSION                 name a version, such as 1.0.0
+    scripts/release.py next                            print the next version, for the pipeline
     scripts/release.py version                         print this build's version
     scripts/release.py build                           build the app with that version
 
-Version numbers: each GitHub release raises the minor number and resets the patch to
-0. The patch counts the commits merged since that release, worked out when building, so
-nothing is committed for it and pull requests never conflict over it. A rebuild of the
-same code keeps the same number. Going to 1.0.0 is a deliberate choice: name it to prepare.
+Version numbers follow what was merged, so nobody has to decide when to release. A new
+feature raises the minor number and resets the patch. A fix raises the patch. Anything
+else, such as documentation, releases nothing. Several merges at once take the largest
+of these, once. A version is never written down for this: it is worked out from the tags
+and the commits since the last one, so a build of the same code always has the same number.
+
+Going to 1.0.0 is a deliberate choice. Name it with prepare, and merge that as a pull
+request: a version in the manifests that is above the last tag is released as it is.
 """
 
 import argparse
-import datetime
 import json
 import re
 import subprocess
@@ -37,7 +40,11 @@ UNRELEASED = "[Unreleased]"
 NO_CHANGES = "No pull requests merged yet."
 SECTION_ORDER = ["Added", "Fixed", "Documentation", "Other"]
 SECTION_FOR_TYPE = {"feat": "Added", "fix": "Fixed", "docs": "Documentation"}
-SUBJECT = re.compile(r"^(?:(?P<type>[a-z]+)(?P<scope>\([^)]*\))?!?:\s*)?(?P<title>.+?)\s*\(#(?P<number>\d+)\)$")
+SUBJECT = re.compile(r"^(?:(?P<type>[a-z]+)(?P<scope>\([^)]*\))?(?P<breaking>!)?:\s*)?(?P<title>.+?)\s*\(#(?P<number>\d+)\)$")
+LEVEL_MAJOR = 3
+LEVEL_MINOR = 2
+LEVEL_PATCH = 1
+LEVEL_NONE = 0
 CHANGELOG_HEADER = f"""# Changelog
 
 Each release lists the pull requests merged into it, and nothing else. The same notes
@@ -140,22 +147,40 @@ def parse_version(text):
     return int(major), int(minor), int(patch)
 
 
-def build_version(manifest, latest_tag, commits_since_tag):
-    """This build's version. The manifests hold X.Y.0, and the patch counts from X.Y's tag."""
-    major, minor, _ = parse_version(manifest)
-    if latest_tag and parse_version(latest_tag)[:2] == (major, minor):
-        return f"{major}.{minor}.{commits_since_tag}"
-    # Before the first release, or between preparing a release and tagging it.
-    return f"{major}.{minor}.0"
+def release_level(subjects):
+    """How far these squash commits move the version. A commit from no pull request counts for nothing."""
+    level = LEVEL_NONE
+    for subject in subjects:
+        match = SUBJECT.match(subject.strip())
+        if not match:
+            continue
+        if match["breaking"]:
+            level = max(level, LEVEL_MAJOR)
+        elif match["type"] == "feat":
+            level = max(level, LEVEL_MINOR)
+        elif match["type"] == "fix":
+            level = max(level, LEVEL_PATCH)
+    return level
 
 
-def next_release_version(manifest, latest_tag):
-    """The first release uses the manifests' number. Each later one raises the minor."""
+def next_version(manifest, latest_tag, subjects):
+    """The version these commits make, and whether that means a new release."""
     if not latest_tag:
-        major, minor, _ = parse_version(manifest)
-        return f"{major}.{minor}.0"
-    major, minor, _ = parse_version(latest_tag)
-    return f"{major}.{minor + 1}.0"
+        return manifest, True
+    major, minor, patch = parse_version(latest_tag)
+    if parse_version(manifest) > (major, minor, patch):
+        return manifest, True
+    level = release_level(subjects)
+    # Before 1.0.0, a breaking change is only a new minor version.
+    if level == LEVEL_MAJOR and major == 0:
+        level = LEVEL_MINOR
+    if level == LEVEL_MAJOR:
+        return f"{major + 1}.0.0", True
+    if level == LEVEL_MINOR:
+        return f"{major}.{minor + 1}.0", True
+    if level == LEVEL_PATCH:
+        return f"{major}.{minor}.{patch + 1}", True
+    return f"{major}.{minor}.{patch}", False
 
 
 def manifest_version():
@@ -172,10 +197,14 @@ def latest_tag():
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def current_build_version():
+def subjects_since(tag):
+    span = f"{tag}..HEAD" if tag else "HEAD"
+    return git("log", "--first-parent", "--format=%s", span).splitlines()
+
+
+def current_version():
     tag = latest_tag()
-    commits = int(git("rev-list", "--count", "--first-parent", f"{tag}..HEAD")) if tag else 0
-    return build_version(manifest_version(), tag, commits)
+    return next_version(manifest_version(), tag, subjects_since(tag))
 
 
 def git(*args):
@@ -199,17 +228,28 @@ def pulls_between(start, end):
     return [pull for pull in pulls if pull]
 
 
-def read_sections():
-    return split_sections(CHANGELOG.read_text()) if CHANGELOG.exists() else []
-
-
 def write_all(sections):
     CHANGELOG.write_text(join_changelog(sections))
     README.write_text(replace_readme_block(README.read_text(), readme_block(sections)))
 
 
 def unreleased_body():
-    return render_notes(pulls_between(previous_tag("HEAD"), "HEAD")).strip()
+    return render_notes(pulls_between(latest_tag(), "HEAD")).strip()
+
+
+def tags_newest_first():
+    return git("tag", "--list", "v[0-9]*", "--merged", "HEAD", "--sort=-v:refname").split()
+
+
+def released_sections():
+    """Every release, from the tags, so the file can be rebuilt at any time."""
+    tags = tags_newest_first()
+    sections = []
+    for index, tag in enumerate(tags):
+        before = tags[index + 1] if index + 1 < len(tags) else None
+        date = git("log", "-1", "--format=%as", tag)
+        sections.append((f"[{tag.removeprefix('v')}] — {date}", render_notes(pulls_between(before, tag)).strip()))
+    return sections
 
 
 def command_notes(args):
@@ -219,55 +259,34 @@ def command_notes(args):
 
 
 def command_sync(_):
-    released = [item for item in read_sections() if item[0] != UNRELEASED]
-    write_all([(UNRELEASED, unreleased_body()), *released])
+    write_all([(UNRELEASED, unreleased_body()), *released_sections()])
+
+
+def command_next(_):
+    version, release = current_version()
+    print(f"version={version}")
+    print(f"release={'true' if release else 'false'}")
 
 
 def command_version(_):
-    print(current_build_version())
+    print(current_version()[0])
 
 
 def command_build(_):
-    version = current_build_version()
+    version = current_version()[0]
     print(f"Building version {version}")
     config = json.dumps({"version": version})
     subprocess.run(["npx", "tauri", "build", "--bundles", "app", "--config", config], cwd=ROOT, check=True)
 
 
 def command_prepare(args):
-    version = args.version.removeprefix("v") if args.version else next_release_version(manifest_version(), latest_tag())
-    released = [item for item in read_sections() if item[0] != UNRELEASED]
-    if any(heading.startswith(f"[{version}]") for heading, _ in released):
-        raise SystemExit(f"CHANGELOG.md already has {version}")
-    today = datetime.date.today().isoformat()
-    section = (f"[{version}] — {today}", unreleased_body())
-    write_all([(UNRELEASED, NO_CHANGES), section, *released])
+    version = args.version.removeprefix("v")
     names = [*CARGO_MANIFESTS, *JSON_MANIFESTS, "Cargo.lock", "package-lock.json"]
     new = set_versions({name: (ROOT / name).read_text() for name in names}, version)
     for name, text in new.items():
         (ROOT / name).write_text(text)
     print(f"Prepared {version}. Open a pull request titled: chore(release): v{version}")
-    print(f"After it merges: git tag v{version} on main, then push the tag.")
-
-
-def command_check(args):
-    version = args.tag.removeprefix("v")
-    problems = []
-    for name in CARGO_MANIFESTS:
-        found = re.search(r'(?m)^version = "([^"]+)"', (ROOT / name).read_text())
-        if not found or found[1] != version:
-            problems.append(f"{name} says {found[1] if found else 'nothing'}")
-    for name in JSON_MANIFESTS:
-        found = json.loads((ROOT / name).read_text()).get("version")
-        if found != version:
-            problems.append(f"{name} says {found}")
-    if not any(heading.startswith(f"[{version}]") for heading, _ in read_sections()):
-        problems.append(f"CHANGELOG.md has no section for {version}")
-    if f"### v{version}" not in README.read_text():
-        problems.append(f"README.md has no section for {version}")
-    if problems:
-        raise SystemExit(f"{args.tag} does not match the repository: " + "; ".join(problems))
-    print(f"{args.tag} matches the versions and the changelog.")
+    print("When it merges, the pipeline releases that version.")
 
 
 def main():
@@ -279,11 +298,9 @@ def main():
     notes.set_defaults(run=command_notes)
     commands.add_parser("sync").set_defaults(run=command_sync)
     prepare = commands.add_parser("prepare")
-    prepare.add_argument("version", nargs="?")
+    prepare.add_argument("version")
     prepare.set_defaults(run=command_prepare)
-    check = commands.add_parser("check")
-    check.add_argument("tag")
-    check.set_defaults(run=command_check)
+    commands.add_parser("next").set_defaults(run=command_next)
     commands.add_parser("version").set_defaults(run=command_version)
     commands.add_parser("build").set_defaults(run=command_build)
     args = parser.parse_args()
