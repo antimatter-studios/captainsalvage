@@ -1162,6 +1162,35 @@ impl MapDb {
         Ok(rows)
     }
 
+    /// Groups by day everything in the folders macOS keeps at the top of a volume. Copies of
+    /// those folders deeper down came from other disks, so they say nothing about this one.
+    pub fn mount_dates(&self, root: u32) -> Result<Vec<crate::mount::MountDate>> {
+        let mut statement = self.connection.prepare(
+            "WITH RECURSIVE under(head) AS ( \
+                 SELECT head FROM nodes WHERE parent = ?1 AND name IN ('.Spotlight-V100', '.fseventsd') \
+                 UNION SELECT nodes.head FROM nodes JOIN under ON nodes.parent = under.head \
+             ) \
+             SELECT substr(modified, 1, 10), COUNT(*), SUM(length), SUM(COALESCE(clusters_needed, 0)) \
+             FROM sets \
+             WHERE modified IS NOT NULL AND ( \
+                 node IN (SELECT head FROM under) \
+                 OR (is_dir = 1 AND first_cluster IN (SELECT head FROM under)) \
+             ) \
+             GROUP BY 1 ORDER BY 1",
+        )?;
+        let dates = statement
+            .query_map([root], |row| {
+                Ok(crate::mount::MountDate {
+                    date: row.get(0)?,
+                    entries: row.get::<_, i64>(1)? as u64,
+                    bytes: row.get::<_, i64>(2)? as u64,
+                    clusters: row.get::<_, i64>(3)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(dates)
+    }
+
     /// Removes stored results, all of them or those with one outcome.
     pub fn forget_file_tests(&self, outcome: Option<&str>) -> Result<u64> {
         let removed = match outcome {

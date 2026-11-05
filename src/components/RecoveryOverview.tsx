@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { call, type FileTestStatus, type Overview, type Status } from "../api";
+import { call, type FileTestStatus, type MountHistory, type Overview, type Status } from "../api";
 import { bytes, count, percent } from "../format";
 import { legendFor } from "../palette";
 import { Icon } from "./icons";
@@ -16,6 +16,43 @@ interface RegionStats {
 }
 
 /** Starts, pauses and reports the background file tests. */
+/** The dates the volume's own system folders changed, which only a finished scan can show. */
+function MacosWrites({ revision }: { revision: number }) {
+  const [history, setHistory] = useState<MountHistory | null>(null);
+  useEffect(() => {
+    let current = true;
+    call<MountHistory>("mount_history").then((value) => current && setHistory(value)).catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [revision]);
+  if (!history || history.dates.length === 0) return null;
+  const baseline = new Date(history.baselineRecordedAtMillis).toLocaleDateString();
+  return (
+    <div className="recovery-tests">
+      <h3>When macOS wrote to this volume</h3>
+      <p className="recovery-note recovery-note-tight">
+        macOS keeps these folders up to date while a volume is mounted. A date after the damage means those writes may have landed on lost files.
+      </p>
+      <table className="recovery-table">
+        <tbody>
+          {history.dates.map((day) => (
+            <tr key={day.date}>
+              <td>{day.date}</td>
+              <td className="recovery-number">{count(day.entries)} {day.entries === 1 ? "entry" : "entries"}</td>
+              <td className="recovery-number">{bytes(day.bytes)}</td>
+              <td className="recovery-number">{count(day.clusters)} {day.clusters === 1 ? "cluster" : "clusters"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="recovery-note recovery-note-after">
+        The safety baseline cannot see any of these from before {baseline}, when it was recorded. The dirty flag is {history.dirtyFlag ? "set, so the last mount did not end cleanly" : "clear, which says only that the last mount ended cleanly, and not that the volume is undamaged"}.
+      </p>
+    </div>
+  );
+}
+
 function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const running = tests.state === "running";
@@ -142,6 +179,8 @@ export function RecoveryOverview({ overview, status, revision, onChanged }: { ov
         )}
 
         {status && <FileTests tests={status.fileTests} onChanged={onChanged} />}
+
+        <MacosWrites revision={revision} />
 
         <ul className="recovery-steps">
           <li><Icon name="folder" /> Open a lost folder in the sidebar to see what survived.</li>

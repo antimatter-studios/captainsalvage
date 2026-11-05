@@ -42,6 +42,7 @@ const QUIET_TOOLS: &[&str] = &[
     "file_test",
     "file_copies",
     "file_tests_status",
+    "mount_history",
 ];
 const DEFAULT_REGION_SAMPLES: usize = 64;
 const DEFAULT_MIN_RUN_CLUSTERS: u64 = 64;
@@ -388,6 +389,7 @@ impl Engine {
                     |database| database.file_copies(id, limit),
                 )?)?)
             }
+            "mount_history" => Ok(serde_json::to_value(session.mount_history()?)?),
             "file_test" => {
                 let id = need_i64(args, "id")?;
                 Ok(serde_json::to_value(

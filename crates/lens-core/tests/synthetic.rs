@@ -74,6 +74,19 @@ fn entry_set(
                 .copy_from_slice(&unit.to_le_bytes());
         }
     }
+    seal_entry_set(&mut set);
+    set
+}
+
+/// Changes when an entry says it was last modified.
+fn modified_on(mut set: Vec<u8>, year: u32, month: u32, day: u32) -> Vec<u8> {
+    let timestamp = ((year - 1980) << 25) | (month << 21) | (day << 16);
+    set[12..16].copy_from_slice(&timestamp.to_le_bytes());
+    seal_entry_set(&mut set);
+    set
+}
+
+fn seal_entry_set(set: &mut [u8]) {
     let mut checksum = 0u16;
     for (index, &byte) in set.iter().enumerate() {
         if index == 2 || index == 3 {
@@ -83,7 +96,6 @@ fn entry_set(
         checksum = checksum.rotate_right(1).wrapping_add(u16::from(value));
     }
     set[2..4].copy_from_slice(&checksum.to_le_bytes());
-    set
 }
 
 impl Builder {
@@ -552,8 +564,12 @@ fn baseline_detects_a_changed_structure_hash() {
 
 /// An engine with a scanned synthetic volume open, as the app would have it.
 fn engine_with_volume(label: &str) -> (Arc<Engine>, Arc<Session>, PathBuf) {
+    engine_with_image(label, build_volume())
+}
+
+fn engine_with_image(label: &str, image: Vec<u8>) -> (Arc<Engine>, Arc<Session>, PathBuf) {
     let (workspace, dir) = temp_workspace(label);
-    let source = Arc::new(MemorySource::new(build_volume()));
+    let source = Arc::new(MemorySource::new(image));
     let session =
         Session::with_source(Path::new("/test/image"), source, workspace).expect("session");
     scan(&session.volume, &session.workspace);
@@ -1835,6 +1851,192 @@ fn a_file_is_judged_by_its_contents_before_its_name() {
         judge("slides.key", b"PK\x03\x04 and nothing after it").outcome,
         OUTCOME_DAMAGED
     );
+}
+
+/// A volume with the two folders macOS keeps at the top, and one more that only looks alike.
+fn volume_macos_has_visited() -> Vec<u8> {
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4, 5, 6, 7, 8, 9] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    let cluster = CLUSTER as u64;
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+            modified_on(
+                entry_set(".fseventsd", true, 5, cluster, true, true),
+                2026,
+                11,
+                4,
+            ),
+            modified_on(
+                entry_set(".Spotlight-V100", true, 6, cluster, true, true),
+                2022,
+                9,
+                8,
+            ),
+            entry_set("holiday", true, 7, cluster, true, true),
+        ],
+    );
+    b.directory(
+        5,
+        &[
+            modified_on(entry_set("0001", false, 20, 100, true, true), 2026, 11, 4),
+            modified_on(
+                entry_set("0002", false, 21, cluster + 1, true, true),
+                2025,
+                5,
+                2,
+            ),
+        ],
+    );
+    b.directory(
+        6,
+        &[modified_on(
+            entry_set("Store", true, 8, cluster, true, true),
+            2022,
+            9,
+            8,
+        )],
+    );
+    b.directory(
+        8,
+        &[modified_on(
+            entry_set("live.0", false, 23, 200, true, true),
+            2025,
+            5,
+            2,
+        )],
+    );
+    // A person's own file, changed on a mount date, was not written by the mount.
+    b.directory(
+        7,
+        &[
+            modified_on(
+                entry_set("photo.jpg", false, 24, 300, true, true),
+                2026,
+                11,
+                4,
+            ),
+            modified_on(
+                entry_set(".fseventsd", true, 9, cluster, true, true),
+                2019,
+                1,
+                1,
+            ),
+        ],
+    );
+    // A copy of that folder from another disk says nothing about this one.
+    b.directory(
+        9,
+        &[modified_on(
+            entry_set("0003", false, 25, 400, true, true),
+            2019,
+            1,
+            1,
+        )],
+    );
+    b.image
+}
+
+#[test]
+fn the_folders_macos_keeps_on_a_volume_date_its_visits() {
+    let (engine, _session, dir) = engine_with_image("mounts", volume_macos_has_visited());
+    let history = call(&engine, "mount_history", json!({}));
+    let dates: Vec<_> = history["dates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|day| {
+            (
+                day["date"].as_str().unwrap(),
+                day["entries"].as_u64().unwrap(),
+                day["bytes"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let cluster = CLUSTER as u64;
+    assert_eq!(
+        dates,
+        [
+            ("2022-09-08", 2, 2 * cluster),
+            ("2025-05-02", 2, cluster + 201),
+            ("2026-11-04", 2, cluster + 100),
+        ]
+    );
+    assert_eq!(history["dirtyFlag"], false);
+    assert!(history["baselineRecordedAtMillis"].as_u64().unwrap() > 0);
+    let _ = std::fs::remove_dir_all(dir);
+
+    // VolumeFlags is left out of the boot checksum, so setting it needs nothing else.
+    let mut dirty = volume_macos_has_visited();
+    dirty[106] = 0x02;
+    let (engine, _session, dir) = engine_with_image("mounts-dirty", dirty);
+    let history = call(&engine, "mount_history", json!({}));
+    assert_eq!(history["dirtyFlag"], true);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_write_counter_is_read_for_the_right_disk() {
+    use lens_core::mount::{parse_write_counter, WriteCounter};
+    let ioreg = r#"
++-o IOBlockStorageDriver  <class IOBlockStorageDriver>
+  |   "Statistics" = {"Operations (Write)"=3454,"Latency Time (Write)"=0,"Bytes (Write)"=99,"Operations (Read)"=7}
+    |   "BSD Name" = "disk4"
+        |   "BSD Name" = "disk4s1"
++-o IOBlockStorageDriver  <class IOBlockStorageDriver>
+  |   "Statistics" = {"Operations (Write)"=310,"Bytes (Read)"=713928624640,"Errors (Write)"=0,"Bytes (Write)"=1618944,"Retries (Write)"=0}
+    |   "BSD Name" = "disk12"
+        |   "BSD Name" = "disk12s1"
+"#;
+    assert_eq!(
+        parse_write_counter(ioreg, "disk12"),
+        Some(WriteCounter {
+            operations: 310,
+            bytes: 1_618_944
+        })
+    );
+    assert_eq!(
+        parse_write_counter(ioreg, "disk4").unwrap().operations,
+        3454
+    );
+    assert_eq!(parse_write_counter(ioreg, "disk1"), None);
+    let only_a_partition = "\"Statistics\" = {\"Operations (Write)\"=1,\"Bytes (Write)\"=2}\n\"BSD Name\" = \"disk12s1\"";
+    assert_eq!(parse_write_counter(only_a_partition, "disk12"), None);
+}
+
+#[test]
+fn a_moved_write_counter_counts_from_when_the_volume_opened() {
+    use lens_core::mount::{DiskWrites, WriteCounter};
+    let counter = |operations, bytes| WriteCounter { operations, bytes };
+    let open = Some(counter(310, 1_000));
+
+    assert_eq!(DiskWrites::between(open, open).since_open, counter(0, 0));
+    assert_eq!(
+        DiskWrites::between(open, Some(counter(315, 1_500))).since_open,
+        counter(5, 500)
+    );
+    // It only falls when the disk was attached again, which is when macOS writes.
+    assert_eq!(
+        DiskWrites::between(open, Some(counter(4, 80))).since_open,
+        counter(4, 80)
+    );
+    // A disk image, or a disk that went away, has nothing to compare.
+    assert_eq!(DiskWrites::between(None, None).since_open, counter(0, 0));
+    assert_eq!(DiskWrites::between(open, None).since_open, counter(0, 0));
+}
+
+#[test]
+fn a_disk_image_has_no_write_counter() {
+    let (engine, _session, dir) = engine_with_volume("no-counter");
+    let status = call(&engine, "status", json!({}));
+    assert!(status["writes"]["atOpen"].is_null());
+    assert!(status["writes"]["now"].is_null());
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
