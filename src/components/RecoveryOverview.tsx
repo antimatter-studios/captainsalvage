@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { call, type FileTestStatus, type MountHistory, type Overview, type Status } from "../api";
 import { bytes, count, percent } from "../format";
-import { locale, t } from "../i18n";
+import { fromEngine, locale, t } from "../i18n";
 import { legendFor } from "../palette";
 import { Icon } from "./icons";
 import { KeepSafe } from "./KeepSafe";
@@ -109,8 +109,8 @@ function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () 
           </>
         )}
       </div>
-      {tests.error && <p className="warn">{tests.error}</p>}
-      {error && <p className="warn">{error}</p>}
+      {tests.error && <p className="warn">{fromEngine(tests.error)}</p>}
+      {error && <p className="warn">{fromEngine(error)}</p>}
     </div>
   );
 }

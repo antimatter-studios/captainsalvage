@@ -14,7 +14,7 @@ import {
   type TypeTotal,
 } from "../api";
 import { bytes, count, percent, stamp, verdictLabel } from "../format";
-import { t, useLanguage } from "../i18n";
+import { fromEngine, t, useLanguage } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 import { isZipName } from "./ZipView";
 
@@ -161,7 +161,7 @@ function RawPreview({ row, note }: { row: BrowseRow; note?: string }) {
   return (
     <div className="preview-raw">
       {note && <p className="preview-message">{note}</p>}
-      {error && <p className="warn">{error}</p>}
+      {error && <p className="warn">{fromEngine(error)}</p>}
       {!shown && !error && <p className="muted">{t("Reading from the disk.")}</p>}
       {shown && !shown.isText && <p className="muted">First {bytes(Math.min(shown.total, HEX_PREVIEW_BYTES))} of this file, as bytes.</p>}
       {shown && <pre className={shown.isText ? "preview-sheet" : "preview-sheet preview-hex"}>{shown.text}</pre>}
@@ -561,7 +561,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
         <div className="segmented browse-types" role="tablist">
           {types?.map((item) => (
             <button key={item.group} role="tab" aria-selected={item.group === group} disabled={item.files === 0} onClick={() => setGroup(item.group)}>
-              {item.label} <span className="browse-count">{count(item.files)}</span>
+              {fromEngine(item.label)} <span className="browse-count">{count(item.files)}</span>
             </button>
           ))}
         </div>
@@ -586,7 +586,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
           </select>
         </div>
       </div>
-      {error && <p className="warn browse-error">{error}</p>}
+      {error && <p className="warn browse-error">{fromEngine(error)}</p>}
       <div
         className="browse-scroll"
         ref={scroller}

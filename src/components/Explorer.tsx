@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
 import { bytes, count, displayPath, lostFolderName, percent, verdictLabel } from "../format";
-import { t } from "../i18n";
+import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 
 const PAGE_SIZE = 200;
@@ -59,7 +59,7 @@ function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }:
   const id = row.id as number;
   return (
     <div className="row-wrap">
-    <button className={selected ? "row row-selected" : "row"} onClick={onSelect} title={row.reason} data-depth={depth}>
+    <button className={selected ? "row row-selected" : "row"} onClick={onSelect} title={fromEngine(row.reason)} data-depth={depth}>
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
         <span className="row-name">{row.name}</span>
@@ -133,7 +133,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         <BasketCheck checked={props.basket.has(`folder:${head}`)} label={t("Add {name} to the recovery basket", { name })} onChange={(add) => props.onBasket("folder", head, add)} />
       )}
       </div>
-      {open && error && <div className="empty" style={{ paddingLeft: 20 + depth * 14 }}>{error}</div>}
+      {open && error && <div className="empty" style={{ paddingLeft: 20 + depth * 14 }}>{fromEngine(error)}</div>}
       {open &&
         children?.rows.map((child) =>
           child.kind === "folder" ? (
@@ -199,7 +199,7 @@ function Nameless({ onChain, selectedKey, revision, classNames, clusterSize }: {
         <span>{t("Starts with")}</span>
         <select value={headClass ?? ""} onChange={(event) => setHeadClass(event.target.value === "" ? null : Number(event.target.value))}>
           <option value="">{t("Anything")}</option>
-          {classNames.map((name, index) => (index === 0 ? null : <option key={name} value={index}>{name}</option>))}
+          {classNames.map((name, index) => (index === 0 ? null : <option key={name} value={index}>{fromEngine(name)}</option>))}
         </select>
       </label>
       <p className="hint">{t("FAT chains no entry claims. These can be files whose names were lost.")}</p>
@@ -208,7 +208,7 @@ function Nameless({ onChain, selectedKey, revision, classNames, clusterSize }: {
         <button key={chain.head} className={selectedKey === `chain:${chain.head}` ? "row row-selected" : "row"} onClick={() => onChain(chain)}>
           <span className="row-icon"><Icon name={chain.endKind === "eof" ? "link" : "broken"} /></span>
           <span className="row-main">
-            <span className="row-name">{chain.headClassName}</span>
+            <span className="row-name">{fromEngine(chain.headClassName)}</span>
             <span className="row-path">{chain.endKind === "eof" ? t("Cluster {cluster}", { cluster: count(chain.head) }) : chain.endKind === "broken" ? t("Cluster {cluster}, chain breaks", { cluster: count(chain.head) }) : t("Cluster {cluster}, chain joins another", { cluster: count(chain.head) })}</span>
           </span>
           <span className="row-size">{bytes(chain.length * clusterSize)}</span>
@@ -254,13 +254,13 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   return (
     <>
       <p className="hint">{t("Free space no entry or chain accounts for yet. This shrinks as the scan finds more folders. Select a region and ask Claude what it is.")}</p>
-      {error && <div className="empty">{error}</div>}
+      {error && <div className="empty">{fromEngine(error)}</div>}
       {runs && runs.length === 0 && <div className="empty">{t("Nothing unexplained so far. Regions appear after the map is rebuilt.")}</div>}
       {runs?.map((run) => (
         <button key={run.startCluster} className={selectedKey === `region:${run.startCluster}` ? "row row-selected" : "row"} onClick={() => onRegion(run)}>
           <span className="row-icon"><Icon name="question" /></span>
           <span className="row-main">
-            <span className="row-name">{run.mainContent}</span>
+            <span className="row-name">{fromEngine(run.mainContent)}</span>
             <span className="row-path">{t("Cluster {cluster}, {percent} of it this type", { cluster: count(run.startCluster), percent: percent(run.mainContentShare) })}</span>
           </span>
           <span className="row-size">{bytes(run.bytes)}</span>

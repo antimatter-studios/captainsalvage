@@ -155,11 +155,16 @@ fn mcp_info(state: State<'_, AppState>) -> Value {
 /// Shows the system's file chooser. Cancelling it gives nothing.
 #[tauri::command(async)]
 fn choose_disk_image() -> Option<String> {
+    // macOS draws this dialog, so its prompt is chosen here, in the window's language.
+    let prompt = match get_language().as_deref() {
+        Some("fr") => "Choisissez une image brute d'une partition exFAT endommagée",
+        Some("de") => "Wählen Sie ein Rohabbild einer beschädigten exFAT-Partition",
+        Some("es") => "Elija una imagen sin procesar de una partición exFAT dañada",
+        _ => "Choose a raw image of a damaged exFAT partition",
+    };
+    let script = format!("POSIX path of (choose file with prompt \"{prompt}\")");
     let output = std::process::Command::new("/usr/bin/osascript")
-        .args([
-            "-e",
-            "POSIX path of (choose file with prompt \"Choose a raw image of a damaged exFAT partition\")",
-        ])
+        .args(["-e", &script])
         .output()
         .ok()?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();

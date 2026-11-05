@@ -18,7 +18,7 @@ import {
   type VolumeChoice,
 } from "../api";
 import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, stamp, verdictLabel } from "../format";
-import { t } from "../i18n";
+import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
 import { isZipName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
@@ -95,7 +95,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, on
         <span className={`verdict-chip ${verdictTone(row.verdict)}`}>{verdictLabel(row.verdict)}</span>
         <span className="confidence-text">{t("Confidence {percent}", { percent: percent(row.confidence) })}</span>
       </div>
-      <p>{row.reason}</p>
+      <p>{fromEngine(row.reason)}</p>
       {row.kind === "file" && row.length > 0 && (
         <div className="detail-actions">
           <button className="primary" onClick={onCopy}>{inBasket ? t("In your basket") : t("Add to basket")}</button>
@@ -127,14 +127,14 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, on
         <>
           <h4>{copies.length >= MAX_COPIES_SHOWN ? t("Same bytes also at (first {count})", { count: count(MAX_COPIES_SHOWN) }) : t("Same bytes also at")}</h4>
           {copies.map((copy) => (
-            <button key={copy.id} className="row" onClick={() => onEntry(copy)} title={copy.reason}>
+            <button key={copy.id} className="row" onClick={() => onEntry(copy)} title={fromEngine(copy.reason)}>
               <span className="row-icon"><Icon name={fileIcon(copy.name)} /></span>
               <span className="row-main"><span className="row-name">{copy.name}</span><span className="row-path">{displayPath(copy.path)}</span></span>
             </button>
           ))}
         </>
       )}
-      {error && <p className="warn">{error}</p>}
+      {error && <p className="warn">{fromEngine(error)}</p>}
       {report && (
         <div className="test-report">
           <strong>{report.report.format === "unknown" ? t("No format walker for this type") : t("{format} structure: {percent} valid", { format: report.report.format.toUpperCase(), percent: percent(report.report.validFraction) })}</strong>
@@ -147,7 +147,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, on
               )}
             </div>
           ))}
-          {report.report.notes.map((note: string, index: number) => <div key={index} className="muted">{note}</div>)}
+          {report.report.notes.map((note: string, index: number) => <div key={index} className="muted">{fromEngine(note)}</div>)}
         </div>
       )}
     </div>
@@ -160,14 +160,14 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
       <h3 className="detail-name">{t("Cluster {cluster}", { cluster: count(info.cluster) })}</h3>
       <dl className="facts">
         <Fact label={t("Bitmap")}>{info.allocated ? t("In use") : t("Marked free")}</Fact>
-        <Fact label={t("FAT entry")}>{info.fatMeaning}</Fact>
+        <Fact label={t("FAT entry")}>{fromEngine(info.fatMeaning)}</Fact>
         <Fact label={t("Chain start")}>
           {info.chainHead === info.cluster ? t("This cluster") : <button className="link" onClick={() => onCluster(info.chainHead)}>{count(info.chainHead)}</button>}
         </Fact>
         {info.predecessor !== null && <Fact label={t("Reached from")}><button className="link" onClick={() => onCluster(info.predecessor as number)}>{count(info.predecessor)}</button></Fact>}
-        <Fact label={t("Content")}>{info.contentClass}</Fact>
+        <Fact label={t("Content")}>{fromEngine(info.contentClass)}</Fact>
         <Fact label={t("Entropy")}>{t("{bits} bits per byte", { bits: decimal(info.entropyBits, 2) })}</Fact>
-        <Fact label={t("Explained by")}>{info.ownership}</Fact>
+        <Fact label={t("Explained by")}>{fromEngine(info.ownership)}</Fact>
         <Fact label={t("Confidence")}>{percent(info.confidence)}</Fact>
         <Fact label={t("Partition offset")}><span className="mono">{`0x${info.offset.toString(16)}`}</span></Fact>
         {info.diskOffset !== null && <Fact label={t("Disk offset")}><span className="mono">{`0x${info.diskOffset.toString(16)}`}</span></Fact>}
@@ -177,7 +177,7 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
         <>
           <h4>{t("Claimed by")}</h4>
           {info.owners.slice(0, 12).map((owner) => (
-            <button key={owner.id} className="row" onClick={() => onEntry(owner)} title={owner.reason}>
+            <button key={owner.id} className="row" onClick={() => onEntry(owner)} title={fromEngine(owner.reason)}>
               <span className="row-icon"><Icon name={fileIcon(owner.name)} /></span>
               <span className="row-main"><span className="row-name">{owner.name}</span><span className="row-path">{displayPath(owner.path)}</span></span>
               <ConfidenceRing value={owner.confidence} tone={verdictTone(owner.verdict)} label={t("{verdict}, confidence {percent}", { verdict: verdictLabel(owner.verdict), percent: percent(owner.confidence) })} />
@@ -343,7 +343,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
           {status.filesPartial > 0 && <div>{t("{count} partial. The manifest says what is missing from each.", { count: count(status.filesPartial) })}</div>}
           {status.badClusters > 0 && <div className="warn">{t("{count} unreadable clusters were filled with zeros.", { count: count(status.badClusters) })}</div>}
           {status.filesFailed > 0 && <div className="warn">{t("{count} failed.", { count: count(status.filesFailed) })}</div>}
-          {status.error && <div className="warn">{status.error}</div>}
+          {status.error && <div className="warn">{fromEngine(status.error)}</div>}
           {running && <div className="detail-actions"><button onClick={() => call("copy_stop")}>{t("Stop copying")}</button></div>}
         </div>
       )}
@@ -360,7 +360,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
               {!plan.fits && <div className="warn">{t("This does not fit. Raise the confidence floor, or remove something.")}</div>}
               {plan.belowFloor > 0 && <div className="muted">{t("{count} files are below the confidence floor.", { count: count(plan.belowFloor) })}</div>}
               {plan.skippedPartial > 0 && <div className="muted">{t("{count} partial files left out, {bytes}.", { count: count(plan.skippedPartial), bytes: bytes(plan.skippedPartialBytes) })}</div>}
-              {plan.refused && <p className="warn"><strong>{plan.refused}</strong></p>}
+              {plan.refused && <p className="warn"><strong>{fromEngine(plan.refused)}</strong></p>}
             </div>
           )}
           {checking && !plan && <div className="muted basket-total">{t("Working out the total.")}</div>}
@@ -372,7 +372,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
           </div>
         </>
       )}
-      {error && <p className="warn">{error}</p>}
+      {error && <p className="warn">{fromEngine(error)}</p>}
 
       <h4>{t("Where it goes")}</h4>
       <p className="muted">{t("Files are written only to this folder, never to the disk being recovered. Nothing already there is overwritten.")}</p>
@@ -387,7 +387,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
             key={volume.path}
             className="link"
             disabled={Boolean(volume.refused)}
-            title={volume.refused ?? undefined}
+            title={volume.refused ? fromEngine(volume.refused) : undefined}
             onClick={() => setDestination(`${volume.path}/captain-salvage-recovered`)}
           >
             {volume.path.split("/").pop()} ({volume.refused ? t("not allowed") : t("{bytes} free", { bytes: bytes(volume.freeBytes) })})
@@ -568,11 +568,11 @@ function LensTab({ overview, lens, onLens, revision, onChanged }: { overview: Ov
       ))}
       <h4>{t("What explains it")}</h4>
       {overview.ownershipNames.map((label, index) => (
-        <label key={label} className="check"><input type="checkbox" checked={current.ownership?.includes(index) ?? false} onChange={() => toggle("ownership", index)} /> {label}</label>
+        <label key={label} className="check"><input type="checkbox" checked={current.ownership?.includes(index) ?? false} onChange={() => toggle("ownership", index)} /> {fromEngine(label)}</label>
       ))}
       <h4>{t("Content")}</h4>
       {overview.groupNames.map((label, index) => (
-        <label key={label} className="check"><input type="checkbox" checked={current.groups?.includes(index) ?? false} onChange={() => toggle("groups", index)} /> {label}</label>
+        <label key={label} className="check"><input type="checkbox" checked={current.groups?.includes(index) ?? false} onChange={() => toggle("groups", index)} /> {fromEngine(label)}</label>
       ))}
       <div className="detail-actions">
         <input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("Name this lens")} aria-label={t("Lens name")} />
@@ -661,7 +661,7 @@ function ConnectTab() {
     invoke<McpDetails>("mcp_info").then(setDetails).catch(() => undefined);
   }, []);
   if (!details) return null;
-  if (!details.info) return <div className="detail"><p className="warn">{t("The MCP server did not start: {error}", { error: details.error ?? "" })}</p></div>;
+  if (!details.info) return <div className="detail"><p className="warn">{t("The MCP server did not start: {error}", { error: fromEngine(details.error) })}</p></div>;
   const command = `claude mcp add --transport http exfat-lens ${details.info.url} --header "Authorization: Bearer ${details.info.token}"`;
   return (
     <div className="detail">
