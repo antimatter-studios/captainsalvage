@@ -187,6 +187,7 @@ pub struct Session {
     pub(crate) browse: Mutex<crate::browse::BrowseCache>,
     pub(crate) file_tests: FileTestControl,
     writes: Mutex<WriteWatch>,
+    pub(crate) zip: Mutex<Option<(i64, Arc<crate::archive::ZipListing>)>>,
 }
 
 #[derive(Default)]
@@ -339,6 +340,7 @@ impl Session {
             browse: Mutex::default(),
             file_tests: FileTestControl::default(),
             writes: Mutex::new(WriteWatch::open(path)),
+            zip: Mutex::new(None),
         }))
     }
 

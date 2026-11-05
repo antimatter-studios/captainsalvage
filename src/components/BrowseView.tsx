@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { bytes, count, percent, stamp, VERDICT_LABEL } from "../format";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
+import { isZipName } from "./ZipView";
 
 const PAGE_ROWS = 120;
 const TILE_WIDTH = 150;
@@ -321,7 +322,8 @@ export function InlinePreview({ id, name, length, complete, onOpen }: {
   return null;
 }
 
-function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket, onBytes }: {
+function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket, onBytes, onInside }: {
+  onInside: () => void;
   row: BrowseRow;
   position: number | null;
   total: number;
@@ -360,6 +362,7 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
             <button className="icon-button" disabled={position + 1 >= total} onClick={() => onMove(1)} aria-label="Next file"><Icon name="chevronRight" /></button>
           </span>
         )}
+        {isZipName(row.name) && <button onClick={onInside}>Look inside</button>}
         <button onClick={onBytes}>Show bytes</button>
         <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? "In your basket" : "Add to basket"}</button>
       </div>
@@ -369,7 +372,8 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
   );
 }
 
-export function BrowseView({ floor, revision, scope, onScopeClear, standalone, onStandaloneClose, basket, onBasket, onSelect, onBytes, onPreviewShown }: {
+export function BrowseView({ floor, revision, scope, onScopeClear, standalone, onStandaloneClose, basket, onBasket, onSelect, onBytes, onInsideZip, onPreviewShown }: {
+  onInsideZip: (row: BrowseRow) => void;
   floor: number;
   revision: number;
   scope: BrowseScope | null;
@@ -601,6 +605,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
           onMove={standalone ? () => undefined : move}
           onBasket={(add) => onBasket("entry", previewRow.id, add)}
           onBytes={() => onBytes(previewRow.firstCluster)}
+          onInside={() => onInsideZip(previewRow)}
         />
       )}
     </section>

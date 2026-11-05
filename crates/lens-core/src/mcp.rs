@@ -112,6 +112,8 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("file_tests_stop", "Stops the background file tests. They resume where they stopped.", json!({}), &[]),
         tool("file_tests_forget", "Forgets stored test results, so those files are tested again after a check has improved. Only changes this Mac's map.", json!({"outcome": string("passed, damaged or untested. Leave out to forget them all.")}), &[]),
         tool("file_tests_status", "How the background file tests are going: how many passed, are damaged or have no test.", json!({}), &[]),
+        tool("zip_contents", "Lists what a zip holds, read from the disk. If its directory is damaged, the list is rebuilt from the headers of the files inside, and source says so.", json!({"id": integer("Entry id of the zip.")}), &["id"]),
+        tool("zip_member_check", "Unpacks one file from a zip in memory and compares it with its checksum. Nothing is saved.", json!({"id": integer("Entry id of the zip."), "index": integer("The file's index from zip_contents.")}), &["id", "index"]),
         tool("mount_history", "When macOS last wrote to this volume: each date its .Spotlight-V100 and .fseventsd folders changed, with the volume's dirty flag and when the baseline was recorded. Needs a scan, and a baseline cannot see anything before it was recorded.", json!({}), &[]),
         tool("file_copies", "Other found files holding exactly the same bytes as this one. Only knows about files already tested.", json!({"id": integer("Entry id."), "limit": integer("Default 100.")}), &["id"]),
         tool("file_test", "The stored test result for one entry, if it has been tested.", json!({"id": integer("Entry id.")}), &["id"]),
