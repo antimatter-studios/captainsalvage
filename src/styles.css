@@ -215,7 +215,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .safety-button:hover:not(:disabled) { background: var(--hover); filter: none; }
 .safety-chip-bad .safety-button { color: #fff; background: var(--critical); }
 .safety-list {
-  display: none;
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -226,7 +225,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   background: var(--raised);
   box-shadow: var(--shadow-float);
 }
-.safety-chip:hover .safety-list, .safety-chip:focus-within .safety-list, .safety-chip-bad .safety-list { display: block; }
 .safety-note { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
 .safety-item { display: flex; gap: 7px; padding: 2px 0; align-items: baseline; color: var(--ink-2); }
 .safety-item-bad { color: var(--critical); font-weight: 600; }
