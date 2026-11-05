@@ -1,7 +1,7 @@
 // Tests that engine text is translated sentence by sentence, with the values in it kept and,
 // where they are names the engine uses, translated too. Run with scripts/test_translations.sh.
 import { renderToString } from "react-dom/server";
-import { fromEngine, LanguageRoot, type Language } from "../src/i18n";
+import { fromEngine, LanguageRoot, questionFor, type Language } from "../src/i18n";
 
 (globalThis as { document?: unknown }).document = { documentElement: {} };
 
@@ -53,6 +53,13 @@ check(
   fromEngine("It uses compression method 99, which this app cannot unpack yet."),
   "Sie nutzt die Kompressionsmethode 99, die diese App noch nicht entpacken kann.",
 );
+
+// Claude is told the person's language once, and again only when it changes.
+check("English at the start needs no telling", questionFor("What is this?", "en", null), "What is this?");
+check("French at the start is told", questionFor("Qu'est-ce que c'est ?", "fr", null), "I speak French, so please answer in French.\n\nQu'est-ce que c'est ?");
+check("once told, not again", questionFor("Et ça ?", "fr", "fr"), "Et ça ?");
+check("a switch is told", questionFor("Und das?", "de", "fr"), "I speak German, so please answer in German.\n\nUnd das?");
+check("a switch back to English is told", questionFor("And this?", "en", "de"), "I speak English, so please answer in English.\n\nAnd this?");
 
 console.log(`translations: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

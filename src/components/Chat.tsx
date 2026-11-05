@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type { Selection } from "../api";
 import { count } from "../format";
-import { fromEngine, t } from "../i18n";
+import { fromEngine, questionFor, t, useLanguage, type Language } from "../i18n";
 import { Icon } from "./icons";
 
 interface ToolCall {
@@ -63,6 +63,9 @@ function Formatted({ text }: { text: string }) {
 }
 
 export function Chat({ selection }: { selection: Selection }) {
+  const { language } = useLanguage();
+  // The language Claude was last told in this conversation, so it is only told again on a change.
+  const toldLanguage = useRef<Language | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -127,7 +130,9 @@ export function Chat({ selection }: { selection: Selection }) {
     setBusy(true);
     setMessages((current) => [...current, { role: "you", text, tools: [], about }]);
     try {
-      await invoke("chat_send", { message: text, selection });
+      // The person sees their own words. Claude also hears which language to answer in.
+      await invoke("chat_send", { message: questionFor(text, language, toldLanguage.current), selection });
+      toldLanguage.current = language;
     } catch (reason) {
       setBusy(false);
       setMessages((current) => [...current, { role: "error", text: String(reason), tools: [] }]);
@@ -136,6 +141,7 @@ export function Chat({ selection }: { selection: Selection }) {
 
   async function startOver() {
     await invoke("chat_reset");
+    toldLanguage.current = null;
     setMessages([]);
     setBusy(false);
   }
