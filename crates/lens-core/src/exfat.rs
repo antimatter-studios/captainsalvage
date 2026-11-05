@@ -11,6 +11,7 @@ pub const FAT_END: u32 = 0xFFFF_FFFF;
 pub const FAT_BAD: u32 = 0xFFFF_FFF7;
 pub const FIRST_CLUSTER: u32 = 2;
 pub const BOOT_REGION_SECTORS: u64 = 12;
+const VOLUME_DIRTY: u16 = 0x0002;
 
 const ATTRIBUTE_DIRECTORY: u16 = 0x10;
 const ATTRIBUTE_VALID_MASK: u16 = 0x37;
@@ -93,6 +94,11 @@ impl BootSector {
 
     pub fn cluster_size(&self) -> u64 {
         self.bytes_per_sector() << self.sectors_per_cluster_shift
+    }
+
+    /// Set while a volume is mounted for writing, and cleared by a clean unmount.
+    pub fn volume_dirty(&self) -> bool {
+        self.volume_flags & VOLUME_DIRTY != 0
     }
 
     pub fn heap_offset(&self) -> u64 {

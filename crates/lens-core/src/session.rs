@@ -12,6 +12,7 @@ use crate::map::{
     to_extents, Extent, IslandRow, MapDb, MapSummary, Overlay, Row, OVERLAY_NOTE,
     OVERLAY_REGION_LABEL, OVERLAY_STRUCT,
 };
+use crate::mount::{DiskWrites, MountHistory, WriteWatch};
 use crate::resolve::{
     OWNERSHIP_DIRECTORY, OWNERSHIP_LABELLED, OWNERSHIP_NAMELESS_CHAIN, OWNERSHIP_ONE_ENTRY,
     OWNERSHIP_SEVERAL_ENTRIES, OWNERSHIP_UNEXPLAINED,
@@ -107,6 +108,7 @@ pub struct Status {
     pub summary: Option<MapSummary>,
     pub copy: CopyStatus,
     pub file_tests: crate::filetest::FileTestStatus,
+    pub writes: DiskWrites,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -184,6 +186,7 @@ pub struct Session {
     pub(crate) copy: CopyControl,
     pub(crate) browse: Mutex<crate::browse::BrowseCache>,
     pub(crate) file_tests: FileTestControl,
+    writes: Mutex<WriteWatch>,
 }
 
 #[derive(Default)]
@@ -335,6 +338,7 @@ impl Session {
             copy: CopyControl::default(),
             browse: Mutex::default(),
             file_tests: FileTestControl::default(),
+            writes: Mutex::new(WriteWatch::open(path)),
         }))
     }
 
@@ -433,6 +437,25 @@ impl Session {
             summary,
             copy: self.copy_status()?,
             file_tests: self.file_test_status()?,
+            writes: self
+                .writes
+                .lock()
+                .map_err(|_| anyhow!("write counter lock poisoned"))?
+                .report(),
+        })
+    }
+
+    /// The dates the volume's own system folders changed, as evidence of earlier mounts.
+    pub fn mount_history(&self) -> Result<MountHistory> {
+        let root = self.volume.boot.root_cluster;
+        Ok(MountHistory {
+            dates: self.with_database(|database| database.mount_dates(root))?,
+            dirty_flag: self.volume.boot.volume_dirty(),
+            baseline_recorded_at_millis: self
+                .baseline
+                .lock()
+                .map_err(|_| anyhow!("baseline lock poisoned"))?
+                .recorded_at_millis,
         })
     }
 

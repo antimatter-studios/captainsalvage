@@ -227,6 +227,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   box-shadow: var(--shadow-float);
 }
 .safety-chip:hover .safety-list, .safety-chip:focus-within .safety-list, .safety-chip-bad .safety-list { display: block; }
+.safety-note { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
 .safety-item { display: flex; gap: 7px; padding: 2px 0; align-items: baseline; color: var(--ink-2); }
 .safety-item-bad { color: var(--critical); font-weight: 600; }
 .safety-mark { flex: none; width: 12px; color: var(--good); font-weight: 700; }
@@ -380,6 +381,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .recovery-tests { margin-top: 20px; }
 .recovery-tests h3 { font-size: 13px; font-weight: 650; margin: 0 0 6px; }
 .recovery-tests .recovery-table td:first-child { width: auto; }
+.recovery-number { text-align: right; font-variant-numeric: tabular-nums; }
+.recovery-note-tight { margin-bottom: 8px; }
+.recovery-note-after { margin: 8px 0 0; }
 .recovery-steps { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 7px; color: var(--ink-2); }
 .recovery-steps li { display: flex; gap: 9px; align-items: center; }
 .recovery-steps svg { color: var(--accent); flex: none; }
@@ -546,6 +550,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 /* First screen */
 .open { max-width: 620px; margin: 0 auto; padding: 16vh 24px 0; background: var(--window); height: 100%; max-width: none; }
 .open > * { max-width: 620px; margin-left: auto; margin-right: auto; }
+.open-warning { background: var(--hover); border-radius: 9px; padding: 9px 11px; }
 .instruction { background: var(--hover); border-radius: 9px; padding: 9px 11px; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 
 @media (prefers-reduced-motion: reduce) {

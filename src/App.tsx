@@ -56,6 +56,9 @@ function OpenVolume({ initialPath, failure, onOpen }: { initialPath: string; fai
     <main className="open">
       <h1>Open a damaged exFAT volume</h1>
       <p>This app only reads. It opens the device read-only, and nothing in it can write to the disk.</p>
+      <p className="open-warning">
+        macOS can write to the disk without this app. It mounts a volume as soon as its disk is plugged in, and writes to it while it stays mounted. If the volume is mounted now, unmount it straight away: <code>diskutil unmountDisk /dev/diskN</code>. Do not run First Aid on it.
+      </p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -85,11 +88,20 @@ function OpenVolume({ initialPath, failure, onOpen }: { initialPath: string; fai
 
 /** One calm chip while the disk is safe. Any problem turns it red and opens the list. */
 function Safety({ status }: { status: Status }) {
+  const { now: counted, sinceOpen } = status.writes;
+  const baselineDate = new Date(status.baseline.recordedAtMillis).toLocaleDateString();
   const checks = [
     { good: status.osDeniesWrites, text: "The OS denies writes to this device", danger: "This account has write permission on the device" },
     { good: status.mounted === null, text: "The volume is not mounted", danger: "Mounted, so macOS may write to it. Unmount it now" },
-    { good: status.baseline.unchanged, text: "Boot, FAT, bitmap and root are unchanged", danger: "Structures have changed since the baseline" },
+    { good: status.baseline.unchanged, text: `Boot, FAT, bitmap and root are unchanged since ${baselineDate}`, danger: `Structures have changed since the baseline of ${baselineDate}` },
     { good: status.reads.errors === 0, text: "No read errors", danger: `${count(status.reads.errors)} read errors` },
+    ...(counted
+      ? [{
+          good: sinceOpen.operations === 0,
+          text: "No writes counted on this disk since it was opened here",
+          danger: `${count(sinceOpen.operations)} writes (${bytes(sinceOpen.bytes)}) counted on this disk since it was opened here. Something other than this app is writing to it`,
+        }]
+      : []),
   ];
   const safe = checks.every((check) => check.good);
   return (
@@ -104,6 +116,12 @@ function Safety({ status }: { status: Status }) {
             {check.good ? check.text : check.danger}
           </div>
         ))}
+        <p className="safety-note">The baseline only covers changes after it was recorded.</p>
+        {counted && (
+          <p className="safety-note">
+            macOS has counted {count(counted.operations)} writes ({bytes(counted.bytes)}) on this disk since it was attached. That covers the whole disk and has no dates, so it is evidence and not proof.
+          </p>
+        )}
       </div>
     </div>
   );

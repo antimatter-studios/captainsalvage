@@ -58,6 +58,24 @@ export interface Status {
   summary: MapSummary | null;
   copy: CopyStatus;
   fileTests: FileTestStatus;
+  writes: DiskWrites;
+}
+
+export interface WriteCounter {
+  operations: number;
+  bytes: number;
+}
+
+export interface DiskWrites {
+  atOpen: WriteCounter | null;
+  now: WriteCounter | null;
+  sinceOpen: WriteCounter;
+}
+
+export interface MountHistory {
+  dates: { date: string; entries: number; bytes: number; clusters: number }[];
+  dirtyFlag: boolean;
+  baselineRecordedAtMillis: number;
 }
 
 export interface FileTestStatus {

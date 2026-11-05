@@ -77,18 +77,52 @@ treats damage as something to route around:
 
 ## Safety
 
-The disk being recovered is never written to. That is the rule the design starts from.
+This app never writes to the disk being recovered. That is the rule the design starts from.
+macOS can, though, and that can happen before the app is open. See
+[Before you plug the disk in](#before-you-plug-the-disk-in).
 
 - Devices are only ever opened read-only, and the read interface has no write method.
 - The volume stays unmounted during a scan, because macOS writes to a volume when it mounts it.
 - The app checks that the boot regions, FAT, bitmap and root directory still match
-  their first-recorded hash.
+  the hash first recorded here. That only covers changes after it was recorded.
+- The app follows the kernel's write counter for the disk, and warns if it moves while
+  the volume is open. The counter covers the whole disk and has no dates, so it is evidence
+  and not proof.
+- After a scan, the Overview lists each date the volume's `.Spotlight-V100` and `.fseventsd`
+  folders changed, as a record of when macOS last wrote there.
 - Copy out refuses any destination on the disk being recovered, including through
   an APFS container, and refuses if it cannot tell which disk a destination is on.
 - Copy out never overwrites a file. Each copy is hashed as it is read, then hashed
   again from the destination.
 - Only the person using the app can start a copy or choose a salvage drive. An AI can
   plan a copy, but not start one.
+
+### Before you plug the disk in
+
+macOS mounts a volume as soon as its disk is attached, and writes to it while it stays
+mounted. On one real recovery, a damaged volume stayed mounted for 13 minutes before anyone
+unmounted it. In that time macOS changed 36 directory entries, about 0.8 MB, inside
+`.Spotlight-V100` and `.fseventsd`, and created files on clusters that had been unclaimed.
+Those clusters could have held lost data.
+
+To stop it, do this before you attach the disk if you can:
+
+1. Add a line for the volume to `/etc/fstab`, using `sudo vifs`:
+
+   ```
+   LABEL=VolumeName none exfat rw,noauto
+   ```
+
+   Use `UUID=` in place of `LABEL=` if you already know the UUID, and use a label only if
+   it has no spaces. We have not yet tested this on a damaged volume, so check that
+   `mount` does not list the volume after you attach it.
+2. If the volume mounts anyway, unmount it straight away with
+   `diskutil unmountDisk /dev/diskN`. Unmounting flushes pending writes, so it can write a
+   little more, but staying mounted writes much more.
+3. Do not run First Aid or `fsck` on it, because both of them write.
+
+Each attach that mounts the volume can write to it again, so keep the disk attached for as
+long as you are working with it.
 
 ## How far to trust the results
 
