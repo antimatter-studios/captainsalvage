@@ -21,6 +21,8 @@ import { bytes, clock, count, displayPath, percent, stamp, VERDICT_LABEL } from 
 import { InlinePreview } from "./BrowseView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
 
+const MAX_COPIES_SHOWN = 20;
+
 const OVERLAY_LABEL: Record<string, string> = {
   accept_entry: "Accept a damaged entry",
   file_extents: "Reassemble a file",
@@ -41,11 +43,21 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, previewElsewhere }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean }) {
+function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, previewElsewhere, onEntry }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
+  const [copies, setCopies] = useState<Row[]>([]);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const id = row.id as number;
+
+  useEffect(() => {
+    let current = true;
+    setCopies([]);
+    call<Row[]>("file_copies", { id, limit: MAX_COPIES_SHOWN }).then((rows) => current && setCopies(rows)).catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [id]);
 
   useEffect(() => {
     setReport(null);
@@ -108,6 +120,17 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, pr
           </Fact>
         )}
       </dl>
+      {copies.length > 0 && (
+        <>
+          <h4>Same bytes also at{copies.length >= MAX_COPIES_SHOWN ? ` (first ${count(MAX_COPIES_SHOWN)})` : ""}</h4>
+          {copies.map((copy) => (
+            <button key={copy.id} className="row" onClick={() => onEntry(copy)} title={copy.reason}>
+              <span className="row-icon"><Icon name={fileIcon(copy.name)} /></span>
+              <span className="row-main"><span className="row-name">{copy.name}</span><span className="row-path">{displayPath(copy.path)}</span></span>
+            </button>
+          ))}
+        </>
+      )}
       {error && <p className="warn">{error}</p>}
       {report && (
         <div className="test-report">
@@ -714,6 +737,7 @@ export function Details(props: DetailsProps) {
                 inBasket={inBasket("entry", entry.row.id)}
                 onPreview={onPreview}
                 previewElsewhere={previewInCenter === entry.row.id}
+                onEntry={onEntry}
                 onCopy={() => {
                   if (entry.row.id !== null) onBasket("entry", entry.row.id, true);
                   setTab("copy");

@@ -92,7 +92,10 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
         {!showImage && <span className="tile-icon"><Icon name={fileIcon(row.name)} size={32} /></span>}
         <span className="tile-name">{row.name}</span>
         <span className="tile-meta">
-          <span>{bytes(row.length)}</span>
+          <span>
+            {bytes(row.length)}
+            {(row.copies ?? 1) > 1 && <span className="tile-copies" title={`${count(row.copies ?? 1)} identical files`}> ×{count(row.copies ?? 1)}</span>}
+          </span>
           <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={`${verdict}, confidence ${percent(row.confidence)}`} />
         </span>
       </button>
@@ -390,6 +393,8 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [scroll, setScroll] = useState({ top: 0, width: 0, height: 0 });
   const [hasFfmpeg, setHasFfmpeg] = useState(false);
+  const [hideCopies, setHideCopies] = useState(true);
+  const [hiddenCopies, setHiddenCopies] = useState(0);
   const scroller = useRef<HTMLDivElement | null>(null);
   const requested = useRef<Set<number>>(new Set());
   const folder = scope?.head;
@@ -425,13 +430,14 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   const fetchPage = useCallback((page: number, reset: boolean) => {
     if (!reset && requested.current.has(page)) return;
     requested.current.add(page);
-    call<BrowsePage>("browse_files", { group, folder, minConfidence: floor, sort, text, offset: page * PAGE_ROWS, limit: PAGE_ROWS })
+    call<BrowsePage>("browse_files", { group, folder, minConfidence: floor, sort, text, hideCopies, offset: page * PAGE_ROWS, limit: PAGE_ROWS })
       .then((result) => {
         setTotal(result.total);
+        setHiddenCopies(result.hiddenCopies);
         setPages((current) => new Map(reset ? [] : current).set(page, result.rows));
       })
       .catch((reason) => setError(String(reason)));
-  }, [group, folder, floor, sort, text]);
+  }, [group, folder, floor, sort, text, hideCopies]);
 
   useEffect(() => {
     requested.current = new Set();
@@ -560,6 +566,10 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
           <label className="sidebar-search browse-search">
             <Icon name="search" size={13} />
             <input value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Filter by name" spellCheck={false} aria-label="Filter by name" />
+          </label>
+          <label className="browse-toggle" title="Show one file for each set of identical bytes, among files already tested">
+            <input type="checkbox" checked={hideCopies} onChange={(event) => setHideCopies(event.target.checked)} />
+            Hide copies{hideCopies && hiddenCopies > 0 ? ` (${count(hiddenCopies)})` : ""}
           </label>
           <select value={sort} onChange={(event) => setSort(event.target.value as BrowseSort)} aria-label="Sort">
             <option value="best">Best first</option>

@@ -1991,6 +1991,69 @@ fn a_test_of_old_clusters_does_not_apply_to_a_changed_entry() {
 }
 
 #[test]
+fn identical_files_can_be_shown_as_one() {
+    let (engine, session, dir) = engine_with_volume("copies");
+    let find = |name: &str| call(&engine, "search", json!({"query": name}))["rows"][0].clone();
+    let first = find("photo.jpg");
+    let second = find("reused.jpg");
+    let same = "ab".repeat(32);
+    let stored = |row: &serde_json::Value| lens_core::filetest::FileTest {
+        id: row["id"].as_i64().expect("id"),
+        first_cluster: row["firstCluster"].as_u64().expect("cluster") as u32,
+        length: row["length"].as_u64().expect("length"),
+        outcome: "untested".into(),
+        format: "unknown".into(),
+        valid_fraction: None,
+        first_break: None,
+        decoded: None,
+        note: String::new(),
+        sha256: Some(same.clone()),
+        tested_at_millis: 1,
+    };
+    session
+        .with_database(|database| database.save_file_tests(&[stored(&first), stored(&second)]))
+        .expect("save");
+
+    let all = call(&engine, "browse_files", json!({"group": "photos"}));
+    let hidden = call(
+        &engine,
+        "browse_files",
+        json!({"group": "photos", "hideCopies": true}),
+    );
+    assert_eq!(
+        hidden["total"].as_u64().expect("total"),
+        all["total"].as_u64().expect("total") - 1
+    );
+    assert_eq!(hidden["hiddenCopies"], 1);
+    assert_eq!(all["hiddenCopies"], 0);
+
+    // The one shown says how many it stands for, and the best of the set is the one shown.
+    let rows = hidden["rows"].as_array().expect("rows");
+    let shown = rows.iter().find(|row| row["copies"] == 2).expect("the set");
+    let names: Vec<_> = rows
+        .iter()
+        .map(|row| row["name"].as_str().expect("name"))
+        .collect();
+    assert!(
+        names.contains(&"photo.jpg") != names.contains(&"reused.jpg"),
+        "{names:?}"
+    );
+    assert!(
+        shown["confidence"].as_f64().expect("score")
+            >= first["confidence"]
+                .as_f64()
+                .expect("score")
+                .min(second["confidence"].as_f64().expect("score"))
+    );
+
+    // Every location stays reachable.
+    let other = call(&engine, "file_copies", json!({"id": first["id"]}));
+    assert_eq!(other[0]["name"], "reused.jpg");
+    assert_eq!(other.as_array().expect("rows").len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_resumed_copy_only_needs_space_for_what_is_not_there_yet() {
     let (engine, session, dir) = engine_with_volume("resume-space");
     let destination = copy_destination("resume-space");

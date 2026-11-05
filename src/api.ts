@@ -362,11 +362,13 @@ export interface BrowseRow {
   firstCluster: number;
   modified: string | null;
   inUse: boolean;
+  copies?: number;
 }
 
 export interface BrowsePage {
   rows: BrowseRow[];
   total: number;
+  hiddenCopies: number;
 }
 
 /** Read live from the disk as the window needs it. Nothing is copied. */

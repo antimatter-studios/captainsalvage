@@ -40,6 +40,7 @@ const QUIET_TOOLS: &[&str] = &[
     "browse_types",
     "browse_files",
     "file_test",
+    "file_copies",
     "file_tests_status",
 ];
 const DEFAULT_REGION_SAMPLES: usize = 64;
@@ -380,6 +381,13 @@ impl Engine {
                 Ok(json!({"forgotten": session.file_tests_forget(outcome)?}))
             }
             "file_tests_status" => Ok(serde_json::to_value(session.file_test_status()?)?),
+            "file_copies" => {
+                let id = need_i64(args, "id")?;
+                let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.file_copies(id, limit),
+                )?)?)
+            }
             "file_test" => {
                 let id = need_i64(args, "id")?;
                 Ok(serde_json::to_value(
@@ -421,6 +429,10 @@ impl Engine {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .into(),
+                    hide_copies: args
+                        .get("hideCopies")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                 };
                 let offset = u64_of(args, "offset").unwrap_or(0);
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);

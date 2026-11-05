@@ -1127,6 +1127,41 @@ impl MapDb {
         Ok(())
     }
 
+    /// Each tested file's content hash, shortened to a number that is quick to compare.
+    pub fn file_hashes(&self) -> Result<std::collections::HashMap<i64, u128>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, SUBSTR(sha256, 1, 32) FROM file_tests WHERE sha256 IS NOT NULL")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut found = std::collections::HashMap::new();
+        for row in rows {
+            let (id, text) = row?;
+            if let Ok(hash) = u128::from_str_radix(&text, 16) {
+                found.insert(id, hash);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Other found files holding exactly the same bytes as this one.
+    pub fn file_copies(&self, id: i64, limit: u64) -> Result<Vec<Row>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM file_tests WHERE id != ?1 AND sha256 = (SELECT sha256 FROM file_tests WHERE id = ?1) LIMIT ?2",
+        )?;
+        let ids = statement
+            .query_map(params![id, limit as i64], |row| row.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut rows = Vec::new();
+        for other in ids {
+            if let Some(row) = self.entry(other)? {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+
     /// Removes stored results, all of them or those with one outcome.
     pub fn forget_file_tests(&self, outcome: Option<&str>) -> Result<u64> {
         let removed = match outcome {
@@ -1259,6 +1294,7 @@ impl MapDb {
                         first_cluster: row.get(5)?,
                         modified: row.get(6)?,
                         in_use: row.get(7)?,
+                        copies: 1,
                     },
                 ))
             })?
