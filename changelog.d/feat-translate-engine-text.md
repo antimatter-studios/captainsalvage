@@ -1,3 +1,3 @@
 ### Added
 
-- **Engine messages now appear in French, German, and Spanish.** You can understand scan results, file details, and errors in your chosen language.
+- **Messages from the disk analysis are translated too.** Verdict reasons, file test and zip notes, disk access instructions and errors show in French, German or Spanish.
