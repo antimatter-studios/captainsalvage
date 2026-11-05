@@ -555,6 +555,7 @@ export default function App() {
         floor={floor}
         revision={revision}
         selectedKey={selectedKey}
+        openKey={browseScope ? `folder:${browseScope.head}` : null}
         onEntry={openEntry}
         onFolder={openFolder}
         onChain={selectChain}

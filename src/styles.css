@@ -320,6 +320,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) .row-icon,
 .explorer-rows:has(.row-cursor) .row-selected:not(.row-cursor) .disclosure { color: var(--muted); }
 .explorer-rows:focus, .explorer-rows:focus-visible { outline: none; }
+/* The folder whose files are showing, while something else is selected. */
+.row-open { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.row-open:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.row-open .row-name { font-weight: 600; }
+
 .row-wrap { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .row-wrap .row { flex: 1; min-width: 0; }
 .basket-check { flex: none; margin: 0 4px 0 0; opacity: 0; width: 14px; height: 14px; }
