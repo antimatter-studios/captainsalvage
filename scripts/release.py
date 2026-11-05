@@ -109,7 +109,10 @@ def readme_block(sections, limit=README_VERSIONS):
         "The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.",
         "",
     ]
-    for heading, body in sections[:limit]:
+    # The limit is on versions, so [Unreleased] does not push one out.
+    unreleased = [item for item in sections if item[0] == UNRELEASED]
+    versions = [item for item in sections if item[0] != UNRELEASED]
+    for heading, body in [*unreleased, *versions[:limit]]:
         lines.append("### " + re.sub(r"^\[(\d[^\]]*)\]", r"v\1", heading).replace("[", "").replace("]", ""))
         lines.append("")
         lines.append(re.sub(r"^### (.+)$", r"**\1**", body, flags=re.MULTILINE))

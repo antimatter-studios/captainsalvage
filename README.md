@@ -292,7 +292,9 @@ Builds are for Apple Silicon and are not signed yet, so macOS asks you to approv
 | A fix (`fix:`) | The patch number goes up: 0.2.0 to 0.2.1 | Yes |
 | Anything else (`docs:`, `test:`, `chore:`) | No change | No |
 
-Merges that land while a release is running go out together in the next one, as one version.
+Whoever opens a pull request, person or agent, assesses whether it fixes something broken or
+adds something new, and titles it to match. [AGENTS.md](AGENTS.md) has the rule. Merges that land
+while a release is running go out together in the next one, as one version.
 The number in the app is worked out the same way, so a build of `main` matches its release.
 
 Going to 1.0.0 is a deliberate choice. Run `scripts/release.py prepare 1.0.0` and merge that

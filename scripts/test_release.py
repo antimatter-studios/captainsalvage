@@ -90,6 +90,17 @@ class Files(unittest.TestCase):
         self.assertIn("CHANGELOG.md", block)
         self.assertIn("**Added**", block)
 
+    def test_unreleased_does_not_push_out_a_version(self):
+        block = release.readme_block([(release.UNRELEASED, "Nothing yet."), *self.SECTIONS])
+        self.assertIn("### Unreleased", block)
+        self.assertEqual(block.count("\n### v"), 10)
+        self.assertIn("### v0.3.0", block)
+        self.assertNotIn("### v0.2.0", block)
+
+    def test_the_changelog_keeps_every_version(self):
+        sections = [(release.UNRELEASED, "Nothing yet."), *self.SECTIONS]
+        self.assertEqual(release.split_sections(release.join_changelog(sections)), sections)
+
     def test_unreleased_has_no_version_mark(self):
         block = release.readme_block([("[Unreleased]", "Nothing yet.")])
         self.assertIn("### Unreleased", block)
