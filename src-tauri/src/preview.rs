@@ -95,6 +95,9 @@ fn plain(status: StatusCode, text: &str) -> Answer {
 }
 
 fn thumb_answer(engine: &Engine, media: Option<&MediaServer>, id: i64) -> Answer {
+    if let Ok(session) = engine.session() {
+        session.note_viewing();
+    }
     let frame = |id: i64| match media {
         Some(media) => media.frame(id),
         None => anyhow::bail!("the media port did not start"),
@@ -119,6 +122,7 @@ fn thumb_answer(engine: &Engine, media: Option<&MediaServer>, id: i64) -> Answer
 
 fn entry_answer(engine: &Engine, id: i64, range: Option<&str>) -> anyhow::Result<Answer> {
     let session = engine.session()?;
+    session.note_viewing();
     let (total, name) = session.entry_total(id)?;
     let kind = content_type(&name);
     let answer = match range {

@@ -103,6 +103,13 @@ pub fn needs_ffmpeg_thumbnail(name: &str) -> bool {
             .is_some_and(|group| group.extensions.contains(&extension.as_str()))
 }
 
+/// The type group of a file, by the name's extension.
+pub fn group_id_of(name: &str) -> &'static str {
+    TYPE_GROUPS
+        .get(usize::from(group_index(name)))
+        .map_or("other", |group| group.id)
+}
+
 /// What the window should treat this file as, going by its name.
 pub fn content_type(name: &str) -> &'static str {
     match extension_of(name).as_str() {
@@ -282,6 +289,17 @@ pub(crate) struct BrowseCache {
 pub fn make_thumbnail(data: &[u8]) -> Result<Vec<u8>> {
     catch_unwind(AssertUnwindSafe(|| decode_to_thumbnail(data)))
         .map_err(|_| anyhow!("the image decoder gave up on this data"))?
+}
+
+/// Whether a file decodes as an image at all. A panic in a decoder counts as a failure.
+pub fn make_decode_check(data: &[u8]) -> Result<()> {
+    catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        ImageReader::new(Cursor::new(data))
+            .with_guessed_format()?
+            .decode()?;
+        Ok(())
+    }))
+    .map_err(|_| anyhow!("the image decoder gave up on this data"))?
 }
 
 fn decode_to_thumbnail(data: &[u8]) -> Result<Vec<u8>> {

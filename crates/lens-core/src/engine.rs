@@ -39,6 +39,8 @@ const QUIET_TOOLS: &[&str] = &[
     "copy_status",
     "browse_types",
     "browse_files",
+    "file_test",
+    "file_tests_status",
 ];
 const DEFAULT_REGION_SAMPLES: usize = 64;
 const DEFAULT_MIN_RUN_CLUSTERS: u64 = 64;
@@ -354,6 +356,35 @@ impl Engine {
                 Ok(serde_json::to_value(session.with_database(
                     |database| database.search(query, limit, floor),
                 )?)?)
+            }
+            "file_tests_start" => {
+                let groups = args
+                    .get("groups")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(serde_json::to_value(session.file_test_start(groups)?)?)
+            }
+            "file_tests_stop" => {
+                session.file_test_stop();
+                Ok(json!({"stopRequested": true}))
+            }
+            "file_tests_forget" => {
+                let outcome = args.get("outcome").and_then(Value::as_str);
+                Ok(json!({"forgotten": session.file_tests_forget(outcome)?}))
+            }
+            "file_tests_status" => Ok(serde_json::to_value(session.file_test_status()?)?),
+            "file_test" => {
+                let id = need_i64(args, "id")?;
+                Ok(serde_json::to_value(
+                    session.with_database(|database| database.file_test(id))?,
+                )?)
             }
             "media_check" => {
                 let id = need_i64(args, "id")?;

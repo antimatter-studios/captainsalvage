@@ -178,6 +178,9 @@ function Toolbar({ status, overview, onChanged }: { status: Status | null; overv
         {status?.scanError && <div className="warn">{status.scanError}</div>}
       </div>
       <div className="toolbar-spacer" data-tauri-drag-region />
+      {status?.fileTests.state === "running" && (
+        <span className="scan-note muted">Testing {count(status.fileTests.done)} of {count(status.fileTests.total)}</span>
+      )}
       {status?.copy.state === "running" && (
         <span className="scan-note muted">Copying {count(status.copy.filesDone + status.copy.filesSkipped)} of {count(status.copy.filesTotal)}</span>
       )}
@@ -276,6 +279,14 @@ export default function App() {
       clearInterval(timer);
     };
   }, [overview]);
+
+  // Finished tests change scores and folder totals, so everything shown is read again.
+  const testState = status?.fileTests.state;
+  const lastTestState = useRef(testState);
+  useEffect(() => {
+    if (lastTestState.current === "running" && testState !== "running") bump();
+    lastTestState.current = testState;
+  }, [testState, bump]);
 
   const scanning = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
   useEffect(() => {
@@ -525,7 +536,7 @@ export default function App() {
             <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>Bytes</button>
           </div>
         </div>
-        {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} />}
+        {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} onChanged={bump} />}
         {center === "browse" && (
           <BrowseView
             floor={floor}

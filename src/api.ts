@@ -57,6 +57,20 @@ export interface Status {
   scanError: string | null;
   summary: MapSummary | null;
   copy: CopyStatus;
+  fileTests: FileTestStatus;
+}
+
+export interface FileTestStatus {
+  state: string;
+  groups: string[];
+  total: number;
+  done: number;
+  bytesDone: number;
+  current: string;
+  error: string | null;
+  passed: number;
+  damaged: number;
+  untested: number;
 }
 
 export interface CopyStatus {

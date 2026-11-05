@@ -73,6 +73,8 @@ export function fileIcon(name: string): IconName {
 
 const VERDICT_TONES: Record<string, string> = {
   live: "tone-neutral",
+  "tested-good": "tone-good",
+  "tested-bad": "tone-critical",
   "likely-intact": "tone-good",
   plausible: "tone-info",
   partial: "tone-warning",

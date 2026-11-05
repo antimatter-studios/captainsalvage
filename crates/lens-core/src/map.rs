@@ -21,6 +21,19 @@ pub const VERDICT_LIVE: &str = "live";
 pub const VERDICT_INTACT: &str = "likely-intact";
 pub const VERDICT_PLAUSIBLE: &str = "plausible";
 pub const VERDICT_PARTIAL: &str = "partial";
+pub const VERDICT_TESTED_GOOD: &str = "tested-good";
+pub const VERDICT_TESTED_BAD: &str = "tested-bad";
+/// A file that passed its test is trusted, and one that failed is not, whatever else says.
+pub const TESTED_GOOD_CONFIDENCE: f64 = 0.99;
+pub const TESTED_BAD_CONFIDENCE: f64 = 0.1;
+
+/// A file waiting to be tested.
+pub struct FileTestCandidate {
+    pub id: i64,
+    pub name: String,
+    pub first_cluster: u32,
+    pub length: u64,
+}
 pub const VERDICT_OVERWRITTEN: &str = "overwritten";
 pub const VERDICT_EMPTY: &str = "empty";
 pub const VERDICT_RESIDUE: &str = "rename-residue";
@@ -58,6 +71,20 @@ CREATE TABLE IF NOT EXISTS sets (
 );
 CREATE INDEX IF NOT EXISTS sets_first ON sets (first_cluster);
 CREATE INDEX IF NOT EXISTS sets_node ON sets (node);
+CREATE TABLE IF NOT EXISTS file_tests (
+    id INTEGER PRIMARY KEY,
+    first_cluster INTEGER NOT NULL,
+    length INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    format TEXT NOT NULL,
+    valid_fraction REAL,
+    first_break INTEGER,
+    decoded INTEGER,
+    note TEXT NOT NULL,
+    sha256 TEXT,
+    tested_at_millis INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS file_tests_sha256 ON file_tests (sha256);
 CREATE TABLE IF NOT EXISTS read_errors (cluster INTEGER PRIMARY KEY, message TEXT);
 CREATE TABLE IF NOT EXISTS nodes (
     head INTEGER PRIMARY KEY,
@@ -1021,6 +1048,153 @@ impl MapDb {
     }
 
     /// Every file in a folder and the folders beneath it, with its path.
+    /// Files with all their clusters, not yet tested, in disk order so reading stays fast.
+    pub fn file_test_candidates(&self, max_bytes: u64) -> Result<Vec<FileTestCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT s.id, COALESCE(s.o_name, s.name), COALESCE(s.o_first, s.first_cluster), COALESCE(s.o_length, s.length) \
+             FROM sets s LEFT JOIN file_tests t ON t.id = s.id \
+             AND t.first_cluster = COALESCE(s.o_first, s.first_cluster) AND t.length = COALESCE(s.o_length, s.length) \
+             WHERE t.id IS NULL AND COALESCE(s.o_is_dir, s.is_dir) = 0 \
+             AND COALESCE(s.o_length, s.length) BETWEEN 1 AND ?1 \
+             AND COALESCE(s.clusters_found, 0) >= COALESCE(s.clusters_needed, 0) \
+             AND COALESCE(s.verdict, '') NOT IN ('rename-residue', 'overwritten', 'empty') \
+             AND COALESCE(s.o_name, s.name) NOT LIKE '.\\_%' ESCAPE '\\' \
+             ORDER BY 3",
+        )?;
+        let found = statement
+            .query_map([max_bytes as i64], |row| {
+                Ok(FileTestCandidate {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    first_cluster: row.get(2)?,
+                    length: row.get::<_, i64>(3)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(found)
+    }
+
+    /// Stores results and applies them at once, so lists show them while a run continues.
+    pub fn save_file_tests(&self, tests: &[crate::filetest::FileTest]) -> Result<()> {
+        if tests.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.connection.unchecked_transaction()?;
+        {
+            let mut insert = transaction.prepare_cached(
+                "INSERT OR REPLACE INTO file_tests (id, first_cluster, length, outcome, format, valid_fraction, first_break, decoded, note, sha256, tested_at_millis) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            )?;
+            let mut good = transaction.prepare_cached(
+                "UPDATE sets SET verdict = CASE WHEN verdict = ?2 THEN verdict ELSE ?3 END, confidence = MAX(COALESCE(confidence, 0), ?4), reason = ?5 || ' ' || COALESCE(reason, '') WHERE id = ?1",
+            )?;
+            let mut bad = transaction.prepare_cached(
+                "UPDATE sets SET verdict = ?2, confidence = MIN(COALESCE(confidence, 0), ?3), reason = ?4 || ' ' || COALESCE(reason, '') WHERE id = ?1",
+            )?;
+            for test in tests {
+                insert.execute(params![
+                    test.id,
+                    test.first_cluster,
+                    test.length as i64,
+                    test.outcome,
+                    test.format,
+                    test.valid_fraction,
+                    test.first_break.map(|offset| offset as i64),
+                    test.decoded,
+                    test.note,
+                    test.sha256,
+                    test.tested_at_millis as i64,
+                ])?;
+                if test.outcome == crate::filetest::OUTCOME_PASSED {
+                    good.execute(params![
+                        test.id,
+                        VERDICT_LIVE,
+                        VERDICT_TESTED_GOOD,
+                        TESTED_GOOD_CONFIDENCE,
+                        test.note
+                    ])?;
+                } else if test.outcome == crate::filetest::OUTCOME_DAMAGED {
+                    bad.execute(params![
+                        test.id,
+                        VERDICT_TESTED_BAD,
+                        TESTED_BAD_CONFIDENCE,
+                        test.note
+                    ])?;
+                }
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Removes stored results, all of them or those with one outcome.
+    pub fn forget_file_tests(&self, outcome: Option<&str>) -> Result<u64> {
+        let removed = match outcome {
+            Some(outcome) => self
+                .connection
+                .execute("DELETE FROM file_tests WHERE outcome = ?1", [outcome])?,
+            None => self.connection.execute("DELETE FROM file_tests", [])?,
+        };
+        Ok(removed as u64)
+    }
+
+    /// Files passed, damaged and with no test yet.
+    pub fn file_test_counts(&self) -> Result<(u64, u64, u64)> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT outcome, COUNT(*) FROM file_tests GROUP BY outcome")?;
+        let mut counts = (0, 0, 0);
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+        })?;
+        for row in rows {
+            let (outcome, count) = row?;
+            match outcome.as_str() {
+                crate::filetest::OUTCOME_PASSED => counts.0 = count,
+                crate::filetest::OUTCOME_DAMAGED => counts.1 = count,
+                _ => counts.2 = count,
+            }
+        }
+        Ok(counts)
+    }
+
+    pub fn file_test(&self, id: i64) -> Result<Option<crate::filetest::FileTest>> {
+        Ok(self.file_tests_where("WHERE id = ?1", [id])?.pop())
+    }
+
+    /// Every stored result, for applying when the map is rebuilt.
+    pub fn all_file_tests(&self) -> Result<Vec<crate::filetest::FileTest>> {
+        self.file_tests_where("", [])
+    }
+
+    fn file_tests_where<P: rusqlite::Params>(
+        &self,
+        filter: &str,
+        values: P,
+    ) -> Result<Vec<crate::filetest::FileTest>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT id, first_cluster, length, outcome, format, valid_fraction, first_break, decoded, note, sha256, tested_at_millis FROM file_tests {filter}"
+        ))?;
+        let found = statement
+            .query_map(values, |row| {
+                Ok(crate::filetest::FileTest {
+                    id: row.get(0)?,
+                    first_cluster: row.get(1)?,
+                    length: row.get::<_, i64>(2)? as u64,
+                    outcome: row.get(3)?,
+                    format: row.get(4)?,
+                    valid_fraction: row.get(5)?,
+                    first_break: row.get::<_, Option<i64>>(6)?.map(|offset| offset as u64),
+                    decoded: row.get(7)?,
+                    note: row.get(8)?,
+                    sha256: row.get(9)?,
+                    tested_at_millis: row.get::<_, i64>(10)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(found)
+    }
+
     /// Every file worth browsing, in the smallest form that can sort and group them.
     pub fn browse_scan(&self) -> Result<Vec<crate::browse::BrowseScanRow>> {
         let mut statement = self.connection.prepare(
