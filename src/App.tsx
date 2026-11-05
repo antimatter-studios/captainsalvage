@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -143,6 +144,10 @@ function ThemeSwitch() {
 }
 
 function Toolbar({ status, overview, onChanged }: { status: Status | null; overview: Overview; onChanged: () => void }) {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => undefined);
+  }, []);
   const scan = status?.scan;
   const fraction = scan ? scan.clustersScanned / scan.totalClusters : 0;
   const running = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
@@ -159,7 +164,10 @@ function Toolbar({ status, overview, onChanged }: { status: Status | null; overv
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="brand">
-        <strong>Captain Salvage</strong>
+        <div className="brand-name">
+          <strong>Captain Salvage</strong>
+          {version && <span className="brand-version">v{version}</span>}
+        </div>
         <span>{overview.device}, {bytes(overview.geometry.volumeBytes)}</span>
       </div>
       <div className="scan">
