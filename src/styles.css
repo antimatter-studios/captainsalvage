@@ -600,6 +600,8 @@ video.inline-preview { max-height: 380px; background: #000; }
 }
 .start-chart { position: relative; overflow: hidden; background: var(--chart-water); color: var(--chart-ink); }
 .start-chart-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* So a press anywhere on the chart lands on the drag region behind these. */
+.start-chart-art, .start-brand, .start-promises { pointer-events: none; }
 .start-contour { fill: var(--chart-shoal); fill-opacity: 0.13; stroke: var(--chart-line); stroke-width: 0.8; }
 .start-sounding { fill: var(--chart-sounding); font: italic 11px "Iowan Old Style", "Palatino", serif; text-anchor: middle; }
 .start-wreck-ring { fill: none; stroke: var(--chart-caution); stroke-width: 1.2; stroke-dasharray: 2 3; }
@@ -616,7 +618,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-brand p { margin: 0; max-width: 30ch; font-size: 16px; line-height: 1.4; }
 .start-promises { position: absolute; left: 40px; right: 40px; bottom: 36px; margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; font-size: 13px; }
 .start-panel { min-width: 0; overflow: auto; padding: 18px 44px 32px; }
-.start-panel-top { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+.start-panel-top { display: flex; align-items: center; gap: 10px; margin: -18px -44px 26px; padding: 18px 44px 0; }
 .start-spacer { flex: 1; }
 .start-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .start-heading h2 { margin: 0; font-size: 25px; font-weight: 650; letter-spacing: -0.01em; }
@@ -632,17 +634,29 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-new { margin: 6px 0 0; color: var(--muted); }
 .start-caution { margin-top: 9px; padding-left: 11px; border-left: 2px solid var(--chart-caution); }
 .start-caution p { margin: 0 0 6px; color: var(--chart-caution); max-width: 70ch; }
-.start-caution code { display: inline-block; font-family: var(--mono); font-size: 12px; user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
 .start-needs { margin-top: 9px; padding-left: 11px; border-left: 2px solid var(--line-strong); }
 .start-needs p { margin: 0 0 6px; color: var(--ink-2); max-width: 70ch; }
-.start-needs code { display: inline-block; font-family: var(--mono); font-size: 12px; user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
 .start-empty { margin: 18px 0; color: var(--ink-2); }
 .start-internal { display: inline-flex; margin-top: 12px; color: var(--ink-2); }
 .start-warning { margin: 24px 0 0; color: var(--muted); font-size: 12px; max-width: 70ch; }
 .start-warning code { font-family: var(--mono); font-size: 11px; }
-.start-image { margin-top: 14px; color: var(--ink-2); font-size: 12px; }
-.start-image form { display: flex; gap: 8px; margin-top: 8px; }
-.start-image input { flex: 1; }
+.start-image p { margin: 2px 0 8px; color: var(--muted); }
+.start-image form { display: flex; gap: 8px; max-width: 640px; }
+.start-image input { flex: 1; min-width: 0; }
+.start-command { display: flex; align-items: center; gap: 10px; margin-top: 5px; padding: 6px 6px 6px 10px; border-radius: 7px; background: var(--hover); }
+.start-command code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.start-command button { flex: none; font-size: 12px; padding: 2px 9px; }
+.start-safe { margin-top: 2px; }
+.start-image { margin-bottom: 4px; }
+.start-safe > p { margin: 3px 0 10px; color: var(--ink-2); max-width: 70ch; }
+.start-safe h4 { margin: 16px 0 4px; font-size: 12px; font-weight: 650; color: var(--ink-2); }
+.start-safe-after { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.start-step { display: flex; gap: 9px; padding: 7px 0; }
+.start-step-mark { flex: none; width: 14px; font-weight: 700; color: var(--muted); }
+.start-step-done .start-step-mark { color: var(--good); }
+.start-step-body { flex: 1; min-width: 0; }
+.start-step-body p { margin: 0 0 3px; max-width: 70ch; color: var(--ink-2); }
+.start-step-body strong { color: var(--ink); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .start-ping { animation: none; } }
 @media (max-width: 900px) {
   .start { grid-template-columns: 1fr; grid-template-rows: 300px 1fr; }

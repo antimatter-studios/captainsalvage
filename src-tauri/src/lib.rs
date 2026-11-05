@@ -149,6 +149,20 @@ fn mcp_info(state: State<'_, AppState>) -> Value {
     json!({"info": state.mcp, "error": state.mcp_error})
 }
 
+/// Shows the system's file chooser. Cancelling it gives nothing.
+#[tauri::command(async)]
+fn choose_disk_image() -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/osascript")
+        .args([
+            "-e",
+            "POSIX path of (choose file with prompt \"Choose a raw image of a damaged exFAT partition\")",
+        ])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (output.status.success() && !path.is_empty()).then_some(path)
+}
+
 #[tauri::command]
 fn last_device() -> Option<String> {
     let text = std::fs::read_to_string(config_dir()?.join(LAST_DEVICE_FILE)).ok()?;
@@ -294,6 +308,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            choose_disk_image,
             engine_call,
             map_layer,
             read_raw,
