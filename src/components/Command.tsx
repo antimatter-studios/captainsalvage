@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t } from "../i18n";
 
 const COPIED_MESSAGE_MS = 1500;
 
@@ -14,7 +15,7 @@ export function Command({ text }: { text: string }) {
   return (
     <div className="command">
       <code>{text}</code>
-      <button onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+      <button onClick={copy}>{copied ? t("Copied") : t("Copy")}</button>
     </div>
   );
 }

@@ -13,7 +13,8 @@ import {
   type MediaInfo,
   type TypeTotal,
 } from "../api";
-import { bytes, count, percent, stamp, VERDICT_LABEL } from "../format";
+import { bytes, count, percent, stamp, verdictLabel } from "../format";
+import { t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 import { isZipName } from "./ZipView";
 
@@ -66,7 +67,7 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const failed = failures >= 2;
-  const verdict = VERDICT_LABEL[row.verdict] ?? row.verdict;
+  const verdict = verdictLabel(row.verdict);
 
   return (
     <div className="tile-wrap" style={style}>
@@ -84,9 +85,9 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
                 }}
               />
             ) : NO_THUMBNAIL.has(extensionOf(row.name)) ? (
-              <span className="tile-note"><Icon name="image" size={28} />Open to view</span>
+              <span className="tile-note"><Icon name="image" size={28} />{t("Open to view")}</span>
             ) : (
-              <span className="tile-note tone-serious"><Icon name="broken" size={28} />Would not decode</span>
+              <span className="tile-note tone-serious"><Icon name="broken" size={28} />{t("Would not decode")}</span>
             )}
           </span>
         )}
@@ -95,17 +96,17 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
         <span className="tile-meta">
           <span>
             {bytes(row.length)}
-            {(row.copies ?? 1) > 1 && <span className="tile-copies" title={`${count(row.copies ?? 1)} identical files`}> ×{count(row.copies ?? 1)}</span>}
+            {(row.copies ?? 1) > 1 && <span className="tile-copies" title={t("{count} identical files", { count: count(row.copies ?? 1) })}> ×{count(row.copies ?? 1)}</span>}
           </span>
-          <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={`${verdict}, confidence ${percent(row.confidence)}`} />
+          <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
         </span>
       </button>
       <input
         type="checkbox"
         className="basket-check tile-check"
         checked={inBasket}
-        aria-label={`Add ${row.name} to the basket`}
-        title="Add to the basket"
+        aria-label={t("Add {name} to the basket", { name: row.name })}
+        title={t("Add to the basket")}
         onChange={(event) => onBasket(event.target.checked)}
       />
     </div>
@@ -161,7 +162,7 @@ function RawPreview({ row, note }: { row: BrowseRow; note?: string }) {
     <div className="preview-raw">
       {note && <p className="preview-message">{note}</p>}
       {error && <p className="warn">{error}</p>}
-      {!shown && !error && <p className="muted">Reading from the disk.</p>}
+      {!shown && !error && <p className="muted">{t("Reading from the disk.")}</p>}
       {shown && !shown.isText && <p className="muted">First {bytes(Math.min(shown.total, HEX_PREVIEW_BYTES))} of this file, as bytes.</p>}
       {shown && <pre className={shown.isText ? "preview-sheet" : "preview-sheet preview-hex"}>{shown.text}</pre>}
     </div>
@@ -179,13 +180,15 @@ function Player({ row, audio, native, media }: { row: BrowseRow; audio: boolean;
   const extension = extensionOf(row.name);
 
   if (failed) {
-    return <RawPreview row={row} note="This file would not play, so its clusters may be wrong or damaged. Its first bytes are below." />;
+    return <RawPreview row={row} note={t("This file would not play, so its clusters may be wrong or damaged. Its first bytes are below.")} />;
   }
   if (converting && !media) {
-    return <p className="preview-message preview-wait muted">Checking for ffmpeg.</p>;
+    return <p className="preview-message preview-wait muted">{t("Checking for ffmpeg.")}</p>;
   }
   if (converting && !media?.available) {
-    return <RawPreview row={row} note={`The window can't play this ${extension ? `.${extension} ` : ""}file by itself. To play it here, install ffmpeg with ${INSTALL_COMMAND}, then open this file again. Everything else works without it.`} />;
+    return <RawPreview row={row} note={extension
+      ? t("The window can't play this .{extension} file by itself. To play it here, install ffmpeg with {command}, then open this file again. Everything else works without it.", { extension, command: INSTALL_COMMAND })
+      : t("The window can't play this file by itself. To play it here, install ffmpeg with {command}, then open this file again. Everything else works without it.", { command: INSTALL_COMMAND })} />;
   }
   const source = converting && media ? convertedUrl(media, row.id) : entryUrl(row.id);
   const onError = () => {
@@ -198,7 +201,7 @@ function Player({ row, audio, native, media }: { row: BrowseRow; audio: boolean;
       {audio
         ? <audio key={source} controls preload="metadata" src={source} onError={onError} />
         : <video key={source} controls preload="metadata" src={source} onError={onError} />}
-      {converting && <p className="preview-converting muted">Converted by ffmpeg as it plays. Nothing is saved.</p>}
+      {converting && <p className="preview-converting muted">{t("Converted by ffmpeg as it plays. Nothing is saved.")}</p>}
     </div>
   );
 }
@@ -222,12 +225,12 @@ function PreviewBody({ row }: { row: BrowseRow }) {
     return <Player row={row} audio native={NATIVE_AUDIO.has(extension)} media={media} />;
   }
   if (failed) {
-    return <RawPreview row={row} note="This file would not open here, so its clusters may be wrong or damaged. Its first bytes are below." />;
+    return <RawPreview row={row} note={t("This file would not open here, so its clusters may be wrong or damaged. Its first bytes are below.")} />;
   }
   if (IMAGE_EXTENSIONS.has(extension)) {
     return (
       <div className="preview-stage">
-        {!loaded && <p className="preview-loading muted">Reading from the disk.</p>}
+        {!loaded && <p className="preview-loading muted">{t("Reading from the disk.")}</p>}
         <img key={row.id} src={entryUrl(row.id)} alt={row.name} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
       </div>
     );
@@ -290,7 +293,7 @@ export function InlinePreview({ id, name, length, complete, onOpen }: {
   const shown = ready ? "" : "inline-waiting";
 
   if (failed) {
-    return <p className="inline-note tone-serious">This would not open, so its clusters may be wrong or damaged.</p>;
+    return <p className="inline-note tone-serious">{t("This would not open, so its clusters may be wrong or damaged.")}</p>;
   }
   if (isImage) {
     return (
@@ -344,12 +347,12 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onMove]);
-  const verdict = VERDICT_LABEL[row.verdict] ?? row.verdict;
+  const verdict = verdictLabel(row.verdict);
 
   return (
     <div className="preview-pane">
       <div className="preview-bar">
-        <button className="icon-button" onClick={onClose} aria-label="Back to the files"><Icon name="chevronLeft" /></button>
+        <button className="icon-button" onClick={onClose} aria-label={t("Back to the files")}><Icon name="chevronLeft" /></button>
         <div className="preview-title">
           <strong>{row.name}</strong>
           <span className="muted">{bytes(row.length)}, {stamp(row.modified)}</span>
@@ -357,17 +360,17 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
         <span className={`verdict-chip ${verdictTone(row.verdict)}`}>{verdict}</span>
         {position !== null && (
           <span className="preview-nav">
-            <button className="icon-button" disabled={position === 0} onClick={() => onMove(-1)} aria-label="Previous file"><Icon name="chevronLeft" /></button>
-            <span className="muted numeric">{count(position + 1)} of {count(total)}</span>
-            <button className="icon-button" disabled={position + 1 >= total} onClick={() => onMove(1)} aria-label="Next file"><Icon name="chevronRight" /></button>
+            <button className="icon-button" disabled={position === 0} onClick={() => onMove(-1)} aria-label={t("Previous file")}><Icon name="chevronLeft" /></button>
+            <span className="muted numeric">{t("{position} of {total}", { position: count(position + 1), total: count(total) })}</span>
+            <button className="icon-button" disabled={position + 1 >= total} onClick={() => onMove(1)} aria-label={t("Next file")}><Icon name="chevronRight" /></button>
           </span>
         )}
-        {isZipName(row.name) && <button onClick={onInside}>Look inside</button>}
-        <button onClick={onBytes}>Show bytes</button>
-        <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? "In your basket" : "Add to basket"}</button>
+        {isZipName(row.name) && <button onClick={onInside}>{t("Look inside")}</button>}
+        <button onClick={onBytes}>{t("Show bytes")}</button>
+        <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? t("In your basket") : t("Add to basket")}</button>
       </div>
       <PreviewBody row={row} />
-      <div className="preview-foot muted">Read live from the disk. Nothing is copied.</div>
+      <div className="preview-foot muted">{t("Read live from the disk. Nothing is copied.")}</div>
     </div>
   );
 }
@@ -543,7 +546,6 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
     return out;
   }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, rowAt, showImages, openIndex, basket, open, onBasket]);
 
-  const label = types?.find((item) => item.group === group)?.label.toLowerCase() ?? "files";
   const previewRow = standalone ?? openRow ?? null;
   const previewId = previewRow?.id ?? null;
   useEffect(() => {
@@ -552,7 +554,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   }, [previewId, onPreviewShown]);
 
   return (
-    <section className="center-panel browse" aria-label="Browse files">
+    <section className="center-panel browse" aria-label={t("Browse files")}>
       <div className="browse-bar">
         <div className="segmented browse-types" role="tablist">
           {types?.map((item) => (
@@ -563,22 +565,22 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
         </div>
         <div className="browse-tools">
           {scope && (
-            <button className="browse-scope" onClick={onScopeClear} title="Show files from the whole disk">
+            <button className="browse-scope" onClick={onScopeClear} title={t("Show files from the whole disk")}>
               <Icon name="folder" size={13} /> <span>{scope.name}</span> <Icon name="close" size={11} />
             </button>
           )}
           <label className="sidebar-search browse-search">
             <Icon name="search" size={13} />
-            <input value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Filter by name" spellCheck={false} aria-label="Filter by name" />
+            <input value={typed} onChange={(event) => setTyped(event.target.value)} placeholder={t("Filter by name")} spellCheck={false} aria-label={t("Filter by name")} />
           </label>
-          <label className="browse-toggle" title="Show one file for each set of identical bytes, among files already tested">
+          <label className="browse-toggle" title={t("Show one file for each set of identical bytes, among files already tested")}>
             <input type="checkbox" checked={hideCopies} onChange={(event) => setHideCopies(event.target.checked)} />
-            Hide copies{hideCopies && hiddenCopies > 0 ? ` (${count(hiddenCopies)})` : ""}
+            {t("Hide copies")}{hideCopies && hiddenCopies > 0 ? ` (${count(hiddenCopies)})` : ""}
           </label>
-          <select value={sort} onChange={(event) => setSort(event.target.value as BrowseSort)} aria-label="Sort">
-            <option value="best">Best first</option>
-            <option value="newest">Newest first</option>
-            <option value="largest">Largest first</option>
+          <select value={sort} onChange={(event) => setSort(event.target.value as BrowseSort)} aria-label={t("Sort")}>
+            <option value="best">{t("Best first")}</option>
+            <option value="newest">{t("Newest first")}</option>
+            <option value="largest">{t("Largest first")}</option>
           </select>
         </div>
       </div>
@@ -591,8 +593,10 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
           setScroll({ top: element.scrollTop, width: element.clientWidth, height: element.clientHeight });
         }}
       >
-        {total === 0 && <p className="empty">No {label} here{text ? ` with "${text}" in the name` : ""}. Try a lower confidence, or clear the filter.</p>}
-        {total === null && !error && <p className="empty">Reading the list of files.</p>}
+        {total === 0 && <p className="empty">{text
+          ? t("No files of this type have “{text}” in the name. Try a lower confidence, or clear the filter.", { text })
+          : t("No files of this type here. Try a lower confidence.")}</p>}
+        {total === null && !error && <p className="empty">{t("Reading the list of files.")}</p>}
         <div className="browse-sheet" style={{ height: rowCount * (tileHeight + TILE_GAP) + TILE_GAP }}>{tiles}</div>
       </div>
       {previewRow && (

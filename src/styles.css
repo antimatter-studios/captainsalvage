@@ -398,6 +398,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 
 .theme-switch { flex: none; }
 .theme-switch button { padding: 3px 7px; }
+.language-switch { flex: none; }
+.language-switch button { padding: 3px 6px; font-size: 11px; font-weight: 550; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
 
 /* Dragging a column's edge */
 .column-handle { position: absolute; top: 0; bottom: 0; width: 9px; z-index: 20; cursor: col-resize; touch-action: none; outline: none; }

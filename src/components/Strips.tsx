@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { mapLayer, type Extent, type Layer, type Lens } from "../api";
 import { count, bytes as formatBytes } from "../format";
-import { colorTable, describeValue, legendFor, onThemeChange, rampGradient, SEQUENTIAL_CAPTION } from "../palette";
+import { t } from "../i18n";
+import { colorTable, describeValue, legendFor, onThemeChange, rampGradient, sequentialCaption } from "../palette";
 
 const MIN_WINDOW_CLUSTERS = 64;
 const WHEEL_ZOOM_STEP = 1.25;
@@ -10,14 +11,14 @@ const MAX_BUCKETS = 8192;
 /** Height of one band unit in a stacked map column, in CSS pixels. */
 const CSS_PIXELS_PER_ROW = 2;
 
-const LAYERS: { id: Layer; label: string; help: string }[] = [
-  { id: "ownership", label: "What explains it", help: "Which clusters a found entry or chain accounts for" },
-  { id: "allocation", label: "Allocation", help: "What the bitmap and FAT say about each cluster" },
-  { id: "content", label: "Content", help: "What the bytes look like, from the scan" },
-  { id: "entropy", label: "Entropy", help: "How random the bytes are, from the scan" },
-  { id: "confidence", label: "Confidence", help: "Best score of any file claiming the cluster" },
-  { id: "folders", label: "Folders", help: "Where directory clusters sit" },
-  { id: "lens", label: "Lens", help: "Clusters matching the current lens" },
+const LAYERS: { id: Layer; label: () => string; help: () => string }[] = [
+  { id: "ownership", label: () => t("What explains it"), help: () => t("Which clusters a found entry or chain accounts for") },
+  { id: "allocation", label: () => t("Allocation"), help: () => t("What the bitmap and FAT say about each cluster") },
+  { id: "content", label: () => t("Content"), help: () => t("What the bytes look like, from the scan") },
+  { id: "entropy", label: () => t("Entropy"), help: () => t("How random the bytes are, from the scan") },
+  { id: "confidence", label: () => t("Confidence"), help: () => t("Best score of any file claiming the cluster") },
+  { id: "folders", label: () => t("Folders"), help: () => t("Where directory clusters sit") },
+  { id: "lens", label: () => t("Lens"), help: () => t("Clusters matching the current lens") },
 ];
 
 /** A notched arrowhead, pointing down. Flipped by its class to point up from below. */
@@ -236,12 +237,12 @@ function Strip(props: StripProps) {
         )}
         {hover && (
           <div className={`strip-tip ${hover.x > width - 240 ? "strip-tip-left" : ""}`} style={{ left: hover.x }}>
-            <strong>Cluster {count(hover.cluster)}</strong>
-            <div className="strip-tip-sub">{formatBytes((hover.cluster - 2) * clusterSize)} into the volume</div>
+            <strong>{t("Cluster {cluster}", { cluster: count(hover.cluster) })}</strong>
+            <div className="strip-tip-sub">{t("{bytes} into the volume", { bytes: formatBytes((hover.cluster - 2) * clusterSize) })}</div>
             {hover.parts.map((part) => (
               <div key={part.label} className="strip-tip-row">
                 {part.color && <span className="legend-swatch" style={{ background: part.color }} />}
-                <span>{part.label}{part.share !== null ? `, about ${part.share}%` : ""}</span>
+                <span>{part.share !== null ? t("{label}, about {share}%", { label: part.label, share: part.share }) : part.label}</span>
               </div>
             ))}
           </div>
@@ -274,7 +275,7 @@ export function Strips(props: StripsProps) {
   const first = 2;
   const last = totalClusters + 2;
   const legend = legendFor(layer);
-  const caption = SEQUENTIAL_CAPTION[layer];
+  const caption = sequentialCaption(layer);
 
   function clampView(start: number, end: number): [number, number] {
     let width = Math.max(end - start, MIN_WINDOW_CLUSTERS);
@@ -291,23 +292,23 @@ export function Strips(props: StripsProps) {
   };
 
   return (
-    <section className="strips" aria-label="Disk map">
+    <section className="strips" aria-label={t("Disk map")}>
       <div className="strips-controls">
-        <div className="segmented" role="tablist" aria-label="Map layer">
+        <div className="segmented" role="tablist" aria-label={t("Map layer")}>
           {LAYERS.map((item) => (
             <button
               key={item.id}
               role="tab"
               aria-selected={layer === item.id}
-              title={item.help}
+              title={item.help()}
               onClick={() => props.onLayer(item.id)}
             >
-              {item.label}
+              {item.label()}
             </button>
           ))}
         </div>
-        <label className="floor" title="Pulls data below this confidence out of focus, on the map and in the file lists">
-          <span>Focus on confidence {Math.round(floor * 100)}% and up</span>
+        <label className="floor" title={t("Pulls data below this confidence out of focus, on the map and in the file lists")}>
+          <span>{t("Focus on confidence {percent}% and up", { percent: Math.round(floor * 100) })}</span>
           <input
             type="range"
             min={0}
@@ -328,7 +329,7 @@ export function Strips(props: StripsProps) {
         highlight={highlight}
         marker={marker}
         clusterSize={clusterSize}
-        label="Whole volume. Drag to choose a region"
+        label={t("Whole volume. Drag to choose a region")}
         windowBox={view[0] <= first && view[1] >= last ? null : view}
         onPick={(cluster) => {
           const width = view[1] - view[0];
@@ -347,7 +348,7 @@ export function Strips(props: StripsProps) {
         highlight={highlight}
         marker={marker}
         clusterSize={clusterSize}
-        label={`Magnified, ${count(view[1] - view[0])} clusters. Scroll to zoom, drag to move, click to inspect`}
+        label={t("Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect", { count: count(view[1] - view[0]) })}
         onPick={onPick}
         onPan={pan}
         onZoom={zoom}

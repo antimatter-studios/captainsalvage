@@ -1,4 +1,5 @@
 import type { KeyboardEvent, PointerEvent } from "react";
+import { t } from "../i18n";
 
 const KEY_STEP = 16;
 
@@ -47,7 +48,7 @@ export function ColumnHandle({ label, edge, onWidth, onReset }: {
       aria-orientation="vertical"
       aria-label={label}
       tabIndex={0}
-      title="Drag to resize. Double-click to reset."
+      title={t("Drag to resize. Double-click to reset.")}
       onPointerDown={start}
       onPointerMove={move}
       onPointerUp={stop}

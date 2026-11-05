@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
-import { bytes, count, displayPath, percent, VERDICT_LABEL } from "../format";
+import { bytes, count, displayPath, lostFolderName, percent, verdictLabel } from "../format";
+import { t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 
 const PAGE_SIZE = 200;
@@ -47,14 +48,14 @@ function BasketCheck({ checked, label, onChange }: { checked: boolean; label: st
       type="checkbox"
       checked={checked}
       aria-label={label}
-      title={checked ? "In the recovery basket" : "Add to the recovery basket"}
+      title={checked ? t("In the recovery basket") : t("Add to the recovery basket")}
       onChange={(event) => onChange(event.target.checked)}
     />
   );
 }
 
 function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"]; depth?: number }) {
-  const verdict = VERDICT_LABEL[row.verdict] ?? row.verdict;
+  const verdict = verdictLabel(row.verdict);
   const id = row.id as number;
   return (
     <div className="row-wrap">
@@ -65,10 +66,10 @@ function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }:
         {showPath && row.path !== null && <span className="row-path">{displayPath(row.path)}</span>}
       </span>
       <span className="row-size">{row.kind === "file" ? bytes(row.length) : ""}</span>
-      <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={`${verdict}, confidence ${percent(row.confidence)}`} />
+      <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
     </button>
     {row.kind === "file" && row.length > 0 && (
-      <BasketCheck checked={basket.has(`entry:${id}`)} label={`Add ${row.name} to the recovery basket`} onChange={(add) => onBasket("entry", id, add)} />
+      <BasketCheck checked={basket.has(`entry:${id}`)} label={t("Add {name} to the recovery basket", { name: row.name })} onChange={(add) => onBasket("entry", id, add)} />
     )}
     </div>
   );
@@ -97,7 +98,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
     };
   }, [open, head, loaded, props.floor, props.revision]);
 
-  const name = row.name || (row.nodeKind === "root" ? "Volume root" : `Lost folder ${count(head)}`);
+  const name = row.name || (row.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
   const key = `folder:${head}`;
   return (
     <>
@@ -111,7 +112,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         style={{ paddingLeft: 6 + depth * 14 }}
         aria-expanded={open}
         data-depth={depth}
-        title={row.hint ? `Contains: ${row.hint}` : undefined}
+        title={row.hint ? t("Contains: {hint}", { hint: row.hint }) : undefined}
         onClick={() => {
           setOpen(!open);
           props.onFolder(row);
@@ -125,11 +126,11 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         </span>
         <span className="row-size">{row.bytes > 0 ? bytes(row.bytes) : ""}</span>
         {row.linkConfidence !== null && row.linkConfidence < 1 ? (
-          <ConfidenceRing value={row.linkConfidence} tone="tone-serious" label={`Link to its parent folder: confidence ${percent(row.linkConfidence)}`} />
+          <ConfidenceRing value={row.linkConfidence} tone="tone-serious" label={t("Link to its parent folder: confidence {percent}", { percent: percent(row.linkConfidence) })} />
         ) : null}
       </button>
       {row.nodeKind !== "root" && (
-        <BasketCheck checked={props.basket.has(`folder:${head}`)} label={`Add ${name} to the recovery basket`} onChange={(add) => props.onBasket("folder", head, add)} />
+        <BasketCheck checked={props.basket.has(`folder:${head}`)} label={t("Add {name} to the recovery basket", { name })} onChange={(add) => props.onBasket("folder", head, add)} />
       )}
       </div>
       {open && error && <div className="empty" style={{ paddingLeft: 20 + depth * 14 }}>{error}</div>}
@@ -162,9 +163,9 @@ function Folders(props: RowProps) {
       current = false;
     };
   }, [limit, props.revision]);
-  if (!page) return <div className="empty">Loading folders.</div>;
+  if (!page) return <div className="empty">{t("Loading folders.")}</div>;
   if (page.rows.length <= 1 && page.rows[0]?.bytes === 0) {
-    return <div className="empty">No folders found yet. Folders appear after the scan has found them and the map has been rebuilt.</div>;
+    return <div className="empty">{t("No folders found yet. Folders appear after the scan has found them and the map has been rebuilt.")}</div>;
   }
   return (
     <>
@@ -195,25 +196,25 @@ function Nameless({ onChain, selectedKey, revision, classNames, clusterSize }: {
   return (
     <>
       <label className="field">
-        <span>Starts with</span>
+        <span>{t("Starts with")}</span>
         <select value={headClass ?? ""} onChange={(event) => setHeadClass(event.target.value === "" ? null : Number(event.target.value))}>
-          <option value="">Anything</option>
+          <option value="">{t("Anything")}</option>
           {classNames.map((name, index) => (index === 0 ? null : <option key={name} value={index}>{name}</option>))}
         </select>
       </label>
-      <p className="hint">FAT chains no entry claims. These can be files whose names were lost.</p>
-      {result && result.chains.length === 0 && <div className="empty">No chains match. They appear once the map has been rebuilt.</div>}
+      <p className="hint">{t("FAT chains no entry claims. These can be files whose names were lost.")}</p>
+      {result && result.chains.length === 0 && <div className="empty">{t("No chains match. They appear once the map has been rebuilt.")}</div>}
       {result?.chains.map((chain) => (
         <button key={chain.head} className={selectedKey === `chain:${chain.head}` ? "row row-selected" : "row"} onClick={() => onChain(chain)}>
           <span className="row-icon"><Icon name={chain.endKind === "eof" ? "link" : "broken"} /></span>
           <span className="row-main">
             <span className="row-name">{chain.headClassName}</span>
-            <span className="row-path">Cluster {count(chain.head)}{chain.endKind === "eof" ? "" : `, chain ${chain.endKind === "broken" ? "breaks" : "joins another"}`}</span>
+            <span className="row-path">{chain.endKind === "eof" ? t("Cluster {cluster}", { cluster: count(chain.head) }) : chain.endKind === "broken" ? t("Cluster {cluster}, chain breaks", { cluster: count(chain.head) }) : t("Cluster {cluster}, chain joins another", { cluster: count(chain.head) })}</span>
           </span>
           <span className="row-size">{bytes(chain.length * clusterSize)}</span>
         </button>
       ))}
-      {result && result.total > limit && <button className="more" onClick={() => setLimit(limit + PAGE_SIZE)}>Show more ({count(result.total - limit)} left)</button>}
+      {result && result.total > limit && <button className="more" onClick={() => setLimit(limit + PAGE_SIZE)}>{t("Show more ({count} left)", { count: count(result.total - limit) })}</button>}
     </>
   );
 }
@@ -229,8 +230,8 @@ function Broken({ onEntry, selectedKey, revision, basket, onBasket }: { onEntry:
   }, [revision]);
   return (
     <>
-      <p className="hint">Files whose FAT chain ends before their length says it should. Most missing data first.</p>
-      {rows && rows.length === 0 && <div className="empty">No broken chains found so far.</div>}
+      <p className="hint">{t("Files whose FAT chain ends before their length says it should. Most missing data first.")}</p>
+      {rows && rows.length === 0 && <div className="empty">{t("No broken chains found so far.")}</div>}
       {rows?.map((row) => (
         <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} basket={basket} onBasket={onBasket} />
       ))}
@@ -252,15 +253,15 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   }, [revision]);
   return (
     <>
-      <p className="hint">Free space no entry or chain accounts for yet. This shrinks as the scan finds more folders. Select a region and ask Claude what it is.</p>
+      <p className="hint">{t("Free space no entry or chain accounts for yet. This shrinks as the scan finds more folders. Select a region and ask Claude what it is.")}</p>
       {error && <div className="empty">{error}</div>}
-      {runs && runs.length === 0 && <div className="empty">Nothing unexplained so far. Regions appear after the map is rebuilt.</div>}
+      {runs && runs.length === 0 && <div className="empty">{t("Nothing unexplained so far. Regions appear after the map is rebuilt.")}</div>}
       {runs?.map((run) => (
         <button key={run.startCluster} className={selectedKey === `region:${run.startCluster}` ? "row row-selected" : "row"} onClick={() => onRegion(run)}>
           <span className="row-icon"><Icon name="question" /></span>
           <span className="row-main">
             <span className="row-name">{run.mainContent}</span>
-            <span className="row-path">Cluster {count(run.startCluster)}, {percent(run.mainContentShare)} of it this type</span>
+            <span className="row-path">{t("Cluster {cluster}, {percent} of it this type", { cluster: count(run.startCluster), percent: percent(run.mainContentShare) })}</span>
           </span>
           <span className="row-size">{bytes(run.bytes)}</span>
         </button>
@@ -270,7 +271,7 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
 }
 
 function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, onBasket }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; openKey: string | null; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
-  if (page.rows.length === 0) return <div className="empty">No names match. The scan may not have reached them yet.</div>;
+  if (page.rows.length === 0) return <div className="empty">{t("No names match. The scan may not have reached them yet.")}</div>;
   return (
     <>
       {page.rows.map((row) =>
@@ -309,7 +310,7 @@ export function Explorer(props: ExplorerProps) {
   const [tab, setTab] = useState<ExplorerTab>("folders");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Page | null>(null);
-  const tabs: [ExplorerTab, string][] = [["folders", "Folders"], ["nameless", "Nameless"], ["broken", "Broken"], ["unexplained", "Unexplained"]];
+  const tabs: [ExplorerTab, string][] = [["folders", t("Folders")], ["nameless", t("Nameless")], ["broken", t("Broken")], ["unexplained", t("Unexplained")]];
   const panel = useRef<HTMLDivElement>(null);
   const selectTimer = useRef<number | undefined>(undefined);
   const lastKey = useRef(0);
@@ -375,7 +376,7 @@ export function Explorer(props: ExplorerProps) {
   }
 
   return (
-    <nav className="explorer" aria-label="Found files">
+    <nav className="explorer" aria-label={t("Found files")}>
       {props.handle}
       <form className="sidebar-search" onSubmit={runSearch}>
         <Icon name="search" size={14} />
@@ -385,12 +386,12 @@ export function Explorer(props: ExplorerProps) {
             setQuery(event.target.value);
             if (!event.target.value) setResults(null);
           }}
-          placeholder="Search names"
-          aria-label="Search names"
+          placeholder={t("Search names")}
+          aria-label={t("Search names")}
           spellCheck={false}
         />
         {query && (
-          <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); setResults(null); }}><Icon name="close" size={12} /></button>
+          <button type="button" aria-label={t("Clear search")} onClick={() => { setQuery(""); setResults(null); }}><Icon name="close" size={12} /></button>
         )}
       </form>
       {!results && (
@@ -404,7 +405,7 @@ export function Explorer(props: ExplorerProps) {
         className="panel-body explorer-rows"
         ref={panel}
         tabIndex={0}
-        aria-label="Found files. Use the arrow keys to move through them."
+        aria-label={t("Found files. Use the arrow keys to move through them.")}
         onKeyDown={onKeyDown}
         onClick={(event) => {
           clearCursor();

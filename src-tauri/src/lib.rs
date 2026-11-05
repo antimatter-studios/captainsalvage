@@ -20,6 +20,9 @@ const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
 const LAST_DEVICE_FILE: &str = "last-device";
 const THEME_FILE: &str = "theme";
 const THEME_SYSTEM: &str = "system";
+const LANGUAGE_FILE: &str = "language";
+/// The window's languages. An unset or unknown choice follows macOS, decided by the window.
+const LANGUAGES: [&str; 4] = ["en", "fr", "de", "es"];
 
 /// Longest piece of a file the window reads at once as text.
 const MAX_TEXT_READ_BYTES: u64 = 1024 * 1024;
@@ -188,6 +191,26 @@ fn get_theme() -> String {
         .unwrap_or_else(|| THEME_SYSTEM.to_string())
 }
 
+/// The language chosen in the window, or nothing when it should follow macOS.
+#[tauri::command]
+fn get_language() -> Option<String> {
+    config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join(LANGUAGE_FILE)).ok())
+        .map(|text| text.trim().to_string())
+        .filter(|name| LANGUAGES.contains(&name.as_str()))
+}
+
+#[tauri::command]
+fn set_language(language: String) -> Result<(), String> {
+    if !LANGUAGES.contains(&language.as_str()) {
+        return Err(format!("unknown language {language}"));
+    }
+    if let Some(dir) = config_dir() {
+        std::fs::write(dir.join(LANGUAGE_FILE), &language).map_err(text_error)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn set_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -319,6 +342,8 @@ pub fn run() {
             last_device,
             get_theme,
             set_theme,
+            get_language,
+            set_language,
             chat_send,
             chat_cancel,
             chat_reset,

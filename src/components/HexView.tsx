@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readRaw, type ClusterInfo, type EntrySet } from "../api";
 import { count, hexOffset, stamp } from "../format";
+import { t } from "../i18n";
 import { Icon } from "./icons";
 
 const BYTES_PER_ROW = 16;
@@ -168,24 +169,24 @@ export function HexView({ cluster, info, infoError, clusterSize, heapOffset, las
   const u32 = view && remaining >= 4 ? view.getUint32(at, true) : null;
 
   return (
-    <section className="center-panel" aria-label="Bytes">
+    <section className="center-panel" aria-label={t("Bytes")}>
       <div className="hex-bar">
         <div className="hex-title">
           <strong>Cluster {count(cluster)}</strong>
           <span className="mono muted">{hexOffset(base)}</span>
         </div>
         <div className="hex-nav">
-          <button className="icon-button" disabled={cluster <= 2} onClick={() => onGo(cluster - 1)} title="The cluster just before this one on disk" aria-label="Previous cluster"><Icon name="chevronLeft" size={15} /></button>
-          <button className="icon-button" disabled={cluster + 1 >= lastCluster} onClick={() => onGo(cluster + 1)} title="The cluster just after this one on disk" aria-label="Next cluster"><Icon name="chevronRight" size={15} /></button>
-          <button disabled={nextByFat === null} onClick={() => nextByFat !== null && onGo(nextByFat)} title={info?.fatMeaning}>Follow FAT</button>
-          <button disabled={!info || info.chainHead === cluster} onClick={() => info && onGo(info.chainHead)} title="Go to the start of this chain">Chain start</button>
+          <button className="icon-button" disabled={cluster <= 2} onClick={() => onGo(cluster - 1)} title={t("The cluster just before this one on disk")} aria-label={t("Previous cluster")}><Icon name="chevronLeft" size={15} /></button>
+          <button className="icon-button" disabled={cluster + 1 >= lastCluster} onClick={() => onGo(cluster + 1)} title={t("The cluster just after this one on disk")} aria-label={t("Next cluster")}><Icon name="chevronRight" size={15} /></button>
+          <button disabled={nextByFat === null} onClick={() => nextByFat !== null && onGo(nextByFat)} title={info?.fatMeaning}>{t("Follow FAT")}</button>
+          <button disabled={!info || info.chainHead === cluster} onClick={() => info && onGo(info.chainHead)} title={t("Go to the start of this chain")}>{t("Chain start")}</button>
           <form onSubmit={submitJump}>
-            <input value={jump} onChange={(event) => setJump(event.target.value)} placeholder="Cluster, or 0x offset" aria-label="Go to cluster or offset" />
+            <input value={jump} onChange={(event) => setJump(event.target.value)} placeholder={t("Cluster, or 0x offset")} aria-label={t("Go to cluster or offset")} />
           </form>
-          <button className="icon-button" onClick={onClose} title="Back to the recovery overview" aria-label="Back to the recovery overview"><Icon name="grid" size={15} /></button>
+          <button className="icon-button" onClick={onClose} title={t("Back to the recovery overview")} aria-label={t("Back to the recovery overview")}><Icon name="grid" size={15} /></button>
         </div>
       </div>
-      <div ref={scroller} className="hex-scroll" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)} tabIndex={0} aria-label="Hex dump">
+      <div ref={scroller} className="hex-scroll" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)} tabIndex={0} aria-label={t("Hex dump")}>
         {error && <div className="empty">{error}</div>}
         <div className="hex-sheet" style={{ height: rows * ROW_HEIGHT }}>{visible}</div>
       </div>
@@ -193,12 +194,12 @@ export function HexView({ cluster, info, infoError, clusterSize, heapOffset, las
         {infoError && <div className="decode-line warn">{infoError}</div>}
         {setAtSelection && (
           <div className="decode-line">
-            <span>{setAtSelection.checksumOk ? "Entry" : "Damaged entry"}{setAtSelection.inUse ? "" : ", marked deleted"}:</span>{" "}
+            <span>{setAtSelection.checksumOk ? t("Entry") : t("Damaged entry")}{setAtSelection.inUse ? "" : t(", marked deleted")}:</span>{" "}
             <strong>{setAtSelection.name}</strong>
             {setAtSelection.firstCluster >= 2 && setAtSelection.firstCluster < lastCluster && (
-              <button className="link" onClick={() => onGo(setAtSelection.firstCluster)}>first cluster {count(setAtSelection.firstCluster)}</button>
+              <button className="link" onClick={() => onGo(setAtSelection.firstCluster)}>{t("first cluster {number}", { number: count(setAtSelection.firstCluster) })}</button>
             )}
-            <span className="muted"> modified {stamp(setAtSelection.modified)}</span>
+            <span className="muted"> {t("modified {date}", { date: stamp(setAtSelection.modified) })}</span>
           </div>
         )}
         {view && byteRange ? (
@@ -207,12 +208,12 @@ export function HexView({ cluster, info, infoError, clusterSize, heapOffset, las
             {remaining >= 2 && <span>u16 {view.getUint16(at, true)}</span>}
             {u32 !== null && <span>u32 {u32}</span>}
             {remaining >= 8 && <span>u64 {view.getBigUint64(at, true).toString()}</span>}
-            {u32 !== null && exfatTime(u32) && <span>exFAT time {exfatTime(u32)}</span>}
-            {u32 !== null && u32 >= 2 && u32 < lastCluster && <button className="link" onClick={() => onGo(u32)}>go to cluster {count(u32)}</button>}
-            {byteRange[1] - byteRange[0] > 1 && <span>{byteRange[1] - byteRange[0]} bytes selected</span>}
+            {u32 !== null && exfatTime(u32) && <span>{t("exFAT time {time}", { time: exfatTime(u32) ?? "" })}</span>}
+            {u32 !== null && u32 >= 2 && u32 < lastCluster && <button className="link" onClick={() => onGo(u32)}>{t("go to cluster {number}", { number: count(u32) })}</button>}
+            {byteRange[1] - byteRange[0] > 1 && <span>{t("{count} bytes selected", { count: count(byteRange[1] - byteRange[0]) })}</span>}
           </div>
         ) : (
-          <div className="decode-line muted">Click a byte to decode it. Shift-click to select a range to ask about.</div>
+          <div className="decode-line muted">{t("Click a byte to decode it. Shift-click to select a range to ask about.")}</div>
         )}
       </div>
     </section>

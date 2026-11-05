@@ -44,6 +44,8 @@ jobs:
           bash scripts/test_create_release.sh
       - name: unreleased changes are fragments
         run: bash scripts/changelog-check.sh
+      - name: every window string is translated
+        run: python3 scripts/check_translations.py
       - name: type check and build the window
         run: npm run build
       - name: formatting
