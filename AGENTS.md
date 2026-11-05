@@ -2,8 +2,9 @@
 
 ## Each pull request's title sets the next version
 
-The release pipeline reads the type at the start of the title, and nothing else. So before
-opening a pull request, assess what it changes for someone using the app, and title it to match.
+When a release is prepared, the version comes from the type at the start of each title since
+the last one, and nothing else. So before opening a pull request, assess what it changes for
+someone using the app, and title it to match.
 
 | Type | Use it when | Version |
 |---|---|---|
@@ -18,3 +19,12 @@ opening a pull request, assess what it changes for someone using the app, and ti
 - Say why in the description, so the assessment can be checked. Correct the title before
   merging if the work changed, because the squash commit takes its subject from the title.
 - Never set a version by hand. 1.0.0 and other named versions are the owner's decision.
+
+## Cutting a release
+
+1. Run `scripts/release.py prepare`. It picks the version from what has merged.
+2. Merge that as a pull request titled `chore(release): vX.Y.Z`.
+3. On an up-to-date `main`, run `git tag vX.Y.Z` and push the tag.
+
+Tags are pushed from a clone, so github-guard's `git-changelog` hook checks each one first. The
+tag starts the release pipeline, and the pipeline never creates a tag.
