@@ -79,7 +79,10 @@ function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) =
   );
 }
 
-/** One calm chip while the disk is safe. Any problem turns it red and opens the list. */
+/**
+ * One calm chip while the disk is safe. Any problem turns it red and opens the list once, so it
+ * is seen. The list then closes like any popover, and the chip stays red while the problem lasts.
+ */
 function Safety({ status }: { status: Status }) {
   const { now: counted, sinceOpen } = status.writes;
   const mountedAgain = status.diskBack?.mounted ?? false;
@@ -100,12 +103,44 @@ function Safety({ status }: { status: Status }) {
       : []),
   ];
   const safe = checks.every((check) => check.good);
+  // Failing checks by their fixed wording, so a count that keeps growing does not reopen the list.
+  const failing = checks.filter((check) => !check.good).map((check) => check.text);
+  const failingKey = failing.join("\n");
+  const [open, setOpen] = useState(false);
+  const chip = useRef<HTMLDivElement>(null);
+  const seen = useRef<string[]>([]);
+  // Opens when a check newly fails. failingKey stands in for failing, a new array every render.
+  useEffect(() => {
+    if (failing.some((text) => !seen.current.includes(text))) setOpen(true);
+    seen.current = failing;
+  }, [failingKey]);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => {
+      if (!chip.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
   return (
-    <div className={safe ? "safety-chip" : "safety-chip safety-chip-bad"}>
-      <button className="safety-button" aria-label={safe ? "Disk protected. Show the checks" : "Disk safety problem"}>
+    <div ref={chip} className={safe ? "safety-chip" : "safety-chip safety-chip-bad"}>
+      <button
+        className="safety-button"
+        aria-expanded={open}
+        aria-controls="safety-list"
+        aria-label={safe ? "Disk protected. Show the checks" : "Disk safety problem. Show the checks"}
+        onClick={() => setOpen((shown) => !shown)}
+      >
         <Icon name={safe ? "shield" : "alert"} size={15} /> {safe ? "Disk protected" : "Check disk safety"}
       </button>
-      <div className="safety-list">
+      {open && <div id="safety-list" className="safety-list">
         {checks.map((check) => (
           <div key={check.text} className={check.good ? "safety-item" : "safety-item safety-item-bad"}>
             <span className="safety-mark" aria-hidden="true">{check.good ? "✓" : "!"}</span>
@@ -118,7 +153,7 @@ function Safety({ status }: { status: Status }) {
             macOS has counted {count(counted.operations)} writes ({bytes(counted.bytes)}) on this disk since it was attached. That covers the whole disk and has no dates, so it is evidence and not proof.
           </p>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
