@@ -2,7 +2,12 @@ name: release
 
 # Pushing a version tag builds, tests and publishes that version. Its notes are that
 # version's CHANGELOG.md section. Running this by hand is a dry run: everything except
-# publishing, with the app kept as an artifact for a week.
+# publishing.
+#
+# Builds never go on GitHub, as a release asset or a workflow artifact, because anyone who can
+# read the repository could download them, and this app will be sold. They go straight from the
+# job that built them to private storage. That step is below, turned off until the bucket
+# exists, so until then a release has notes and no build.
 on:
   push:
     tags:
@@ -21,6 +26,8 @@ jobs:
   build:
     name: build and test
     runs-on: macos-15
+    outputs:
+      notes: ${{ steps.notes.outputs.body }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,12 +85,30 @@ jobs:
       - name: show the release notes
         if: github.event_name == 'push'
         run: cat out/release-notes.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release
-          path: out/
-          retention-days: 7
-          if-no-files-found: error
+      - name: keep the notes for the publish job
+        id: notes
+        if: github.event_name == 'push'
+        run: |
+          delimiter="notes-$(uuidgen)"
+          { echo "body<<$delimiter"; cat out/release-notes.md; echo; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+      # Turned off until the bucket exists. To turn it on, uncomment this and add these to the
+      # repository's Actions settings:
+      #   variables: S3_ENDPOINT, S3_BUCKET, S3_REGION
+      #   secrets:   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY
+      # Give that key write access to this one bucket and nothing else. The secrets are set on
+      # this step only, so the build steps before it cannot read them.
+      # - name: upload the build to private storage
+      #   if: github.event_name == 'push'
+      #   env:
+      #     AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      #     AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      #     AWS_DEFAULT_REGION: ${{ vars.S3_REGION }}
+      #     S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+      #     S3_BUCKET: ${{ vars.S3_BUCKET }}
+      #   run: |
+      #     for file in out/*.zip out/*.sha256; do
+      #       aws s3 cp "$file" "s3://$S3_BUCKET/captain-salvage/$GITHUB_REF_NAME/" --endpoint-url "$S3_ENDPOINT"
+      #     done
 
   publish:
     name: publish
@@ -93,17 +118,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release
-          path: out
       - name: publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          NOTES: ${{ needs.build.outputs.notes }}
         run: |
+          [ -n "$NOTES" ] || { echo "::error::the build job passed on no release notes"; exit 1; }
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
             --title "Captain Salvage ${GITHUB_REF_NAME#v}" \
-            --notes-file out/release-notes.md \
-            out/*.zip out/*.sha256
+            --notes "$NOTES"
