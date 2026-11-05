@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 pub const THUMB_SIZE: u32 = 256;
 const THUMB_QUALITY: u8 = 80;
@@ -31,6 +31,8 @@ pub const SORT_NEWEST: &str = "newest";
 pub const GROUP_ALL: &str = "all";
 const GROUP_OTHER: u8 = u8::MAX;
 const LIKELY_GOOD_CONFIDENCE: f32 = 0.5;
+/// Tests keep finding copies while they run, so a list is worked out again this often.
+const COPIES_LIST_LIFETIME: Duration = Duration::from_secs(60);
 
 pub struct TypeGroup {
     pub id: &'static str,
@@ -157,6 +159,8 @@ pub struct BrowseRow {
     pub first_cluster: u32,
     pub modified: Option<String>,
     pub in_use: bool,
+    /// How many files in this list hold the same bytes, counting this one.
+    pub copies: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -171,9 +175,11 @@ pub struct TypeTotal {
 }
 
 #[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BrowsePage {
     pub rows: Vec<BrowseRow>,
     pub total: u64,
+    pub hidden_copies: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -183,6 +189,8 @@ pub struct BrowseQuery {
     pub min_confidence: f64,
     pub sort: String,
     pub text: String,
+    /// Shows one file for each set of identical bytes, among files already tested.
+    pub hide_copies: bool,
 }
 
 /// Kept small, because a damaged disk can hold a million of these.
@@ -275,11 +283,22 @@ impl ThumbCache {
     }
 }
 
+type BrowseListParts = (Arc<BrowseIndex>, Arc<Vec<u32>>, Arc<HashMap<i64, u32>>);
+
+/// One browse list, in order, and how many copies each shown file stands for.
+struct CachedList {
+    query: BrowseQuery,
+    stamp: Option<SystemTime>,
+    built: Instant,
+    positions: Arc<Vec<u32>>,
+    copies: Arc<HashMap<i64, u32>>,
+}
+
 #[derive(Default)]
 pub(crate) struct BrowseCache {
     index: Option<Arc<BrowseIndex>>,
     folder: Option<(u32, Arc<HashSet<i64>>)>,
-    list: Option<(BrowseQuery, Option<SystemTime>, Arc<Vec<u32>>)>,
+    list: Option<CachedList>,
     streams: VecDeque<Arc<EntryStream>>,
     thumbs: ThumbCache,
 }
@@ -435,15 +454,15 @@ impl Session {
             .collect())
     }
 
-    fn browse_list(&self, query: &BrowseQuery) -> Result<(Arc<BrowseIndex>, Arc<Vec<u32>>)> {
+    fn browse_list(&self, query: &BrowseQuery, from_top: bool) -> Result<BrowseListParts> {
         let mut cache = self.lock_browse()?;
         let index = self.browse_index(&mut cache)?;
-        if let Some((_, _, list)) = cache
-            .list
-            .as_ref()
-            .filter(|(key, stamp, _)| key == query && *stamp == index.stamp)
-        {
-            return Ok((index, list.clone()));
+        if let Some(list) = cache.list.as_ref().filter(|list| {
+            // Only a fresh look from the top moves files, never one partway down the list.
+            let aged = query.hide_copies && from_top && list.built.elapsed() > COPIES_LIST_LIFETIME;
+            list.query == *query && list.stamp == index.stamp && !aged
+        }) {
+            return Ok((index, list.positions.clone(), list.copies.clone()));
         }
         let ids = query
             .folder
@@ -488,13 +507,42 @@ impl Session {
                     .then(row(b).length.cmp(&row(a).length))
             }),
         }
-        let list = Arc::new(list);
-        cache.list = Some((query.clone(), index.stamp, list.clone()));
-        Ok((index, list))
+        let mut copies: HashMap<i64, u32> = HashMap::new();
+        if query.hide_copies {
+            let hashes = self.with_database(|database| database.file_hashes())?;
+            let mut shown: HashMap<u128, i64> = HashMap::new();
+            // The list is in its final order, so the first of each set is the one to show.
+            list.retain(|position| {
+                let id = rows[*position as usize].id;
+                let Some(hash) = hashes.get(&id) else {
+                    return true;
+                };
+                match shown.get(hash) {
+                    Some(first) => {
+                        *copies.entry(*first).or_insert(1) += 1;
+                        false
+                    }
+                    None => {
+                        shown.insert(*hash, id);
+                        true
+                    }
+                }
+            });
+        }
+        let positions = Arc::new(list);
+        let copies = Arc::new(copies);
+        cache.list = Some(CachedList {
+            query: query.clone(),
+            stamp: index.stamp,
+            built: Instant::now(),
+            positions: positions.clone(),
+            copies: copies.clone(),
+        });
+        Ok((index, positions, copies))
     }
 
     pub fn browse_files(&self, query: &BrowseQuery, offset: u64, limit: u64) -> Result<BrowsePage> {
-        let (index, list) = self.browse_list(query)?;
+        let (index, list, copies) = self.browse_list(query, offset == 0)?;
         let ids: Vec<i64> = list
             .iter()
             .skip(offset as usize)
@@ -503,8 +551,16 @@ impl Session {
             .collect();
         let mut found = self.with_database(|database| database.browse_rows(&ids))?;
         Ok(BrowsePage {
-            rows: ids.iter().filter_map(|id| found.remove(id)).collect(),
+            rows: ids
+                .iter()
+                .filter_map(|id| found.remove(id))
+                .map(|mut row| {
+                    row.copies = copies.get(&row.id).copied().unwrap_or(1);
+                    row
+                })
+                .collect(),
             total: list.len() as u64,
+            hidden_copies: copies.values().map(|count| u64::from(count - 1)).sum(),
         })
     }
 

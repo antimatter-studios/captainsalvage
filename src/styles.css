@@ -411,6 +411,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .browse-scope { display: inline-flex; align-items: center; gap: 5px; max-width: 200px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); box-shadow: none; }
 .browse-scope span { overflow: hidden; text-overflow: ellipsis; }
 .browse-error { padding: 0 12px; }
+.browse-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile-copies { color: var(--ink-2); font-weight: 600; }
 .browse-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .browse-sheet { position: relative; }
 .tile-wrap { position: absolute; }
