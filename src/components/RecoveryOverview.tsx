@@ -3,6 +3,7 @@ import { call, type FileTestStatus, type MountHistory, type Overview, type Statu
 import { bytes, count, percent } from "../format";
 import { legendFor } from "../palette";
 import { Icon } from "./icons";
+import { KeepSafe } from "./KeepSafe";
 
 interface RegionStats {
   ownership: {
@@ -181,6 +182,8 @@ export function RecoveryOverview({ overview, status, revision, onChanged }: { ov
         {status && <FileTests tests={status.fileTests} onChanged={onChanged} />}
 
         <MacosWrites revision={revision} />
+
+        <KeepSafe device={status?.diskBack?.device ?? overview.device} />
 
         <ul className="recovery-steps">
           <li><Icon name="folder" /> Open a lost folder in the sidebar to see what survived.</li>
