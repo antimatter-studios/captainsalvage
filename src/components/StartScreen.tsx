@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
@@ -12,6 +13,8 @@ const SOUNDING_COUNT = 46;
 const SOUNDING_CLEAR_RADIUS = 96;
 const METRES_PER_PIXEL = 1 / 26;
 /** The brand and the promises sit over the chart here, so no figures may land under them. */
+const DEFAULT_DISK_SLEEP_MINUTES = 10;
+const COPIED_MESSAGE_MS = 1500;
 const TEXT_CLEAR_TOP = 225;
 const TEXT_CLEAR_BOTTOM = 770;
 /** Nor under the wreck's label, which runs out to the right of it. */
@@ -72,6 +75,72 @@ function Chart({ label, detail }: { label: string; detail: string }) {
   );
 }
 
+function Command({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), COPIED_MESSAGE_MS);
+    });
+  };
+  return (
+    <div className="start-command">
+      <code>{text}</code>
+      <button onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
+/** What stops the drops and remounts doing harm, and how to undo all of it afterwards. */
+function KeepSafe({ volumes, diskSleep }: { volumes: StartupVolume[]; diskSleep: number | null }) {
+  const drives = new Set(volumes.filter((volume) => volume.canOpen && volume.external).map((volume) => volume.wholeDisk));
+  const onDrive = volumes.filter((volume) => drives.has(volume.wholeDisk) && volume.fstabLine && volume.uuid);
+  if (onDrive.length === 0) return null;
+  const waiting = onDrive.filter((volume) => !volume.protected);
+  const names = onDrive.map((volume) => volume.name || "unnamed volume").join(" and ");
+  const sleepsNever = diskSleep === 0;
+  const restoreSleep = diskSleep && diskSleep > 0 ? diskSleep : DEFAULT_DISK_SLEEP_MINUTES;
+  return (
+    <section className="start-safe">
+      <h3>Keep this disk safe</h3>
+      <p>A damaged disk can drop off and come back. Each time, macOS may mount it and write to it, so set this up before you start.</p>
+
+      <div className={waiting.length === 0 ? "start-step start-step-done" : "start-step"}>
+        <span className="start-step-mark" aria-hidden="true">{waiting.length === 0 ? "✓" : "○"}</span>
+        <div className="start-step-body">
+          {waiting.length === 0 ? (
+            <p><strong>macOS will not mount {names}.</strong> After the next reconnect, check that it stayed unmounted.</p>
+          ) : (
+            <>
+              <p><strong>Stop macOS mounting {names}.</strong> Run this in Terminal. It has not been proven on a damaged disk yet, so after the next reconnect, check that it stayed unmounted.</p>
+              {waiting.map((volume) => <Command key={volume.device} text={`printf '\\n%s\\n' '${volume.fstabLine}' | sudo tee -a /etc/fstab`} />)}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className={sleepsNever ? "start-step start-step-done" : "start-step"}>
+        <span className="start-step-mark" aria-hidden="true">{sleepsNever ? "✓" : "○"}</span>
+        <div className="start-step-body">
+          {sleepsNever ? (
+            <p><strong>macOS will not put disks to sleep.</strong> A drive's own firmware still may.</p>
+          ) : (
+            <>
+              <p><strong>Keep disks awake when this app is closed too.</strong> While it is open, it already stops macOS putting disks to sleep. A drive's own firmware still may.</p>
+              <Command text="sudo pmset -a disksleep 0" />
+            </>
+          )}
+        </div>
+      </div>
+
+      <h4>To go back to normal afterwards</h4>
+      {onDrive.map((volume) => <Command key={volume.device} text={`sudo sed -i '' '/^UUID=${volume.uuid} /d' /etc/fstab`} />)}
+      <Command text={`sudo pmset -a disksleep ${restoreSleep}`} />
+      <p className="start-safe-after">Then reconnect the disk, and macOS mounts it as usual.</p>
+    </section>
+  );
+}
+
 function lastOpened(known: KnownVolume): string {
   return new Date(known.record.lastOpenedMillis).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
 }
@@ -104,13 +173,13 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
       {volume.canOpen && volume.mountPoint && (
         <div className="start-caution">
           <p>It is mounted, so macOS may be writing to it. Unmounting stops that, but writes a little itself. It has to be unmounted before it can be opened here.</p>
-          <code>diskutil unmount {block}</code>
+          <Command text={`diskutil unmount ${block}`} />
         </div>
       )}
       {volume.canOpen && !volume.mountPoint && !volume.readable && (
         <div className="start-needs">
           <p>Reading it needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.</p>
-          <code>sudo chgrp staff {volume.device} {volume.wholeDisk}</code>
+          <Command text={`sudo chgrp staff ${volume.device} ${volume.wholeDisk}`} />
         </div>
       )}
     </li>
@@ -153,7 +222,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
 
   return (
     <main className="start">
-      <section className="start-chart">
+      <section className="start-chart" data-tauri-drag-region>
         <Chart label={recognised?.record.name || "Uncharted"} detail={recognised ? foundText(recognised) : "your disk goes here"} />
         <div className="start-brand">
           <h1>Captain Salvage</h1>
@@ -167,9 +236,9 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
       </section>
 
       <section className="start-panel">
-        <div className="start-panel-top">
+        <div className="start-panel-top" data-tauri-drag-region>
           {onBack && <button onClick={onBack}>Back to the open disk</button>}
-          <div className="start-spacer" />
+          <div className="start-spacer" data-tauri-drag-region />
           {themeSwitch}
         </div>
 
@@ -211,22 +280,29 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
           </>
         )}
 
-        <p className="start-warning">
-          macOS mounts a disk as soon as it is plugged in, and can write to it while it is mounted. Before you plug in a damaged disk, stop that with an <code>/etc/fstab</code> line. The README shows how.
-        </p>
-
-        <details className="start-image">
-          <summary>Open a disk image or a device by path</summary>
+        <section className="start-image">
+          <h3>Or open a disk image</h3>
+          <p>A raw image of an exFAT partition, or a device by its path.</p>
           <form
             onSubmit={(event) => {
               event.preventDefault();
               onOpen(path.trim());
             }}
           >
-            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/image.dmg" spellCheck={false} aria-label="Disk image or device path" />
-            <button type="submit" disabled={!path.trim()}>Open</button>
+            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label="Disk image or device path" />
+            <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>Choose a file</button>
+            <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>Open</button>
           </form>
-        </details>
+        </section>
+
+        <KeepSafe volumes={volumes} diskSleep={report?.diskSleepMinutes ?? null} />
+
+        {report && volumes.length === 0 && (
+          <p className="start-warning">
+            macOS mounts a disk as soon as it is plugged in, and can write to it while it is mounted. Before you plug in a damaged disk, stop that with an <code>/etc/fstab</code> line. The README shows how.
+          </p>
+        )}
+
       </section>
     </main>
   );

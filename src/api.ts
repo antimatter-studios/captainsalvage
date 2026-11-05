@@ -96,11 +96,14 @@ export interface StartupVolume {
   canOpen: boolean;
   readable: boolean;
   known: KnownVolume | null;
+  fstabLine: string | null;
+  protected: boolean;
 }
 
 export interface StartupReport {
   volumes: StartupVolume[];
   elsewhere: KnownVolume[];
+  diskSleepMinutes: number | null;
 }
 
 export interface ZipMember {

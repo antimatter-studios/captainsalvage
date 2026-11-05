@@ -1924,6 +1924,49 @@ fn the_start_screen_reads_what_diskutil_says() {
     assert!(parse_volume(&windows).is_some());
 }
 
+#[test]
+fn the_start_screen_offers_the_right_protection_for_each_volume() {
+    use lens_core::startup::{is_protected, parse_disk_sleep, parse_volume};
+    let uuid = "52D6C729-7E3F-310C-9073-7142E9EA7C05";
+    let line = format!("UUID={uuid} none exfat rw,noauto");
+    assert_eq!(
+        parse_volume(SAMPLE_DISK_INFO)
+            .expect("volume")
+            .fstab_line
+            .as_deref(),
+        Some(line.as_str())
+    );
+    let ntfs = parse_volume(&SAMPLE_DISK_INFO.replace("ExFAT", "NTFS")).expect("volume");
+    assert!(ntfs
+        .fstab_line
+        .expect("line")
+        .contains(" none ntfs rw,noauto"));
+    // With no known format there is no honest line to offer.
+    let unknown = SAMPLE_DISK_INFO.replace(
+        "File System Personality:   ExFAT",
+        "File System Personality:   Not applicable (no file system)",
+    );
+    assert_eq!(parse_volume(&unknown).expect("volume").fstab_line, None);
+
+    assert!(is_protected(&format!("# notes\n{line}\n"), uuid));
+    assert!(!is_protected("", uuid));
+    // The commented line in a real fstab does nothing, and this one still mounts.
+    assert!(!is_protected(&format!("#{line}\n"), uuid));
+    assert!(!is_protected(
+        &format!("UUID={uuid} none exfat rw,auto,nobrowse\n"),
+        uuid
+    ));
+    // Another volume's line is not this one's.
+    assert!(!is_protected(&line.replace("52D6C729", "AAAAAAAA"), uuid));
+
+    assert_eq!(
+        parse_disk_sleep(" standby 1\n disksleep            10\n sleep 1\n"),
+        Some(10)
+    );
+    assert_eq!(parse_disk_sleep(" disksleep 0\n"), Some(0));
+    assert_eq!(parse_disk_sleep("nothing here\n"), None);
+}
+
 /// Disk numbers change on every attach, so a volume must be known by its UUID alone.
 #[test]
 fn a_volume_is_recognised_by_uuid_under_any_disk_number() {

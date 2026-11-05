@@ -114,24 +114,39 @@ unmounted it. In that time macOS changed 36 directory entries, about 0.8 MB, ins
 `.Spotlight-V100` and `.fseventsd`, and created files on clusters that had been unclaimed.
 Those clusters could have held lost data.
 
-To stop it, do this before you attach the disk if you can:
+Captain Salvage does not unmount anything itself, because unmounting writes to the disk too.
+The start screen shows these commands for the disk attached, with its real UUID. Set them up
+before you start:
 
-1. Add a line for the volume to `/etc/fstab`, using `sudo vifs`:
+1. Stop macOS mounting the volume. A UUID is shown by `diskutil info`, once per volume:
 
    ```
-   LABEL=VolumeName none exfat rw,noauto
+   printf '\n%s\n' 'UUID=YOUR-VOLUME-UUID none exfat rw,noauto' | sudo tee -a /etc/fstab
    ```
 
-   Use `UUID=` in place of `LABEL=` if you already know the UUID, and use a label only if
-   it has no spaces. We have not yet tested this on a damaged volume, so check that
-   `mount` does not list the volume after you attach it.
-2. If the volume mounts anyway, unmount it straight away with
-   `diskutil unmountDisk /dev/diskN`. Unmounting flushes pending writes, so it can write a
-   little more, but staying mounted writes much more.
+   We have not yet proven this on a damaged volume, so check that `mount` does not list the
+   volume the next time it attaches.
+2. Keep disks awake when the app is closed too. While it is open, it does this for you.
+
+   ```
+   sudo pmset -a disksleep 0
+   ```
+
 3. Do not run First Aid or `fsck` on it, because both of them write.
 
-Each attach that mounts the volume can write to it again, so keep the disk attached for as
-long as you are working with it.
+If the volume is already mounted, the choice is yours. Staying mounted lets macOS keep writing,
+and unmounting flushes pending writes, so both change the disk. One real unmount added 23 write
+operations and 98 KB. If the disk keeps dropping off, check the cable and power, and avoid hubs.
+
+### Going back to normal
+
+```
+sudo sed -i '' '/^UUID=YOUR-VOLUME-UUID /d' /etc/fstab
+sudo pmset -a disksleep 10
+```
+
+Use the value `disksleep` had before if it was not 10. Then reconnect the disk, and macOS
+mounts it as usual.
 
 ## How far to trust the results
 

@@ -21,6 +21,9 @@ const HIDDEN_PARTITION_TYPE_PREFIX: &str = "Apple_";
 const OPENABLE_FORMATS: &[&str] = &["exfat", "unknown"];
 /// Verdicts that count as something found by name.
 const FOUND_VERDICTS: &[&str] = &["tested-good", "likely-intact", "plausible", "live"];
+const FSTAB: &str = "/etc/fstab";
+const PMSET: &str = "/usr/bin/pmset";
+const FSTAB_NO_MOUNT: &str = "noauto";
 
 /// What this app remembers about a volume it has opened.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +60,10 @@ pub struct StartupVolume {
     pub can_open: bool,
     pub readable: bool,
     pub known: Option<KnownVolume>,
+    /// The `/etc/fstab` line that stops macOS mounting this volume.
+    pub fstab_line: Option<String>,
+    /// Whether that line, or one like it, is already in place.
+    pub protected: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -65,6 +72,8 @@ pub struct StartupReport {
     pub volumes: Vec<StartupVolume>,
     /// Volumes seen before that are not attached now.
     pub elsewhere: Vec<KnownVolume>,
+    /// macOS's `disksleep` setting, in minutes. Zero means disks never sleep.
+    pub disk_sleep_minutes: Option<u32>,
 }
 
 /// Finds partitions in `diskutil list` output, which name them at the end of each line.
@@ -89,6 +98,40 @@ fn is_partition(word: &str) -> bool {
 
 fn applicable<'a>(info: &'a str, name: &str) -> Option<&'a str> {
     info_field(info, name).filter(|value| !value.starts_with(NOT_APPLICABLE))
+}
+
+fn fstab_line(uuid: &str, format: &str) -> Option<String> {
+    let kind = match format.to_ascii_lowercase().as_str() {
+        "exfat" => "exfat",
+        "ntfs" => "ntfs",
+        "apfs" => "apfs",
+        name if name.starts_with("ms-dos") => "msdos",
+        name if name.contains("mac os extended") => "hfs",
+        _ => return None,
+    };
+    Some(format!("UUID={uuid} none {kind} rw,{FSTAB_NO_MOUNT}"))
+}
+
+/// True only for a live line that names this volume and stops it mounting. A commented
+/// line does nothing, and neither does one that still says to mount it.
+pub fn is_protected(fstab: &str, uuid: &str) -> bool {
+    let wanted = format!("UUID={uuid}");
+    fstab.lines().any(|line| {
+        let mut words = line.split_whitespace();
+        words.next() == Some(wanted.as_str())
+            && words
+                .nth(2)
+                .is_some_and(|options| options.split(',').any(|option| option == FSTAB_NO_MOUNT))
+    })
+}
+
+pub fn parse_disk_sleep(pmset: &str) -> Option<u32> {
+    pmset.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        (words.next() == Some("disksleep"))
+            .then(|| words.next()?.parse().ok())
+            .flatten()
+    })
 }
 
 /// Reads one partition from `diskutil info` output.
@@ -121,6 +164,10 @@ pub fn parse_volume(info: &str) -> Option<StartupVolume> {
             .then(|| applicable(info, "Mount Point:"))
             .flatten()
             .map(str::to_string),
+        fstab_line: parse_volume_uuid(info)
+            .as_deref()
+            .and_then(|uuid| fstab_line(uuid, format)),
+        protected: false,
         uuid: parse_volume_uuid(info),
         readable: can_read(&device),
         device,
@@ -245,7 +292,11 @@ pub fn join_known(mut volumes: Vec<StartupVolume>, known: Vec<KnownVolume>) -> S
     }
     // What is recognised comes first, then what can be opened at all.
     volumes.sort_by_key(|volume| (volume.known.is_none(), !volume.can_open));
-    StartupReport { volumes, elsewhere }
+    StartupReport {
+        volumes,
+        elsewhere,
+        disk_sleep_minutes: None,
+    }
 }
 
 pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
@@ -253,5 +304,18 @@ pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
     if include_internal {
         volumes.extend(list_volumes("internal"));
     }
-    Ok(join_known(volumes, known_volumes(&Workspace::root()?)))
+    let mut report = join_known(volumes, known_volumes(&Workspace::root()?));
+    let fstab = fs::read_to_string(FSTAB).unwrap_or_default();
+    for volume in &mut report.volumes {
+        volume.protected = volume
+            .uuid
+            .as_deref()
+            .is_some_and(|uuid| is_protected(&fstab, uuid));
+    }
+    report.disk_sleep_minutes = Command::new(PMSET)
+        .arg("-g")
+        .output()
+        .ok()
+        .and_then(|output| parse_disk_sleep(&String::from_utf8_lossy(&output.stdout)));
+    Ok(report)
 }
