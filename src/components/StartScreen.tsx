@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
@@ -200,6 +201,11 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
   const [internal, setInternal] = useState(false);
   const [path, setPath] = useState(imagePath);
   const [access, setAccess] = useState<DiskAccess | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => undefined);
+  }, []);
 
   const look = useCallback((includeInternal: boolean) => {
     setLooking(true);
@@ -233,6 +239,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
           <li>It maps every cluster, even where the folders are gone.</li>
           <li>It tests what it finds, so you know what is really whole.</li>
         </ul>
+        {version && <span className="start-version">v{version}</span>}
       </section>
 
       <section className="start-panel">
