@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
+import { locale, t } from "../i18n";
 import { Command } from "./Command";
 
 const CHART_WIDTH = 640;
@@ -53,7 +54,7 @@ function soundings(): { x: number; y: number; depth: number }[] {
 }
 
 function foundText(known: KnownVolume): string {
-  return known.scanned ? `${bytes(known.bytesFound)} found` : "not scanned yet";
+  return known.scanned ? t("{bytes} found", { bytes: bytes(known.bytesFound) }) : t("not scanned yet");
 }
 
 /** A real chart's symbol for a wreck, with the disk it stands for beside it. */
@@ -76,22 +77,22 @@ function Chart({ label, detail }: { label: string; detail: string }) {
 }
 
 function lastOpened(known: KnownVolume): string {
-  return new Date(known.record.lastOpenedMillis).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  return new Date(known.record.lastOpenedMillis).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" });
 }
 
 function KnownLine({ known }: { known: KnownVolume }) {
   return (
     <p className="start-known">
-      Seen before, last opened {lastOpened(known)}.
-      {known.scanned && ` ${bytes(known.bytesFound)} found by name, in ${count(known.filesFound)} files.`}
-      {known.filesPassed + known.filesDamaged > 0 && ` ${count(known.filesPassed)} tested good, ${count(known.filesDamaged)} damaged.`}
+      {t("Seen before, last opened {date}.", { date: lastOpened(known) })}
+      {known.scanned && ` ${t("{bytes} found by name, in {count} files.", { bytes: bytes(known.bytesFound), count: count(known.filesFound) })}`}
+      {known.filesPassed + known.filesDamaged > 0 && ` ${t("{passed} tested good, {damaged} damaged.", { passed: count(known.filesPassed), damaged: count(known.filesDamaged) })}`}
     </p>
   );
 }
 
 function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: string) => void }) {
   const block = volume.device.replace("/dev/rdisk", "/dev/disk");
-  const title = volume.name || "Unnamed volume";
+  const title = volume.name || t("Unnamed volume");
   const ready = volume.canOpen && !volume.mountPoint && volume.readable;
   return (
     <li className={volume.canOpen ? "start-volume" : "start-volume start-volume-other"}>
@@ -100,19 +101,19 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
           <strong>{title}</strong>
           <span>{bytes(volume.bytes)}, {volume.format}, {volume.device}</span>
         </div>
-        {ready && <button className="primary" onClick={() => onOpen(volume.device)}>{volume.known ? "Open again" : "Open"}</button>}
+        {ready && <button className="primary" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
       </div>
-      {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && <p className="start-new">Not seen before.</p>}
-      {!volume.canOpen && <p className="start-new">Captain Salvage reads exFAT for now.</p>}
+      {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && <p className="start-new">{t("Not seen before.")}</p>}
+      {!volume.canOpen && <p className="start-new">{t("Captain Salvage reads exFAT for now.")}</p>}
       {volume.canOpen && volume.mountPoint && (
         <div className="start-caution">
-          <p>It is mounted, so macOS may be writing to it. Unmounting stops that, but writes a little itself. It has to be unmounted before it can be opened here.</p>
+          <p>{t("It is mounted, so macOS may be writing to it. Unmounting stops that, but writes a little itself. It has to be unmounted before it can be opened here.")}</p>
           <Command text={`diskutil unmount ${block}`} />
         </div>
       )}
       {volume.canOpen && !volume.mountPoint && !volume.readable && (
         <div className="start-needs">
-          <p>Reading it needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.</p>
+          <p>{t("Reading it needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.")}</p>
           <Command text={`sudo chgrp staff ${volume.device} ${volume.wholeDisk}`} />
         </div>
       )}
@@ -162,29 +163,29 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
   return (
     <main className="start">
       <section className="start-chart" data-tauri-drag-region>
-        <Chart label={recognised?.record.name || "Uncharted"} detail={recognised ? foundText(recognised) : "your disk goes here"} />
+        <Chart label={recognised?.record.name || t("Uncharted")} detail={recognised ? foundText(recognised) : t("your disk goes here")} />
         <div className="start-brand">
           <h1>Captain Salvage</h1>
-          <p>Charts what is left on a damaged disk, and helps you bring it home.</p>
+          <p>{t("Charts what is left on a damaged disk, and helps you bring it home.")}</p>
         </div>
         <ul className="start-promises">
-          <li>It only reads. Nothing in it can write to your disk.</li>
-          <li>It maps every cluster, even where the folders are gone.</li>
-          <li>It tests what it finds, so you know what is really whole.</li>
+          <li>{t("It only reads. Nothing in it can write to your disk.")}</li>
+          <li>{t("It maps every cluster, even where the folders are gone.")}</li>
+          <li>{t("It tests what it finds, so you know what is really whole.")}</li>
         </ul>
         {version && <span className="start-version">v{version}</span>}
       </section>
 
       <section className="start-panel">
         <div className="start-panel-top" data-tauri-drag-region>
-          {onBack && <button onClick={onBack}>Back to the open disk</button>}
+          {onBack && <button onClick={onBack}>{t("Back to the open disk")}</button>}
           <div className="start-spacer" data-tauri-drag-region />
           {themeSwitch}
         </div>
 
         <div className="start-heading">
-          <h2>Which disk is damaged?</h2>
-          <button onClick={() => look(internal)} disabled={looking}>{looking ? "Looking" : "Check again"}</button>
+          <h2>{t("Which disk is damaged?")}</h2>
+          <button onClick={() => look(internal)} disabled={looking}>{looking ? t("Looking") : t("Check again")}</button>
         </div>
 
         {lookError && <p className="warn">{lookError}</p>}
@@ -196,21 +197,21 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
             {volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} />)}
           </ul>
         ) : (
-          !looking && <p className="start-empty">No disks found here. Plug in the damaged disk, then check again.</p>
+          !looking && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
         )}
 
         <label className="check start-internal">
-          <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> Show internal disks
+          <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> {t("Show internal disks")}
         </label>
 
         {report && report.elsewhere.length > 0 && (
           <>
-            <h3>Seen before, not attached</h3>
+            <h3>{t("Seen before, not attached")}</h3>
             <ul className="start-volumes">
               {report.elsewhere.map((known) => (
                 <li key={`${known.record.uuid}-${known.record.lastOpenedMillis}`} className="start-volume">
                   <div className="start-volume-title">
-                    <strong>{known.record.name || "Unnamed volume"}</strong>
+                    <strong>{known.record.name || t("Unnamed volume")}</strong>
                     <span>{bytes(known.record.bytes)}</span>
                   </div>
                   <KnownLine known={known} />
@@ -221,23 +222,23 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
         )}
 
         <section className="start-image">
-          <h3>Or open a disk image</h3>
-          <p>A raw image of an exFAT partition, or a device by its path.</p>
+          <h3>{t("Or open a disk image")}</h3>
+          <p>{t("A raw image of an exFAT partition, or a device by its path.")}</p>
           <form
             onSubmit={(event) => {
               event.preventDefault();
               onOpen(path.trim());
             }}
           >
-            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label="Disk image or device path" />
-            <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>Choose a file</button>
-            <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>Open</button>
+            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label={t("Disk image or device path")} />
+            <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>{t("Choose a file")}</button>
+            <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>{t("Open")}</button>
           </form>
         </section>
 
         {report && volumes.length === 0 && (
           <p className="start-warning">
-            macOS mounts a disk as soon as it is plugged in, and can write to it while it is mounted. Before you plug in a damaged disk, stop that with an <code>/etc/fstab</code> line. The README shows how.
+            {t("macOS mounts a disk as soon as it is plugged in, and can write to it while it is mounted. Before you plug in a damaged disk, stop that with an {file} line. The README shows how.", { file: "/etc/fstab" })}
           </p>
         )}
 

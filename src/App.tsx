@@ -31,7 +31,8 @@ import { Command } from "./components/Command";
 import { StartScreen } from "./components/StartScreen";
 import { isZipName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
-import { bytes, count, duration } from "./format";
+import { bytes, count, decimal, duration, lostFolderName } from "./format";
+import { LANGUAGES, locale, t, useLanguage } from "./i18n";
 import { onThemeChange } from "./palette";
 import appIcon from "../src-tauri/icons/64x64.png";
 
@@ -67,26 +68,26 @@ function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) =
 
   return (
     <div className="disk-gone" role="alert">
-      <strong>The disk has been disconnected.</strong>
-      {!back && <p>Files cannot be read until it is back, so a file that will not open now is not necessarily damaged. If you plug it back in, macOS may mount it and write to it.</p>}
+      <strong>{t("The disk has been disconnected.")}</strong>
+      {!back && <p>{t("Files cannot be read until it is back, so a file that will not open now is not necessarily damaged. If you plug it back in, macOS may mount it and write to it.")}</p>}
       {back?.mounted && (
         <>
-          <p>It is back as {back.device}, and macOS has mounted it, so macOS may be writing to it. Unmount it now, in Terminal:</p>
+          <p>{t("It is back as {device}, and macOS has mounted it, so macOS may be writing to it. Unmount it now, in Terminal:", { device: back.device })}</p>
           <Command text={`diskutil unmount ${back.device.replace("/dev/rdisk", "/dev/disk")}`} />
         </>
       )}
       {back && !back.mounted && (
         <>
-          <p>It is back as {back.device}, and it is not mounted.</p>
+          <p>{t("It is back as {device}, and it is not mounted.", { device: back.device })}</p>
           {unreadable.length > 0 ? (
             <>
-              <p>To read it again, give this account read-only access in Terminal. It lasts until the disk is reconnected.</p>
+              <p>{t("To read it again, give this account read-only access in Terminal. It lasts until the disk is reconnected.")}</p>
               <Command text={`sudo chgrp staff ${unreadable.join(" ")}`} />
             </>
           ) : (
             access?.instructions.map((text) => <p key={text} className="instruction">{text}</p>)
           )}
-          <button className="primary" disabled={!access?.ready} onClick={() => onOpen(back.device)}>Open it again</button>
+          <button className="primary" disabled={!access?.ready} onClick={() => onOpen(back.device)}>{t("Open it again")}</button>
         </>
       )}
     </div>
@@ -100,25 +101,26 @@ function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) =
 function Safety({ status }: { status: Status }) {
   const { now: counted, sinceOpen } = status.writes;
   const mountedAgain = status.diskBack?.mounted ?? false;
-  const baselineDate = new Date(status.baseline.recordedAtMillis).toLocaleDateString();
+  const baselineDate = new Date(status.baseline.recordedAtMillis).toLocaleDateString(locale());
   const checks = [
-    { good: !status.diskGone, text: "The disk is connected", danger: "The disk has been disconnected" },
-    { good: status.osDeniesWrites, text: "The OS denies writes to this device", danger: "This account has write permission on the device" },
-    { good: status.mounted === null && !mountedAgain, text: status.diskGone ? "The volume is not mounted, as far as can be seen" : "The volume is not mounted", danger: "Mounted, so macOS may write to it. Unmount it now" },
-    { good: status.baseline.unchanged, text: `Boot, FAT, bitmap and root are unchanged since ${baselineDate}`, danger: `Structures have changed since the baseline of ${baselineDate}` },
-    { good: status.reads.errors === 0, text: "No read errors", danger: `${count(status.reads.errors)} read errors` },
-    { good: status.keepAwake, text: "macOS will not put disks to sleep while this app is open", danger: "macOS may put this disk to sleep, and it can drop off when woken" },
+    { id: "connected", good: !status.diskGone, text: t("The disk is connected"), danger: t("The disk has been disconnected") },
+    { id: "write-denied", good: status.osDeniesWrites, text: t("The OS denies writes to this device"), danger: t("This account has write permission on the device") },
+    { id: "unmounted", good: status.mounted === null && !mountedAgain, text: status.diskGone ? t("The volume is not mounted, as far as can be seen") : t("The volume is not mounted"), danger: t("Mounted, so macOS may write to it. Unmount it now") },
+    { id: "baseline", good: status.baseline.unchanged, text: t("Boot, FAT, bitmap and root are unchanged since {date}", { date: baselineDate }), danger: t("Structures have changed since the baseline of {date}", { date: baselineDate }) },
+    { id: "reads", good: status.reads.errors === 0, text: t("No read errors"), danger: t("{count} read errors", { count: count(status.reads.errors) }) },
+    { id: "awake", good: status.keepAwake, text: t("macOS will not put disks to sleep while this app is open"), danger: t("macOS may put this disk to sleep, and it can drop off when woken") },
     ...(counted
       ? [{
+          id: "writes",
           good: sinceOpen.operations === 0,
-          text: "No writes counted on this disk since it was opened here",
-          danger: `${count(sinceOpen.operations)} writes (${bytes(sinceOpen.bytes)}) counted on this disk since it was opened here. Something other than this app is writing to it`,
+          text: t("No writes counted on this disk since it was opened here"),
+          danger: t("{count} writes ({bytes}) counted on this disk since it was opened here. Something other than this app is writing to it", { count: count(sinceOpen.operations), bytes: bytes(sinceOpen.bytes) }),
         }]
       : []),
   ];
   const safe = checks.every((check) => check.good);
-  // Failing checks by their fixed wording, so a count that keeps growing does not reopen the list.
-  const failing = checks.filter((check) => !check.good).map((check) => check.text);
+  // Failing checks by a fixed id, so a growing count or a new language does not reopen the list.
+  const failing = checks.filter((check) => !check.good).map((check) => check.id);
   const failingKey = failing.join("\n");
   const [open, setOpen] = useState(false);
   const chip = useRef<HTMLDivElement>(null);
@@ -149,22 +151,22 @@ function Safety({ status }: { status: Status }) {
         className="safety-button"
         aria-expanded={open}
         aria-controls="safety-list"
-        aria-label={safe ? "Disk protected. Show the checks" : "Disk safety problem. Show the checks"}
+        aria-label={safe ? t("Disk protected. Show the checks") : t("Disk safety problem. Show the checks")}
         onClick={() => setOpen((shown) => !shown)}
       >
-        <Icon name={safe ? "shield" : "alert"} size={15} /> {safe ? "Disk protected" : "Check disk safety"}
+        <Icon name={safe ? "shield" : "alert"} size={15} /> {safe ? t("Disk protected") : t("Check disk safety")}
       </button>
       {open && <div id="safety-list" className="safety-list">
         {checks.map((check) => (
-          <div key={check.text} className={check.good ? "safety-item" : "safety-item safety-item-bad"}>
+          <div key={check.id} className={check.good ? "safety-item" : "safety-item safety-item-bad"}>
             <span className="safety-mark" aria-hidden="true">{check.good ? "✓" : "!"}</span>
             {check.good ? check.text : check.danger}
           </div>
         ))}
-        <p className="safety-note">The baseline only covers changes after it was recorded.</p>
+        <p className="safety-note">{t("The baseline only covers changes after it was recorded.")}</p>
         {counted && (
           <p className="safety-note">
-            macOS has counted {count(counted.operations)} writes ({bytes(counted.bytes)}) on this disk since it was attached. That covers the whole disk and has no dates, so it is evidence and not proof.
+            {t("macOS has counted {count} writes ({bytes}) on this disk since it was attached. That covers the whole disk and has no dates, so it is evidence and not proof.", { count: count(counted.operations), bytes: bytes(counted.bytes) })}
           </p>
         )}
       </div>}
@@ -173,10 +175,10 @@ function Safety({ status }: { status: Status }) {
 }
 
 type ThemeChoice = "system" | "light" | "dark";
-const THEME_CHOICES: { id: ThemeChoice; label: string; icon: IconName }[] = [
-  { id: "system", label: "Match macOS", icon: "auto" },
-  { id: "light", label: "Light", icon: "sun" },
-  { id: "dark", label: "Dark", icon: "moon" },
+const THEME_CHOICES: { id: ThemeChoice; label: () => string; icon: IconName }[] = [
+  { id: "system", label: () => t("Match macOS"), icon: "auto" },
+  { id: "light", label: () => t("Light"), icon: "sun" },
+  { id: "dark", label: () => t("Dark"), icon: "moon" },
 ];
 
 function ThemeSwitch() {
@@ -185,21 +187,44 @@ function ThemeSwitch() {
     invoke<ThemeChoice>("get_theme").then(setChoice).catch(() => undefined);
   }, []);
   return (
-    <div className="segmented theme-switch" role="radiogroup" aria-label="Appearance">
+    <div className="segmented theme-switch" role="radiogroup" aria-label={t("Appearance")}>
       {THEME_CHOICES.map((item) => (
         <button
           key={item.id}
           role="radio"
           aria-checked={choice === item.id}
           aria-selected={choice === item.id}
-          aria-label={item.label}
-          title={item.label}
+          aria-label={item.label()}
+          title={item.label()}
           onClick={() => {
             setChoice(item.id);
             void invoke("set_theme", { theme: item.id });
           }}
         >
           <Icon name={item.icon} size={14} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Chooses the window's language. Each choice is named in its own language. */
+function LanguageSwitch() {
+  const { language, choose } = useLanguage();
+  return (
+    <div className="segmented language-switch" role="radiogroup" aria-label={t("Language")}>
+      {LANGUAGES.map((item) => (
+        <button
+          key={item.id}
+          role="radio"
+          lang={item.id}
+          aria-checked={language === item.id}
+          aria-selected={language === item.id}
+          aria-label={item.name}
+          title={item.name}
+          onClick={() => choose(item.id)}
+        >
+          {item.label}
         </button>
       ))}
     </div>
@@ -220,7 +245,7 @@ function SidebarBrand({ onHome }: { onHome: () => void }) {
       <img className="sidebar-brand-icon" src={appIcon} alt="" width={20} height={20} />
       <strong>Captain Salvage</strong>
       {version && <span className="brand-version">v{version}</span>}
-      <button className="sidebar-home" onClick={onHome} aria-label="Go to the overview" title="Overview">
+      <button className="sidebar-home" onClick={onHome} aria-label={t("Go to the overview")} title={t("Overview")}>
         <Icon name="home" size={16} />
       </button>
     </div>
@@ -233,22 +258,25 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
   const running = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
   const left = scan && scan.bytesPerSecond > 0 ? ((scan.totalClusters - scan.clustersScanned) * overview.geometry.clusterSize) / scan.bytesPerSecond : Infinity;
 
-  let scanText = "Scan not started";
-  if (scan?.status === "complete") scanText = "Scan complete";
-  else if (scan?.status === "resolving") scanText = "Building the map";
-  else if (scan?.status === "measuring-text" && running) scanText = "Checking text files found so far";
+  let scanText = t("Scan not started");
+  if (scan?.status === "complete") scanText = t("Scan complete");
+  else if (scan?.status === "resolving") scanText = t("Building the map");
+  else if (scan?.status === "measuring-text" && running) scanText = t("Checking text files found so far");
   else if (scan && running) {
-    scanText = `Scan ${(fraction * 100).toFixed(1)}%${scan.bytesPerSecond > 0 ? `, ${bytes(scan.bytesPerSecond)}/s, ${duration(left)} left` : ""}`;
-  } else if (scan && scan.clustersScanned > 0) scanText = `Scan paused at ${(fraction * 100).toFixed(1)}%`;
+    const done = decimal(fraction * 100, 1);
+    scanText = scan.bytesPerSecond > 0
+      ? t("Scan {percent}%, {speed}/s, {time} left", { percent: done, speed: bytes(scan.bytesPerSecond), time: duration(left) })
+      : t("Scan {percent}%", { percent: done });
+  } else if (scan && scan.clustersScanned > 0) scanText = t("Scan paused at {percent}%", { percent: decimal(fraction * 100, 1) });
 
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="brand">
         <strong>{overview.device}</strong>
-        <span>{bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>Change disk</button></span>
+        <span>{bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>{t("Change disk")}</button></span>
       </div>
       <div className="scan">
-        <div className="scan-text" title={scan ? `${count(scan.directoryClusters)} directory clusters and ${count(scan.setsFound)} entries found so far` : undefined}>{scanText}</div>
+        <div className="scan-text" title={scan ? t("{clusters} directory clusters and {entries} entries found so far", { clusters: count(scan.directoryClusters), entries: count(scan.setsFound) }) : undefined}>{scanText}</div>
         <div className="scan-bar" role="progressbar" aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
           <div className="scan-fill" style={{ width: `${fraction * 100}%` }} />
         </div>
@@ -256,20 +284,21 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
       </div>
       <div className="toolbar-spacer" data-tauri-drag-region />
       {status?.fileTests.state === "running" && (
-        <span className="scan-note muted">Testing {count(status.fileTests.done)} of {count(status.fileTests.total)}</span>
+        <span className="scan-note muted">{t("Testing {done} of {total}", { done: count(status.fileTests.done), total: count(status.fileTests.total) })}</span>
       )}
       {status?.copy.state === "running" && (
-        <span className="scan-note muted">Copying {count(status.copy.filesDone + status.copy.filesSkipped)} of {count(status.copy.filesTotal)}</span>
+        <span className="scan-note muted">{t("Copying {done} of {total}", { done: count(status.copy.filesDone + status.copy.filesSkipped), total: count(status.copy.filesTotal) })}</span>
       )}
       {status && scan?.status !== "complete" && (
         status.scanInThisApp ? (
-          <button onClick={() => call("stop_scan").then(onChanged)}>Pause scan</button>
+          <button onClick={() => call("stop_scan").then(onChanged)}>{t("Pause scan")}</button>
         ) : status.scanHeldElsewhere ? (
-          <span className="muted scan-note" title="The scan runs in a separate process. This window follows its progress.">Scanning in another process</span>
+          <span className="muted scan-note" title={t("The scan runs in a separate process. This window follows its progress.")}>{t("Scanning in another process")}</span>
         ) : (
-          <button onClick={() => call("start_scan").then(onChanged)}>{scan && scan.clustersScanned > 0 ? "Resume scan" : "Start scan"}</button>
+          <button onClick={() => call("start_scan").then(onChanged)}>{scan && scan.clustersScanned > 0 ? t("Resume scan") : t("Start scan")}</button>
         )
       )}
+      <LanguageSwitch />
       <ThemeSwitch />
       {status && <Safety status={status} />}
     </header>
@@ -277,6 +306,8 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
 }
 
 export default function App() {
+  // The window's root takes the language from here, so changing it draws everything again.
+  useLanguage();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [startPath, setStartPath] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -456,7 +487,7 @@ export default function App() {
     setHighlight([{ first: head, count: 1 }]);
     moveHexTo(head);
     setStandalone(null);
-    setBrowseScope({ head, name: full.name || `Lost folder ${count(head)}` });
+    setBrowseScope({ head, name: full.name || lostFolderName(head) });
     if (centerNow.current !== "bytes") setCenter("browse");
   }, [moveHexTo]);
 
@@ -476,7 +507,7 @@ export default function App() {
   }, []);
 
   const browseFolder = useCallback((row: Row) => {
-    setBrowseScope({ head: row.head ?? row.firstCluster, name: row.name || `Lost folder ${count(row.head ?? row.firstCluster)}` });
+    setBrowseScope({ head: row.head ?? row.firstCluster, name: row.name || lostFolderName(row.head ?? row.firstCluster) });
     setStandalone(null);
     setCenter("browse");
   }, []);
@@ -581,7 +612,7 @@ export default function App() {
         failure={failure}
         onOpen={(path) => void open(path)}
         onBack={overview ? () => setChoosing(false) : undefined}
-        themeSwitch={<ThemeSwitch />}
+        themeSwitch={<><LanguageSwitch /><ThemeSwitch /></>}
       />
     );
   }
@@ -629,20 +660,20 @@ export default function App() {
         onBasket={changeBasket}
         classNames={overview.classNames}
         clusterSize={overview.geometry.clusterSize}
-        handle={<ColumnHandle label="Resize the sidebar" edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
+        handle={<ColumnHandle label={t("Resize the sidebar")} edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
       />
       <div className="center-stack">
         {status?.diskGone && <DiskGone status={status} onOpen={(path) => void open(path).then(bump)} />}
         <div className="center-tabs">
           <div className="segmented" role="tablist">
-            <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>Overview</button>
-            <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>Browse files</button>
-            <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>Bytes</button>
-            <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>Inside zip</button>
+            <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>{t("Overview")}</button>
+            <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
+            <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>
+            <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside zip")}</button>
           </div>
         </div>
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
-        {center === "zip" && !zipEntry && <section className="center-panel"><p className="muted zip-message">Choose a zip file to see inside it.</p></section>}
+        {center === "zip" && !zipEntry && <section className="center-panel"><p className="muted zip-message">{t("Choose a zip file to see inside it.")}</p></section>}
         {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} onChanged={bump} />}
         {center === "browse" && (
           <BrowseView
@@ -679,7 +710,7 @@ export default function App() {
         )}
       </div>
       <div className="side">
-        <ColumnHandle label="Resize the details panel" edge="right-panel" onWidth={columns.setRight} onReset={columns.resetRight} />
+        <ColumnHandle label={t("Resize the details panel")} edge="right-panel" onWidth={columns.setRight} onReset={columns.resetRight} />
         <Details
           overview={overview}
           status={status}

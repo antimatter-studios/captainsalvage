@@ -1,4 +1,6 @@
 import type { Layer } from "./api";
+import { decimal } from "./format";
+import { t } from "./i18n";
 
 export type Rgb = [number, number, number];
 
@@ -51,36 +53,36 @@ export interface LegendItem {
 
 /** The colors and labels for a layer whose values are categories. */
 export function legendFor(layer: Layer): LegendItem[] {
-  const t = theme();
+  const colors = theme();
   switch (layer) {
     case "allocation":
       return [
-        { value: 1, label: "In use by current files", color: t.strong },
-        { value: 2, label: "Marked free, FAT chain remains", color: t.series[0] },
-        { value: 3, label: "Marked free, no FAT chain", color: t.softBlue },
+        { value: 1, label: t("In use by current files"), color: colors.strong },
+        { value: 2, label: t("Marked free, FAT chain remains"), color: colors.series[0] },
+        { value: 3, label: t("Marked free, no FAT chain"), color: colors.softBlue },
       ];
     case "content":
       return [
-        { value: 2, label: "Compressed or media data", color: t.series[0] },
-        { value: 3, label: "Text", color: t.series[1] },
-        { value: 4, label: "Audio start", color: t.series[2] },
-        { value: 5, label: "Image start", color: t.series[3] },
-        { value: 6, label: "Video start", color: t.series[4] },
-        { value: 7, label: "Document or archive start", color: t.series[5] },
-        { value: 8, label: "Binary", color: t.series[6] },
-        { value: 9, label: "exFAT directory", color: t.series[7] },
-        { value: 1, label: "Empty", color: t.neutral },
-        { value: 0, label: "Not scanned yet", color: t.faint },
-        { value: 10, label: "Read error", color: isDark() ? "#ffffff" : "#000000" },
+        { value: 2, label: t("Compressed or media data"), color: colors.series[0] },
+        { value: 3, label: t("Text"), color: colors.series[1] },
+        { value: 4, label: t("Audio start"), color: colors.series[2] },
+        { value: 5, label: t("Image start"), color: colors.series[3] },
+        { value: 6, label: t("Video start"), color: colors.series[4] },
+        { value: 7, label: t("Document or archive start"), color: colors.series[5] },
+        { value: 8, label: t("Binary"), color: colors.series[6] },
+        { value: 9, label: t("exFAT directory"), color: colors.series[7] },
+        { value: 1, label: t("Empty"), color: colors.neutral },
+        { value: 0, label: t("Not scanned yet"), color: colors.faint },
+        { value: 10, label: t("Read error"), color: isDark() ? "#ffffff" : "#000000" },
       ];
     case "ownership":
       return [
-        { value: 2, label: "Claimed by one entry", color: t.series[0] },
-        { value: 3, label: "Claimed by several entries", color: t.series[1] },
-        { value: 4, label: "Directory", color: t.series[2] },
-        { value: 5, label: "FAT chain with no name", color: t.series[3] },
-        { value: 6, label: "Explained by a hypothesis", color: t.series[4] },
-        { value: 1, label: "Nothing explains it", color: t.neutral },
+        { value: 2, label: t("Claimed by one entry"), color: colors.series[0] },
+        { value: 3, label: t("Claimed by several entries"), color: colors.series[1] },
+        { value: 4, label: t("Directory"), color: colors.series[2] },
+        { value: 5, label: t("FAT chain with no name"), color: colors.series[3] },
+        { value: 6, label: t("Explained by a hypothesis"), color: colors.series[4] },
+        { value: 1, label: t("Nothing explains it"), color: colors.neutral },
       ];
     default:
       return [];
@@ -89,11 +91,11 @@ export function legendFor(layer: Layer): LegendItem[] {
 
 /** Builds a lookup from byte value to color for any layer. */
 export function colorTable(layer: Layer): Rgb[] {
-  const t = theme();
+  const colors = theme();
   const items = legendFor(layer);
   const table: Rgb[] = new Array(256);
   if (items.length > 0) {
-    const fallback = hex(t.faint);
+    const fallback = hex(colors.faint);
     for (let value = 0; value < 256; value++) {
       table[value] = fallback;
     }
@@ -102,8 +104,8 @@ export function colorTable(layer: Layer): Rgb[] {
     }
     return table;
   }
-  const stops = t.ramp.map(hex);
-  table[0] = hex(t.faint);
+  const stops = colors.ramp.map(hex);
+  table[0] = hex(colors.faint);
   for (let value = 1; value < 256; value++) {
     const position = ((value - 1) / 254) * (stops.length - 1);
     const low = Math.min(Math.floor(position), stops.length - 2);
@@ -117,24 +119,33 @@ export function colorTable(layer: Layer): Rgb[] {
 export function describeValue(layer: Layer, value: number): string {
   switch (layer) {
     case "entropy":
-      return `${((value * 8) / 255).toFixed(2)} bits per byte`;
+      return t("{bits} bits per byte", { bits: decimal((value * 8) / 255, 2) });
     case "confidence":
-      return value === 0 ? "Below the focus floor, or unclaimed" : `Best confidence ${Math.round((value / 255) * 100)}%`;
+      return value === 0 ? t("Below the focus floor, or unclaimed") : t("Best confidence {percent}%", { percent: Math.round((value / 255) * 100) });
     case "folders":
-      return value === 0 ? "No directories here" : "Holds directories";
+      return value === 0 ? t("No directories here") : t("Holds directories");
     case "lens":
-      return value === 0 ? "Out of focus" : "In focus";
+      return value === 0 ? t("Out of focus") : t("In focus");
     default:
-      return legendFor(layer).find((item) => item.value === value)?.label ?? "Unknown";
+      return legendFor(layer).find((item) => item.value === value)?.label ?? t("Unknown");
   }
 }
 
-export const SEQUENTIAL_CAPTION: Partial<Record<Layer, [string, string]>> = {
-  entropy: ["Ordered, repetitive", "Random, compressed"],
-  confidence: ["Low confidence", "High confidence"],
-  folders: ["Few directories", "Many directories"],
-  lens: ["Few clusters match", "All clusters match"],
-};
+/** The words at each end of a sequential layer's legend. */
+export function sequentialCaption(layer: Layer): [string, string] | undefined {
+  switch (layer) {
+    case "entropy":
+      return [t("Ordered, repetitive"), t("Random, compressed")];
+    case "confidence":
+      return [t("Low confidence"), t("High confidence")];
+    case "folders":
+      return [t("Few directories"), t("Many directories")];
+    case "lens":
+      return [t("Few clusters match"), t("All clusters match")];
+    default:
+      return undefined;
+  }
+}
 
 export function rampGradient(): string {
   return `linear-gradient(90deg, ${theme().ramp.join(", ")})`;

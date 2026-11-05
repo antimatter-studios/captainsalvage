@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from "react";
 import { call, type ZipListing, type ZipMember, type ZipMemberCheck } from "../api";
 import { bytes, count, stamp } from "../format";
+import { t } from "../i18n";
 import { fileIcon, Icon } from "./icons";
 
 const ROW_HEIGHT = 28;
@@ -88,7 +89,7 @@ function visibleRows(root: TreeNode, open: Set<string>): VisibleRow[] {
   return rows;
 }
 
-const METHODS: Record<number, string> = { 0: "Stored", 8: "Deflate", 9: "Deflate64", 12: "BZIP2", 14: "LZMA", 93: "Zstandard", 95: "XZ" };
+const METHODS: Record<number, string> = { 0: "stored", 8: "Deflate", 9: "Deflate64", 12: "BZIP2", 14: "LZMA", 93: "Zstandard", 95: "XZ" };
 
 function CheckMark({ check, damagedInside }: { check?: ZipMemberCheck; damagedInside?: number }) {
   if (damagedInside) return <span className="zip-mark zip-mark-bad" title={`${count(damagedInside)} damaged inside`}>{count(damagedInside)} !</span>;
@@ -222,41 +223,41 @@ export function ZipView({ id, name, onBack }: { id: number; name: string; onBack
   const last = Math.min(Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + ROWS_BEYOND_VIEW, rows.length);
 
   return (
-    <section className="center-panel zip-view" aria-label={`Inside ${name}`}>
+    <section className="center-panel zip-view" aria-label={t("Inside {name}", { name })}>
       <div className="zip-head">
-        <button className="icon-button" onClick={onBack} aria-label="Back to the files"><Icon name="chevronLeft" /></button>
+        <button className="icon-button" onClick={onBack} aria-label={t("Back to the files")}><Icon name="chevronLeft" /></button>
         <div className="zip-title">
           <strong title={name}>{name}</strong>
           {listing && (
             <span className="muted">
-              {count(root.files)} files, {bytes(root.size)} when unpacked, {bytes(listing.totalBytes)} on the disk
+              {t("{count} files, {unpacked} when unpacked, {packed} on the disk", { count: count(root.files), unpacked: bytes(root.size), packed: bytes(listing.totalBytes) })}
             </span>
           )}
         </div>
         {listing && root.files > 0 && (
           checking
-            ? <button onClick={() => { stopCheck.current = true; }}>Stop checking {count(checking.done)} of {count(checking.total)}</button>
-            : <button onClick={() => void checkEvery()}>Check every file</button>
+            ? <button onClick={() => { stopCheck.current = true; }}>{t("Stop checking {done} of {total}", { done: count(checking.done), total: count(checking.total) })}</button>
+            : <button onClick={() => void checkEvery()}>{t("Check every file")}</button>
         )}
       </div>
 
       {error && <p className="warn zip-message">{error}</p>}
-      {!listing && !error && <p className="muted zip-message">Reading the zip from the disk.</p>}
+      {!listing && !error && <p className="muted zip-message">{t("Reading the zip from the disk.")}</p>}
       {listing?.note && <p className="zip-note">{listing.note}</p>}
       {checks.size > 0 && (
         <p className="zip-summary">
-          <span className="zip-mark-good">{count(intact)} intact</span>, <span className={damaged.size > 0 ? "zip-mark-bad" : undefined}>{count(damaged.size)} damaged</span>
-          {checks.size > intact + damaged.size && `, ${count(checks.size - intact - damaged.size)} could not be checked`}
+          <span className="zip-mark-good">{t("{count} intact", { count: count(intact) })}</span>, <span className={damaged.size > 0 ? "zip-mark-bad" : undefined}>{t("{count} damaged", { count: count(damaged.size) })}</span>
+          {checks.size > intact + damaged.size && `, ${t("{count} could not be checked", { count: count(checks.size - intact - damaged.size) })}`}
         </p>
       )}
-      {listing && listing.members.length === 0 && !listing.note && <p className="muted zip-message">This zip is empty.</p>}
+      {listing && listing.members.length === 0 && !listing.note && <p className="muted zip-message">{t("This zip is empty.")}</p>}
 
       {rows.length > 0 && (
         <div
           className="zip-rows"
           ref={rowsElement}
           role="tree"
-          aria-label={`Files inside ${name}`}
+          aria-label={t("Files inside {name}", { name })}
           tabIndex={0}
           onKeyDown={onKeyDown}
           onScroll={(event: UIEvent<HTMLDivElement>) => setScrollTop(event.currentTarget.scrollTop)}
@@ -300,14 +301,14 @@ export function ZipView({ id, name, onBack }: { id: number; name: string; onBack
           <div className="zip-selected-text">
             <strong title={selected.path}>{selected.path}</strong>
             <span className="muted">
-              {selected.member.size === null ? "Size unknown" : bytes(selected.member.size)}
-              {selected.member.packed !== null && `, ${bytes(selected.member.packed)} packed`}
-              {`, ${METHODS[selected.member.method] ?? `method ${selected.member.method}`}`}
-              {selected.member.encrypted && ", encrypted"}
+              {selected.member.size === null ? t("Size unknown") : bytes(selected.member.size)}
+              {selected.member.packed !== null && `, ${t("{bytes} packed", { bytes: bytes(selected.member.packed) })}`}
+              {`, ${METHODS[selected.member.method] === "stored" ? t("stored") : METHODS[selected.member.method] ?? t("method {number}", { number: selected.member.method })}`}
+              {selected.member.encrypted && t(", encrypted")}
             </span>
             {checks.get(selected.member.index) && <span>{checks.get(selected.member.index)?.note}</span>}
           </div>
-          <button disabled={checking !== null} onClick={() => { const index = selected.member?.index; if (index !== undefined) checkOne(index).catch((reason) => setError(String(reason))); }}>Check this file</button>
+          <button disabled={checking !== null} onClick={() => { const index = selected.member?.index; if (index !== undefined) checkOne(index).catch((reason) => setError(String(reason))); }}>{t("Check this file")}</button>
         </div>
       )}
     </section>

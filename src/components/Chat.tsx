@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type { Selection } from "../api";
 import { count } from "../format";
+import { t } from "../i18n";
 import { Icon } from "./icons";
 
 interface ToolCall {
@@ -29,13 +30,13 @@ export function describeSelection(selection: Selection): string {
     case "entry":
       return selection.name;
     case "folder":
-      return selection.name || `Folder at cluster ${count(selection.head)}`;
+      return selection.name || t("Folder at cluster {cluster}", { cluster: count(selection.head) });
     case "chain":
-      return `Nameless chain at cluster ${count(selection.head)}`;
+      return t("Nameless chain at cluster {cluster}", { cluster: count(selection.head) });
     case "region":
-      return `Unexplained region, clusters ${count(selection.startCluster)} to ${count(selection.endCluster)}`;
+      return t("Unexplained region, clusters {start} to {end}", { start: count(selection.startCluster), end: count(selection.endCluster) });
     default:
-      return "Nothing selected";
+      return t("Nothing selected");
   }
 }
 
@@ -101,7 +102,7 @@ export function Chat({ selection }: { selection: Selection }) {
           });
         }
       } else if (payload.type === "result" && payload.is_error) {
-        setMessages((current) => [...current, { role: "error", text: String(payload.result ?? "Claude reported an error."), tools: [] }]);
+        setMessages((current) => [...current, { role: "error", text: String(payload.result ?? t("Claude reported an error.")), tools: [] }]);
       } else if (payload.type === "chat-end") {
         setBusy(false);
         if (payload.code !== 0 && payload.code !== null && payload.stderr) {
@@ -140,14 +141,14 @@ export function Chat({ selection }: { selection: Selection }) {
   }
 
   return (
-    <section className="chat" aria-label="Ask Claude">
+    <section className="chat" aria-label={t("Ask Claude")}>
       <div className="chat-head">
-        <strong><Icon name="sparkle" size={15} /> Ask Claude</strong>
-        <button className="link" onClick={startOver} disabled={messages.length === 0}>New conversation</button>
+        <strong><Icon name="sparkle" size={15} /> {t("Ask Claude")}</strong>
+        <button className="link" onClick={startOver} disabled={messages.length === 0}>{t("New conversation")}</button>
       </div>
       <div ref={scroller} className="chat-log" aria-live="polite">
         {messages.length === 0 && (
-          <p className="empty">Select something on the map, in the list or in the bytes, then ask about it. Claude can read the whole disk and test ideas, and has no way to write to it.</p>
+          <p className="empty">{t("Select something on the map, in the list or in the bytes, then ask about it. Claude can read the whole disk and test ideas, and has no way to write to it.")}</p>
         )}
         {messages.map((message, index) => (
           <div key={index} className={`chat-message chat-${message.role}`}>
@@ -162,7 +163,7 @@ export function Chat({ selection }: { selection: Selection }) {
             {message.text && <div className="chat-text"><Formatted text={message.text} /></div>}
           </div>
         ))}
-        {busy && <div className="chat-busy">Investigating</div>}
+        {busy && <div className="chat-busy">{t("Investigating")}</div>}
       </div>
       <div className="chat-input">
         <div className="chat-context">About: {describeSelection(selection)}</div>
@@ -170,8 +171,8 @@ export function Chat({ selection }: { selection: Selection }) {
           <textarea
             value={draft}
             rows={2}
-            placeholder="What is this? Where does it lead?"
-            aria-label="Question for Claude"
+            placeholder={t("What is this? Where does it lead?")}
+            aria-label={t("Question for Claude")}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -181,9 +182,9 @@ export function Chat({ selection }: { selection: Selection }) {
             }}
           />
           {busy ? (
-            <button onClick={() => invoke("chat_cancel")} title="Stop" aria-label="Stop"><Icon name="stop" size={13} /></button>
+            <button onClick={() => invoke("chat_cancel")} title={t("Stop")} aria-label={t("Stop")}><Icon name="stop" size={13} /></button>
           ) : (
-            <button className="primary" onClick={send} disabled={!draft.trim()} title="Ask" aria-label="Ask"><Icon name="send" size={15} /></button>
+            <button className="primary" onClick={send} disabled={!draft.trim()} title={t("Ask")} aria-label={t("Ask")}><Icon name="send" size={15} /></button>
           )}
         </div>
       </div>
