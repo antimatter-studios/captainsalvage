@@ -1853,6 +1853,293 @@ fn a_file_is_judged_by_its_contents_before_its_name() {
     );
 }
 
+/// One file for a hand-built zip: its local header and data, and its directory record.
+fn zip_file(name: &str, content: &[u8], deflate: bool, offset: u32) -> (Vec<u8>, Vec<u8>) {
+    let mut crc = flate2::Crc::new();
+    crc.update(content);
+    let body = if deflate {
+        use std::io::Write;
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(content).unwrap();
+        encoder.finish().unwrap()
+    } else {
+        content.to_vec()
+    };
+    let method: u16 = if deflate { 8 } else { 0 };
+    let date: u16 = (42 << 9) | (9 << 5) | 5;
+    let time: u16 = (17 << 11) | (53 << 5) | 13;
+    let mut shared = Vec::new();
+    shared.extend_from_slice(&0u16.to_le_bytes());
+    shared.extend_from_slice(&method.to_le_bytes());
+    shared.extend_from_slice(&time.to_le_bytes());
+    shared.extend_from_slice(&date.to_le_bytes());
+    shared.extend_from_slice(&crc.sum().to_le_bytes());
+    shared.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    shared.extend_from_slice(&(content.len() as u32).to_le_bytes());
+    shared.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    shared.extend_from_slice(&0u16.to_le_bytes());
+
+    let mut local = b"PK\x03\x04\x14\x00".to_vec();
+    local.extend_from_slice(&shared);
+    local.extend_from_slice(name.as_bytes());
+    local.extend_from_slice(&body);
+
+    let mut central = b"PK\x01\x02\x14\x00\x14\x00".to_vec();
+    central.extend_from_slice(&shared);
+    central.extend_from_slice(&[0u8; 10]);
+    central.extend_from_slice(&offset.to_le_bytes());
+    central.extend_from_slice(name.as_bytes());
+    (local, central)
+}
+
+fn hand_built_zip(files: &[(&str, &[u8], bool)]) -> Vec<u8> {
+    let (mut zip, mut directory) = (Vec::new(), Vec::new());
+    for (name, content, deflate) in files {
+        let (local, central) = zip_file(name, content, *deflate, zip.len() as u32);
+        zip.extend_from_slice(&local);
+        directory.extend_from_slice(&central);
+    }
+    let start = zip.len() as u32;
+    zip.extend_from_slice(&directory);
+    zip.extend_from_slice(b"PK\x05\x06\0\0\0\0");
+    zip.extend_from_slice(&(files.len() as u16).to_le_bytes());
+    zip.extend_from_slice(&(files.len() as u16).to_le_bytes());
+    zip.extend_from_slice(&(directory.len() as u32).to_le_bytes());
+    zip.extend_from_slice(&start.to_le_bytes());
+    zip.extend_from_slice(&0u16.to_le_bytes());
+    zip
+}
+
+fn sample_zip() -> Vec<u8> {
+    hand_built_zip(&[
+        ("docs/", b"", false),
+        ("docs/notes.txt", b"plain words kept as they are", false),
+        ("docs/deep/report.txt", &[b'r'; 5000], true),
+        ("top.bin", &[7u8; 300], true),
+    ])
+}
+
+fn zip_reader(data: &[u8]) -> impl Fn(u64, u64) -> anyhow::Result<Vec<u8>> + '_ {
+    move |start, length| {
+        let from = (start as usize).min(data.len());
+        let to = start.saturating_add(length).min(data.len() as u64) as usize;
+        Ok(data[from..to].to_vec())
+    }
+}
+
+#[test]
+fn a_zip_lists_what_its_directory_says() {
+    use lens_core::archive::{list_zip, SOURCE_DIRECTORY};
+    let zip = sample_zip();
+    let listing = list_zip(zip.len() as u64, &zip_reader(&zip)).unwrap();
+    assert_eq!(listing.source, SOURCE_DIRECTORY);
+    assert!(listing.complete);
+    assert_eq!(listing.note, None);
+    let paths: Vec<_> = listing.members.iter().map(|m| m.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        ["docs/", "docs/notes.txt", "docs/deep/report.txt", "top.bin"]
+    );
+    assert!(listing.members[0].is_dir);
+    let report = &listing.members[2];
+    assert_eq!(report.size, Some(5000));
+    assert!(report.packed.unwrap() < 5000);
+    assert_eq!(report.method, 8);
+    assert_eq!(report.modified.as_deref(), Some("2022-09-05T17:53:26"));
+
+    // Bytes in front of a zip, as a self-extractor has, move every offset it records.
+    let mut prefixed = vec![0x41u8; 777];
+    prefixed.extend_from_slice(&zip);
+    let listing = list_zip(prefixed.len() as u64, &zip_reader(&prefixed)).unwrap();
+    assert!(listing.complete);
+    assert_eq!(listing.members[1].offset, zip_offset(&zip, 1) + 777);
+}
+
+fn zip_offset(zip: &[u8], index: usize) -> u64 {
+    use lens_core::archive::list_zip;
+    list_zip(zip.len() as u64, &zip_reader(zip))
+        .unwrap()
+        .members[index]
+        .offset
+}
+
+#[test]
+fn a_zip_with_no_directory_is_listed_from_its_file_headers() {
+    use lens_core::archive::{list_zip, SOURCE_HEADERS};
+    let zip = sample_zip();
+    let directory_at = zip.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+
+    // Cut off before its directory, as a lost last cluster would leave it.
+    let cut = &zip[..directory_at];
+    let listing = list_zip(cut.len() as u64, &zip_reader(cut)).unwrap();
+    assert_eq!(listing.source, SOURCE_HEADERS);
+    assert!(!listing.complete);
+    assert_eq!(listing.members.len(), 4);
+    assert_eq!(listing.members[2].path, "docs/deep/report.txt");
+    assert_eq!(listing.members[2].size, Some(5000));
+    assert!(listing.note.as_deref().unwrap().contains("rebuilt"));
+
+    // A zip stored inside a zip stays one file, because a known size jumps over its data.
+    // The end record still in view belongs to the inner zip, and must not be taken for this one.
+    let inner = sample_zip();
+    let mut outer = hand_built_zip(&[("inner.zip", &inner, false), ("after.txt", b"after", false)]);
+    let end = outer.len() - 22;
+    let directory = u32::from_le_bytes(outer[end + 16..end + 20].try_into().unwrap());
+    outer.truncate(directory as usize);
+    let listing = list_zip(outer.len() as u64, &zip_reader(&outer)).unwrap();
+    let paths: Vec<_> = listing.members.iter().map(|m| m.path.as_str()).collect();
+    assert_eq!(paths, ["inner.zip", "after.txt"]);
+
+    // A stray signature with no believable header around it is not a file.
+    let mut noise = vec![0u8; 500];
+    noise[100..104].copy_from_slice(b"PK\x03\x04");
+    let listing = list_zip(noise.len() as u64, &zip_reader(&noise)).unwrap();
+    assert!(listing.members.is_empty());
+    assert!(listing
+        .note
+        .as_deref()
+        .unwrap()
+        .contains("looks like a zip"));
+}
+
+#[test]
+fn a_zip_with_a_broken_directory_keeps_the_longer_list() {
+    use lens_core::archive::{list_zip, SOURCE_DIRECTORY, SOURCE_HEADERS};
+    let zip = sample_zip();
+    let directory_at = zip.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+    let second = zip[directory_at + 4..]
+        .windows(4)
+        .position(|w| w == b"PK\x01\x02")
+        .unwrap()
+        + directory_at
+        + 4;
+
+    // The directory breaks after one record, and the headers still find all four.
+    let mut broken = zip.clone();
+    broken[second] = 0;
+    let listing = list_zip(broken.len() as u64, &zip_reader(&broken)).unwrap();
+    assert_eq!(listing.source, SOURCE_HEADERS);
+    assert_eq!(listing.members.len(), 4);
+
+    // With the headers gone too, the part of the directory that survives is what is left.
+    let local_second = zip_offset(&zip, 1) as usize;
+    let mut headers_gone = broken.clone();
+    headers_gone[..local_second + 30].fill(0);
+    headers_gone[local_second + 30..directory_at].fill(0);
+    let listing = list_zip(headers_gone.len() as u64, &zip_reader(&headers_gone)).unwrap();
+    assert_eq!(listing.source, SOURCE_DIRECTORY);
+    assert!(!listing.complete);
+    assert_eq!(listing.members.len(), 1);
+}
+
+#[test]
+fn a_zip_member_is_checked_against_its_checksum() {
+    use lens_core::archive::{
+        check_member, list_zip, CHECK_DAMAGED, CHECK_INTACT, CHECK_UNCHECKED,
+    };
+    let zip = sample_zip();
+    let total = zip.len() as u64;
+    let listing = list_zip(total, &zip_reader(&zip)).unwrap();
+    let check = |data: &[u8], index: usize| {
+        check_member(
+            &listing.members[index],
+            data.len() as u64,
+            &zip_reader(data),
+        )
+        .unwrap()
+    };
+    assert_eq!(check(&zip, 0).status, CHECK_UNCHECKED);
+    assert_eq!(check(&zip, 1).status, CHECK_INTACT);
+    assert_eq!(check(&zip, 2).status, CHECK_INTACT);
+    assert_eq!(check(&zip, 3).status, CHECK_INTACT);
+
+    // One changed byte in a stored file.
+    let mut stored = zip.clone();
+    let at = zip.windows(5).position(|w| w == b"plain").unwrap();
+    stored[at] = b'P';
+    let hit = check(&stored, 1);
+    assert_eq!(hit.status, CHECK_DAMAGED);
+    assert!(hit.note.contains("checksum"), "{}", hit.note);
+
+    // Other data over a compressed file, as a reused cluster leaves it.
+    let start = listing.members[2].offset as usize + 30 + "docs/deep/report.txt".len();
+    let mut compressed = zip.clone();
+    compressed[start..start + 8].fill(0xFF);
+    assert_eq!(check(&compressed, 2).status, CHECK_DAMAGED);
+    // The file beside it is not touched.
+    assert_eq!(check(&compressed, 3).status, CHECK_INTACT);
+
+    // Its header overwritten.
+    let mut no_header = zip.clone();
+    no_header[listing.members[3].offset as usize] = 0;
+    let hit = check(&no_header, 3);
+    assert_eq!(hit.status, CHECK_DAMAGED);
+    assert!(hit.note.contains("header"), "{}", hit.note);
+
+    // The zip cut short before the file's end.
+    let short = &zip[..start + 2];
+    let hit = check(short, 2);
+    assert_eq!(hit.status, CHECK_DAMAGED);
+
+    // A method this app cannot unpack is not called damage.
+    let mut other = listing.members[1].clone();
+    other.method = 12;
+    assert_eq!(
+        check_member(&other, total, &zip_reader(&zip))
+            .unwrap()
+            .status,
+        CHECK_UNCHECKED
+    );
+    let mut locked = listing.members[1].clone();
+    locked.encrypted = true;
+    assert_eq!(
+        check_member(&locked, total, &zip_reader(&zip))
+            .unwrap()
+            .status,
+        CHECK_UNCHECKED
+    );
+}
+
+#[test]
+fn a_zip_on_the_disk_can_be_listed_and_checked_through_the_tools() {
+    let zip = sample_zip();
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4, 20] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+            entry_set("bundle.zip", false, 20, zip.len() as u64, true, true),
+        ],
+    );
+    b.put(20, 0, &zip);
+    let (engine, _session, dir) = engine_with_image("zip", b.image);
+    let found = call(&engine, "search", json!({"query": "bundle.zip"}));
+    let id = found["rows"][0]["id"].as_i64().unwrap();
+
+    let listing = call(&engine, "zip_contents", json!({"id": id}));
+    assert_eq!(listing["source"], "directory");
+    assert_eq!(listing["members"].as_array().unwrap().len(), 4);
+    assert_eq!(listing["members"][2]["path"], "docs/deep/report.txt");
+    assert_eq!(listing["members"][2]["size"], 5000);
+
+    let check = call(&engine, "zip_member_check", json!({"id": id, "index": 2}));
+    assert_eq!(check["status"], "intact");
+    assert!(engine
+        .call(
+            "zip_member_check",
+            &json!({"id": id, "index": 99}),
+            AUTHOR_CLAUDE
+        )
+        .is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// A volume with the two folders macOS keeps at the top, and one more that only looks alike.
 fn volume_macos_has_visited() -> Vec<u8> {
     let mut b = Builder::new();

@@ -71,6 +71,9 @@ treats damage as something to route around:
   recalculates, and the disk is never touched.
 - **It tests its guesses.** It walks PNG chunks, JPEG markers, MP3 frames and zip
   CRCs through a reassembled file, and reports where the file breaks.
+- **It looks inside zips.** Open a zip to see its files as a tree, read live from the
+  disk. If the zip has lost its directory, the list is rebuilt from the headers of the
+  files inside, and each file can be checked against its own checksum.
 - **An AI can investigate with you.** Select anything and ask Claude about it.
   Claude works through the same tools as the app, over MCP, and has no write path
   to the disk.

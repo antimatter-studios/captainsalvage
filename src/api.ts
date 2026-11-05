@@ -72,6 +72,32 @@ export interface DiskWrites {
   sinceOpen: WriteCounter;
 }
 
+export interface ZipMember {
+  index: number;
+  path: string;
+  isDir: boolean;
+  packed: number | null;
+  size: number | null;
+  method: number;
+  crc: number | null;
+  encrypted: boolean;
+  modified: string | null;
+  offset: number;
+}
+
+export interface ZipListing {
+  source: "directory" | "headers";
+  members: ZipMember[];
+  complete: boolean;
+  totalBytes: number;
+  note: string | null;
+}
+
+export interface ZipMemberCheck {
+  status: "intact" | "damaged" | "unchecked";
+  note: string;
+}
+
 export interface MountHistory {
   dates: { date: string; entries: number; bytes: number; clusters: number }[];
   dirtyFlag: boolean;

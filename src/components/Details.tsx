@@ -19,6 +19,7 @@ import {
 } from "../api";
 import { bytes, clock, count, displayPath, percent, stamp, VERDICT_LABEL } from "../format";
 import { InlinePreview } from "./BrowseView";
+import { isZipName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
 
 const MAX_COPIES_SHOWN = 20;
@@ -43,7 +44,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, previewElsewhere, onEntry }: { row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
+function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, onInsideZip, previewElsewhere, onEntry }: { onInsideZip: () => void; row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
   const [copies, setCopies] = useState<Row[]>([]);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -98,6 +99,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, pr
         <div className="detail-actions">
           <button className="primary" onClick={onCopy}>{inBasket ? "In your basket" : "Add to basket"}</button>
           <button onClick={() => onPreview(row)}>Open large</button>
+          {isZipName(row.name) && <button onClick={onInsideZip}>Look inside</button>}
           <button onClick={runTest} disabled={busy !== null}>{busy === "test" ? "Testing" : "Test format"}</button>
         </div>
       )}
@@ -694,12 +696,13 @@ export interface DetailsProps {
   basket: BasketItem[];
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
   onPreview: (row: Row) => void;
+  onInsideZip: () => void;
   onBrowseFolder: (row: Row) => void;
   previewInCenter: number | null;
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onBrowseFolder, previewInCenter } = props;
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter } = props;
   const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
   const [tab, setTab] = useState<Tab>("selected");
   useEffect(() => {
@@ -736,6 +739,7 @@ export function Details(props: DetailsProps) {
                 onCluster={onCluster}
                 inBasket={inBasket("entry", entry.row.id)}
                 onPreview={onPreview}
+                onInsideZip={onInsideZip}
                 previewElsewhere={previewInCenter === entry.row.id}
                 onEntry={onEntry}
                 onCopy={() => {

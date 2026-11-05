@@ -43,6 +43,8 @@ const QUIET_TOOLS: &[&str] = &[
     "file_copies",
     "file_tests_status",
     "mount_history",
+    "zip_contents",
+    "zip_member_check",
 ];
 const DEFAULT_REGION_SAMPLES: usize = 64;
 const DEFAULT_MIN_RUN_CLUSTERS: u64 = 64;
@@ -390,6 +392,15 @@ impl Engine {
                 )?)?)
             }
             "mount_history" => Ok(serde_json::to_value(session.mount_history()?)?),
+            "zip_contents" => {
+                let id = need_i64(args, "id")?;
+                Ok(serde_json::to_value(session.zip_contents(id)?)?)
+            }
+            "zip_member_check" => {
+                let id = need_i64(args, "id")?;
+                let index = u64_of(args, "index").context("index is required")? as u32;
+                Ok(serde_json::to_value(session.zip_member_check(id, index)?)?)
+            }
             "file_test" => {
                 let id = need_i64(args, "id")?;
                 Ok(serde_json::to_value(

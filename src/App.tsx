@@ -27,6 +27,7 @@ import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
 import { Icon, type IconName } from "./components/icons";
 import { RecoveryOverview } from "./components/RecoveryOverview";
+import { isZipName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, duration } from "./format";
 import { onThemeChange } from "./palette";
@@ -37,7 +38,7 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 /** While a scan runs, the tree and totals are rebuilt from what it has found. */
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
-type CenterView = "overview" | "browse" | "bytes";
+type CenterView = "overview" | "browse" | "bytes" | "zip";
 
 function asBrowseRow(row: Row): BrowseRow {
   return { ...row, id: row.id as number };
@@ -355,6 +356,10 @@ export default function App() {
     if (row.id === null) return;
     const full = await noteEntry(row.id);
     if (centerNow.current === "bytes") return;
+    if (isZipName(full.name)) {
+      setCenter("zip");
+      return;
+    }
     setStandalone(asBrowseRow(full));
     setCenter("browse");
   }, [noteEntry]);
@@ -505,6 +510,7 @@ export default function App() {
     return <OpenVolume initialPath={startPath} failure={failure} onOpen={open} />;
   }
 
+  const zipEntry = entry && entry.row.kind === "file" && isZipName(entry.row.name) ? entry.row : null;
   const selectedKey = entry ? `entry:${entry.row.id}` : folder ? `folder:${folder.head}` : chain ? `chain:${chain.head}` : region ? `region:${region.startCluster}` : null;
 
   return (
@@ -552,8 +558,11 @@ export default function App() {
             <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>Overview</button>
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>Browse files</button>
             <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>Bytes</button>
+            <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>Inside zip</button>
           </div>
         </div>
+        {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
+        {center === "zip" && !zipEntry && <section className="center-panel"><p className="muted zip-message">Choose a zip file to see inside it.</p></section>}
         {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} onChanged={bump} />}
         {center === "browse" && (
           <BrowseView
@@ -567,6 +576,7 @@ export default function App() {
             onBasket={changeBasket}
             onSelect={(row) => void noteEntry(row.id)}
             onBytes={showCluster}
+            onInsideZip={(row) => void noteEntry(row.id).then(() => setCenter("zip"))}
             onPreviewShown={setPreviewInCenter}
           />
         )}
@@ -608,6 +618,7 @@ export default function App() {
           basket={basket}
           onBasket={changeBasket}
           onPreview={previewEntry}
+          onInsideZip={() => setCenter("zip")}
           onBrowseFolder={browseFolder}
           previewInCenter={previewInCenter}
         />
