@@ -244,10 +244,6 @@ ffmpeg is optional, is not bundled, and nothing it converts is saved.
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
-### Unreleased
-
-No pull requests merged yet.
-
 ### v0.2.0 — 2026-11-05
 
 **Added**
@@ -314,13 +310,16 @@ Several merges take the largest of these, once. Whoever opens a pull request, pe
 assesses whether it fixes something broken or adds something new, and titles it to match.
 [AGENTS.md](AGENTS.md) has the rule.
 
-To cut a release:
+Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one per pull request.
+Run `scripts/install-hooks.sh` once per clone: on a `feat/` or `fix/` branch, the pre-commit hook
+writes the first one from what is staged, using an agent for the wording.
 
-1. Run `scripts/release.py prepare`, which picks the next version, sets it everywhere and moves the notes.
-2. Merge that as a pull request titled `chore(release): v0.3.0`.
-3. Tag the merge on `main` with `v0.3.0` and push the tag. The pipeline does the rest.
+To cut a release, run `scripts/create-release`. It shows what would go out and stops for a yes,
+then opens the release pull request. It combines the fragments into `CHANGELOG.md`, copies the
+newest ten versions into this README, and sets the version. When that has merged, run
+`scripts/create-release --tag v0.3.0`, which tags `main` and pushes. The tag starts the pipeline.
 
-Going to 1.0.0 is a deliberate choice: run `scripts/release.py prepare 1.0.0`.
+Going to 1.0.0 is a deliberate choice: run `scripts/create-release 1.0.0`.
 
 To try the pipeline without publishing anything, run the `release` workflow by hand.
 

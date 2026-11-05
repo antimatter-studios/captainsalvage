@@ -1,12 +1,12 @@
 # Changelog
 
-Each release lists the pull requests merged into it, and nothing else. The same notes
-appear on the [releases page](https://github.com/antimatter-studios/captainsalvage/releases). `scripts/release.py`
-writes this file.
+Each release lists what changed in it. The same notes appear on the
+[releases page](https://github.com/antimatter-studios/captainsalvage/releases).
+
+Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one per pull request.
+`scripts/create-release` gathers them into a section here.
 
 ## [Unreleased]
-
-No pull requests merged yet.
 
 ## [0.2.0] — 2026-11-05
 
