@@ -33,6 +33,7 @@ import { isZipName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, duration } from "./format";
 import { onThemeChange } from "./palette";
+import appIcon from "../src-tauri/icons/64x64.png";
 
 const STATUS_POLL_MILLIS = 2000;
 /** While a scan runs, the content layers keep filling in at this pace. */
@@ -205,11 +206,28 @@ function ThemeSwitch() {
   );
 }
 
-function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void }) {
+/**
+ * The top of the sidebar, beside the window controls: the app's name, and a way home to the
+ * overview. The row is part of the window's drag area, so only the button takes clicks.
+ */
+function SidebarBrand({ onHome }: { onHome: () => void }) {
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => undefined);
   }, []);
+  return (
+    <div className="sidebar-brand">
+      <img className="sidebar-brand-icon" src={appIcon} alt="" width={20} height={20} />
+      <strong>Captain Salvage</strong>
+      {version && <span className="brand-version">v{version}</span>}
+      <button className="sidebar-home" onClick={onHome} aria-label="Go to the overview" title="Overview">
+        <Icon name="home" size={16} />
+      </button>
+    </div>
+  );
+}
+
+function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void }) {
   const scan = status?.scan;
   const fraction = scan ? scan.clustersScanned / scan.totalClusters : 0;
   const running = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
@@ -226,11 +244,8 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="brand">
-        <div className="brand-name">
-          <strong>Captain Salvage</strong>
-          {version && <span className="brand-version">v{version}</span>}
-        </div>
-        <span>{overview.device}, {bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>Change disk</button></span>
+        <strong>{overview.device}</strong>
+        <span>{bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>Change disk</button></span>
       </div>
       <div className="scan">
         <div className="scan-text" title={scan ? `${count(scan.directoryClusters)} directory clusters and ${count(scan.setsFound)} entries found so far` : undefined}>{scanText}</div>
@@ -579,7 +594,9 @@ export default function App() {
       className="app"
       style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}
     >
-      <div className="sidebar-drag" data-tauri-drag-region />
+      <div className="sidebar-drag" data-tauri-drag-region>
+        <SidebarBrand onHome={() => setCenter("overview")} />
+      </div>
       <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} />
       <Strips
         layer={layer}
