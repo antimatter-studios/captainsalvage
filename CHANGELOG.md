@@ -8,6 +8,24 @@ writes this file.
 
 No pull requests merged yet.
 
+## [0.2.0] — 2026-11-05
+
+### Added
+
+- Release every feature and fix automatically ([#60](https://github.com/antimatter-studios/captainsalvage/pull/60))
+- Show the version on the start screen ([#59](https://github.com/antimatter-studios/captainsalvage/pull/59))
+- Show how to keep a disk safe on the start screen, and undo it ([#58](https://github.com/antimatter-studios/captainsalvage/pull/58))
+- Open on a start screen, and never reopen a disk by itself ([#57](https://github.com/antimatter-studios/captainsalvage/pull/57))
+- Show what a zip holds as a file tree, read live from the disk ([#51](https://github.com/antimatter-studios/captainsalvage/pull/51))
+- Warn that macOS writes to a damaged volume, and show the evidence ([#50](https://github.com/antimatter-studios/captainsalvage/pull/50))
+- Show identical files as one in the browse list ([#46](https://github.com/antimatter-studios/captainsalvage/pull/46))
+- Test found files in the background and score them on the result ([#45](https://github.com/antimatter-studios/captainsalvage/pull/45))
+
+### Fixed
+
+- Say when the disk is disconnected, and keep disks from sleeping ([#56](https://github.com/antimatter-studios/captainsalvage/pull/56))
+- Report what survives in a damaged file, and stop calling text keys broken zips ([#47](https://github.com/antimatter-studios/captainsalvage/pull/47))
+
 ## [0.1.0] — 2026-11-05
 
 ### Added
