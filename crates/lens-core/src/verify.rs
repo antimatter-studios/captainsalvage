@@ -12,6 +12,25 @@ use std::io::Read;
 const ID3_HEADER_BYTES: usize = 10;
 const MPEG_HEADER_BYTES: usize = 4;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+/// Unwritten clusters read as zeros, which compressed image data never is for this long.
+const JPEG_MAX_ZERO_RUN: usize = 4096;
+const JPEG_FIRST_RESTART: u8 = 0xD0;
+const JPEG_RESTART_COUNT: u8 = 8;
+const PDF_SIGNATURE: &[u8] = b"%PDF-";
+const OLE_SIGNATURE: &[u8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1";
+/// Office and similar documents that are zip files inside.
+const ZIP_EXTENSIONS: &[&str] = &[
+    "zip", "docx", "xlsx", "pptx", "odt", "pages", "numbers", "key",
+];
+const TEXT_EXTENSIONS: &[&str] = &["txt", "md", "csv", "rtf"];
+/// Bytes from the end of a PDF to look for its pointer to the cross-reference table.
+const PDF_TAIL_BYTES: usize = 2048;
+const PDF_XREF_LINE_BYTES: usize = 20;
+const OLE_HEADER_BYTES: usize = 512;
+const OLE_DIFAT_START: usize = 76;
+const OLE_FREE_ENTRIES_FROM: u32 = 0xFFFF_FFFA;
+const TEXT_WINDOW_BYTES: usize = 4096;
+const MIN_PRINTABLE_SHARE: f64 = 0.85;
 /// Bytes to search forward for the next MP3 frame after a break.
 const RESYNC_WINDOW: usize = 64 * 1024;
 
@@ -49,17 +68,35 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
         .unwrap_or_default();
-    if data.starts_with(PNG_SIGNATURE) || extension == "png" {
+    // What the bytes say comes first: a name can be wrong, and renamed files are common.
+    if data.starts_with(PNG_SIGNATURE) {
         return verify_png(data);
     }
-    if data.starts_with(b"\xff\xd8\xff") || matches!(extension.as_str(), "jpg" | "jpeg") {
+    if data.starts_with(b"\xff\xd8\xff") {
         return verify_jpeg(data);
     }
-    if data.starts_with(b"ID3") || extension == "mp3" {
+    if data.starts_with(b"ID3") {
         return verify_mp3(data);
     }
-    if data.starts_with(b"PK\x03\x04") || extension == "zip" {
+    if data.starts_with(b"PK\x03\x04") {
         return verify_zip(data);
+    }
+    if data.starts_with(PDF_SIGNATURE) {
+        return verify_pdf(data);
+    }
+    if data.starts_with(OLE_SIGNATURE) {
+        return verify_ole(data);
+    }
+    // Without a signature, the name says what it should have been. A .doc has no entry
+    // here, because several older formats use that name and have no signature to check.
+    match extension.as_str() {
+        "png" => return verify_png(data),
+        "jpg" | "jpeg" => return verify_jpeg(data),
+        "mp3" => return verify_mp3(data),
+        "pdf" => return verify_pdf(data),
+        name if ZIP_EXTENSIONS.contains(&name) => return verify_zip(data),
+        name if TEXT_EXTENSIONS.contains(&name) => return verify_text(data),
+        _ => {}
     }
     VerifyReport {
         format: "unknown".into(),
@@ -251,7 +288,19 @@ pub fn verify_jpeg(data: &[u8]) -> VerifyReport {
         let marker = data[position + 1];
         if marker == 0xD9 {
             position += 2;
+            // Some cameras add a second image, such as a preview, right after the first.
+            if data[position..].starts_with(b"\xff\xd8") {
+                position += 2;
+                continue;
+            }
             report.reached_end = true;
+            // Padding after the end is harmless, and so does not count against the file.
+            let padding = data[position..]
+                .iter()
+                .all(|byte| matches!(byte, 0x00 | 0xFF));
+            if padding {
+                position = data.len();
+            }
             break;
         }
         if marker == 0xFF {
@@ -266,11 +315,36 @@ pub fn verify_jpeg(data: &[u8]) -> VerifyReport {
         position += 2 + length;
         if marker == 0xDA {
             // Scan data: 0xFF may only precede 0x00, a restart marker or a new marker.
+            let mut next_restart = JPEG_FIRST_RESTART;
+            let mut zero_run = 0;
             while position + 1 < data.len() {
-                if data[position] == 0xFF {
+                let byte = data[position];
+                zero_run = if byte == 0 { zero_run + 1 } else { 0 };
+                if zero_run >= JPEG_MAX_ZERO_RUN {
+                    let start = position + 1 - zero_run;
+                    report.breaks.push(start as u64);
+                    report.notes.push(format!(
+                        "Its image data has a long empty stretch at {start}."
+                    ));
+                    report.valid_bytes = start as u64;
+                    return report.finish(data.len());
+                }
+                if byte == 0xFF {
                     let next = data[position + 1];
-                    let legal_stuffing = next == 0x00 || (0xD0..=0xD7).contains(&next);
-                    if !legal_stuffing {
+                    let restart = (JPEG_FIRST_RESTART..JPEG_FIRST_RESTART + JPEG_RESTART_COUNT)
+                        .contains(&next);
+                    if restart && next != next_restart {
+                        report.breaks.push(position as u64);
+                        report
+                            .notes
+                            .push(format!("Restart markers go out of order at {position}."));
+                        report.valid_bytes = position as u64;
+                        return report.finish(data.len());
+                    }
+                    if restart {
+                        next_restart = JPEG_FIRST_RESTART
+                            + (next - JPEG_FIRST_RESTART + 1) % JPEG_RESTART_COUNT;
+                    } else if next != 0x00 {
                         break;
                     }
                 }
@@ -295,6 +369,237 @@ const ZIP_LOCAL_HEADER_BYTES: usize = 30;
 const ZIP_METHOD_STORED: u16 = 0;
 const ZIP_METHOD_DEFLATED: u16 = 8;
 const MAX_NOTES: usize = 20;
+
+fn find_last(data: &[u8], needle: &[u8]) -> Option<usize> {
+    data.windows(needle.len())
+        .rposition(|window| window == needle)
+}
+
+/// True if the bytes at this offset begin an object, such as `12 0 obj`.
+fn pdf_object_at(data: &[u8], offset: usize) -> bool {
+    let Some(rest) = data.get(offset..) else {
+        return false;
+    };
+    let head = &rest[..rest.len().min(32)];
+    let text = String::from_utf8_lossy(head);
+    let mut parts = text.split_ascii_whitespace();
+    let number = parts
+        .next()
+        .is_some_and(|part| part.bytes().all(|b| b.is_ascii_digit()));
+    let generation = parts
+        .next()
+        .is_some_and(|part| part.bytes().all(|b| b.is_ascii_digit()));
+    number && generation && parts.next().is_some_and(|part| part.starts_with("obj"))
+}
+
+/// A PDF's cross-reference table says where every object is, all through the file, so a
+/// wrong cluster shows as objects that are not where the table says. Newer PDFs compress
+/// that table, so for those only the two ends can be checked, and the report says so.
+pub fn verify_pdf(data: &[u8]) -> VerifyReport {
+    let mut report = VerifyReport {
+        format: "pdf".into(),
+        ..VerifyReport::default()
+    };
+    if !data.starts_with(PDF_SIGNATURE) {
+        report.breaks.push(0);
+        report
+            .notes
+            .push("It does not start with a PDF header.".into());
+        return report.finish(data.len());
+    }
+    let tail_start = data.len().saturating_sub(PDF_TAIL_BYTES);
+    let tail = &data[tail_start..];
+    let pointer = find_last(tail, b"startxref").and_then(|at| {
+        String::from_utf8_lossy(&tail[at + b"startxref".len()..])
+            .split_ascii_whitespace()
+            .next()
+            .and_then(|text| text.parse::<usize>().ok())
+    });
+    report.reached_end = find_last(tail, b"%%EOF").is_some();
+    let Some(start) = pointer.filter(|start| *start < data.len()) else {
+        report.breaks.push(data.len() as u64);
+        report
+            .notes
+            .push("Its pointer to the cross-reference table is missing.".into());
+        return report.finish(data.len());
+    };
+    if pdf_object_at(data, start) {
+        report.units = 1;
+        report.valid_bytes = if report.reached_end {
+            data.len() as u64
+        } else {
+            0
+        };
+        report.notes.push(
+            "Its cross-reference table is compressed, so only the two ends were checked.".into(),
+        );
+        return report.finish(data.len());
+    }
+    if !data[start..].starts_with(b"xref") {
+        report.breaks.push(start as u64);
+        report
+            .notes
+            .push("Its cross-reference table is not where the file says it is.".into());
+        return report.finish(data.len());
+    }
+    let mut position = start + b"xref".len();
+    let (mut total, mut good) = (0u64, 0u64);
+    loop {
+        let rest = &data[position..data.len().min(position + 64)];
+        let text = String::from_utf8_lossy(rest);
+        let line = text
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mut parts = line.split_ascii_whitespace();
+        let (Some(_first), Some(count), None) = (
+            parts.next().and_then(|part| part.parse::<u64>().ok()),
+            parts.next().and_then(|part| part.parse::<usize>().ok()),
+            parts.next(),
+        ) else {
+            break;
+        };
+        let header_at = position + text.find(&line).unwrap_or(0) + line.len();
+        let entries_at = header_at
+            + data[header_at..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count();
+        for index in 0..count {
+            let at = entries_at + index * PDF_XREF_LINE_BYTES;
+            let Some(entry) = data.get(at..at + PDF_XREF_LINE_BYTES) else {
+                break;
+            };
+            let entry = String::from_utf8_lossy(entry);
+            if !entry.trim_end().ends_with('n') {
+                continue;
+            }
+            total += 1;
+            let offset = entry
+                .split_ascii_whitespace()
+                .next()
+                .and_then(|part| part.parse::<usize>().ok());
+            // Some writers mark unused objects this way. Nothing can live at offset zero.
+            if offset == Some(0) {
+                total -= 1;
+                continue;
+            }
+            if offset.is_some_and(|offset| pdf_object_at(data, offset)) {
+                good += 1;
+            } else if report.breaks.is_empty() {
+                report.breaks.push(offset.unwrap_or(at) as u64);
+            }
+        }
+        position = entries_at + count * PDF_XREF_LINE_BYTES;
+        if position >= data.len() {
+            break;
+        }
+    }
+    report.units = total;
+    if total == 0 {
+        // A table this walker cannot read says nothing about the file, either way.
+        report.units = 1;
+        report.valid_bytes = if report.reached_end {
+            data.len() as u64
+        } else {
+            0
+        };
+        report.notes.push(
+            "Its cross-reference table could not be read, so only the two ends were checked."
+                .into(),
+        );
+        return report.finish(data.len());
+    }
+    report.valid_bytes = (good as f64 / total as f64 * data.len() as f64) as u64;
+    report.finish(data.len())
+}
+
+/// Older Word, Excel and PowerPoint files hold their own allocation table. Wrong clusters
+/// in that table show as entries pointing outside the file.
+pub fn verify_ole(data: &[u8]) -> VerifyReport {
+    let mut report = VerifyReport {
+        format: "ole".into(),
+        ..VerifyReport::default()
+    };
+    if !data.starts_with(OLE_SIGNATURE) || data.len() < OLE_HEADER_BYTES {
+        report.breaks.push(0);
+        report
+            .notes
+            .push("It does not start with an Office document header.".into());
+        return report.finish(data.len());
+    }
+    let shift = le16(data, 30);
+    if shift != 9 && shift != 12 {
+        report.breaks.push(30);
+        report.notes.push("Its sector size is not valid.".into());
+        return report.finish(data.len());
+    }
+    let sector = 1usize << shift;
+    let sectors = (data.len() / sector) as u32 + 1;
+    let (mut total, mut good) = (0u64, 0u64);
+    for slot in 0..109 {
+        let at = OLE_DIFAT_START + slot * 4;
+        let fat_sector = le32(data, at);
+        if fat_sector >= OLE_FREE_ENTRIES_FROM {
+            continue;
+        }
+        let start = (fat_sector as usize + 1) * sector;
+        let Some(table) = data.get(start..start + sector) else {
+            report.breaks.push(at as u64);
+            report
+                .notes
+                .push("Its allocation table lies outside the file.".into());
+            return report.finish(data.len());
+        };
+        for entry in table.chunks_exact(4) {
+            let value = u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]);
+            total += 1;
+            if value >= OLE_FREE_ENTRIES_FROM || value < sectors {
+                good += 1;
+            } else if report.breaks.is_empty() {
+                report.breaks.push(start as u64);
+            }
+        }
+    }
+    report.units = total;
+    report.reached_end = total > 0;
+    let share = if total == 0 {
+        0.0
+    } else {
+        good as f64 / total as f64
+    };
+    report.valid_bytes = (share * data.len() as f64) as u64;
+    report
+        .notes
+        .push("Only its allocation table was checked, not the document inside.".into());
+    report.finish(data.len())
+}
+
+/// A text file should read as text all the way through. A wrong cluster is usually
+/// binary, or empty, and shows as a stretch that is not.
+pub fn verify_text(data: &[u8]) -> VerifyReport {
+    let mut report = VerifyReport {
+        format: "text".into(),
+        ..VerifyReport::default()
+    };
+    let wide = data.starts_with(b"\xff\xfe") || data.starts_with(b"\xfe\xff");
+    for (index, window) in data.chunks(TEXT_WINDOW_BYTES).enumerate() {
+        report.units += 1;
+        let printable = window
+            .iter()
+            .filter(|&&byte| (wide && byte == 0) || byte >= 32 || matches!(byte, 9 | 10 | 12 | 13))
+            .count();
+        if printable as f64 / window.len() as f64 >= MIN_PRINTABLE_SHARE {
+            report.valid_bytes += window.len() as u64;
+        } else if report.breaks.is_empty() {
+            report.breaks.push((index * TEXT_WINDOW_BYTES) as u64);
+        }
+    }
+    report.reached_end = true;
+    report.finish(data.len())
+}
 
 fn le16(data: &[u8], offset: usize) -> usize {
     usize::from(u16::from_le_bytes([data[offset], data[offset + 1]]))

@@ -106,6 +106,7 @@ pub struct Status {
     pub scan_error: Option<String>,
     pub summary: Option<MapSummary>,
     pub copy: CopyStatus,
+    pub file_tests: crate::filetest::FileTestStatus,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -182,6 +183,15 @@ pub struct Session {
     rate: Mutex<RateSample>,
     pub(crate) copy: CopyControl,
     pub(crate) browse: Mutex<crate::browse::BrowseCache>,
+    pub(crate) file_tests: FileTestControl,
+}
+
+#[derive(Default)]
+pub(crate) struct FileTestControl {
+    pub(crate) last_viewed: std::sync::atomic::AtomicU64,
+    pub(crate) status: Mutex<crate::filetest::FileTestStatus>,
+    pub(crate) stop: AtomicBool,
+    pub(crate) thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// `/dev/rdisk12s2` becomes `/dev/rdisk12`. Anything else has no whole-disk parent.
@@ -324,6 +334,7 @@ impl Session {
             }),
             copy: CopyControl::default(),
             browse: Mutex::default(),
+            file_tests: FileTestControl::default(),
         }))
     }
 
@@ -421,6 +432,7 @@ impl Session {
                 .clone(),
             summary,
             copy: self.copy_status()?,
+            file_tests: self.file_test_status()?,
         })
     }
 

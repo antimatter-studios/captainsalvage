@@ -1632,6 +1632,362 @@ fn the_media_port_needs_its_token_and_serves_exact_ranges() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+fn encoded_image(format: image::ImageFormat) -> Vec<u8> {
+    let mut data = Vec::new();
+    image::RgbImage::from_fn(64, 64, |x, y| image::Rgb([x as u8 * 3, y as u8 * 3, 90]))
+        .write_to(&mut std::io::Cursor::new(&mut data), format)
+        .expect("encode");
+    data
+}
+
+#[test]
+fn a_whole_image_passes_and_a_damaged_one_fails_with_a_reason() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    let png = encoded_image(image::ImageFormat::Png);
+    let good = judge("a.png", &png);
+    assert_eq!(good.outcome, OUTCOME_PASSED, "{}", good.note);
+    assert_eq!(good.format, "png");
+    let jpeg = encoded_image(image::ImageFormat::Jpeg);
+    assert_eq!(judge("a.jpg", &jpeg).outcome, OUTCOME_PASSED);
+
+    // A wrong cluster in the middle, as a bad chain would leave.
+    let mut hit = png.clone();
+    let middle = hit.len() / 2;
+    hit[middle..middle + 20].fill(0xaa);
+    let bad = judge("a.png", &hit);
+    assert_eq!(bad.outcome, OUTCOME_DAMAGED);
+    assert!(bad.note.contains("Tested:"), "{}", bad.note);
+
+    let noise = judge("a.jpg", &vec![0x5a; 4096]);
+    assert_eq!(noise.outcome, OUTCOME_DAMAGED);
+}
+
+/// A JPEG's outline, by hand, so its image data can be exactly what a test needs.
+fn sample_jpeg(scan: &[u8], after: &[u8]) -> Vec<u8> {
+    let mut data = b"\xff\xd8\xff\xdb\x00\x04\x00\x00\xff\xda\x00\x02".to_vec();
+    data.extend_from_slice(scan);
+    data.extend_from_slice(b"\xff\xd9");
+    data.extend_from_slice(after);
+    data
+}
+
+#[test]
+fn a_jpeg_walk_catches_what_a_wrong_cluster_leaves() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    let image_data: Vec<u8> = (0..60_000u32).map(|n| (n % 251) as u8 + 1).collect();
+    assert_eq!(
+        judge("a.jpg", &sample_jpeg(&image_data, b"")).outcome,
+        OUTCOME_PASSED
+    );
+
+    // A wrong cluster of other compressed data has stray markers that lead nowhere.
+    let mut foreign = image_data.clone();
+    foreign[30_000..30_004].copy_from_slice(b"\xff\xe1\x00\x10");
+    assert_eq!(
+        judge("a.jpg", &sample_jpeg(&foreign, b"")).outcome,
+        OUTCOME_DAMAGED
+    );
+
+    // A cluster nothing was ever written to.
+    let mut empty = image_data.clone();
+    empty[20_000..30_000].fill(0);
+    let hit = judge("a.jpg", &sample_jpeg(&empty, b""));
+    assert_eq!(hit.outcome, OUTCOME_DAMAGED);
+    assert!(hit.first_break.is_some());
+
+    // Restart markers must count up, so a piece from elsewhere shows.
+    let mut in_order = image_data.clone();
+    in_order[1_000..1_002].copy_from_slice(b"\xff\xd0");
+    in_order[2_000..2_002].copy_from_slice(b"\xff\xd1");
+    assert_eq!(
+        judge("a.jpg", &sample_jpeg(&in_order, b"")).outcome,
+        OUTCOME_PASSED
+    );
+    let mut out_of_order = in_order.clone();
+    out_of_order[2_000..2_002].copy_from_slice(b"\xff\xd5");
+    assert_eq!(
+        judge("a.jpg", &sample_jpeg(&out_of_order, b"")).outcome,
+        OUTCOME_DAMAGED
+    );
+
+    // What real cameras add after the end is not damage.
+    let padded = sample_jpeg(&image_data, &vec![0u8; 50_000]);
+    assert_eq!(judge("a.jpg", &padded).outcome, OUTCOME_PASSED);
+    let second = sample_jpeg(&image_data, &sample_jpeg(&image_data, b""));
+    assert_eq!(judge("a.jpg", &second).outcome, OUTCOME_PASSED);
+
+    // Cut short, or followed by something that is not padding, it fails.
+    let whole = sample_jpeg(&image_data, b"");
+    assert_eq!(
+        judge("a.jpg", &whole[..whole.len() / 2]).outcome,
+        OUTCOME_DAMAGED
+    );
+    let trailing = sample_jpeg(&image_data, &vec![0x41u8; 50_000]);
+    assert_eq!(judge("a.jpg", &trailing).outcome, OUTCOME_DAMAGED);
+}
+
+#[test]
+fn image_types_with_no_walker_are_judged_by_decoding() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    let gif = encoded_image(image::ImageFormat::Gif);
+    assert_eq!(judge("a.gif", &gif).outcome, OUTCOME_PASSED);
+    assert_eq!(
+        judge("a.gif", &gif[..gif.len() / 3]).outcome,
+        OUTCOME_DAMAGED
+    );
+}
+
+/// A small PDF with a real cross-reference table, built with correct offsets.
+fn sample_pdf() -> Vec<u8> {
+    let mut data = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for number in 1..=3 {
+        offsets.push(data.len());
+        data.extend_from_slice(format!("{number} 0 obj\n<< /N {number} >>\nendobj\n").as_bytes());
+    }
+    let table = data.len();
+    data.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+    for offset in offsets {
+        data.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    data.extend_from_slice(
+        format!("trailer\n<< /Size 4 >>\nstartxref\n{table}\n%%EOF\n").as_bytes(),
+    );
+    data
+}
+
+#[test]
+fn a_pdf_is_checked_against_its_own_table_of_objects() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    let pdf = sample_pdf();
+    let good = judge("a.pdf", &pdf);
+    assert_eq!(good.outcome, OUTCOME_PASSED, "{}", good.note);
+    assert_eq!(good.format, "pdf");
+
+    let mut hit = pdf.clone();
+    hit[9..30].fill(b'#');
+    assert_eq!(judge("a.pdf", &hit).outcome, OUTCOME_DAMAGED);
+    assert_eq!(judge("a.pdf", b"not a pdf at all").outcome, OUTCOME_DAMAGED);
+    assert_eq!(
+        judge("a.pdf", &pdf[..pdf.len() - 30]).outcome,
+        OUTCOME_DAMAGED
+    );
+}
+
+#[test]
+fn a_pdf_with_unused_entries_or_an_unreadable_table_is_not_called_damaged() {
+    use lens_core::filetest::{judge, OUTCOME_PASSED};
+    let pdf = String::from_utf8(sample_pdf()).expect("text");
+    // Some writers mark unused objects as in use at offset zero. Same length as a free
+    // entry, so the table stays where the file says it is.
+    let zeroed = pdf.replacen("0000000000 65535 f ", "0000000000 00000 n ", 1);
+    let good = judge("a.pdf", zeroed.as_bytes());
+    assert_eq!(good.outcome, OUTCOME_PASSED, "{}", good.note);
+
+    // A table this check cannot read says nothing about the file.
+    let odd = pdf.replace("xref\n0 4\n", "xref\nno table\n");
+    let start = odd.find("xref").expect("table");
+    let end = odd.find("trailer").expect("trailer");
+    let padded = format!("{}{}", &odd[..start + 4], &odd[end..]);
+    let fixed = padded.replace(
+        &format!("startxref\n{}", pdf.find("xref").expect("table")),
+        &format!("startxref\n{start}"),
+    );
+    let unread = judge("a.pdf", fixed.as_bytes());
+    assert_eq!(unread.outcome, OUTCOME_PASSED, "{}", unread.note);
+}
+
+#[test]
+fn a_file_is_judged_by_its_contents_before_its_name() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED, OUTCOME_UNTESTED};
+    // A macOS alias named as a picture was found on a real disk. It is not damaged.
+    let alias = judge("holiday.png", b"book\0\0\0\0mark\0\0\0\0 target");
+    assert_eq!(alias.outcome, OUTCOME_UNTESTED);
+    assert_eq!(alias.format, "alias");
+    let companion = judge("._holiday.png", b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X");
+    assert_eq!(companion.outcome, OUTCOME_UNTESTED);
+    assert_eq!(companion.format, "companion");
+
+    // A renamed file is judged as what it really is.
+    let renamed = judge("a.png", &encoded_image(image::ImageFormat::Jpeg));
+    assert_eq!(renamed.outcome, OUTCOME_PASSED, "{}", renamed.note);
+    assert_eq!(renamed.format, "jpeg");
+
+    // Several older formats use .doc, one was plain text on a real disk, and none of that is damage.
+    assert_eq!(
+        judge("old.doc", b"This document was moved").outcome,
+        OUTCOME_UNTESTED
+    );
+    // A name that promises a checkable format, over bytes that are nothing like it, is.
+    assert_eq!(
+        judge("a.png", b"not a picture at all").outcome,
+        OUTCOME_DAMAGED
+    );
+}
+
+#[test]
+fn forgetting_results_puts_the_old_score_back() {
+    let (engine, session, dir) = engine_with_volume("forget");
+    let id = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    call(&engine, "file_tests_start", json!({"groups": ["photos"]}));
+    wait_for_file_tests(&session);
+    assert_eq!(
+        call(&engine, "entry", json!({"id": id}))["entry"]["verdict"],
+        "tested-bad"
+    );
+
+    let forgotten = call(&engine, "file_tests_forget", json!({"outcome": "damaged"}));
+    assert!(forgotten["forgotten"].as_u64().expect("count") >= 1);
+    assert_eq!(
+        call(&engine, "entry", json!({"id": id}))["entry"]["verdict"],
+        "likely-intact"
+    );
+    assert!(call(&engine, "file_test", json!({"id": id})).is_null());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_office_file_is_checked_against_its_own_allocation_table() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    let mut doc = vec![0u8; 512 * 4];
+    doc[..8].copy_from_slice(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1");
+    doc[30] = 9;
+    doc[76..512].fill(0xff);
+    doc[76..80].copy_from_slice(&0u32.to_le_bytes());
+    doc[512..1024].fill(0xff);
+    let good = judge("a.doc", &doc);
+    assert_eq!(good.outcome, OUTCOME_PASSED, "{}", good.note);
+    assert_eq!(good.format, "ole");
+
+    let mut hit = doc.clone();
+    hit[512..1024].fill(0x77);
+    assert_eq!(judge("a.doc", &hit).outcome, OUTCOME_DAMAGED);
+}
+
+#[test]
+fn a_text_file_with_a_binary_stretch_fails() {
+    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    let text = "ordinary words, line after line.\n"
+        .repeat(1000)
+        .into_bytes();
+    assert_eq!(judge("a.txt", &text).outcome, OUTCOME_PASSED);
+    let mut hit = text.clone();
+    hit[8192..16384].fill(0);
+    assert_eq!(judge("a.txt", &hit).outcome, OUTCOME_DAMAGED);
+}
+
+#[test]
+fn a_file_type_with_no_test_changes_nothing() {
+    use lens_core::filetest::{judge, OUTCOME_UNTESTED};
+    assert_eq!(judge("a.iso", b"anything").outcome, OUTCOME_UNTESTED);
+}
+
+fn wait_for_file_tests(session: &Session) -> lens_core::filetest::FileTestStatus {
+    loop {
+        let status = session.file_test_status().expect("status");
+        if status.state != "running" {
+            return status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn background_tests_change_the_score_and_survive_a_rebuild() {
+    let (engine, session, dir) = engine_with_volume("filetests");
+    let before = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0].clone();
+    assert_eq!(before["verdict"], "likely-intact");
+    let id = before["id"].as_i64().expect("id");
+
+    let started = call(&engine, "file_tests_start", json!({"groups": ["photos"]}));
+    assert!(started["total"].as_u64().expect("total") >= 1);
+    let status = wait_for_file_tests(&session);
+    assert_eq!(status.state, "finished", "{:?}", status.error);
+    assert!(status.damaged >= 1);
+
+    // The test volume's photo holds noise, so whatever its entry said, it has failed.
+    let after = call(&engine, "entry", json!({"id": id}))["entry"].clone();
+    assert_eq!(after["verdict"], "tested-bad");
+    assert!(after["confidence"].as_f64().expect("score") <= 0.1);
+    assert!(after["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("Tested:"));
+    let test = call(&engine, "file_test", json!({"id": id}));
+    assert_eq!(test["outcome"], "damaged");
+    assert_eq!(test["sha256"].as_str().expect("hash").len(), 64);
+
+    // A rebuild works everything out again, and the result still stands.
+    session.resolve().expect("resolve");
+    let rebuilt = call(&engine, "entry", json!({"id": id}))["entry"].clone();
+    assert_eq!(rebuilt["verdict"], "tested-bad");
+
+    // A second run has nothing left to do in that group.
+    let again = call(&engine, "file_tests_start", json!({"groups": ["photos"]}));
+    assert_eq!(again["total"], 0);
+    wait_for_file_tests(&session);
+
+    // A pass, stored by hand, lifts a file that the map could not be sure of.
+    let track = call(&engine, "search", json!({"query": "song.mp3"}))["rows"][0].clone();
+    let track_id = track["id"].as_i64().expect("id");
+    session
+        .with_database(|database| {
+            database.save_file_tests(&[lens_core::filetest::FileTest {
+                id: track_id,
+                first_cluster: track["firstCluster"].as_u64().expect("cluster") as u32,
+                length: track["length"].as_u64().expect("length"),
+                outcome: "passed".into(),
+                format: "mp3".into(),
+                valid_fraction: Some(1.0),
+                first_break: None,
+                decoded: None,
+                note: "Tested: its MP3 structure is whole.".into(),
+                sha256: None,
+                tested_at_millis: 1,
+            }])
+        })
+        .expect("save");
+    session.resolve().expect("resolve");
+    let lifted = call(&engine, "entry", json!({"id": track_id}))["entry"].clone();
+    assert_eq!(lifted["verdict"], "tested-good");
+    assert!(lifted["confidence"].as_f64().expect("score") >= 0.99);
+
+    // The next run counts it with the rest.
+    call(&engine, "file_tests_start", json!({"groups": ["photos"]}));
+    assert!(wait_for_file_tests(&session).passed >= 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_test_of_old_clusters_does_not_apply_to_a_changed_entry() {
+    let (engine, session, dir) = engine_with_volume("old-test");
+    let row = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0].clone();
+    let id = row["id"].as_i64().expect("id");
+    session
+        .with_database(|database| {
+            database.save_file_tests(&[lens_core::filetest::FileTest {
+                id,
+                first_cluster: 999_999,
+                length: 1,
+                outcome: "damaged".into(),
+                format: "jpeg".into(),
+                valid_fraction: Some(0.0),
+                first_break: Some(0),
+                decoded: Some(false),
+                note: "Tested: old result.".into(),
+                sha256: None,
+                tested_at_millis: 1,
+            }])
+        })
+        .expect("save");
+    session.resolve().expect("resolve");
+    let after = call(&engine, "entry", json!({"id": id}))["entry"].clone();
+    assert_eq!(after["verdict"], "likely-intact");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn a_resumed_copy_only_needs_space_for_what_is_not_there_yet() {
     let (engine, session, dir) = engine_with_volume("resume-space");

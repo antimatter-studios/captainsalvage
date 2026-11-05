@@ -377,6 +377,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .recovery-table { width: 100%; border-collapse: collapse; }
 .recovery-table td { padding: 2.5px 8px 2.5px 0; }
 .recovery-table td:first-child { width: 18px; }
+.recovery-tests { margin-top: 20px; }
+.recovery-tests h3 { font-size: 13px; font-weight: 650; margin: 0 0 6px; }
+.recovery-tests .recovery-table td:first-child { width: auto; }
 .recovery-steps { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 7px; color: var(--ink-2); }
 .recovery-steps li { display: flex; gap: 9px; align-items: center; }
 .recovery-steps svg { color: var(--accent); flex: none; }

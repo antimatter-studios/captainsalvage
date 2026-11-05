@@ -102,7 +102,12 @@ async fn read_raw(
         return Err(format!("read of {length} bytes is over the limit"));
     }
     let engine = state.engine.clone();
-    let bytes = blocking(move || engine.session()?.read(Scope::Partition, offset, length)).await?;
+    let bytes = blocking(move || {
+        let session = engine.session()?;
+        session.note_viewing();
+        session.read(Scope::Partition, offset, length)
+    })
+    .await?;
     Ok(Response::new(bytes))
 }
 

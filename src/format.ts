@@ -48,6 +48,8 @@ export function stamp(value: string | null): string {
 
 export const VERDICT_LABEL: Record<string, string> = {
   live: "Visible now",
+  "tested-good": "Tested good",
+  "tested-bad": "Failed test",
   "likely-intact": "Likely intact",
   plausible: "Plausible",
   partial: "Partial",

@@ -13,9 +13,10 @@ use crate::exfat::FIRST_CLUSTER;
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
     OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
-    VERDICT_DAMAGED, VERDICT_EMPTY, VERDICT_FOLDER, VERDICT_FOLDER_EMPTY, VERDICT_FOLDER_MISSING,
-    VERDICT_INTACT, VERDICT_LIVE, VERDICT_OVERWRITTEN, VERDICT_PARTIAL, VERDICT_PLAUSIBLE,
-    VERDICT_RESIDUE,
+    TESTED_BAD_CONFIDENCE, TESTED_GOOD_CONFIDENCE, VERDICT_DAMAGED, VERDICT_EMPTY, VERDICT_FOLDER,
+    VERDICT_FOLDER_EMPTY, VERDICT_FOLDER_MISSING, VERDICT_INTACT, VERDICT_LIVE,
+    VERDICT_OVERWRITTEN, VERDICT_PARTIAL, VERDICT_PLAUSIBLE, VERDICT_RESIDUE, VERDICT_TESTED_BAD,
+    VERDICT_TESTED_GOOD,
 };
 use crate::volume::{StreamClusters, Volume};
 use crate::workspace::Workspace;
@@ -195,10 +196,29 @@ impl Streams<'_> {
     }
 }
 
+/// A test of the file's real bytes outranks everything the map could work out by itself.
+fn apply_file_test(mut assessment: Assessment, test: &crate::filetest::FileTest) -> Assessment {
+    if test.outcome == crate::filetest::OUTCOME_PASSED {
+        if assessment.verdict != VERDICT_LIVE {
+            assessment.verdict = VERDICT_TESTED_GOOD;
+        }
+        assessment.confidence = assessment.confidence.max(TESTED_GOOD_CONFIDENCE);
+    } else if test.outcome == crate::filetest::OUTCOME_DAMAGED {
+        assessment.verdict = VERDICT_TESTED_BAD;
+        assessment.confidence = assessment.confidence.min(TESTED_BAD_CONFIDENCE);
+    } else {
+        return assessment;
+    }
+    assessment.reason = format!("{} {}", test.note, assessment.reason);
+    assessment
+}
+
 fn counts_as_file(verdict: &str) -> bool {
     matches!(
         verdict,
         VERDICT_LIVE
+            | VERDICT_TESTED_GOOD
+            | VERDICT_TESTED_BAD
             | VERDICT_INTACT
             | VERDICT_PLAUSIBLE
             | VERDICT_PARTIAL
@@ -498,6 +518,11 @@ impl MapDb {
         let entropy = workspace.read_cluster_map(&workspace.entropy(), count);
         let params = self.params()?;
         let overlays = self.overlays(true)?;
+        let file_tests: HashMap<i64, crate::filetest::FileTest> = self
+            .all_file_tests()?
+            .into_iter()
+            .map(|test| (test.id, test))
+            .collect();
         let mut sets = self.load_sets()?;
         let corrections = apply_entry_overlays(&mut sets, &overlays);
         let overrides: HashMap<i64, Vec<u32>> = overlays
@@ -714,7 +739,12 @@ impl MapDb {
                 )
             } else {
                 let (stream, assumed) = streams.claim(set);
-                let assessment = context.assess_file(set, &stream, assumed, node_kind);
+                let mut assessment = context.assess_file(set, &stream, assumed, node_kind);
+                if let Some(test) = file_tests.get(&set.id).filter(|test| {
+                    test.first_cluster == set.first_cluster && test.length == set.length
+                }) {
+                    assessment = apply_file_test(assessment, test);
+                }
                 let scaled = (assessment.confidence * CONFIDENCE_SCALE)
                     .round()
                     .min(CONFIDENCE_SCALE) as u8;
@@ -729,7 +759,10 @@ impl MapDb {
                     let total = totals.entry(node).or_default();
                     total.files += 1;
                     total.bytes += set.length;
-                    if matches!(assessment.verdict, VERDICT_INTACT | VERDICT_PLAUSIBLE) {
+                    if matches!(
+                        assessment.verdict,
+                        VERDICT_TESTED_GOOD | VERDICT_INTACT | VERDICT_PLAUSIBLE
+                    ) {
                         total.intact_files += 1;
                         total.intact_bytes += set.length;
                     }

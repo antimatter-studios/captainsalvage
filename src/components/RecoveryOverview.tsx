@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { call, type Overview, type Status } from "../api";
+import { call, type FileTestStatus, type Overview, type Status } from "../api";
 import { bytes, count, percent } from "../format";
 import { legendFor } from "../palette";
 import { Icon } from "./icons";
@@ -15,8 +15,66 @@ interface RegionStats {
   };
 }
 
+/** Starts, pauses and reports the background file tests. */
+function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const running = tests.state === "running";
+  const start = (groups: string[]) => {
+    setError(null);
+    call("file_tests_start", { groups }).then(onChanged).catch((reason) => setError(String(reason)));
+  };
+  const tested = tests.passed + tests.damaged;
+  return (
+    <div className="recovery-tests">
+      <h3>File tests</h3>
+      {tested > 0 ? (
+        <table className="recovery-table">
+          <tbody>
+            <tr>
+              <td className="tone-good">Passed</td>
+              <td className="numeric">{count(tests.passed)}</td>
+            </tr>
+            <tr>
+              <td className="tone-critical">Damaged</td>
+              <td className="numeric">{count(tests.damaged)}</td>
+            </tr>
+            {tests.untested > 0 && (
+              <tr>
+                <td className="muted">No test for this type yet</td>
+                <td className="numeric muted">{count(tests.untested)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">Scores are estimates until a file's real bytes are tested. This reads each file once, at low priority, and writes nothing to the disk. You can pause at any time.</p>
+      )}
+      {running && (
+        <div className="copy-progress">
+          <div className="scan-bar" role="progressbar" aria-valuenow={tests.total ? Math.round((tests.done / tests.total) * 100) : 0} aria-valuemin={0} aria-valuemax={100}>
+            <div className="scan-fill" style={{ width: `${tests.total ? (tests.done / tests.total) * 100 : 0}%` }} />
+          </div>
+          <div className="muted">Testing {count(tests.done)} of {count(tests.total)}, {bytes(tests.bytesDone)} read</div>
+        </div>
+      )}
+      <div className="detail-actions">
+        {running ? (
+          <button onClick={() => call("file_tests_stop").then(onChanged)}>Pause</button>
+        ) : (
+          <>
+            <button className="primary" onClick={() => start(["photos", "documents"])}>Test photos and documents</button>
+            <button onClick={() => start(["music", "archives"])}>Test music and archives</button>
+          </>
+        )}
+      </div>
+      {tests.error && <p className="warn">{tests.error}</p>}
+      {error && <p className="warn">{error}</p>}
+    </div>
+  );
+}
+
 /** The first thing on screen: what has been found so far, before any selection. */
-export function RecoveryOverview({ overview, status, revision }: { overview: Overview; status: Status | null; revision: number }) {
+export function RecoveryOverview({ overview, status, revision, onChanged }: { overview: Overview; status: Status | null; revision: number; onChanged: () => void }) {
   const [stats, setStats] = useState<RegionStats | null>(null);
   useEffect(() => {
     let current = true;
@@ -28,7 +86,7 @@ export function RecoveryOverview({ overview, status, revision }: { overview: Ove
 
   const clusterSize = overview.geometry.clusterSize;
   const verdicts = status?.summary?.verdicts ?? [];
-  const named = verdicts.filter((item) => item.verdict === "likely-intact" || item.verdict === "plausible");
+  const named = verdicts.filter((item) => item.verdict === "tested-good" || item.verdict === "likely-intact" || item.verdict === "plausible");
   const namedBytes = named.reduce((total, item) => total + item.bytes, 0);
   const namedFiles = named.reduce((total, item) => total + item.count, 0);
   const scanned = status ? status.scan.clustersScanned / status.scan.totalClusters : 0;
@@ -82,6 +140,8 @@ export function RecoveryOverview({ overview, status, revision }: { overview: Ove
             </table>
           </>
         )}
+
+        {status && <FileTests tests={status.fileTests} onChanged={onChanged} />}
 
         <ul className="recovery-steps">
           <li><Icon name="folder" /> Open a lost folder in the sidebar to see what survived.</li>

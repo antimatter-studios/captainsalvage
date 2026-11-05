@@ -571,6 +571,7 @@ impl MediaServer {
 
     fn serve_file(&self, id: i64, headers: &[Header]) -> Result<Answer> {
         let session = self.engine.session()?;
+        session.note_viewing();
         let (total, _) = session.entry_total(id)?;
         let range = headers
             .iter()
