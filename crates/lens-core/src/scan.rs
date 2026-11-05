@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 
 /// Enough to finish a maximum-size entry set (19 slots) that starts in the last
 /// slot of a chunk and continues into the next cluster.
+const LOCK_ATTEMPTS: u32 = 20;
+const LOCK_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
 const LOOKAHEAD_BYTES: u64 = 1024;
 const DEFAULT_CHUNK_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -154,10 +156,22 @@ pub fn run_scan(
         .write(true)
         .truncate(false)
         .open(workspace.lock())?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => bail!("another scan is already running on this workspace"),
-        Err(TryLockError::Error(error)) => return Err(error.into()),
+    // A child process being started can hold a copy of this lock for a moment, until it
+    // replaces itself with its program. The app starts ffmpeg, so that alone must not
+    // read as another scan running.
+    let mut attempts = 0;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) if attempts < LOCK_ATTEMPTS => {
+                attempts += 1;
+                std::thread::sleep(LOCK_RETRY_WAIT);
+            }
+            Err(TryLockError::WouldBlock) => {
+                bail!("another scan is already running on this workspace")
+            }
+            Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
     }
 
     let mut database = MapDb::open(&workspace.database())?;

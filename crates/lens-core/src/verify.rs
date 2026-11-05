@@ -294,13 +294,16 @@ pub fn verify_jpeg(data: &[u8]) -> VerifyReport {
                 continue;
             }
             report.reached_end = true;
-            // Padding after the end is harmless, and so does not count against the file.
-            let padding = data[position..]
-                .iter()
-                .all(|byte| matches!(byte, 0x00 | 0xFF));
-            if padding {
-                position = data.len();
+            // The picture is complete here. Cameras and phones often add more after it,
+            // such as a preview or a motion clip, and none of that can harm the picture.
+            let extra = &data[position..];
+            if !extra.iter().all(|byte| matches!(byte, 0x00 | 0xFF)) {
+                report.notes.push(format!(
+                    "{} bytes follow the end of the image.",
+                    extra.len()
+                ));
             }
+            position = data.len();
             break;
         }
         if marker == 0xFF {

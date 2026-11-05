@@ -1716,14 +1716,16 @@ fn a_jpeg_walk_catches_what_a_wrong_cluster_leaves() {
     let second = sample_jpeg(&image_data, &sample_jpeg(&image_data, b""));
     assert_eq!(judge("a.jpg", &second).outcome, OUTCOME_PASSED);
 
-    // Cut short, or followed by something that is not padding, it fails.
+    // Real cameras also add about 145 KB of their own data, and phones a motion clip.
+    let camera_data = sample_jpeg(&image_data, &vec![0x41u8; 50_000]);
+    assert_eq!(judge("a.jpg", &camera_data).outcome, OUTCOME_PASSED);
+
+    // Cut short, it fails.
     let whole = sample_jpeg(&image_data, b"");
     assert_eq!(
         judge("a.jpg", &whole[..whole.len() / 2]).outcome,
         OUTCOME_DAMAGED
     );
-    let trailing = sample_jpeg(&image_data, &vec![0x41u8; 50_000]);
-    assert_eq!(judge("a.jpg", &trailing).outcome, OUTCOME_DAMAGED);
 }
 
 #[test]
