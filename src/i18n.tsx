@@ -11,12 +11,24 @@ import fr from "./locales/fr";
  */
 export type Language = "en" | "fr" | "de" | "es";
 
-export const LANGUAGES: { id: Language; label: string; name: string }[] = [
-  { id: "en", label: "EN", name: "English" },
-  { id: "fr", label: "FR", name: "Français" },
-  { id: "de", label: "DE", name: "Deutsch" },
-  { id: "es", label: "ES", name: "Español" },
+/** Each language with its short label, its own name, and its name in English for Claude. */
+export const LANGUAGES: { id: Language; label: string; name: string; english: string }[] = [
+  { id: "en", label: "EN", name: "English", english: "English" },
+  { id: "fr", label: "FR", name: "Français", english: "French" },
+  { id: "de", label: "DE", name: "Deutsch", english: "German" },
+  { id: "es", label: "ES", name: "Español", english: "Spanish" },
 ];
+
+/**
+ * A question for Claude, told the person's language when Claude has not been told it yet in
+ * this conversation. Claude keeps it for the rest of the session, so it is said once, and again
+ * only after the person switches. English needs no telling at the start.
+ */
+export function questionFor(text: string, language: Language, told: Language | null): string {
+  if (told === language || (told === null && language === "en")) return text;
+  const name = LANGUAGES.find((item) => item.id === language)?.english ?? "English";
+  return `I speak ${name}, so please answer in ${name}.\n\n${text}`;
+}
 
 const LOCALES: Record<Language, string> = { en: "en-US", fr: "fr-FR", de: "de-DE", es: "es-ES" };
 const DICTIONARIES: Record<Language, Record<string, string>> = { en: {}, fr, de, es };

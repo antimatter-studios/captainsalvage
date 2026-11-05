@@ -191,6 +191,11 @@ export const ENGINE_TEXT: string[] = [
   "the image decoder gave up on this data",
   "too large to sample",
   "the MCP server is not running, so Claude has no tools",
+  "the claude command was not found.",
+  "Install Claude Code, then try again.",
+  "Claude is still answering.",
+  "Stop it first, or wait for it to finish.",
+  "starting claude",
 ];
 
 /** Errors macOS itself gives, which the engine passes on. They are not in the Rust source. */
