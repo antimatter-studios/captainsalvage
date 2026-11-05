@@ -6,23 +6,24 @@ come from git history: this repository squashes every pull request into one comm
 whose subject is the pull request's title, ending in (#number).
 
     scripts/release.py notes [--from REF] [--to REF]   print the notes for a range
-    scripts/release.py sync                            rewrite the changelog from the tags
-    scripts/release.py prepare VERSION                 name a version, such as 1.0.0
-    scripts/release.py next                            print the next version, for the pipeline
+    scripts/release.py sync                            refresh [Unreleased] and the README
+    scripts/release.py prepare [VERSION]               start a release: bump and move notes
+    scripts/release.py check v0.2.0                    fail unless a tag matches the files
     scripts/release.py version                         print this build's version
     scripts/release.py build                           build the app with that version
 
-Version numbers follow what was merged, so nobody has to decide when to release. A new
-feature raises the minor number and resets the patch. A fix raises the patch. Anything
-else, such as documentation, releases nothing. Several merges at once take the largest
-of these, once. A version is never written down for this: it is worked out from the tags
-and the commits since the last one, so a build of the same code always has the same number.
+Version numbers follow what was merged since the last tag. A new feature raises the minor
+number and resets the patch. A fix raises the patch. Anything else moves nothing. Several
+merges take the largest of these, once. So prepare picks the number, and a build shows the
+number that code would be released as.
 
-Going to 1.0.0 is a deliberate choice. Name it with prepare, and merge that as a pull
-request: a version in the manifests that is above the last tag is released as it is.
+A release is cut on purpose: prepare it, merge that as a pull request, then tag the merge on
+main and push the tag. The tag is what starts the pipeline, and the pipeline never makes one.
+Going to 1.0.0 is a deliberate choice: name it to prepare.
 """
 
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -231,6 +232,10 @@ def pulls_between(start, end):
     return [pull for pull in pulls if pull]
 
 
+def read_sections():
+    return split_sections(CHANGELOG.read_text()) if CHANGELOG.exists() else []
+
+
 def write_all(sections):
     CHANGELOG.write_text(join_changelog(sections))
     README.write_text(replace_readme_block(README.read_text(), readme_block(sections)))
@@ -240,21 +245,6 @@ def unreleased_body():
     return render_notes(pulls_between(latest_tag(), "HEAD")).strip()
 
 
-def tags_newest_first():
-    return git("tag", "--list", "v[0-9]*", "--merged", "HEAD", "--sort=-v:refname").split()
-
-
-def released_sections():
-    """Every release, from the tags, so the file can be rebuilt at any time."""
-    tags = tags_newest_first()
-    sections = []
-    for index, tag in enumerate(tags):
-        before = tags[index + 1] if index + 1 < len(tags) else None
-        date = git("log", "-1", "--format=%as", tag)
-        sections.append((f"[{tag.removeprefix('v')}] — {date}", render_notes(pulls_between(before, tag)).strip()))
-    return sections
-
-
 def command_notes(args):
     end = args.to
     start = args.start if args.start else previous_tag(end)
@@ -262,13 +252,8 @@ def command_notes(args):
 
 
 def command_sync(_):
-    write_all([(UNRELEASED, unreleased_body()), *released_sections()])
-
-
-def command_next(_):
-    version, release = current_version()
-    print(f"version={version}")
-    print(f"release={'true' if release else 'false'}")
+    released = [item for item in read_sections() if item[0] != UNRELEASED]
+    write_all([(UNRELEASED, unreleased_body()), *released])
 
 
 def command_version(_):
@@ -283,13 +268,44 @@ def command_build(_):
 
 
 def command_prepare(args):
-    version = args.version.removeprefix("v")
+    if args.version:
+        version = args.version.removeprefix("v")
+    else:
+        version, release = current_version()
+        if not release:
+            raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
+    released = [item for item in read_sections() if item[0] != UNRELEASED]
+    if any(heading.startswith(f"[{version}]") for heading, _ in released):
+        raise SystemExit(f"CHANGELOG.md already has {version}")
+    today = datetime.date.today().isoformat()
+    section = (f"[{version}] — {today}", unreleased_body())
+    write_all([(UNRELEASED, NO_CHANGES), section, *released])
     names = [*CARGO_MANIFESTS, *JSON_MANIFESTS, "Cargo.lock", "package-lock.json"]
     new = set_versions({name: (ROOT / name).read_text() for name in names}, version)
     for name, text in new.items():
         (ROOT / name).write_text(text)
     print(f"Prepared {version}. Open a pull request titled: chore(release): v{version}")
-    print("When it merges, the pipeline releases that version.")
+    print(f"After it merges: git tag v{version} on main, then push the tag.")
+
+
+def command_check(args):
+    version = args.tag.removeprefix("v")
+    problems = []
+    for name in CARGO_MANIFESTS:
+        found = re.search(r'(?m)^version = "([^"]+)"', (ROOT / name).read_text())
+        if not found or found[1] != version:
+            problems.append(f"{name} says {found[1] if found else 'nothing'}")
+    for name in JSON_MANIFESTS:
+        found = json.loads((ROOT / name).read_text()).get("version")
+        if found != version:
+            problems.append(f"{name} says {found}")
+    if not any(heading.startswith(f"[{version}]") for heading, _ in read_sections()):
+        problems.append(f"CHANGELOG.md has no section for {version}")
+    if f"### v{version}" not in README.read_text():
+        problems.append(f"README.md has no section for {version}")
+    if problems:
+        raise SystemExit(f"{args.tag} does not match the repository: " + "; ".join(problems))
+    print(f"{args.tag} matches the versions and the changelog.")
 
 
 def main():
@@ -301,9 +317,11 @@ def main():
     notes.set_defaults(run=command_notes)
     commands.add_parser("sync").set_defaults(run=command_sync)
     prepare = commands.add_parser("prepare")
-    prepare.add_argument("version")
+    prepare.add_argument("version", nargs="?")
     prepare.set_defaults(run=command_prepare)
-    commands.add_parser("next").set_defaults(run=command_next)
+    check = commands.add_parser("check")
+    check.add_argument("tag")
+    check.set_defaults(run=command_check)
     commands.add_parser("version").set_defaults(run=command_version)
     commands.add_parser("build").set_defaults(run=command_build)
     args = parser.parse_args()

@@ -1,23 +1,16 @@
 name: release
 
-# Each merge to main that adds a feature or fixes something builds, tests and publishes a
-# new version. scripts/release.py works out the number from what was merged, and the notes
-# list only the pull requests since the last version. Running this by hand is a dry run:
+# Pushing a version tag builds, tests and publishes that version. Its notes list only
+# the pull requests merged since the previous tag. Running this by hand is a dry run:
 # everything except publishing, with the app kept as an artifact for a week.
 on:
   push:
-    branches: [main]
-    paths-ignore: ["**.md", "media/**", "LICENSE"]
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
 
-# One release at a time, in order, so a later run sees the tag an earlier one made. Merges
-# that arrive while one is running are released together by the next run.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
-# Every job reads, and the jobs that write check nothing out and run nothing from the
-# repository. Actions are pinned to commits, because a tag can move.
+# Every job reads, and one job writes. The writing job checks nothing out and runs
+# nothing from the repository. Actions are pinned to commits, because a tag can move.
 permissions:
   contents: read
 
@@ -25,25 +18,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  decide:
-    name: decide the version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.next.outputs.version }}
-      release: ${{ steps.next.outputs.release }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-      - id: next
-        run: python3 scripts/release.py next | tee -a "$GITHUB_OUTPUT"
-
   build:
     name: build and test
-    needs: decide
-    if: needs.decide.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +27,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+      - name: check the tag
+        if: github.event_name == 'push'
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "$GITHUB_REF_NAME is not on main" >&2
+            exit 1
+          }
+          python3 scripts/release.py check "$GITHUB_REF_NAME"
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
         with:
           toolchain: 1.95.0
@@ -76,10 +60,8 @@ jobs:
       - name: build the app
         run: python3 scripts/release.py build
       - name: package it
-        env:
-          VERSION: ${{ needs.decide.outputs.version }}
         run: |
-          label="$VERSION"
+          label="${GITHUB_REF_NAME#v}"
           [ "$GITHUB_EVENT_NAME" = push ] || label="dry-run"
           name="Captain-Salvage-$label-macos-arm64.zip"
           mkdir out
@@ -99,8 +81,8 @@ jobs:
 
   publish:
     name: publish
-    needs: [decide, build]
-    if: github.event_name == 'push' && needs.decide.outputs.release == 'true'
+    needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -113,64 +95,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.decide.outputs.version }}
         run: |
-          gh release create "v$VERSION" \
-            --target "$GITHUB_SHA" \
-            --title "Captain Salvage $VERSION" \
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "Captain Salvage ${GITHUB_REF_NAME#v}" \
             --notes-file out/release-notes.md \
             out/*.zip out/*.sha256
-
-  changelog:
-    name: write the changelog
-    needs: [decide, publish]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-      - run: python3 scripts/release.py sync
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: changelog
-          path: |
-            CHANGELOG.md
-            README.md
-          retention-days: 7
-          if-no-files-found: error
-
-  # main only takes pull requests, so the changelog arrives as one. It starts from the
-  # released commit, so anything merged since is left alone. A failure here leaves the
-  # release published, and `scripts/release.py sync` can catch up later.
-  changelog-pull-request:
-    name: merge the changelog
-    needs: [decide, changelog]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: changelog
-          path: out
-      - name: open and merge it
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.decide.outputs.version }}
-        run: |
-          branch="changelog/v$VERSION"
-          title="chore(release): changelog for v$VERSION"
-          gh api "repos/$GH_REPO/git/refs" -f "ref=refs/heads/$branch" -f "sha=$GITHUB_SHA" > /dev/null
-          for file in CHANGELOG.md README.md; do
-            current=$(gh api "repos/$GH_REPO/contents/$file?ref=$branch" --jq .sha)
-            gh api -X PUT "repos/$GH_REPO/contents/$file" \
-              -f "message=$title" -f "branch=$branch" -f "sha=$current" \
-              -f "content=$(base64 -w0 "out/$file")" > /dev/null
-          done
-          gh pr create --base main --head "$branch" --title "$title" \
-            --body "Written by the release pipeline for v$VERSION."
-          gh pr merge "$branch" --squash --delete-branch
