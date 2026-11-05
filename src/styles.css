@@ -601,7 +601,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-chart { position: relative; overflow: hidden; background: var(--chart-water); color: var(--chart-ink); }
 .start-chart-art { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* So a press anywhere on the chart lands on the drag region behind these. */
-.start-chart-art, .start-brand, .start-promises { pointer-events: none; }
+.start-chart-art, .start-brand, .start-promises, .start-version { pointer-events: none; }
 .start-contour { fill: var(--chart-shoal); fill-opacity: 0.13; stroke: var(--chart-line); stroke-width: 0.8; }
 .start-sounding { fill: var(--chart-sounding); font: italic 11px "Iowan Old Style", "Palatino", serif; text-anchor: middle; }
 .start-wreck-ring { fill: none; stroke: var(--chart-caution); stroke-width: 1.2; stroke-dasharray: 2 3; }
@@ -617,6 +617,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-brand h1 { margin: 0 0 8px; font: 400 46px/1.05 "Copperplate", "Copperplate Gothic Light", "Didot", serif; letter-spacing: 0.01em; }
 .start-brand p { margin: 0; max-width: 30ch; font-size: 16px; line-height: 1.4; }
 .start-promises { position: absolute; left: 40px; right: 40px; bottom: 36px; margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; font-size: 13px; }
+.start-version { position: absolute; right: 18px; bottom: 36px; font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0.7; }
 .start-panel { min-width: 0; overflow: auto; padding: 18px 44px 32px; }
 .start-panel-top { display: flex; align-items: center; gap: 10px; margin: -18px -44px 26px; padding: 18px 44px 0; }
 .start-spacer { flex: 1; }
