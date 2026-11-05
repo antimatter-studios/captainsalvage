@@ -140,7 +140,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .app {
   height: 100%;
   display: grid;
-  grid-template-columns: 300px minmax(640px, 1.1fr) minmax(420px, 1fr);
+  grid-template-columns: 320px minmax(640px, 1.1fr) minmax(420px, 1fr);
   grid-template-rows: 52px auto minmax(0, 1fr);
   grid-template-areas: "side top top" "side map map" "side center inspector";
 }
@@ -160,7 +160,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   background: var(--sidebar);
   border-right: 0.5px solid var(--line-strong);
 }
-.sidebar-drag { position: absolute; top: 0; left: 0; width: var(--left-width, 300px); height: 52px; }
+.sidebar-drag { position: absolute; top: 0; left: 0; width: var(--left-width, 320px); height: 52px; z-index: 5; }
+/* Starts clear of the window controls. Everything but the button lets drags through to the row. */
+.sidebar-brand { display: flex; align-items: center; gap: 7px; height: 100%; padding: 0 10px 0 86px; box-sizing: border-box; pointer-events: none; white-space: nowrap; }
+.sidebar-brand strong { font-size: 13.5px; font-weight: 650; }
+.sidebar-brand .brand-version { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sidebar-brand-icon { flex: none; width: 20px; height: 20px; }
+.sidebar-home { pointer-events: auto; margin-left: auto; flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0; background: none; box-shadow: none; border-radius: 7px; color: var(--ink-2); }
+.sidebar-home:hover:not(:disabled) { background: var(--hover); color: var(--ink); filter: none; }
 .sidebar-search { display: flex; align-items: center; gap: 6px; margin: 0 10px 8px; padding: 0 8px; height: 28px; border-radius: 7px; background: var(--hover); color: var(--muted); }
 .sidebar-search:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
 .sidebar-search input { flex: 1; background: none; box-shadow: none !important; padding: 0; color: var(--ink); }
@@ -203,8 +210,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .brand { display: flex; flex-direction: column; line-height: 1.2; flex: none; pointer-events: none; }
 .brand strong { font-size: 13.5px; font-weight: 650; }
 .brand span { font-size: 11px; color: var(--muted); }
-.brand-name { display: flex; align-items: baseline; gap: 6px; }
-.brand .brand-version { font-variant-numeric: tabular-nums; }
 .scan { flex: 1; min-width: 180px; max-width: 520px; pointer-events: none; }
 .scan-text { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scan-bar { height: 4px; background: var(--hover); border-radius: 4px; overflow: hidden; margin-top: 4px; }

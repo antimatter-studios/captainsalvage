@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "lens-column-widths";
-const DEFAULT_LEFT = 300;
-const MIN_LEFT = 200;
+// The sidebar's top row holds the window controls, the app's name and the home button, so the
+// sidebar cannot be narrower than that row.
+const DEFAULT_LEFT = 320;
+const MIN_LEFT = 320;
 const MAX_LEFT = 620;
 const MIN_CENTER = 380;
 const MIN_RIGHT = 300;
