@@ -284,13 +284,21 @@ Each version is on the [releases page](https://github.com/antimatter-studios/cap
 built and tested by GitHub Actions. Its notes list only the pull requests merged into it.
 Builds are for Apple Silicon and are not signed yet, so macOS asks you to approve the app the first time.
 
-**Version numbers:** each GitHub release raises the minor number and resets the patch to 0. Between releases, the patch counts the commits merged since the last one, so `0.2.3` is three merges after `0.2.0`. Build with `npm run app` to get the right number. When to reach `1.0.0` has not been decided.
+**Version numbers** follow what was merged, so nobody has to decide when to release:
 
-To cut one:
+| Merged | Version | Released |
+|---|---|---|
+| A new feature (`feat:`) | The minor number goes up: 0.1.0 to 0.2.0 | Yes |
+| A fix (`fix:`) | The patch number goes up: 0.2.0 to 0.2.1 | Yes |
+| Anything else (`docs:`, `test:`, `chore:`) | No change | No |
 
-1. Run `scripts/release.py prepare`, which picks the next minor version, sets it everywhere and moves the notes into `CHANGELOG.md` and this file. To choose a number, such as `1.0.0`, pass it.
-2. Merge that as a pull request titled `chore(release): v0.2.0`.
-3. Tag the merge on `main` with `v0.2.0` and push the tag. The pipeline does the rest.
+Whoever opens a pull request, person or agent, assesses whether it fixes something broken or
+adds something new, and titles it to match. [AGENTS.md](AGENTS.md) has the rule. Merges that land
+while a release is running go out together in the next one, as one version.
+The number in the app is worked out the same way, so a build of `main` matches its release.
+
+Going to 1.0.0 is a deliberate choice. Run `scripts/release.py prepare 1.0.0` and merge that
+as a pull request titled `chore(release): v1.0.0`. The pipeline releases it.
 
 To try the pipeline without publishing anything, run the `release` workflow by hand.
 

@@ -41,21 +41,38 @@ class Notes(unittest.TestCase):
 
 
 class Versions(unittest.TestCase):
-    def test_the_patch_counts_commits_since_the_release(self):
-        self.assertEqual(release.build_version("0.2.0", "v0.2.0", 0), "0.2.0")
-        self.assertEqual(release.build_version("0.2.0", "v0.2.0", 7), "0.2.7")
+    def test_a_feature_raises_the_minor_and_resets_the_patch(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["feat: a thing (#1)"]), ("0.3.0", True))
 
-    def test_before_any_release_the_patch_stays_zero(self):
-        self.assertEqual(release.build_version("0.1.0", None, 0), "0.1.0")
+    def test_a_fix_raises_the_patch(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["fix: a thing (#1)"]), ("0.2.4", True))
 
-    def test_a_prepared_release_not_yet_tagged_starts_at_zero(self):
-        self.assertEqual(release.build_version("0.3.0", "v0.2.0", 5), "0.3.0")
+    def test_several_merges_take_the_largest_change_once(self):
+        subjects = ["fix: one (#1)", "feat: two (#2)", "feat: three (#3)", "fix: four (#4)"]
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", subjects), ("0.3.0", True))
 
-    def test_each_release_raises_the_minor_and_resets_the_patch(self):
-        self.assertEqual(release.next_release_version("0.2.0", "v0.2.0"), "0.3.0")
+    def test_anything_else_releases_nothing(self):
+        subjects = ["docs: a (#1)", "chore: b (#2)", "test: c (#3)", "ci: d (#4)", "no prefix (#5)"]
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", subjects), ("0.2.3", False))
+
+    def test_the_same_code_keeps_the_same_number(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", []), ("0.2.3", False))
+
+    def test_a_commit_from_no_pull_request_counts_for_nothing(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["feat: pushed directly"]), ("0.2.3", False))
 
     def test_the_first_release_uses_the_number_it_has(self):
-        self.assertEqual(release.next_release_version("0.1.0", None), "0.1.0")
+        self.assertEqual(release.next_version("0.1.0", None, []), ("0.1.0", True))
+
+    def test_a_named_version_above_the_last_tag_is_released_as_it_is(self):
+        self.assertEqual(release.next_version("1.0.0", "v0.9.2", ["chore(release): v1.0.0 (#9)"]), ("1.0.0", True))
+
+    def test_a_version_named_earlier_does_not_hold_later_ones_back(self):
+        self.assertEqual(release.next_version("1.0.0", "v1.0.0", ["feat: a thing (#1)"]), ("1.1.0", True))
+
+    def test_a_breaking_change_is_a_minor_before_one_and_a_major_after(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["feat!: a thing (#1)"]), ("0.3.0", True))
+        self.assertEqual(release.next_version("1.0.0", "v1.2.3", ["fix!: a thing (#1)"]), ("2.0.0", True))
 
 
 class Files(unittest.TestCase):
@@ -72,6 +89,17 @@ class Files(unittest.TestCase):
         self.assertNotIn("### v0.2.0", block)
         self.assertIn("CHANGELOG.md", block)
         self.assertIn("**Added**", block)
+
+    def test_unreleased_does_not_push_out_a_version(self):
+        block = release.readme_block([(release.UNRELEASED, "Nothing yet."), *self.SECTIONS])
+        self.assertIn("### Unreleased", block)
+        self.assertEqual(block.count("\n### v"), 10)
+        self.assertIn("### v0.3.0", block)
+        self.assertNotIn("### v0.2.0", block)
+
+    def test_the_changelog_keeps_every_version(self):
+        sections = [(release.UNRELEASED, "Nothing yet."), *self.SECTIONS]
+        self.assertEqual(release.split_sections(release.join_changelog(sections)), sections)
 
     def test_unreleased_has_no_version_mark(self):
         block = release.readme_block([("[Unreleased]", "Nothing yet.")])
