@@ -127,6 +127,30 @@ CREATE TABLE IF NOT EXISTS basket (
     added_at_millis INTEGER NOT NULL,
     UNIQUE (kind, target)
 );
+CREATE TABLE IF NOT EXISTS canvases (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at_millis INTEGER NOT NULL,
+    updated_at_millis INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS canvas_items (
+    id INTEGER PRIMARY KEY,
+    canvas INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    head INTEGER,
+    name TEXT,
+    parent_item INTEGER,
+    parent_head INTEGER,
+    position INTEGER NOT NULL,
+    created_at_millis INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS canvas_items_canvas ON canvas_items (canvas, parent_item);
+CREATE TABLE IF NOT EXISTS canvas_choices (
+    canvas INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    entry INTEGER NOT NULL,
+    PRIMARY KEY (canvas, path)
+);
 CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY,
     at_millis INTEGER NOT NULL,
@@ -320,7 +344,7 @@ pub struct MapDb {
     pub(crate) connection: Connection,
 }
 
-const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_length, length), \
+pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_length, length), \
     COALESCE(o_length, valid_length), in_use, COALESCE(o_ok, checksum_ok), COALESCE(verdict, ''), \
     COALESCE(reason, ''), COALESCE(o_first, first_cluster), COALESCE(o_no_fat, no_fat_chain), created, modified, \
     source_cluster, source_offset, COALESCE(clusters_needed, 0), COALESCE(clusters_found, 0), \
@@ -330,7 +354,7 @@ const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_length, lengt
 /// Position of `node` when a query appends it to `FILE_COLUMNS`.
 const FILE_NODE_INDEX: usize = 20;
 
-fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
+pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let is_dir: bool = row.get(18)?;
     Ok(Row {
         kind: if is_dir {
@@ -361,10 +385,10 @@ fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     })
 }
 
-const NODE_COLUMNS: &str =
+pub(crate) const NODE_COLUMNS: &str =
     "head, COALESCE(name, ''), kind, modified, files, bytes, intact_files, intact_bytes, link_confidence";
 
-fn node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
+pub(crate) fn node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let head: u32 = row.get(0)?;
     Ok(Row {
         kind: "folder".into(),

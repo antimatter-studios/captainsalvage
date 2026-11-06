@@ -252,6 +252,67 @@ export interface Page {
   total: number;
 }
 
+/** One rebuild of the folder tree, made by placing the pieces the scan found. */
+export interface Canvas {
+  id: number;
+  name: string;
+  createdAtMillis: number;
+  updatedAtMillis: number;
+  items: number;
+}
+
+export interface CanvasItem {
+  id: number;
+  /** "folder" the person made, "piece" placed as a folder, or "merge" joined into its folder. */
+  kind: "folder" | "piece" | "merge";
+  head: number | null;
+  name: string | null;
+  parentItem: number | null;
+  parentHead: number | null;
+}
+
+/** Where a piece or folder goes: an item of the canvas, and optionally a found folder in it. */
+export interface CanvasPlace {
+  item?: number;
+  head?: number;
+}
+
+export interface RebuiltFolder {
+  pathName: string;
+  name: string | null;
+  lostHead: number | null;
+  origin: "made" | "found" | "placed";
+  merged: boolean;
+  items: number[];
+  heads: number[];
+  files: number;
+  bytes: number;
+  intactFiles: number;
+  intactBytes: number;
+}
+
+export interface RebuiltFile {
+  name: string;
+  chosen: Row;
+  byPerson: boolean;
+  copies: Row[];
+}
+
+export interface CanvasListing {
+  path: string[];
+  folders: RebuiltFolder[];
+  files: RebuiltFile[];
+  totalFiles: number;
+  clashes: number;
+}
+
+export interface UnusedPieces {
+  rows: Row[];
+  total: number;
+  totalFiles: number;
+  totalBytes: number;
+}
+
 export interface IslandRow {
   head: number;
   tail: number;

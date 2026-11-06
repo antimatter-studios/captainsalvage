@@ -3561,3 +3561,355 @@ fn a_recorded_copy_that_stopped_reporting_is_not_shown_as_running() {
     assert_eq!(session.copy_status().expect("status").state, "stopped");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Four lost folders and nothing else, for rebuilding a tree on a canvas. Two of them hold a
+/// `shared.jpg`: the copy at cluster 32 is whole, and the one at cluster 23 was wiped to zeros.
+fn build_jigsaw_volume() -> Vec<u8> {
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+        ],
+    );
+    let jpeg = |b: &mut Builder, cluster: u32| {
+        b.put(cluster, 0, &[0xFF, 0xD8, 0xFF, 0xE0]);
+        b.put(cluster, 16, &noise(cluster, CLUSTER - 16));
+    };
+    let mp3 = |b: &mut Builder, cluster: u32| {
+        b.put(cluster, 0, b"ID3\x04");
+        b.put(cluster, 16, &noise(cluster, CLUSTER - 16));
+    };
+    // Piece A at cluster 20, with a subfolder of its own at 21.
+    b.directory(
+        20,
+        &[
+            entry_set("a1.jpg", false, 22, CLUSTER as u64, true, true),
+            entry_set("shared.jpg", false, 23, CLUSTER as u64, true, true),
+            entry_set("sub", true, 21, CLUSTER as u64, true, true),
+        ],
+    );
+    jpeg(&mut b, 22);
+    b.directory(
+        21,
+        &[entry_set("deep.mp3", false, 24, CLUSTER as u64, true, true)],
+    );
+    mp3(&mut b, 24);
+    // Piece B at cluster 30, holding the good copy of shared.jpg.
+    b.directory(
+        30,
+        &[
+            entry_set("b1.mp3", false, 31, CLUSTER as u64, true, true),
+            entry_set("SHARED.jpg", false, 32, CLUSTER as u64, true, true),
+        ],
+    );
+    mp3(&mut b, 31);
+    jpeg(&mut b, 32);
+    // Pieces C and D.
+    b.directory(
+        40,
+        &[entry_set("c.mp3", false, 41, CLUSTER as u64, true, true)],
+    );
+    mp3(&mut b, 41);
+    b.directory(
+        50,
+        &[entry_set("d.mp3", false, 51, CLUSTER as u64, true, true)],
+    );
+    mp3(&mut b, 51);
+    b.image
+}
+
+fn call_as_person(engine: &Engine, tool: &str, args: serde_json::Value) -> serde_json::Value {
+    engine
+        .call(tool, &args, lens_core::engine::AUTHOR_USER)
+        .unwrap_or_else(|error| panic!("{tool} failed: {error:#}"))
+}
+
+fn refusal(engine: &Engine, tool: &str, args: serde_json::Value) -> String {
+    match engine.call(tool, &args, lens_core::engine::AUTHOR_USER) {
+        Ok(value) => panic!("{tool} should have been refused, and gave {value}"),
+        Err(error) => format!("{error:#}"),
+    }
+}
+
+fn names(listing: &serde_json::Value, kind: &str) -> Vec<String> {
+    listing[kind]
+        .as_array()
+        .expect("list")
+        .iter()
+        .map(|entry| {
+            entry["name"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| entry["pathName"].as_str().expect("path name").to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
+    let (engine, _session, dir) = engine_with_image("canvas", build_jigsaw_volume());
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Mine"}))["id"]
+        .as_i64()
+        .expect("id");
+
+    // Claude reads canvases, and only the person changes them.
+    let claude = engine.call(
+        "canvas_place",
+        &json!({"canvas": canvas, "head": 20}),
+        AUTHOR_CLAUDE,
+    );
+    assert!(format!("{:#}", claude.expect_err("refused")).contains("Only the person"));
+
+    // The volume root and four lost folders are the pieces, largest first.
+    let unused = call(&engine, "canvas_unused", json!({"canvas": canvas}));
+    assert_eq!(unused["total"], 5);
+
+    // The first piece becomes the root. C goes inside it, and B merges into it.
+    let root = call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20}),
+    )["id"]
+        .as_i64()
+        .expect("root");
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 40}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 30, "merge": true}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    assert_eq!(
+        names(&top, "files"),
+        ["a1.jpg", "b1.mp3", "SHARED.jpg"],
+        "the whole copy's own name"
+    );
+    assert_eq!(
+        names(&top, "folders").len(),
+        2,
+        "sub, and C with its name lost"
+    );
+    assert!(names(&top, "folders").contains(&"sub".to_string()));
+    assert!(names(&top, "folders").contains(&"lost:40".to_string()));
+
+    // The two copies of shared.jpg clash, and the whole one wins over the wiped one.
+    assert_eq!(top["clashes"], 1);
+    let shared = top["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| {
+            file["name"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("shared.jpg"))
+        })
+        .expect("shared")
+        .clone();
+    assert_eq!(shared["copies"].as_array().expect("copies").len(), 2);
+    assert_eq!(shared["chosen"]["firstCluster"], 32);
+    assert_eq!(shared["byPerson"], false);
+
+    // The person can pick the other copy instead, and take the pick back.
+    let wiped = shared["copies"]
+        .as_array()
+        .expect("copies")
+        .iter()
+        .find(|copy| copy["firstCluster"] == 23)
+        .expect("wiped")["id"]
+        .clone();
+    call_as_person(
+        &engine,
+        "canvas_choose",
+        json!({"canvas": canvas, "path": ["shared.jpg"], "entry": wiped}),
+    );
+    let picked = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    let shared = picked["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| {
+            file["name"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("shared.jpg"))
+        })
+        .expect("shared")
+        .clone();
+    assert_eq!(shared["chosen"]["firstCluster"], 23);
+    assert_eq!(shared["byPerson"], true);
+    call_as_person(
+        &engine,
+        "canvas_choose",
+        json!({"canvas": canvas, "path": ["shared.jpg"]}),
+    );
+
+    // A made-up folder, and a piece moved into it.
+    let photos = call_as_person(
+        &engine,
+        "canvas_folder",
+        json!({"canvas": canvas, "name": "Photos"}),
+    )["id"]
+        .as_i64()
+        .expect("folder");
+    let items = call(&engine, "canvas_items", json!({"canvas": canvas}));
+    let c_item = items
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["head"] == 40)
+        .expect("C")["id"]
+        .as_i64()
+        .expect("id");
+    call_as_person(
+        &engine,
+        "canvas_move",
+        json!({"canvas": canvas, "item": c_item, "place": {"item": photos}}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    let made = top["folders"]
+        .as_array()
+        .expect("folders")
+        .iter()
+        .find(|folder| folder["name"] == "Photos")
+        .expect("Photos")
+        .clone();
+    assert_eq!(
+        made["origin"], "made",
+        "the person made this folder, whatever is in it"
+    );
+    assert!(made["files"].as_u64().expect("files") >= 1);
+    let inside = call(
+        &engine,
+        "canvas_tree",
+        json!({"canvas": canvas, "path": ["Photos"]}),
+    );
+    assert_eq!(names(&inside, "folders"), ["lost:40"]);
+    assert_eq!(
+        names(
+            &call(
+                &engine,
+                "canvas_tree",
+                json!({"canvas": canvas, "path": ["Photos", "lost:40"]})
+            ),
+            "files"
+        ),
+        ["c.mp3"],
+        "a folder whose name was lost is reached by its path name"
+    );
+
+    // A piece can go inside a found folder of another piece.
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 50, "place": {"item": root, "head": 21}}),
+    );
+    let sub = call(
+        &engine,
+        "canvas_tree",
+        json!({"canvas": canvas, "path": ["sub"]}),
+    );
+    assert_eq!(names(&sub, "files"), ["deep.mp3"]);
+    assert_eq!(names(&sub, "folders"), ["lost:50"]);
+
+    // Each piece is used once, and only whole pieces can be placed.
+    assert!(refusal(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20})
+    )
+    .contains("already on this canvas"));
+    assert!(refusal(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 21})
+    )
+    .contains("inside another piece"));
+    assert!(refusal(
+        &engine,
+        "canvas_move",
+        json!({"canvas": canvas, "item": photos, "place": {"item": photos}})
+    )
+    .contains("inside itself"));
+    assert_eq!(
+        call(&engine, "canvas_unused", json!({"canvas": canvas}))["total"],
+        1,
+        "only the volume root is left"
+    );
+
+    // Taking a folder off puts what was in it back among the unused pieces.
+    assert_eq!(
+        call_as_person(
+            &engine,
+            "canvas_remove",
+            json!({"canvas": canvas, "item": photos})
+        )["removed"],
+        2
+    );
+    assert_eq!(
+        call(&engine, "canvas_unused", json!({"canvas": canvas}))["total"],
+        2
+    );
+
+    // The rest can be put away in one go.
+    let away = call_as_person(
+        &engine,
+        "canvas_leftovers",
+        json!({"canvas": canvas, "name": "Leftovers"}),
+    );
+    assert_eq!(away["pieces"], 2);
+    assert_eq!(
+        call(&engine, "canvas_unused", json!({"canvas": canvas}))["total"],
+        0
+    );
+
+    // Rebuilding the map keeps the canvas, because pieces are known by their first cluster.
+    call_as_person(&engine, "resolve", json!({}));
+    let again = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    assert!(names(&again, "folders").contains(&"Leftovers".to_string()));
+    assert_eq!(names(&again, "files"), ["a1.jpg", "b1.mp3", "SHARED.jpg"]);
+
+    // A second canvas is independent of the first.
+    let other = call_as_person(&engine, "canvas_create", json!({"name": "Another try"}))["id"]
+        .as_i64()
+        .expect("id");
+    assert_eq!(
+        call(&engine, "canvas_unused", json!({"canvas": other}))["total"],
+        5
+    );
+    assert_eq!(
+        call(&engine, "canvas_list", json!({}))
+            .as_array()
+            .expect("canvases")
+            .len(),
+        2
+    );
+    call_as_person(&engine, "canvas_delete", json!({"canvas": other}));
+    assert_eq!(
+        call(&engine, "canvas_list", json!({}))
+            .as_array()
+            .expect("canvases")
+            .len(),
+        1
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Writes the jigsaw volume to `LENS_JIGSAW_IMAGE`, for testing the window against it.
+/// Run with: LENS_JIGSAW_IMAGE=/path/jigsaw.img cargo test -p lens-core --test synthetic -- --ignored write_the_jigsaw
+#[test]
+#[ignore]
+fn write_the_jigsaw_volume_for_window_tests() {
+    let path =
+        std::env::var("LENS_JIGSAW_IMAGE").expect("LENS_JIGSAW_IMAGE names where to write it");
+    std::fs::write(path, build_jigsaw_volume()).expect("written");
+}
