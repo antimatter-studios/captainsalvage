@@ -1,3 +1,3 @@
 ### Fixed
 
-- **Long disk paths now shorten from the beginning, keeping the device name visible.** You can identify the selected disk at a glance.
+- **A long disk path no longer pushes the safety chip out of the window.** The path shortens from the left instead, so the file name at its end stays readable.
