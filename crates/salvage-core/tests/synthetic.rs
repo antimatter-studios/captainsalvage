@@ -4601,3 +4601,101 @@ fn a_lost_png_in_free_space_is_carved_with_its_measured_length() {
     assert_eq!(found[0]["endBy"], "structure");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Two pieces laid over one place each hold a different song.mp3 that measures the same:
+/// the upper layer's copy is picked, and the clash is marked for the person to look at.
+#[test]
+fn clashing_copies_that_measure_the_same_go_to_the_upper_layer_and_ask_the_person() {
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+        ],
+    );
+    for (folder, song) in [(20u32, 21u32), (30, 31), (40, 41)] {
+        b.directory(
+            folder,
+            &[entry_set(
+                "song.mp3",
+                false,
+                song,
+                CLUSTER as u64,
+                true,
+                true,
+            )],
+        );
+        b.put(song, 0, b"ID3\x04");
+        b.put(song, 16, &noise(song, CLUSTER - 16));
+    }
+    let (engine, _session, dir) = engine_with_image("layers", b.image);
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Layers"}))["id"]
+        .as_i64()
+        .expect("id");
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 30, "merge": true}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    let song = &top["files"][0];
+    assert_eq!(song["copies"].as_array().expect("copies").len(), 2);
+    assert_eq!(
+        song["chosen"]["firstCluster"], 31,
+        "the later drop is the upper layer"
+    );
+    assert_eq!(song["decidedBy"], "layer");
+    assert_eq!(song["needsYou"], true);
+    assert_eq!(top["clashesNeedYou"], 1);
+    assert_eq!(top["clashesPicked"], 0);
+
+    // A third layer on top takes the pick again.
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 40, "merge": true}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    assert_eq!(top["files"][0]["chosen"]["firstCluster"], 41);
+    assert_eq!(
+        top["files"][0]["copies"].as_array().expect("copies").len(),
+        3
+    );
+
+    // The whole canvas's clashes, those needing the person first.
+    let clashes = call(
+        &engine,
+        "canvas_clashes",
+        json!({"canvas": canvas, "needYou": true}),
+    );
+    assert_eq!(clashes["needYou"], 1);
+    assert_eq!(clashes["clashes"][0]["path"], json!(["song.mp3"]));
+
+    // The person's pick ends the question.
+    let lower = top["files"][0]["copies"]
+        .as_array()
+        .expect("copies")
+        .iter()
+        .find(|copy| copy["firstCluster"] == 21)
+        .expect("lowest")["id"]
+        .clone();
+    call_as_person(
+        &engine,
+        "canvas_choose",
+        json!({"canvas": canvas, "path": ["song.mp3"], "entry": lower}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    assert_eq!(top["files"][0]["decidedBy"], "person");
+    assert_eq!(top["clashesNeedYou"], 0);
+    let _ = std::fs::remove_dir_all(dir);
+}

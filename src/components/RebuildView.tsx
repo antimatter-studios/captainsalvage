@@ -276,6 +276,14 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   );
 }
 
+/** Why a clashing file's copy was picked, in words. */
+const DECIDED: Record<NonNullable<RebuiltFile["decidedBy"]>, () => string> = {
+  person: () => t("You chose this copy."),
+  quality: () => t("Picked because it measured better: tested or judged good, all its clusters there, a valid entry, or the size its entry says."),
+  date: () => t("These measure the same, so the newer copy was picked. Look at both if it matters."),
+  layer: () => t("These measure the same and have the same date, so the copy from the upper layer, the later drop, was picked. Look at both if it matters."),
+};
+
 function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: string[]; depth: number; shared: Shared }) {
   const [choosing, setChoosing] = useState(false);
   const clash = file.copies.length > 1;
@@ -304,8 +312,8 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
           <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict: verdictLabel(row.verdict), percent: percent(row.confidence) })} />
         </button>
         {clash && (
-          <button className="canvas-clash" onClick={() => setChoosing(!choosing)} aria-expanded={choosing} title={t("Pieces hold more than one copy of this file")}>
-            {t("{count} copies", { count: count(file.copies.length) })}
+          <button className={file.needsYou ? "canvas-clash canvas-clash-needs-you" : "canvas-clash"} onClick={() => setChoosing(!choosing)} aria-expanded={choosing} title={file.needsYou ? t("These copies differ, and nothing measured tells them apart. Look, and choose one.") : t("Pieces hold more than one copy of this file")}>
+            {file.needsYou ? t("{count} copies, choose", { count: count(file.copies.length) }) : t("{count} copies", { count: count(file.copies.length) })}
           </button>
         )}
       </div>
@@ -327,6 +335,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
               </div>
             );
           })}
+          {file.decidedBy && <p className="canvas-decided muted">{DECIDED[file.decidedBy]()}</p>}
           {file.byPerson && <button className="link" onClick={() => void choose(null)}>{t("Go back to the best copy")}</button>}
         </div>
       )}
@@ -356,6 +365,13 @@ function FolderContents({ path, depth, around, shared }: { path: string[]; depth
   }
   return (
     <>
+      {listing.clashes > 0 && (
+        <div className={listing.clashesNeedYou > 0 ? "canvas-clash-summary canvas-clash-summary-needs-you" : "canvas-clash-summary"} style={{ paddingLeft: 23 + depth * INDENT }}>
+          {listing.clashesNeedYou > 0
+            ? t("{picked} clashes picked for you, {needed} need you", { picked: count(listing.clashesPicked), needed: count(listing.clashesNeedYou) })
+            : t("{picked} clashes picked for you", { picked: count(listing.clashesPicked) })}
+        </div>
+      )}
       {listing.folders.map((folder) => (
         <FolderNode key={folder.pathName} folder={folder} path={[...path, folder.pathName]} depth={depth} around={around} shared={shared} />
       ))}
