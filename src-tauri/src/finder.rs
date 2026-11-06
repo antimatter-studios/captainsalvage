@@ -79,15 +79,15 @@ fn port(state: &AppState) -> Result<Value> {
 /// Whether the helper is installed, and which of this disk's canvases are in Finder.
 #[tauri::command(async)]
 pub fn finder_status(state: State<'_, AppState>) -> Result<Value, String> {
+    status(&state).map_err(|error| format!("{error:#}"))
+}
+
+pub fn status(state: &AppState) -> Result<Value> {
     if helper().is_none() {
         return Ok(json!({"available": false, "shown": []}));
     }
-    let serial = state
-        .engine
-        .session()
-        .map(|session| serial_text(&session))
-        .map_err(|error| format!("{error:#}"))?;
-    let listed = run("list", json!({})).map_err(|error| format!("{error:#}"))?;
+    let serial = serial_text(&*state.engine.session()?);
+    let listed = run("list", json!({}))?;
     let prefix = format!("{serial}-");
     let shown: Vec<i64> = listed["domains"]
         .as_array()
@@ -106,29 +106,31 @@ pub fn finder_show(
     name: String,
     revision: String,
 ) -> Result<Value, String> {
-    let work = || -> Result<Value> {
-        let mut request = port(&state)?;
-        request["canvas"] = json!(canvas);
-        request["name"] = json!(name);
-        request["revision"] = json!(revision);
-        let reply = run("show", request)?;
-        // A hidden test copy opens no windows on the screen of the person using the Mac.
-        let hidden = std::env::var_os("SALVAGE_TEST_HIDDEN").is_some();
-        if let (Some(folder), false) = (reply["folder"].as_str(), hidden) {
-            let _ = Command::new("/usr/bin/open").arg(folder).status();
-        }
-        Ok(reply)
-    };
-    work().map_err(|error| format!("{error:#}"))
+    show(&state, canvas, &name, &revision).map_err(|error| format!("{error:#}"))
+}
+
+pub fn show(state: &AppState, canvas: i64, name: &str, revision: &str) -> Result<Value> {
+    let mut request = port(state)?;
+    request["canvas"] = json!(canvas);
+    request["name"] = json!(name);
+    request["revision"] = json!(revision);
+    let reply = run("show", request)?;
+    // A hidden test copy opens no windows on the screen of the person using the Mac.
+    let hidden = std::env::var_os("SALVAGE_TEST_HIDDEN").is_some();
+    if let (Some(folder), false) = (reply["folder"].as_str(), hidden) {
+        let _ = Command::new("/usr/bin/open").arg(folder).status();
+    }
+    Ok(reply)
 }
 
 #[tauri::command(async)]
 pub fn finder_hide(state: State<'_, AppState>, canvas: i64) -> Result<Value, String> {
-    let work = || -> Result<Value> {
-        let serial = serial_text(&*state.engine.session()?);
-        run("hide", json!({"serial": serial, "canvas": canvas}))
-    };
-    work().map_err(|error| format!("{error:#}"))
+    hide(&state, canvas).map_err(|error| format!("{error:#}"))
+}
+
+pub fn hide(state: &AppState, canvas: i64) -> Result<Value> {
+    let serial = serial_text(&*state.engine.session()?);
+    run("hide", json!({"serial": serial, "canvas": canvas}))
 }
 
 /// Tells this disk's Finder locations about the canvases as they are now. A location whose

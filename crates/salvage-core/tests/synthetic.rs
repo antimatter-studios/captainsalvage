@@ -4476,3 +4476,84 @@ fn a_copy_started_under_the_old_manifest_name_keeps_it() {
     );
     let _ = std::fs::remove_dir_all(&destination);
 }
+
+/// Everything the window can do through the engine, an MCP client can find too: each engine
+/// tool the window calls is listed over MCP, unless it is only the person's to do, or only
+/// means something inside the window.
+#[test]
+fn every_engine_tool_the_window_uses_is_listed_over_mcp() {
+    // Writing files, choosing where they go, and arranging a canvas stay the person's.
+    const PERSON_ONLY: &[&str] = &[
+        "basket_start",
+        "canvas_choose",
+        "canvas_copy_start",
+        "canvas_create",
+        "canvas_delete",
+        "canvas_folder",
+        "canvas_leftovers",
+        "canvas_move",
+        "canvas_place",
+        "canvas_remove",
+        "canvas_rename",
+        "canvas_rename_item",
+        "canvas_swap",
+        "copy_start",
+        "copy_stop",
+        "set_salvage_drive",
+    ];
+    // The window tells the engine what is selected. An agent reads it with get_selection, and
+    // moves the window with show_in_app.
+    const WINDOW_ONLY: &[&str] = &["set_selection"];
+
+    fn calls_in(folder: &std::path::Path, found: &mut std::collections::BTreeSet<String>) {
+        for entry in std::fs::read_dir(folder).expect("source folder") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                calls_in(&path, found);
+            } else if path
+                .extension()
+                .is_some_and(|ext| ext == "ts" || ext == "tsx")
+            {
+                let text = std::fs::read_to_string(&path).expect("source");
+                for (index, _) in text.match_indices("call") {
+                    let rest = &text[index + 4..];
+                    // call("name" or call<Type>("name"
+                    let rest = rest.strip_prefix('<').map_or(rest, |typed| {
+                        typed.find(">(").map_or("", |end| &typed[end + 1..])
+                    });
+                    if let Some(name) = rest.strip_prefix("(\"") {
+                        let name: String = name
+                            .chars()
+                            .take_while(|c| c.is_ascii_lowercase() || *c == '_')
+                            .collect();
+                        if !name.is_empty() {
+                            found.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let window = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+    let mut used = std::collections::BTreeSet::new();
+    calls_in(&window, &mut used);
+    assert!(
+        used.contains("basket_add"),
+        "the window's calls were not found"
+    );
+    let listed: std::collections::BTreeSet<String> = tool_definitions()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+        .collect();
+    let missing: Vec<&String> = used
+        .iter()
+        .filter(|name| !listed.contains(*name))
+        .filter(|name| {
+            !PERSON_ONLY.contains(&name.as_str()) && !WINDOW_ONLY.contains(&name.as_str())
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the window uses these, but MCP does not list them: {missing:?}"
+    );
+}

@@ -20,6 +20,18 @@ pub type UiSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
 /// Captures the app window as PNG bytes.
 pub type ScreenshotHook = Arc<dyn Fn() -> Result<Vec<u8>> + Send + Sync>;
+/// Runs a tool that belongs to the app rather than the engine, such as Finder or the window's
+/// language, so MCP clients can do what the window does.
+pub type AppHook = Arc<dyn Fn(&str, &Value) -> Result<Value> + Send + Sync>;
+/// The tools the app hook answers.
+pub const APP_TOOLS: &[&str] = &[
+    "finder_status",
+    "finder_show",
+    "finder_hide",
+    "app_settings",
+    "set_language",
+    "set_theme",
+];
 
 pub const AUTHOR_CLAUDE: &str = "claude";
 pub const AUTHOR_USER: &str = "you";
@@ -58,6 +70,7 @@ pub struct Engine {
     selection: Mutex<Value>,
     sink: RwLock<Option<UiSink>>,
     screenshot: RwLock<Option<ScreenshotHook>>,
+    app_hook: RwLock<Option<AppHook>>,
     media: RwLock<Option<Arc<MediaServer>>>,
 }
 
@@ -210,6 +223,23 @@ impl Engine {
         }
     }
 
+    pub fn set_app_hook(&self, hook: AppHook) {
+        if let Ok(mut slot) = self.app_hook.write() {
+            *slot = Some(hook);
+        }
+    }
+
+    fn app_tool(&self, tool: &str, args: &Value) -> Result<Value> {
+        let hook = self
+            .app_hook
+            .read()
+            .map_err(|_| anyhow!("app hook lock poisoned"))?
+            .clone();
+        hook.context("this needs the Captain Salvage window, which is not running here")?(
+            tool, args,
+        )
+    }
+
     pub fn screenshot(&self) -> Result<Vec<u8>> {
         let hook = self
             .screenshot
@@ -284,6 +314,9 @@ impl Engine {
     }
 
     fn dispatch(&self, tool: &str, args: &Value, author: &str) -> Result<Value> {
+        if APP_TOOLS.contains(&tool) {
+            return self.app_tool(tool, args);
+        }
         match tool {
             "disk_access" => {
                 let path = match str_of(args, "path") {
