@@ -689,6 +689,46 @@ impl MapDb {
     }
 
     /// Top-level folders: the volume root, then orphans with the most data first.
+    /// Found files of each kind, as (group, files, bytes), for files with one of these verdicts.
+    pub fn kind_totals(&self, verdicts: &[&str]) -> Result<Vec<(&'static str, u64, u64)>> {
+        let list = verdicts
+            .iter()
+            .map(|verdict| format!("'{}'", verdict.replace('\'', "")))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT COALESCE(o_name, name), COALESCE(o_length, length) FROM sets \
+             WHERE is_dir = 0 AND verdict IN ({list})"
+        ))?;
+        let mut totals: Vec<(&'static str, u64, u64)> = Vec::new();
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (name, length) = row?;
+            let group = crate::browse::group_id_of(&name);
+            match totals.iter_mut().find(|total| total.0 == group) {
+                Some(total) => {
+                    total.1 += 1;
+                    total.2 += length.max(0) as u64;
+                }
+                None => totals.push((group, 1, length.max(0) as u64)),
+            }
+        }
+        totals.sort_by_key(|total| std::cmp::Reverse(total.2));
+        Ok(totals)
+    }
+
+    /// Found folders whose parent is gone: the pieces left to fit together.
+    pub fn lost_folder_count(&self) -> Result<u64> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE parent IS NULL AND kind != 'root'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
     pub fn roots(&self, offset: u64, limit: u64) -> Result<Page> {
         let total: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM nodes WHERE parent IS NULL",

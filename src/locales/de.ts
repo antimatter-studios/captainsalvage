@@ -822,6 +822,8 @@ const strings: Record<string, string> = {
   "Inside archive": "Im Archiv",
   "Magnified view. Hold the left or right arrow to move through the clusters, faster the longer you hold. Shift and an arrow jumps a whole view.": "Vergrößerte Ansicht. Halten Sie die linke oder rechte Pfeiltaste, um durch die Cluster zu gehen, je länger, desto schneller. Umschalt und ein Pfeil springen eine ganze Ansicht weiter.",
   "Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub": "Vergrößert, {count} Cluster. Scrollen zum Zoomen, Ziehen zum Verschieben, Klicken zum Untersuchen, Pfeile zum Durchlaufen",
+  "Lost folders": "Verlorene Ordner",
+  "{count} pieces": "{count} Teile",
 };
 
 export default strings;
