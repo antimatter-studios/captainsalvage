@@ -18,8 +18,7 @@ const CHUNK_BYTES: u64 = 1024 * 1024;
 const TAR_MAGIC_AT: usize = 257;
 const TAR_BLOCK: usize = 512;
 const MAX_MEMBERS: usize = 500_000;
-/// How much an xz block may ask for to unpack, in KiB: far more than any real one needs.
-const XZ_MEMORY_LIMIT_KIB: u32 = 1024 * 1024;
+const XZ_INPUT_BYTES: usize = 64 * 1024;
 
 const GZIP_MAGIC: &[u8] = &[0x1F, 0x8B];
 const XZ_MAGIC: &[u8] = &[0xFD, b'7', b'z', b'X', b'Z', 0x00];
@@ -173,7 +172,7 @@ fn read_up_to(source: &mut dyn Read, buffer: &mut [u8]) -> io::Result<usize> {
 }
 
 /// The archive's bytes, read from the disk a piece at a time, and seekable for 7z.
-struct Source<'a> {
+pub(crate) struct Source<'a> {
     read: ReadRange<'a>,
     total: u64,
     position: u64,
@@ -182,7 +181,7 @@ struct Source<'a> {
 }
 
 impl<'a> Source<'a> {
-    fn new(total: u64, read: ReadRange<'a>) -> Source<'a> {
+    pub(crate) fn new(total: u64, read: ReadRange<'a>) -> Source<'a> {
         Source {
             read,
             total,
@@ -235,16 +234,68 @@ fn unpacker<'a>(packing: Packing, source: Source<'a>) -> io::Result<Box<dyn Read
     Ok(match packing {
         Packing::Plain => Box::new(source),
         Packing::Gzip => Box::new(flate2::read::MultiGzDecoder::new(source)),
-        Packing::Xz => Box::new(lzma_rust2::XzReader::new_mem_limit(
-            source,
-            true,
-            XZ_MEMORY_LIMIT_KIB,
-        )),
-        Packing::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(source)),
+        Packing::Xz => Box::new(XzStream::new(source)),
+        Packing::Bzip2 => Box::new(bzip2_rs::DecoderReader::new(source)),
         Packing::Zstd => {
             Box::new(ruzstd::decoding::StreamingDecoder::new(source).map_err(io::Error::other)?)
         }
     })
+}
+
+/// Unpacks xz as it is read, with xz4rust's decoder. Its own reader needs a source that lives
+/// for the whole program, and this one borrows the disk, so this feeds the decoder itself.
+/// The decoder checks each block's checksum as it reaches it.
+struct XzStream<'a> {
+    decoder: Box<xz4rust::XzDecoder<'static>>,
+    source: Source<'a>,
+    input: Vec<u8>,
+    start: usize,
+    end: usize,
+    finished: bool,
+}
+
+impl<'a> XzStream<'a> {
+    fn new(source: Source<'a>) -> XzStream<'a> {
+        XzStream {
+            decoder: xz4rust::XzDecoder::in_heap(),
+            source,
+            input: vec![0; XZ_INPUT_BYTES],
+            start: 0,
+            end: 0,
+            finished: false,
+        }
+    }
+}
+
+impl Read for XzStream<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() || self.finished {
+            return Ok(0);
+        }
+        loop {
+            if self.start == self.end {
+                self.start = 0;
+                self.end = self.source.read(&mut self.input)?;
+                if self.end == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "the xz stream ends early",
+                    ));
+                }
+            }
+            let result = self
+                .decoder
+                .decode(&self.input[self.start..self.end], buffer)
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            self.start += result.input_consumed();
+            if let xz4rust::XzNextBlockResult::EndOfStream(..) = result {
+                self.finished = true;
+            }
+            if result.output_produced() > 0 || self.finished {
+                return Ok(result.output_produced());
+            }
+        }
+    }
 }
 
 /// Seconds since 1970 as a date and time, in the same form as the zip listing uses.

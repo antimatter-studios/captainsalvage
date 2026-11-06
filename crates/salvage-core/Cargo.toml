@@ -17,11 +17,10 @@ path = "src/bin/salvage-scan.rs"
 
 [dependencies]
 anyhow = "1.0.104"
-bzip2 = "0.6.1"
+bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
-lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz"] }
 rhai = { version = "1.27.0", features = ["serde", "sync"] }
 ruzstd = "0.9.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
@@ -31,8 +30,11 @@ sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip
 sha2 = "0.11.1"
 tar = "0.4.46"
 tiny_http = "0.12.0"
+xz4rust = "0.2.3"
+zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2", "deflate64", "aes-crypto"] }
 
 [dev-dependencies]
 # Only to build archives for the tests: the app itself never writes one.
+bzip2 = "0.6.1"
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }
 sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip2", "deflate", "ppmd", "compress", "util"] }

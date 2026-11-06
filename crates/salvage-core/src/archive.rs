@@ -367,10 +367,134 @@ fn search_headers(total: u64, read: ReadRange) -> Result<Search> {
     Ok(Search { members, complete })
 }
 
-/// Lists a zip from its directory, or from its file headers when the directory cannot be
-/// trusted, whichever finds more.
+/// Compression methods the zip library unpacks here: stored, deflate, deflate64, and AES,
+/// whose files say their real method inside.
+const LIBRARY_METHODS: [u16; 4] = [0, 8, 9, 99];
+
+fn library_stamp(stamp: zip::DateTime) -> Option<String> {
+    (stamp.month() > 0 && stamp.day() > 0).then(|| {
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            stamp.year(),
+            stamp.month(),
+            stamp.day(),
+            stamp.hour(),
+            stamp.minute(),
+            stamp.second()
+        )
+    })
+}
+
+/// Lists a zip whose directory is whole, with the zip library. Nothing when the library
+/// cannot open it, which is what a damaged directory does; the search below then takes over.
+fn list_with_library(total: u64, read: ReadRange) -> Option<Vec<ZipMember>> {
+    let mut archive = zip::ZipArchive::new(crate::archives::Source::new(total, read)).ok()?;
+    let mut members = Vec::with_capacity(archive.len());
+    for index in 0..archive.len().min(MAX_MEMBERS) {
+        let file = archive.by_index_raw(index).ok()?;
+        // The library offers no other way to read the method's number, which the window shows.
+        #[allow(deprecated)]
+        let method = file.compression().to_u16();
+        members.push(ZipMember {
+            index: index as u32,
+            path: clean_name(file.name_raw()),
+            is_dir: file.is_dir(),
+            packed: Some(file.compressed_size()),
+            size: Some(file.size()),
+            method,
+            crc: Some(file.crc32()),
+            encrypted: file.encrypted(),
+            modified: file.last_modified().and_then(library_stamp),
+            offset: file.header_start(),
+        });
+    }
+    Some(members)
+}
+
+/// Checks one file with the zip library, when the zip opens with it and lists this file at the
+/// same place. Nothing otherwise, so the app's own check takes over.
+fn check_with_library(member: &ZipMember, total: u64, read: ReadRange) -> Option<ZipMemberCheck> {
+    let mut archive = zip::ZipArchive::new(crate::archives::Source::new(total, read)).ok()?;
+    let index = member.index as usize;
+    let same = archive.by_index_raw(index).is_ok_and(|file| {
+        file.header_start() == member.offset && clean_name(file.name_raw()) == member.path
+    });
+    if !same {
+        return None;
+    }
+    let mut file = match archive.by_index(index) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::UnsupportedArchive(why))
+            if why == zip::result::ZipError::PASSWORD_REQUIRED =>
+        {
+            return Some(verdict(
+                CHECK_UNCHECKED,
+                "It is encrypted, so it cannot be checked without its password.",
+            ));
+        }
+        Err(zip::result::ZipError::UnsupportedArchive(_)) => {
+            return Some(verdict(
+                CHECK_UNCHECKED,
+                format!(
+                    "It uses compression method {}, which this app cannot unpack yet.",
+                    member.method
+                ),
+            ));
+        }
+        Err(error) => {
+            return Some(verdict(
+                CHECK_DAMAGED,
+                format!("Its local header cannot be read: {error}."),
+            ));
+        }
+    };
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut seen = 0u64;
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => seen += count as u64,
+            Err(error) if error.to_string().to_lowercase().contains("checksum") => {
+                return Some(verdict(
+                    CHECK_DAMAGED,
+                    "Its data does not match its checksum, so some of it is wrong.",
+                ));
+            }
+            Err(error) => {
+                return Some(verdict(
+                    CHECK_DAMAGED,
+                    format!("It stops unpacking after {seen} bytes: {error}."),
+                ));
+            }
+        }
+    }
+    Some(match member.size {
+        Some(size) if size != seen => verdict(
+            CHECK_DAMAGED,
+            format!("It unpacks to {seen} bytes, not the {size} it should."),
+        ),
+        _ => verdict(CHECK_INTACT, "It unpacks whole, and its checksum agrees."),
+    })
+}
+
+/// Lists a zip: with the zip library when its directory is whole, and otherwise from what is
+/// left of its directory or from its file headers, whichever finds more.
 pub fn list_zip(total: u64, read: ReadRange) -> Result<ZipListing> {
     let directory = read_directory(total, read)?;
+    // The library is trusted only once this zip's own directory is found whole at its end: a
+    // zip cut short can still show the end of a zip stored inside it, which the library would
+    // open as if it were this one.
+    let whole = matches!(directory, Some(Directory { complete: true, .. }));
+    if let Some(members) = whole.then(|| list_with_library(total, read)).flatten() {
+        return Ok(ZipListing {
+            format: "zip".into(),
+            source: SOURCE_DIRECTORY,
+            members,
+            complete: true,
+            total_bytes: total,
+            note: None,
+        });
+    }
     if let Some(Directory {
         members,
         complete: true,
@@ -487,6 +611,15 @@ pub fn check_member(member: &ZipMember, total: u64, read: ReadRange) -> Result<Z
             CHECK_UNCHECKED,
             "It is encrypted, so it cannot be checked without its password.",
         ));
+    }
+    let whole = matches!(
+        read_directory(total, read)?,
+        Some(Directory { complete: true, .. })
+    );
+    if whole && LIBRARY_METHODS.contains(&member.method) {
+        if let Some(found) = check_with_library(member, total, read) {
+            return Ok(found);
+        }
     }
     if member.method != METHOD_STORED && member.method != METHOD_DEFLATED {
         return Ok(verdict(
