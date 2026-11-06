@@ -437,12 +437,19 @@ impl Session {
                 slot[3] += row.length;
             }
         }
-        let labels = TYPE_GROUPS
-            .iter()
-            .map(|group| (group.id, group.label))
+        // Every file, first: the whole of what was found, before any one kind of it.
+        let mut all = [0u64; 4];
+        for total in &totals {
+            for (sum, part) in all.iter_mut().zip(total) {
+                *sum += part;
+            }
+        }
+        let labels = [(GROUP_ALL, "All")]
+            .into_iter()
+            .chain(TYPE_GROUPS.iter().map(|group| (group.id, group.label)))
             .chain([("other", "Other")]);
         Ok(labels
-            .zip(totals)
+            .zip(std::iter::once(all).chain(totals))
             .map(|((group, label), total)| TypeTotal {
                 group: group.into(),
                 label: label.into(),

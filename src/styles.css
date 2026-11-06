@@ -753,3 +753,14 @@ video.inline-preview { max-height: 380px; background: #000; }
 .canvas-copy-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .canvas-copy p { margin: 0 0 8px; }
 .canvas-copy .detail-actions { margin-top: 8px; }
+.browse-layout button { padding: 3px 7px; display: inline-flex; align-items: center; }
+.browse-layout button[aria-checked="true"] { color: var(--accent); }
+.list-row { position: absolute; display: flex; align-items: center; gap: 8px; padding: 0 6px; border-bottom: 0.5px solid var(--line); }
+.list-row-selected { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.list-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; background: none; box-shadow: none; padding: 0; text-align: left; color: var(--ink); font-size: 12.5px; }
+.list-row-main:hover:not(:disabled) { filter: none; }
+.list-row-main svg { flex: none; color: var(--muted); }
+.list-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-row-size { flex: none; width: 72px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.list-row-date { flex: none; width: 130px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.list-row-verdict { flex: none; width: 150px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); overflow: hidden; white-space: nowrap; }

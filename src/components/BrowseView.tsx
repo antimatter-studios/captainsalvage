@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   call,
@@ -24,6 +25,45 @@ const TILE_GAP = 10;
 const PHOTO_TILE_HEIGHT = 190;
 const FILE_TILE_HEIGHT = 124;
 const OVERSCAN_ROWS = 2;
+const LIST_ROW_HEIGHT = 30;
+/** Where the window remembers the kind of file and the layout, across restarts. */
+const BROWSE_SETTING = "browse";
+type BrowseLayout = "icons" | "list";
+
+/** One file as a line of the list layout. */
+function ListRow({ row, selected, inBasket, style, onOpen, onBasket }: {
+  row: BrowseRow;
+  selected: boolean;
+  inBasket: boolean;
+  style: CSSProperties;
+  onOpen: () => void;
+  onBasket: (add: boolean) => void;
+}) {
+  const verdict = verdictLabel(row.verdict);
+  return (
+    <div className={selected ? "list-row list-row-selected" : "list-row"} style={style}>
+      <input
+        type="checkbox"
+        className="basket-check"
+        checked={inBasket}
+        aria-label={t("Add {name} to the treasure list", { name: row.name })}
+        title={t("Add to the treasure list")}
+        onChange={(event) => onBasket(event.target.checked)}
+      />
+      <button className="list-row-main" onClick={onOpen} title={row.name}>
+        <Icon name={fileIcon(row.name)} size={15} />
+        <span className="list-row-name">{row.name}</span>
+        {(row.copies ?? 1) > 1 && <span className="tile-copies" title={t("{count} identical files", { count: count(row.copies ?? 1) })}>×{count(row.copies ?? 1)}</span>}
+        <span className="list-row-size">{bytes(row.length)}</span>
+        <span className="list-row-date">{row.modified ? stamp(row.modified) : ""}</span>
+        <span className="list-row-verdict">
+          <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
+          {verdict}
+        </span>
+      </button>
+    </div>
+  );
+}
 const THUMB_RETRY_MILLIS = 2000;
 const SEARCH_WAIT_MILLIS = 300;
 const TEXT_PREVIEW_BYTES = 256 * 1024;
@@ -390,7 +430,24 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   onPreviewShown: (id: number | null) => void;
 }) {
   const [types, setTypes] = useState<TypeTotal[] | null>(null);
-  const [group, setGroup] = useState<BrowseGroup>("photos");
+  const [group, setGroup] = useState<BrowseGroup>("all");
+  const [layout, setLayout] = useState<BrowseLayout>("icons");
+  const remembered = useRef(false);
+  useEffect(() => {
+    invoke<Record<string, any>>("ui_settings")
+      .then((settings) => {
+        const saved = settings[BROWSE_SETTING] as { group?: BrowseGroup; layout?: BrowseLayout } | undefined;
+        if (saved?.group) setGroup(saved.group);
+        if (saved?.layout === "list" || saved?.layout === "icons") setLayout(saved.layout);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        remembered.current = true;
+      });
+  }, []);
+  useEffect(() => {
+    if (remembered.current) void invoke("set_ui_setting", { key: BROWSE_SETTING, value: { group, layout } }).catch(() => undefined);
+  }, [group, layout]);
   const [sort, setSort] = useState<BrowseSort>("best");
   const [typed, setTyped] = useState("");
   const [text, setText] = useState("");
@@ -466,13 +523,20 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
     return () => observer.disconnect();
   }, []);
 
-  const showImages = group === "photos" || (group === "videos" && hasFfmpeg);
-  const tileHeight = showImages ? PHOTO_TILE_HEIGHT : FILE_TILE_HEIGHT;
-  const columns = Math.max(1, Math.floor((scroll.width - TILE_GAP) / (TILE_WIDTH + TILE_GAP)));
-  const tileWidth = Math.floor((scroll.width - TILE_GAP * (columns + 1)) / columns);
+  const listed = layout === "list";
+  // All shows pictures for the photos and videos among it, and icons for the rest.
+  const showImages = group === "photos" || group === "all" || (group === "videos" && hasFfmpeg);
+  const imageFor = useCallback((row: BrowseRow) => {
+    const kind = fileIcon(row.name);
+    return group === "photos" || (group === "videos" && hasFfmpeg) || (group === "all" && (kind === "image" || (kind === "film" && hasFfmpeg)));
+  }, [group, hasFfmpeg]);
+  const tileHeight = listed ? LIST_ROW_HEIGHT : showImages ? PHOTO_TILE_HEIGHT : FILE_TILE_HEIGHT;
+  const columns = listed ? 1 : Math.max(1, Math.floor((scroll.width - TILE_GAP) / (TILE_WIDTH + TILE_GAP)));
+  const tileWidth = listed ? scroll.width - TILE_GAP * 2 : Math.floor((scroll.width - TILE_GAP * (columns + 1)) / columns);
+  const lineGap = listed ? 0 : TILE_GAP;
   const rowCount = Math.ceil((total ?? 0) / columns);
-  const firstRow = Math.max(0, Math.floor(scroll.top / (tileHeight + TILE_GAP)) - OVERSCAN_ROWS);
-  const lastRow = Math.min(rowCount - 1, Math.ceil((scroll.top + scroll.height) / (tileHeight + TILE_GAP)) + OVERSCAN_ROWS);
+  const firstRow = Math.max(0, Math.floor(scroll.top / (tileHeight + lineGap)) - OVERSCAN_ROWS);
+  const lastRow = Math.min(rowCount - 1, Math.ceil((scroll.top + scroll.height) / (tileHeight + lineGap)) + OVERSCAN_ROWS);
 
   const rowAt = useCallback((index: number) => pages.get(Math.floor(index / PAGE_ROWS))?.[index % PAGE_ROWS], [pages]);
 
@@ -509,11 +573,11 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   const closeOpen = useCallback(() => {
     setOpenIndex((current) => {
       if (current !== null && scroller.current) {
-        scroller.current.scrollTop = Math.floor(current / columns) * (tileHeight + TILE_GAP);
+        scroller.current.scrollTop = Math.floor(current / columns) * (tileHeight + lineGap);
       }
       return null;
     });
-  }, [columns, tileHeight]);
+  }, [columns, tileHeight, lineGap]);
 
   // The tiles are kept between draws, so their words must be redrawn when the language changes.
   const { language } = useLanguage();
@@ -526,16 +590,26 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
         if (index >= total) break;
         const style: CSSProperties = {
           left: TILE_GAP + column * (tileWidth + TILE_GAP),
-          top: TILE_GAP + line * (tileHeight + TILE_GAP),
+          top: TILE_GAP + line * (tileHeight + lineGap),
           width: tileWidth,
           height: tileHeight,
         };
         const row = rowAt(index);
-        out.push(row ? (
+        out.push(row && listed ? (
+          <ListRow
+            key={row.id}
+            row={row}
+            selected={openIndex === index}
+            inBasket={basket.has(`entry:${row.id}`)}
+            style={style}
+            onOpen={() => open(index)}
+            onBasket={(add) => onBasket("entry", row.id, add)}
+          />
+        ) : row ? (
           <Tile
             key={row.id}
             row={row}
-            showImage={showImages}
+            showImage={imageFor(row)}
             selected={openIndex === index}
             inBasket={basket.has(`entry:${row.id}`)}
             style={style}
@@ -546,7 +620,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
       }
     }
     return out;
-  }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, rowAt, showImages, openIndex, basket, open, onBasket, language]);
+  }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, lineGap, listed, rowAt, imageFor, openIndex, basket, open, onBasket, language]);
 
   const previewRow = standalone ?? openRow ?? null;
   const previewId = previewRow?.id ?? null;
@@ -579,6 +653,10 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
             <input type="checkbox" checked={hideCopies} onChange={(event) => setHideCopies(event.target.checked)} />
             {t("Hide copies")}{hideCopies && hiddenCopies > 0 ? ` (${count(hiddenCopies)})` : ""}
           </label>
+          <div className="segmented browse-layout" role="radiogroup" aria-label={t("Layout")}>
+            <button role="radio" aria-checked={layout === "icons"} aria-label={t("Icons")} title={t("Icons")} onClick={() => setLayout("icons")}><Icon name="grid" size={13} /></button>
+            <button role="radio" aria-checked={layout === "list"} aria-label={t("List")} title={t("List")} onClick={() => setLayout("list")}><Icon name="list" size={13} /></button>
+          </div>
           <select value={sort} onChange={(event) => setSort(event.target.value as BrowseSort)} aria-label={t("Sort")}>
             <option value="best">{t("Best first")}</option>
             <option value="newest">{t("Newest first")}</option>
@@ -599,7 +677,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
           ? t("No files of this type have “{text}” in the name. Try a lower confidence, or clear the filter.", { text })
           : t("No files of this type here. Try a lower confidence.")}</p>}
         {total === null && !error && <p className="empty">{t("Reading the list of files.")}</p>}
-        <div className="browse-sheet" style={{ height: rowCount * (tileHeight + TILE_GAP) + TILE_GAP }}>{tiles}</div>
+        <div className="browse-sheet" style={{ height: rowCount * (tileHeight + lineGap) + TILE_GAP * 2 }}>{tiles}</div>
       </div>
       {previewRow && (
         <PreviewPane

@@ -795,6 +795,9 @@ const strings: Record<string, string> = {
   "Install Codex, then try again.": "Installieren Sie Codex und versuchen Sie es erneut.",
   "the opencode command was not found.": "der Befehl opencode wurde nicht gefunden.",
   "Install opencode, then try again.": "Installieren Sie opencode und versuchen Sie es erneut.",
+  "Icons": "Symbole",
+  "List": "Liste",
+  "All": "Alle",
 };
 
 export default strings;

@@ -39,6 +39,7 @@ export const ENGINE_TEXT: string[] = [
   "nameless FAT chain",
   "explained by a hypothesis",
   // The file types in Browse files.
+  "All",
   "Photos",
   "Videos",
   "Music",
