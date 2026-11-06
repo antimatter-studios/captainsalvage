@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   call,
   type ActivityItem,
@@ -694,7 +694,7 @@ function ConnectTab() {
   );
 }
 
-type Tab = "selected" | "copy" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
+export type DetailsTab = "selected" | "rebuild" | "copy" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
 
 export interface DetailsProps {
   overview: Overview;
@@ -709,7 +709,11 @@ export interface DetailsProps {
   onCluster: (cluster: number) => void;
   onEntry: (row: Row) => void;
   onChanged: () => void;
-  tabRequest: { tab: Tab; at: number } | null;
+  tabRequest: { tab: DetailsTab; at: number } | null;
+  /** Says which tab is showing, so the sidebar can mark the pieces a canvas has used. */
+  onTab: (tab: DetailsTab) => void;
+  /** The Rebuild tab's canvas, which pieces are dragged onto from the sidebar. */
+  rebuild: ReactNode;
   floor: number;
   basket: BasketItem[];
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
@@ -720,14 +724,16 @@ export interface DetailsProps {
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter } = props;
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild } = props;
   const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
-  const [tab, setTab] = useState<Tab>("selected");
+  const [tab, setTab] = useState<DetailsTab>("selected");
   useEffect(() => {
     if (tabRequest) setTab(tabRequest.tab);
   }, [tabRequest]);
-  const tabs: [Tab, string, IconName][] = [
+  useEffect(() => onTab(tab), [tab, onTab]);
+  const tabs: [DetailsTab, string, IconName][] = [
     ["selected", t("Selected"), "info"],
+    ["rebuild", t("Rebuild"), "puzzle"],
     ["copy", t("Recovery basket"), "basket"],
     ["hypotheses", t("Hypotheses"), "bulb"],
     ["lens", t("Lens"), "aperture"],
@@ -747,7 +753,8 @@ export function Details(props: DetailsProps) {
         ))}
       </div>
       <div className="inspector-title">{tabTitle}</div>
-      <div className="panel-body">
+      {tab === "rebuild" && rebuild}
+      <div className="panel-body" hidden={tab === "rebuild"}>
         {tab === "selected" && (
           <>
             {entry && (
