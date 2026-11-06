@@ -358,7 +358,6 @@ const strings: Record<string, string> = {
   "macOS would not add the Finder location": "macOS no quiso añadir la ubicación del Finder",
   "macOS would not remove the Finder location": "macOS no quiso quitar la ubicación del Finder",
   "Made by you": "Creada por usted",
-  "Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect": "Ampliado, {count} clústeres. Desplace para ampliar, arrastre para mover, haga clic para inspeccionar",
   "Main": "Principal",
   "main boot sector": "sector de arranque principal",
   "Many directories": "Muchos directorios",
@@ -821,6 +820,8 @@ const strings: Record<string, string> = {
   "this 7z cannot be opened": "no se puede abrir este 7z",
   "this archive has no file number {name}": "este archivo comprimido no tiene el archivo número {name}",
   "Inside archive": "Dentro del archivo comprimido",
+  "Magnified view. Hold the left or right arrow to move through the clusters, faster the longer you hold. Shift and an arrow jumps a whole view.": "Vista ampliada. Mantenga la flecha izquierda o derecha para recorrer los clústeres, más rápido cuanto más tiempo la mantenga. Mayúsculas y una flecha saltan una vista entera.",
+  "Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub": "Ampliado, {count} clústeres. Desplace para ampliar, arrastre para mover, haga clic para inspeccionar, flechas para recorrer",
 };
 
 export default strings;
