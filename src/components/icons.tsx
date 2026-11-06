@@ -17,7 +17,8 @@ const PATHS = {
   chevronLeft: "M15 6l-6 6 6 6",
   chevronUp: "M6 15l6-6 6 6",
   chevronDown: "M6 9l6 6 6-6",
-  basket: "M5 9h14l-1.4 9.2a2 2 0 0 1-2 1.8H8.4a2 2 0 0 1-2-1.8zM9 9l2.5-5M15 9l-2.5-5M3.5 9h17",
+  // A treasure chest, for the treasure list.
+  chest: "M4 11h16v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 11V9a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2M10.5 11v3h3v-3M12 14v1.5",
   grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01",
   download: "M12 4v11M7.5 11L12 15.5 16.5 11M4 20h16",

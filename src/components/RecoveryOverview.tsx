@@ -157,7 +157,7 @@ export function RecoveryOverview({ overview, status, revision, onChanged }: { ov
               : t("found by name so far, in {count} files, with {percent} of the disk scanned.", { count: count(namedFiles), percent: percent(scanned) })
             : t("Files appear here once the scan has found their folders.")}
         </p>
-        <p className="recovery-note">{t("These are estimates until a file is tested or opened. Add what matters to your basket to get it to safety.")}</p>
+        <p className="recovery-note">{t("These are estimates until a file is tested or opened. Add what matters to your treasure list to get it to safety.")}</p>
 
         {segments.length > 0 && (
           <>

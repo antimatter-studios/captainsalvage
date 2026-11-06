@@ -181,7 +181,7 @@ export const ENGINE_TEXT: string[] = [
   "A copy is already running.",
   "The destination is out of space: {error}",
   "the copy on the destination does not match what was read, so it was discarded",
-  "The basket is empty.",
+  "The treasure list is empty.",
   "Add files or folders first.",
   // Previews and Claude.
   "ffmpeg is not installed",

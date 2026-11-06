@@ -99,7 +99,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, on
       <p>{fromEngine(row.reason)}</p>
       {row.kind === "file" && row.length > 0 && (
         <div className="detail-actions">
-          <button className="primary" onClick={onCopy}>{inBasket ? t("In your basket") : t("Add to basket")}</button>
+          <button className="primary" onClick={onCopy}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
           <button onClick={() => onPreview(row)}>{t("Open large")}</button>
           {isZipName(row.name) && <button onClick={onInsideZip}>{t("Look inside")}</button>}
           <button onClick={runTest} disabled={busy !== null}>{busy === "test" ? t("Testing") : t("Test format")}</button>
@@ -208,7 +208,7 @@ function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket
         {row.hint && <Fact label={t("Contains")}>{row.hint}</Fact>}
       </dl>
       <div className="detail-actions">
-        <button className="primary" onClick={onCopy}>{inBasket ? t("In your basket") : t("Add folder to basket")}</button>
+        <button className="primary" onClick={onCopy}>{inBasket ? t("On the treasure list") : t("Add folder to the treasure list")}</button>
         <button onClick={() => onBrowse(row)}>{t("Browse files")}</button>
         {(row.nodeKind === "orphan" || row.nodeKind === "root") && !similar && (
           <button onClick={() => setSimilar(true)}>{t("Find similar pieces")}</button>
@@ -298,7 +298,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
   return (
     <div className="detail">
       {items.length === 0 ? (
-        <p className="empty">{t("Your basket is empty. Tick files and folders in the sidebar, and they appear here in the order they will copy.")}</p>
+        <p className="empty">{t("Your treasure list is empty. Tick files and folders in the sidebar, and they appear here in the order they will copy.")}</p>
       ) : (
         <ol className="basket-list">
           {items.map((item, index) => (
@@ -333,7 +333,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
               <span className="basket-actions">
                 <button className="icon-button" disabled={index === 0} aria-label={t("Move up")} title={t("Copy earlier")} onClick={() => call("basket_move", { id: item.id, position: index - 1 })}><Icon name="chevronUp" size={13} /></button>
                 <button className="icon-button" disabled={index === items.length - 1} aria-label={t("Move down")} title={t("Copy later")} onClick={() => call("basket_move", { id: item.id, position: index + 1 })}><Icon name="chevronDown" size={13} /></button>
-                <button className="icon-button" aria-label={t("Remove from basket")} title={t("Remove from the basket")} onClick={() => call("basket_remove", { id: item.id })}><Icon name="close" size={12} /></button>
+                <button className="icon-button" aria-label={t("Remove from the treasure list")} title={t("Remove from the treasure list")} onClick={() => call("basket_remove", { id: item.id })}><Icon name="close" size={12} /></button>
               </span>
             </li>
           ))}
@@ -380,7 +380,7 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
             <button className="primary" onClick={start} disabled={!plan || Boolean(plan.refused) || !plan.fits || plan.files === 0 || running}>
               {plan ? t("Copy {count} files", { count: count(plan.files) }) : t("Copy")}
             </button>
-            <button onClick={() => call("basket_clear")} disabled={running}>{t("Empty basket")}</button>
+            <button onClick={() => call("basket_clear")} disabled={running}>{t("Empty the treasure list")}</button>
           </div>
         </>
       )}
@@ -739,7 +739,7 @@ export function Details(props: DetailsProps) {
     ["selected", t("Selected"), "info"],
     ["rebuild", t("Rebuild"), "truck"],
     ["agent", t("Ask agent"), "robot"],
-    ["copy", t("Recovery basket"), "basket"],
+    ["copy", t("Treasure list"), "chest"],
     ["hypotheses", t("Hypotheses"), "bulb"],
     ["lens", t("Lens"), "aperture"],
     ["volume", t("Volume"), "disk"],

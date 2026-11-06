@@ -1,4 +1,4 @@
-//! The recovery basket: what to copy, in the order that matters to the person.
+//! The treasure list (called the basket in code and tool names): what to copy, in the order that matters to the person.
 //!
 //! The basket only records intentions, on this Mac. Nothing is read or written
 //! until the person starts it, and removing an item touches no disk.
@@ -212,7 +212,7 @@ impl Session {
     pub fn basket_start(self: &Arc<Self>, options: &BasketOptions) -> Result<CopyPlan> {
         let groups = self.basket_groups(options)?;
         if groups.is_empty() {
-            bail!("The basket is empty. Add files or folders first.");
+            bail!("The treasure list is empty. Add files or folders first.");
         }
         self.copy_start_groups(groups)
     }
