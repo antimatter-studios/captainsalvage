@@ -4208,3 +4208,96 @@ fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
     let _ = std::fs::remove_dir_all(&destination);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn finder_reads_a_canvas_through_the_media_port_and_only_for_the_open_disk() {
+    use lens_core::media::{serial_text, MediaServer};
+    let (engine, session, dir) = engine_with_image("finder", build_jigsaw_volume());
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Finder"}))["id"]
+        .as_i64()
+        .expect("id");
+    for args in [
+        json!({"canvas": canvas, "head": 20}),
+        json!({"canvas": canvas, "head": 40}),
+        json!({"canvas": canvas, "head": 30, "merge": true}),
+    ] {
+        call_as_person(&engine, "canvas_place", args);
+    }
+    let media = MediaServer::start(engine.clone()).expect("start");
+    let info = media.info();
+    let port = info.base_url.rsplit(':').next().expect("port").to_string();
+    let serial = serial_text(&session);
+    let hex = |path: serde_json::Value| -> String {
+        path.to_string()
+            .bytes()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    let get = |query: String| {
+        let (status, body) = local_get(&port, &format!("/canvas/{canvas}?{query}"), None);
+        let value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        (status, value)
+    };
+
+    assert_eq!(get(String::new()).0, 403, "it needs the token");
+    let (status, top) = get(format!("t={}&v={serial}", info.token));
+    assert_eq!(status, 200);
+    let mut folders: Vec<&str> = top["folders"]
+        .as_array()
+        .expect("folders")
+        .iter()
+        .map(|folder| folder["name"].as_str().expect("name"))
+        .collect();
+    folders.sort_unstable();
+    assert_eq!(folders, ["Lost folder 40", "sub"]);
+    let files: Vec<&str> = top["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .map(|file| file["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(files, ["a1.jpg", "b1.mp3", "SHARED.jpg"]);
+
+    // A folder is named by its path names, and a lost one by its path name.
+    let (_, lost) = get(format!(
+        "t={}&v={serial}&p={}",
+        info.token,
+        hex(json!(["lost:40"]))
+    ));
+    assert_eq!(lost["files"][0]["name"], "c.mp3");
+    let (status, _) = get(format!(
+        "t={}&v={serial}&p={}",
+        info.token,
+        hex(json!(["nowhere"]))
+    ));
+    assert_eq!(status, 404);
+
+    // The chosen copy's bytes come from the file route, and only while this disk is open.
+    let shared = top["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["name"] == "SHARED.jpg")
+        .expect("shared")["id"]
+        .as_i64()
+        .expect("id");
+    let (status, body) = local_get(
+        &port,
+        &format!("/file/{shared}?t={}&v={serial}", info.token),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(&body[..4], &[0xFF, 0xD8, 0xFF, 0xE0]);
+    assert_eq!(get(format!("t={}&v=00000000", info.token)).0, 409);
+    assert_eq!(
+        local_get(
+            &port,
+            &format!("/file/{shared}?t={}&v=00000000", info.token),
+            None
+        )
+        .0,
+        409
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}

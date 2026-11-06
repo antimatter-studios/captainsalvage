@@ -7,16 +7,18 @@
 
 use crate::browse::parse_range;
 use crate::engine::Engine;
+use crate::export::modified_time;
 use crate::session::Session;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::UNIX_EPOCH;
 use tiny_http::{Header, Response, Server, StatusCode};
 
 pub const SEGMENT_SECONDS: f64 = 6.0;
@@ -361,6 +363,24 @@ pub struct MediaServer {
     file_requests: AtomicU64,
 }
 
+/// The open disk's serial number as the Finder helper names it.
+pub fn serial_text(session: &Session) -> String {
+    format!("{:08x}", session.volume.boot.volume_serial)
+}
+
+fn from_hex(text: &str) -> Result<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        bail!("hex has an odd length");
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|index| {
+            u8::from_str_radix(text.get(index..index + 2).context("not hex")?, 16)
+                .context("not hex")
+        })
+        .collect()
+}
+
 fn new_token() -> Result<String> {
     let mut bytes = [0u8; TOKEN_BYTES];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
@@ -537,14 +557,31 @@ impl MediaServer {
         if !authorised {
             return text_answer(403, "not allowed");
         }
-        self.route(path, headers)
+        // A caller that names the disk it expects is refused once another one is open, so a
+        // Finder window left open never shows the wrong disk's files.
+        if let Some(wanted) = query.split('&').find_map(|pair| pair.strip_prefix("v=")) {
+            match self.engine.session() {
+                Ok(session) if serial_text(&session) == wanted => {}
+                _ => return text_answer(409, "that disk is not open"),
+            }
+        }
+        self.route(path, query, headers)
             .unwrap_or_else(|error| text_answer(422, &format!("{error:#}")))
     }
 
-    fn route(&self, path: &str, headers: &[Header]) -> Result<Answer> {
+    fn route(&self, path: &str, query: &str, headers: &[Header]) -> Result<Answer> {
         let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         match parts.as_slice() {
             ["file", id] => self.serve_file(id.parse()?, headers),
+            ["canvas", canvas] => {
+                let folder = query
+                    .split('&')
+                    .find_map(|pair| pair.strip_prefix("p="))
+                    .unwrap_or("");
+                Ok(self
+                    .serve_canvas(canvas.parse()?, folder)
+                    .unwrap_or_else(|error| text_answer(404, &format!("{error:#}"))))
+            }
             ["hls", id, "index.m3u8"] => {
                 let tools = self.tools().context("ffmpeg is not installed")?;
                 let found = self.probe_entry(&tools, id.parse()?)?;
@@ -567,6 +604,55 @@ impl MediaServer {
             }
             _ => Ok(text_answer(404, "no such path")),
         }
+    }
+
+    /// One folder of a canvas's rebuilt tree, for Finder. The folder is named by the path names
+    /// from the top, as JSON in hex, so no name needs escaping.
+    fn serve_canvas(&self, canvas: i64, folder: &str) -> Result<Answer> {
+        let session = self.engine.session()?;
+        let path: Vec<String> = if folder.is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_slice(&from_hex(folder)?)?
+        };
+        let listing = session
+            .with_database(|database| database.canvas_list(canvas, &path, 0, u64::MAX >> 1))?;
+        let folders: Vec<Value> = listing
+            .folders
+            .iter()
+            .map(|folder| {
+                let shown = match (&folder.name, folder.lost_head) {
+                    (Some(name), _) => name.clone(),
+                    (None, Some(head)) => format!("Lost folder {head}"),
+                    (None, None) => folder.path_name.clone(),
+                };
+                json!({"pathName": folder.path_name, "name": shown})
+            })
+            .collect();
+        let files: Vec<Value> = listing
+            .files
+            .iter()
+            .filter_map(|file| {
+                let modified = file
+                    .chosen
+                    .modified
+                    .as_deref()
+                    .and_then(modified_time)
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|since| since.as_secs());
+                file.chosen.id.map(|id| {
+                    json!({"name": file.name, "id": id, "length": file.chosen.length, "modified": modified})
+                })
+            })
+            .collect();
+        let body = serde_json::to_vec(&json!({"folders": folders, "files": files}))?;
+        let length = body.len();
+        Ok(answer(
+            200,
+            vec![header("Content-Type", "application/json")?],
+            Box::new(std::io::Cursor::new(body)),
+            Some(length),
+        ))
     }
 
     fn serve_file(&self, id: i64, headers: &[Header]) -> Result<Answer> {

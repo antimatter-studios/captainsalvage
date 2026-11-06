@@ -231,6 +231,13 @@ export const ENGINE_TEXT: string[] = [
   "Move it out first.",
   "A suggestion needs a note saying why.",
   "there is no open suggestion {suggestion}",
+  // Showing a canvas in Finder.
+  "The Captain Salvage Finder helper is not installed.",
+  "The media port did not start, so Finder cannot read files.",
+  "macOS would not add the Finder location",
+  "macOS would not remove the Finder location",
+  "macOS did not answer when adding the Finder location.",
+  "This helper is not signed into the app group.",
 ];
 
 /** Errors macOS itself gives, which the engine passes on. They are not in the Rust source. */

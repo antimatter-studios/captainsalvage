@@ -216,6 +216,29 @@ scripts/take-screenshots.py media/v4
 This drives a second copy of the app off screen, with file names blurred. Look at every
 image before committing it, because bytes and chat answers can still hold names.
 
+## Showing a canvas in Finder
+
+A canvas in the Rebuild tab can appear in Finder as a folder, with the rebuilt tree inside. It
+is read only: folders are listed and files are read through the app's private port, straight
+from the map, and nothing done in Finder reaches the disk. The app must be open on that disk
+for Finder to read it.
+
+This needs **Captain Salvage Finder**, a small helper app that holds the File Provider
+extension. macOS only runs such an extension when the team's signature and provisioning
+profiles are on it, so it is built separately, and the profiles and key stay outside the repo:
+
+```sh
+CS_SIGN_KEY=development.key.pem CS_SIGN_CERT=development.cer.pem \
+CS_APP_PROFILE=app.provisionprofile CS_EXT_PROFILE=fileprovider.provisionprofile \
+  macos/finder/build.sh --install
+```
+
+The first time, turn it on in System Settings, General, Login Items & Extensions, File
+Providers. When the helper is installed, the Rebuild tab shows **Show in Finder**.
+
+Finder lets a program write into the folder, but the extension refuses every change, so a file
+saved there stays on this Mac only and is never sent anywhere.
+
 ## Using it from an MCP client
 
 The app runs an MCP server on localhost, protected by a token. Its **Connect** tab shows

@@ -253,6 +253,12 @@ export interface Page {
 }
 
 /** One rebuild of the folder tree, made by placing the pieces the scan found. */
+/** Whether the Finder helper is installed, and which of this disk's canvases Finder shows. */
+export interface FinderState {
+  available: boolean;
+  shown: number[];
+}
+
 export interface Canvas {
   id: number;
   name: string;

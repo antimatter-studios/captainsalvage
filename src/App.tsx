@@ -7,6 +7,7 @@ import {
   type BasketItem,
   type Canvas,
   type CanvasItem,
+  type FinderState,
   type BrowseRow,
   type ClusterInfo,
   type DiskAccess,
@@ -345,6 +346,7 @@ export default function App() {
   const [canvases, setCanvases] = useState<Canvas[]>([]);
   const [canvas, setCanvas] = useState<number | null>(rememberedCanvas);
   const [canvasRevision, setCanvasRevision] = useState(0);
+  const [finder, setFinder] = useState<FinderState>({ available: false, shown: [] });
   const [canvasUsed, setCanvasUsed] = useState<Set<number>>(new Set());
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
   const [center, setCenter] = useState<CenterView>("overview");
@@ -387,6 +389,28 @@ export default function App() {
       current = false;
     };
   }, [overview, canvasRevision]);
+  // Finder shows each canvas through a helper app. Telling it about every change keeps an open
+  // Finder window in step, and drops a location whose canvas was deleted.
+  useEffect(() => {
+    if (!overview) return;
+    let current = true;
+    invoke<FinderState>("finder_status")
+      .then((found) => current && setFinder(found))
+      .catch(() => current && setFinder({ available: false, shown: [] }));
+    return () => {
+      current = false;
+    };
+  }, [overview]);
+  useEffect(() => {
+    if (!overview || !finder.available) return;
+    const timer = setTimeout(() => {
+      const revisions = canvases.map((item) => ({ id: item.id, name: item.name, revision: `${item.updatedAtMillis}-${revision}` }));
+      invoke<{ shown: number[] }>("finder_sync", { canvases: revisions })
+        .then((synced) => setFinder({ available: true, shown: synced.shown }))
+        .catch(() => undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [overview, finder.available, canvases, revision]);
   useEffect(() => {
     try {
       if (canvas === null) localStorage.removeItem(CANVAS_STORAGE_KEY);
@@ -740,6 +764,9 @@ export default function App() {
             onChanged={bumpCanvas}
             onEntry={(row) => row.id !== null && void noteEntry(row.id)}
             copy={status?.copy ?? null}
+            finder={finder}
+            onFinder={setFinder}
+            mapRevision={revision}
           />
         )}
         {center === "browse" && (

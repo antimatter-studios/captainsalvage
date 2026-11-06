@@ -50,6 +50,10 @@ jobs:
         run: bash scripts/test_translations.sh
       - name: type check and build the window
         run: npm run build
+      - name: the Finder helper type checks
+        run: |
+          swiftc -typecheck -parse-as-library -application-extension macos/finder/Extension.swift
+          swiftc -typecheck macos/finder/Helper.swift
       - name: formatting
         run: cargo fmt --all --check
       - name: lint
