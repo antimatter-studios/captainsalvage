@@ -499,7 +499,7 @@ export async function readEntryBytes(id: number): Promise<Uint8Array> {
   return new Uint8Array(await invoke<ArrayBuffer>("read_entry_bytes", { id }));
 }
 
-export type BrowseGroup = "photos" | "videos" | "music" | "documents" | "archives" | "other";
+export type BrowseGroup = "all" | "photos" | "videos" | "music" | "documents" | "archives" | "other";
 export type BrowseSort = "best" | "largest" | "newest";
 
 export interface TypeTotal {
