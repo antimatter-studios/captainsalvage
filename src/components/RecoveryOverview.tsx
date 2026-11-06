@@ -116,6 +116,8 @@ function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () 
 }
 
 /** The first thing on screen: what has been found so far, before any selection. */
+const FOUND_VERDICTS = ["tested-good", "likely-intact", "plausible", "live"];
+
 export function RecoveryOverview({ overview, status, revision, onChanged }: { overview: Overview; status: Status | null; revision: number; onChanged: () => void }) {
   const [stats, setStats] = useState<RegionStats | null>(null);
   useEffect(() => {
@@ -128,7 +130,8 @@ export function RecoveryOverview({ overview, status, revision, onChanged }: { ov
 
   const clusterSize = overview.geometry.clusterSize;
   const verdicts = status?.summary?.verdicts ?? [];
-  const named = verdicts.filter((item) => item.verdict === "tested-good" || item.verdict === "likely-intact" || item.verdict === "plausible");
+  // The same verdicts the start screen counts: a file still visible on the volume is found too.
+  const named = verdicts.filter((item) => FOUND_VERDICTS.includes(item.verdict));
   const namedBytes = named.reduce((total, item) => total + item.bytes, 0);
   const namedFiles = named.reduce((total, item) => total + item.count, 0);
   const scanned = status ? status.scan.clustersScanned / status.scan.totalClusters : 0;
