@@ -11,6 +11,8 @@ import { SimilarPieces } from "./SimilarPieces";
 export const PIECE_TYPE = "application/x-salvage-piece";
 /** What a dragged canvas item carries, to move it. */
 const ITEM_TYPE = "application/x-salvage-item";
+/** What a file dragged from Browse files carries: its entry id. */
+export const ENTRY_TYPE = "application/x-salvage-entry";
 const FILES_PAGE = 200;
 const INDENT = 14;
 
@@ -20,21 +22,30 @@ export function startPieceDrag(event: DragEvent, head: number) {
   event.dataTransfer.effectAllowed = "copyMove";
 }
 
+/** Sets what a file dragged from Browse files carries. */
+export function startEntryDrag(event: DragEvent, entry: number) {
+  event.dataTransfer.setData(ENTRY_TYPE, String(entry));
+  event.dataTransfer.effectAllowed = "copy";
+}
+
 interface Dragged {
   piece?: number;
   item?: number;
+  entry?: number;
 }
 
 function dragged(event: DragEvent): Dragged | null {
   const piece = event.dataTransfer.getData(PIECE_TYPE);
   const item = event.dataTransfer.getData(ITEM_TYPE);
+  const entry = event.dataTransfer.getData(ENTRY_TYPE);
   if (piece) return { piece: Number(piece) };
   if (item) return { item: Number(item) };
+  if (entry) return { entry: Number(entry) };
   return null;
 }
 
 function carriesSomething(event: DragEvent): boolean {
-  return event.dataTransfer.types.includes(PIECE_TYPE) || event.dataTransfer.types.includes(ITEM_TYPE);
+  return [PIECE_TYPE, ITEM_TYPE, ENTRY_TYPE].some((type) => event.dataTransfer.types.includes(type));
 }
 
 interface Shared {
@@ -64,6 +75,9 @@ async function drop(shared: Shared, what: Dragged, place: CanvasPlace | undefine
       await call("canvas_place", { canvas: shared.canvas, head: what.piece, place: place ?? null, merge });
     } else if (what.item !== undefined) {
       await call("canvas_move", { canvas: shared.canvas, item: what.item, place: place ?? null, merge });
+    } else if (what.entry !== undefined) {
+      // A single file always joins the folder it lands on, as a layer of one file.
+      await call("canvas_place_file", { canvas: shared.canvas, entry: what.entry, place: place ?? null });
     }
     shared.changed();
   } catch (reason) {

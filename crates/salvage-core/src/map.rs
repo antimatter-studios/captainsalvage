@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS activity (
 /// corrections to an entry: raw values from the disk stay untouched beside them,
 /// and every resolve recalculates them.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("canvas_items", "entry", "INTEGER"),
     ("sets", "o_name", "TEXT"),
     ("sets", "o_first", "INTEGER"),
     ("sets", "o_length", "INTEGER"),

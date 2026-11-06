@@ -477,7 +477,6 @@ const strings: Record<string, string> = {
   "Pieces hold more than one copy of this file": "Las piezas contienen más de una copia de este archivo",
   "Place a first piece before putting the rest away.": "Coloque una primera pieza antes de guardar el resto.",
   "Place in tree": "Lugar en el árbol",
-  "Place the piece it belongs to instead.": "Coloque en su lugar la pieza a la que pertenece.",
   "Plausible": "Plausible",
   "PNG signature is missing.": "Falta la firma PNG.",
   "PNG start": "inicio de PNG",
@@ -593,7 +592,6 @@ const strings: Record<string, string> = {
   "Text": "Texto",
   "text": "texto",
   "That entry is not a copy of this file.": "Esa entrada no es una copia de este archivo.",
-  "That folder is inside another piece.": "Esa carpeta está dentro de otra pieza.",
   "That piece is already on this canvas.": "Esa pieza ya está en este lienzo.",
   "The baseline only covers changes after it was recorded.": "La referencia solo cubre los cambios posteriores a su registro.",
   "The canvas has no root to move it into.": "El lienzo no tiene raíz a la que moverlo.",
@@ -832,6 +830,10 @@ const strings: Record<string, string> = {
   "{count} copies, choose": "{count} copias, elija",
   "{picked} clashes picked for you": "{picked} conflictos resueltos para usted",
   "{picked} clashes picked for you, {needed} need you": "{picked} conflictos resueltos para usted, {needed} necesitan su atención",
+  "That is a folder.": "Eso es una carpeta.",
+  "Place a folder as a piece instead.": "Coloque una carpeta como pieza.",
+  "A file cannot be the top of the tree.": "Un archivo no puede ser la cima del árbol.",
+  "Place a piece or make a folder first.": "Coloque primero una pieza o cree una carpeta.",
 };
 
 export default strings;

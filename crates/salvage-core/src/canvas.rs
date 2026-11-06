@@ -26,6 +26,8 @@ pub const ITEM_FOLDER: &str = "folder";
 pub const ITEM_PIECE: &str = "piece";
 /// A found folder whose contents join the folder it is placed in.
 pub const ITEM_MERGE: &str = "merge";
+/// One found file, placed on its own: a small layer of one file.
+pub const ITEM_FILE: &str = "file";
 
 /// Deeper than any real tree, so a damaged one that loops cannot hang a walk.
 const MAX_DEPTH: usize = 256;
@@ -54,6 +56,8 @@ pub struct CanvasItem {
     pub parent_item: Option<i64>,
     /// A found folder inside that item's piece, when it was placed deeper than the item itself.
     pub parent_head: Option<u32>,
+    /// The found file, for a file placed on its own.
+    pub entry: Option<i64>,
 }
 
 /// Where something is put: in a canvas item, and optionally in a found folder inside it.
@@ -274,7 +278,7 @@ impl MapDb {
     pub fn canvas_items(&self, canvas: i64) -> Result<Vec<CanvasItem>> {
         self.need_canvas(canvas)?;
         let mut statement = self.connection.prepare_cached(
-            "SELECT id, kind, head, name, parent_item, parent_head FROM canvas_items \
+            "SELECT id, kind, head, name, parent_item, parent_head, entry FROM canvas_items \
              WHERE canvas = ?1 ORDER BY position, id",
         )?;
         let rows = statement
@@ -286,6 +290,7 @@ impl MapDb {
                     name: row.get(3)?,
                     parent_item: row.get(4)?,
                     parent_head: row.get(5)?,
+                    entry: row.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -378,12 +383,10 @@ impl MapDb {
                 row.get(0)
             })
             .optional()?;
-        match top {
-            None => bail!("there is no folder at cluster {head}"),
-            Some(Some(_)) => {
-                bail!("That folder is inside another piece. Place the piece it belongs to instead.")
-            }
-            Some(None) => {}
+        // A folder from inside a piece may be placed too, as a layer of its own. Where its
+        // piece is also on the canvas, the same files at the same clusters are one copy.
+        if top.is_none() {
+            bail!("there is no folder at cluster {head}");
         }
         if self.used_heads(canvas)?.contains(&head) {
             bail!("That piece is already on this canvas.");
@@ -398,6 +401,36 @@ impl MapDb {
             "INSERT INTO canvas_items (canvas, kind, head, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![canvas, kind, head, parent_item, parent_head, self.next_position(canvas)?, now_millis() as i64],
+        )?;
+        let id = self.connection.last_insert_rowid();
+        self.touch_canvas(canvas)?;
+        Ok(id)
+    }
+
+    /// Places one found file on its own, as a small layer: its file joins the folder it is
+    /// placed in, and clashes with a file of the same name there like any other copy.
+    pub fn canvas_place_file(&self, canvas: i64, entry: i64, place: Place) -> Result<i64> {
+        self.need_canvas(canvas)?;
+        let is_file: Option<bool> = self
+            .connection
+            .query_row(
+                "SELECT COALESCE(o_is_dir, is_dir) = 0 FROM sets WHERE id = ?1",
+                [entry],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match is_file {
+            None => bail!("there is no file {entry}"),
+            Some(false) => bail!("That is a folder. Place a folder as a piece instead."),
+            Some(true) => {}
+        }
+        let Some((item, at)) = self.resolve_place(canvas, place)? else {
+            bail!("A file cannot be the top of the tree. Place a piece or make a folder first.");
+        };
+        self.connection.execute(
+            "INSERT INTO canvas_items (canvas, kind, entry, parent_item, parent_head, position, created_at_millis) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![canvas, ITEM_FILE, entry, item, at, self.next_position(canvas)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
         self.touch_canvas(canvas)?;
@@ -1137,6 +1170,21 @@ impl<'a> Tree<'a> {
             for id in self.inside.get(&source).into_iter().flatten() {
                 let item = &self.items[id];
                 if item.kind == ITEM_MERGE {
+                    continue;
+                }
+                if item.kind == ITEM_FILE {
+                    if let Some(entry) = item.entry {
+                        let sql = format!("SELECT {FILE_COLUMNS} FROM sets WHERE id = ?1");
+                        let found = self
+                            .database
+                            .connection
+                            .query_row(&sql, [entry], file_row)
+                            .optional()?;
+                        if let Some(row) = found {
+                            self.file_layers.borrow_mut().insert(entry, item.id);
+                            files.entry(key(&row.name)).or_default().push(row);
+                        }
+                    }
                     continue;
                 }
                 let (name, lost) = self.item_name(item)?;

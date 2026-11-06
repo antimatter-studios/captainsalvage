@@ -785,9 +785,9 @@ impl Engine {
                 )?)?)
             }
             "canvas_create" | "canvas_rename" | "canvas_delete" | "canvas_place"
-            | "canvas_folder" | "canvas_move" | "canvas_rename_item" | "canvas_remove"
-            | "canvas_leftovers" | "canvas_choose" | "canvas_swap" | "canvas_accept"
-            | "canvas_dismiss" => {
+            | "canvas_place_file" | "canvas_folder" | "canvas_move" | "canvas_rename_item"
+            | "canvas_remove" | "canvas_leftovers" | "canvas_choose" | "canvas_swap"
+            | "canvas_accept" | "canvas_dismiss" => {
                 only_the_person(author)?;
                 let result = session.with_database(|database| -> Result<Value> {
                     Ok(match tool {
@@ -810,6 +810,11 @@ impl Engine {
                             need_u32(args, "head")?,
                             place_of(args)?,
                             bool_of(args, "merge", false),
+                        )?}),
+                        "canvas_place_file" => json!({"id": database.canvas_place_file(
+                            need_i64(args, "canvas")?,
+                            need_i64(args, "entry")?,
+                            place_of(args)?,
                         )?}),
                         "canvas_folder" => json!({"id": database.canvas_folder(
                             need_i64(args, "canvas")?,

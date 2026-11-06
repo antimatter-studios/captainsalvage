@@ -17,6 +17,7 @@ import {
 import { bytes, count, percent, stamp, verdictLabel } from "../format";
 import { fromEngine, t, useLanguage } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
+import { startEntryDrag } from "./RebuildView";
 import { isArchiveName } from "./ZipView";
 
 const PAGE_ROWS = 120;
@@ -50,7 +51,7 @@ function ListRow({ row, selected, inBasket, style, onOpen, onBasket }: {
         title={t("Add to the treasure list")}
         onChange={(event) => onBasket(event.target.checked)}
       />
-      <button className="list-row-main" onClick={onOpen} title={row.name}>
+      <button className="list-row-main" onClick={onOpen} title={row.name} draggable onDragStart={(event) => startEntryDrag(event, row.id)}>
         <Icon name={fileIcon(row.name)} size={15} />
         <span className="list-row-name">{row.name}</span>
         {(row.copies ?? 1) > 1 && <span className="tile-copies" title={t("{count} identical files", { count: count(row.copies ?? 1) })}>×{count(row.copies ?? 1)}</span>}
@@ -111,7 +112,7 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
 
   return (
     <div className="tile-wrap" style={style}>
-      <button className={selected ? "tile tile-selected" : "tile"} onClick={onOpen} title={row.name}>
+      <button className={selected ? "tile tile-selected" : "tile"} onClick={onOpen} title={row.name} draggable onDragStart={(event) => startEntryDrag(event, row.id)}>
         {showImage && (
           <span className="tile-image">
             {!failed ? (
