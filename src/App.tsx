@@ -199,6 +199,8 @@ function ThemeSwitch() {
   const [choice, setChoice] = useState<ThemeChoice>("system");
   useEffect(() => {
     invoke<ThemeChoice>("get_theme").then(setChoice).catch(() => undefined);
+    const stop = listen<{ theme: ThemeChoice }>("salvage-theme", ({ payload }) => setChoice(payload.theme));
+    return () => void stop.then((unlisten) => unlisten());
   }, []);
   return (
     <div className="segmented theme-switch" role="radiogroup" aria-label={t("Appearance")}>
@@ -398,6 +400,12 @@ export default function App() {
   }, [overview, canvasRevision]);
   // Finder shows each canvas through a helper app. Telling it about every change keeps an open
   // Finder window in step, and drops a location whose canvas was deleted.
+  const [finderRevision, setFinderRevision] = useState(0);
+  useEffect(() => {
+    // An MCP client showed or hid a canvas in Finder.
+    const stop = listen("salvage-finder-changed", () => setFinderRevision((value) => value + 1));
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
   useEffect(() => {
     if (!overview) return;
     let current = true;
@@ -407,7 +415,7 @@ export default function App() {
     return () => {
       current = false;
     };
-  }, [overview]);
+  }, [overview, finderRevision]);
   useEffect(() => {
     if (!overview || !finder.available) return;
     const timer = setTimeout(() => {

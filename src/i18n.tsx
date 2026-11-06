@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { ENGINE_TEXT, SYSTEM_TEXT } from "./engineText";
 import de from "./locales/de";
 import es from "./locales/es";
@@ -151,6 +152,11 @@ export function LanguageRoot({ initial, children }: { initial: Language; childre
   const choose = useCallback((next: Language) => {
     setLanguage(next);
     void invoke("set_language", { language: next }).catch(() => undefined);
+  }, []);
+  // An MCP client changed it: the app has saved it already, so only show it.
+  useEffect(() => {
+    const stop = listen<{ language: Language }>("salvage-language", ({ payload }) => setLanguage(payload.language));
+    return () => void stop.then((unlisten) => unlisten());
   }, []);
   return <LanguageContext.Provider value={{ language, choose }}>{children}</LanguageContext.Provider>;
 }
