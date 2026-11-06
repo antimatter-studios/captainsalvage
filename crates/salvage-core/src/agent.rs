@@ -27,15 +27,31 @@ Say plainly what you measured and what you are guessing. Use show_in_app to take
 /// The variable Codex reads the MCP server's token from, so it is never on a command line.
 const TOKEN_VARIABLE: &str = "SALVAGE_MCP_TOKEN";
 const CLAUDE_TOOL_PREFIX: &str = "mcp__captain-salvage__";
+const OPENCODE_TOOL_PREFIX: &str = "captain-salvage_";
+/// Claude Code takes these names for its newest models, so the list never goes stale.
+const CLAUDE_MODELS: &[(&str, &str)] = &[
+    ("fable", "Fable"),
+    ("opus", "Opus"),
+    ("sonnet", "Sonnet"),
+    ("haiku", "Haiku"),
+];
 
 /// The agents there are adapters for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentKind {
     Claude,
     Codex,
+    Opencode,
 }
 
-pub const AGENTS: [AgentKind; 2] = [AgentKind::Claude, AgentKind::Codex];
+pub const AGENTS: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Opencode];
+
+/// A model an agent offers. The empty id is the agent's own default.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Model {
+    pub id: String,
+    pub name: String,
+}
 
 /// One agent as the window lists it.
 #[derive(Serialize)]
@@ -43,6 +59,8 @@ pub struct AgentInfo {
     pub id: &'static str,
     pub name: &'static str,
     pub installed: bool,
+    /// How to install it, when it is not.
+    pub install: &'static str,
 }
 
 /// What an agent said or did, in the same shape whichever agent it was.
@@ -67,8 +85,11 @@ pub struct Ask<'a> {
     pub session: Option<&'a str>,
     /// Added to the engine's instructions.
     pub instructions: &'a str,
-    /// An empty folder the agent runs in. Claude Code also finds its MCP settings file here.
+    /// An empty folder the agent runs in. Claude Code and opencode also find their MCP settings
+    /// file here.
     pub work_dir: &'a Path,
+    /// A model id from `models`, or nothing for the agent's default.
+    pub model: Option<&'a str>,
 }
 
 impl AgentKind {
@@ -76,6 +97,15 @@ impl AgentKind {
         match self {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",
+            AgentKind::Opencode => "opencode",
+        }
+    }
+
+    pub fn install(self) -> &'static str {
+        match self {
+            AgentKind::Claude => "npm install -g @anthropic-ai/claude-code",
+            AgentKind::Codex => "npm install -g @openai/codex",
+            AgentKind::Opencode => "npm install -g opencode-ai",
         }
     }
 
@@ -83,6 +113,7 @@ impl AgentKind {
         match self {
             AgentKind::Claude => "Claude Code",
             AgentKind::Codex => "Codex",
+            AgentKind::Opencode => "opencode",
         }
     }
 
@@ -107,6 +138,10 @@ impl AgentKind {
                     "/usr/local/bin/codex",
                     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
                 ],
+            ),
+            AgentKind::Opencode => (
+                &[".opencode/bin/opencode", ".local/bin/opencode"],
+                &["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"],
             ),
         }
     }
@@ -134,6 +169,9 @@ impl AgentKind {
                 }
                 AgentKind::Codex => {
                     "the codex command was not found. Install Codex, then try again."
+                }
+                AgentKind::Opencode => {
+                    "the opencode command was not found. Install opencode, then try again."
                 }
             })
     }
@@ -164,6 +202,9 @@ impl AgentKind {
                 if let Some(session) = ask.session {
                     command.arg("--resume").arg(session);
                 }
+                if let Some(model) = ask.model {
+                    command.arg("--model").arg(model);
+                }
             }
             AgentKind::Codex => {
                 let server = format!(
@@ -187,10 +228,26 @@ impl AgentKind {
                         "developer_instructions={}",
                         toml_string(&instructions)
                     ));
+                if let Some(model) = ask.model {
+                    command.arg("--model").arg(model);
+                }
                 if let Some(session) = ask.session {
                     command.arg(session);
                 }
                 command.arg(ask.prompt).env(TOKEN_VARIABLE, &ask.mcp.token);
+            }
+            AgentKind::Opencode => {
+                let config = write_opencode_config(ask.mcp, ask.work_dir, &instructions)?;
+                command
+                    .args(["run", "--format", "json"])
+                    .env("OPENCODE_CONFIG", config);
+                if let Some(model) = ask.model {
+                    command.arg("--model").arg(model);
+                }
+                if let Some(session) = ask.session {
+                    command.arg("--session").arg(session);
+                }
+                command.arg(ask.prompt);
             }
         }
         // A parent agent session's variables would confuse the child.
@@ -237,6 +294,63 @@ pub fn agents() -> Vec<AgentInfo> {
             id: agent.id(),
             name: agent.name(),
             installed: agent.find().is_ok(),
+            install: agent.install(),
+        })
+        .collect()
+}
+
+/// The models an agent offers, its default first. Claude Code's are its own names for its
+/// newest models. Codex and opencode are asked for theirs.
+pub fn models(agent: AgentKind) -> Result<Vec<Model>> {
+    let mut found = vec![Model {
+        id: String::new(),
+        name: "Default".to_string(),
+    }];
+    let listed = |args: &[&str]| -> Result<String> {
+        let output = Command::new(agent.find()?)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("asking {} for its models", agent.id()))?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    };
+    match agent {
+        AgentKind::Claude => found.extend(CLAUDE_MODELS.iter().map(|(id, name)| Model {
+            id: id.to_string(),
+            name: name.to_string(),
+        })),
+        AgentKind::Codex => found.extend(codex_models(&listed(&["debug", "models"])?)),
+        AgentKind::Opencode => found.extend(opencode_models(&listed(&["models"])?)),
+    }
+    Ok(found)
+}
+
+/// Codex lists its models as JSON, some of them hidden from people.
+fn codex_models(text: &str) -> Vec<Model> {
+    let listed: Value = serde_json::from_str(text).unwrap_or_default();
+    listed["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|model| model["visibility"] == "list")
+        .filter_map(|model| {
+            let id = model["slug"].as_str()?;
+            Some(Model {
+                id: id.to_string(),
+                name: model["display_name"].as_str().unwrap_or(id).to_string(),
+            })
+        })
+        .collect()
+}
+
+/// opencode lists one provider/model per line.
+fn opencode_models(text: &str) -> Vec<Model> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| line.contains('/') && !line.contains(' '))
+        .map(|line| Model {
+            id: line.to_string(),
+            name: line.to_string(),
         })
         .collect()
 }
@@ -254,9 +368,61 @@ fn toml_string(text: &str) -> String {
     Value::String(text.to_string()).to_string()
 }
 
-fn write_claude_config(mcp: &McpInfo, folder: &Path) -> Result<PathBuf> {
+/// Writes a file only this user can read, from the moment it exists: these hold the token.
+fn write_private(path: &Path, text: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     const OWNER_ONLY: u32 = 0o600;
+    let mut options = std::fs::OpenOptions::new();
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, OWNER_ONLY);
+    let mut file = options.write(true).create(true).truncate(true).open(path)?;
+    std::io::Write::write_all(&mut file, text.as_bytes())?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(OWNER_ONLY))?;
+    Ok(())
+}
+
+/// opencode's settings for one question: only this server, and none of its own tools that
+/// read or change files or run commands, so it works only through the engine.
+fn write_opencode_config(mcp: &McpInfo, folder: &Path, instructions: &str) -> Result<PathBuf> {
+    const OWN_TOOLS: &[&str] = &[
+        "bash",
+        "edit",
+        "write",
+        "patch",
+        "read",
+        "glob",
+        "grep",
+        "list",
+        "webfetch",
+        "task",
+        "todowrite",
+        "todoread",
+    ];
+    let rules = folder.join("instructions.md");
+    std::fs::write(&rules, instructions)?;
+    let tools: serde_json::Map<String, Value> = OWN_TOOLS
+        .iter()
+        .map(|tool| (tool.to_string(), Value::Bool(false)))
+        .collect();
+    let config = json!({
+        "$schema": "https://opencode.ai/config.json",
+        "instructions": [rules],
+        "mcp": {
+            SERVER_NAME: {
+                "type": "remote",
+                "url": mcp.url,
+                "headers": {"Authorization": format!("Bearer {}", mcp.token)},
+                "enabled": true,
+            },
+        },
+        "tools": tools,
+        "permission": {"edit": "deny", "bash": "deny", "webfetch": "deny"},
+    });
+    let path = folder.join("opencode.json");
+    write_private(&path, &config.to_string())?;
+    Ok(path)
+}
+
+fn write_claude_config(mcp: &McpInfo, folder: &Path) -> Result<PathBuf> {
     let path = folder.join("mcp-client.json");
     let config = json!({
         "mcpServers": {
@@ -267,16 +433,7 @@ fn write_claude_config(mcp: &McpInfo, folder: &Path) -> Result<PathBuf> {
             },
         },
     });
-    // Created private, so the token is never readable by others, even for a moment.
-    let mut options = std::fs::OpenOptions::new();
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, OWNER_ONLY);
-    let mut file = options
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&path)?;
-    std::io::Write::write_all(&mut file, config.to_string().as_bytes())?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(OWNER_ONLY))?;
+    write_private(&path, &config.to_string())?;
     Ok(path)
 }
 
@@ -295,12 +452,14 @@ impl Parser {
         let found = match self.agent {
             AgentKind::Claude => claude_events(&event),
             AgentKind::Codex => codex_events(&event),
+            AgentKind::Opencode => opencode_events(&event),
         };
         let mut events = Vec::new();
         for event in found {
             let event = match event {
-                // Codex gives each message whole, so a later one starts a new paragraph.
-                AgentEvent::Text { text } if self.agent == AgentKind::Codex && self.said => {
+                // Codex and opencode give each message whole, so a later one starts a new
+                // paragraph.
+                AgentEvent::Text { text } if self.agent != AgentKind::Claude && self.said => {
                     AgentEvent::Text {
                         text: format!("\n\n{text}"),
                     }
@@ -367,6 +526,38 @@ fn claude_events(event: &Value) -> Vec<AgentEvent> {
     found
 }
 
+fn opencode_events(event: &Value) -> Vec<AgentEvent> {
+    let part = &event["part"];
+    let mut found = Vec::new();
+    match event["type"].as_str() {
+        // Every event names the session; the first step is enough to learn it.
+        Some("step_start") => {
+            if let Some(id) = event["sessionID"].as_str() {
+                found.push(AgentEvent::Session { id: id.to_string() });
+            }
+        }
+        Some("tool_use") => found.push(AgentEvent::Tool {
+            name: text(&part["tool"])
+                .trim_start_matches(OPENCODE_TOOL_PREFIX)
+                .to_string(),
+            input: part["state"]["input"].to_string(),
+        }),
+        Some("text") => found.push(AgentEvent::Text {
+            text: text(&part["text"]),
+        }),
+        Some("error") => found.push(AgentEvent::Error {
+            text: event["error"]["data"]["message"]
+                .as_str()
+                .or_else(|| event["error"]["message"].as_str())
+                .or_else(|| event["error"]["name"].as_str())
+                .unwrap_or("The agent reported an error.")
+                .to_string(),
+        }),
+        _ => {}
+    }
+    found
+}
+
 fn codex_events(event: &Value) -> Vec<AgentEvent> {
     let item = &event["item"];
     match (event["type"].as_str(), item["type"].as_str()) {
@@ -416,4 +607,177 @@ pub fn check_prompt(prompt: &str) -> Result<()> {
         bail!("There is no question to ask.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(agent: AgentKind, lines: &[&str]) -> Vec<AgentEvent> {
+        let mut parser = agent.parser();
+        lines.iter().flat_map(|line| parser.line(line)).collect()
+    }
+
+    fn tool(name: &str, input: &str) -> AgentEvent {
+        AgentEvent::Tool {
+            name: name.into(),
+            input: input.into(),
+        }
+    }
+
+    fn said(text: &str) -> AgentEvent {
+        AgentEvent::Text { text: text.into() }
+    }
+
+    fn session(id: &str) -> AgentEvent {
+        AgentEvent::Session { id: id.into() }
+    }
+
+    #[test]
+    fn claude_code_streams_its_answer_and_names_its_tools() {
+        let events = read(
+            AgentKind::Claude,
+            &[
+                r#"{"type":"system","subtype":"init","session_id":"s1"}"#,
+                r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__captain-salvage__volume_overview","input":{}}]}}"#,
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"20"}}}"#,
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"0"}}}"#,
+                r#"{"type":"result","is_error":true,"result":"Overloaded"}"#,
+            ],
+        );
+        assert_eq!(
+            events,
+            vec![
+                session("s1"),
+                tool("volume_overview", "{}"),
+                said("20"),
+                said("0"),
+                AgentEvent::Error {
+                    text: "Overloaded".into()
+                },
+            ]
+        );
+    }
+
+    /// Lines as `codex exec --json` printed them against a test copy of the app.
+    #[test]
+    fn codex_gives_whole_messages_as_paragraphs() {
+        let events = read(
+            AgentKind::Codex,
+            &[
+                r#"{"type":"thread.started","thread_id":"t1"}"#,
+                r#"{"type":"turn.started"}"#,
+                r#"{"type":"item.started","item":{"id":"item_0","type":"mcp_tool_call","server":"captain-salvage","tool":"volume_overview","arguments":{},"status":"in_progress"}}"#,
+                r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Looking."}}"#,
+                r#"{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"200"}}"#,
+                r#"{"type":"turn.failed","error":{"message":"usage limit"}}"#,
+            ],
+        );
+        assert_eq!(
+            events,
+            vec![
+                session("t1"),
+                tool("volume_overview", "{}"),
+                said("Looking."),
+                said("\n\n200"),
+                AgentEvent::Error {
+                    text: "usage limit".into()
+                },
+            ]
+        );
+    }
+
+    /// Lines as `opencode run --format json` printed them against a test copy of the app.
+    #[test]
+    fn opencode_names_its_session_tools_and_text() {
+        let events = read(
+            AgentKind::Opencode,
+            &[
+                r#"{"type":"step_start","sessionID":"ses_1","part":{"type":"step-start"}}"#,
+                r#"{"type":"tool_use","sessionID":"ses_1","part":{"type":"tool","tool":"captain-salvage_volume_overview","state":{"status":"completed","input":{},"output":"{}"}}}"#,
+                r#"{"type":"step_finish","sessionID":"ses_1","part":{"reason":"tool-calls"}}"#,
+                r#"{"type":"text","sessionID":"ses_1","part":{"type":"text","text":"200"}}"#,
+                r#"{"type":"error","sessionID":"ses_1","error":{"name":"APIError","data":{"message":"rate limited"}}}"#,
+            ],
+        );
+        assert_eq!(
+            events,
+            vec![
+                session("ses_1"),
+                tool("volume_overview", "{}"),
+                said("200"),
+                AgentEvent::Error {
+                    text: "rate limited".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn model_lists_keep_only_what_people_may_choose() {
+        let codex = codex_models(
+            r#"{"models":[{"slug":"a","display_name":"A","visibility":"list"},{"slug":"b","visibility":"hide"}]}"#,
+        );
+        assert_eq!(
+            codex,
+            vec![Model {
+                id: "a".into(),
+                name: "A".into()
+            }]
+        );
+        let opencode = opencode_models("opencode/free-one\nnoise line here\nother/two\n");
+        assert_eq!(
+            opencode
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["opencode/free-one", "other/two"]
+        );
+    }
+
+    #[test]
+    fn the_token_is_never_an_argument() {
+        let folder =
+            std::env::temp_dir().join(format!("salvage-agent-test-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let mcp = McpInfo {
+            url: "http://127.0.0.1:1/mcp".into(),
+            token: "secret-token".into(),
+            port: 1,
+        };
+        for agent in AGENTS {
+            let ask = Ask {
+                mcp: &mcp,
+                prompt: "q",
+                session: Some("s"),
+                instructions: "",
+                work_dir: &folder,
+                model: Some("m"),
+            };
+            let command = agent.command(Path::new("/bin/echo"), &ask).unwrap();
+            let arguments: Vec<String> = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            assert!(
+                arguments.iter().all(|arg| !arg.contains("secret-token")),
+                "{}: {arguments:?}",
+                agent.id()
+            );
+            assert!(
+                arguments.iter().any(|arg| arg == "m"),
+                "{} ignores the model",
+                agent.id()
+            );
+        }
+        let config = std::fs::read_to_string(folder.join("opencode.json")).unwrap();
+        assert!(config.contains("\"bash\":false"));
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(folder.join("opencode.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
 }

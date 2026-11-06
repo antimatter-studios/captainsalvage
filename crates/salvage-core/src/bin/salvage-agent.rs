@@ -4,7 +4,8 @@
 //!
 //! Usage:
 //!   salvage-agent list
-//!   salvage-agent ask [--agent claude|codex] [--session ID] [--json] QUESTION...
+//!   salvage-agent models AGENT
+//!   salvage-agent ask [--agent claude|codex|opencode] [--model ID] [--session ID] [--json] QUESTION...
 //!
 //! The answer is printed as it comes, and each tool the agent uses is shown on standard error.
 //! The last line on standard error is the session, to continue with --session. With --json,
@@ -16,7 +17,7 @@ use salvage_core::mcp::published_info;
 use salvage_core::workspace::app_support;
 use std::io::Write;
 
-const USAGE: &str = "usage: salvage-agent list\n       salvage-agent ask [--agent claude|codex] [--session ID] [--json] QUESTION...";
+const USAGE: &str = "usage: salvage-agent list\n       salvage-agent models AGENT\n       salvage-agent ask [--agent claude|codex|opencode] [--model ID] [--session ID] [--json] QUESTION...";
 
 fn list() -> Result<()> {
     for found in agent::agents() {
@@ -30,8 +31,21 @@ fn list() -> Result<()> {
     Ok(())
 }
 
+fn models(arguments: &[String]) -> Result<()> {
+    let kind = AgentKind::from_id(arguments.first().context(USAGE)?)?;
+    for model in agent::models(kind)? {
+        if model.id.is_empty() {
+            println!("(default)");
+        } else {
+            println!("{:<32} {}", model.id, model.name);
+        }
+    }
+    Ok(())
+}
+
 fn ask(arguments: &[String]) -> Result<()> {
     let mut kind = AgentKind::Claude;
+    let mut model = None;
     let mut session = None;
     let mut json = false;
     let mut words = Vec::new();
@@ -39,6 +53,7 @@ fn ask(arguments: &[String]) -> Result<()> {
     while let Some(argument) = rest.next() {
         match argument.as_str() {
             "--agent" => kind = AgentKind::from_id(rest.next().context("--agent needs a name")?)?,
+            "--model" => model = Some(rest.next().context("--model needs an id")?.clone()),
             "--session" => session = Some(rest.next().context("--session needs an id")?.clone()),
             "--json" => json = true,
             other if other.starts_with("--") => bail!("unknown option {other}\n{USAGE}"),
@@ -55,6 +70,7 @@ fn ask(arguments: &[String]) -> Result<()> {
         session: session.as_deref(),
         instructions: CHAT_INSTRUCTIONS,
         work_dir: &work_dir,
+        model: model.as_deref(),
     })?;
     let errors = agent::collect_errors(errors);
     let mut found_session = None;
@@ -102,6 +118,7 @@ fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("list") => list(),
+        Some("models") => models(&arguments[1..]),
         Some("ask") => ask(&arguments[1..]),
         _ => bail!("{USAGE}"),
     }

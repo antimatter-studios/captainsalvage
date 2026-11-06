@@ -31,6 +31,12 @@ impl ChatState {
         agent::agents()
     }
 
+    /// The agent's models. Codex and opencode are asked each time, which takes a moment, so
+    /// the window asks once per agent.
+    pub fn models(agent_id: &str) -> Result<Vec<agent::Model>> {
+        agent::models(AgentKind::from_id(agent_id)?)
+    }
+
     pub fn cancel(&self) {
         if let Ok(mut slot) = self.child.lock() {
             if let Some(child) = slot.as_mut() {
@@ -51,6 +57,7 @@ impl ChatState {
         app: tauri::AppHandle,
         info: &McpInfo,
         agent_id: &str,
+        model: Option<&str>,
         message: &str,
         selection: &Value,
     ) -> Result<()> {
@@ -86,6 +93,7 @@ impl ChatState {
             session: session.as_deref(),
             instructions: CHAT_INSTRUCTIONS,
             work_dir: &work_dir,
+            model: model.filter(|model| !model.is_empty()),
         })?;
         *self.child.lock().map_err(|_| poisoned())? = Some(child);
 
