@@ -668,6 +668,9 @@ video.inline-preview { max-height: 380px; background: #000; }
 .keep-safe > p { margin: 3px 0 10px; color: var(--ink-2); max-width: 70ch; }
 .keep-safe h4 { margin: 16px 0 4px; font-size: 12px; font-weight: 650; color: var(--ink-2); }
 .keep-safe-after { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.mount-block { margin-top: 8px; }
+.mount-block .check { font-size: 12.5px; }
+.mount-block-note { margin: 4px 0 0; font-size: 12px; color: var(--chart-caution); }
 .keep-step { display: flex; gap: 9px; padding: 7px 0; }
 .keep-step-mark { flex: none; width: 14px; font-weight: 700; color: var(--muted); }
 .keep-step-done .keep-step-mark { color: var(--good); }

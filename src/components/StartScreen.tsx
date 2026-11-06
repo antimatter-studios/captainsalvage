@@ -5,6 +5,7 @@ import { call, type DiskAccess, type KnownVolume, type StartupReport, type Start
 import { bytes, count } from "../format";
 import { fromEngine, locale, t } from "../i18n";
 import { Command } from "./Command";
+import { MountBlockToggle } from "./MountBlock";
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 900;
@@ -104,6 +105,7 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
         {ready && <button className="primary" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
       </div>
       {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && <p className="start-new">{t("Not seen before.")}</p>}
+      {volume.uuid && <MountBlockToggle uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
       {!volume.canOpen && <p className="start-new">{t("Captain Salvage reads exFAT for now.")}</p>}
       {volume.canOpen && volume.mountPoint && (
         <div className="start-caution">
@@ -215,6 +217,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
                     <span>{bytes(known.record.bytes)}</span>
                   </div>
                   <KnownLine known={known} />
+                  {known.record.uuid && <MountBlockToggle uuid={known.record.uuid} name={known.record.name || t("Unnamed volume")} mounted={false} />}
                 </li>
               ))}
             </ul>
@@ -238,7 +241,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
 
         {report && volumes.length === 0 && (
           <p className="start-warning">
-            {t("macOS mounts a disk as soon as it is plugged in, and can write to it while it is mounted. Before you plug in a damaged disk, stop that with an {file} line. The README shows how.", { file: "/etc/fstab" })}
+            {t("macOS mounts a disk as soon as it is plugged in, and can write to it while it is mounted. Plug the damaged disk in while Captain Salvage is open, turn on Block mounting for it, and unmount it once. From then on macOS cannot mount it while the app is open.")}
           </p>
         )}
 

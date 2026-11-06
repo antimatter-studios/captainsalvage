@@ -275,6 +275,12 @@ pub fn run() {
         })
         .setup(|app| {
             salvage_core::mount::keep_disks_awake();
+            // From here until the app quits, macOS cannot mount the volumes the person blocked.
+            if let Ok(folder) = salvage_core::workspace::app_support() {
+                if let Err(error) = salvage_core::mountblock::start(&folder) {
+                    eprintln!("mount blocking did not start: {error:#}");
+                }
+            }
             let engine = Engine::new();
             let handle = app.handle().clone();
             let allow_test_scripts = std::env::var_os("SALVAGE_TEST_UI").is_some();

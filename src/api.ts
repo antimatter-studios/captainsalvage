@@ -98,6 +98,7 @@ export interface StartupVolume {
   known: KnownVolume | null;
   fstabLine: string | null;
   protected: boolean;
+  mountBlocked: boolean;
 }
 
 export interface StartupReport {

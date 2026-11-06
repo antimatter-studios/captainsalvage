@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { call, type StartupReport } from "../api";
 import { t } from "../i18n";
 import { Command } from "./Command";
+import { MountBlockToggle, useMountBlocks } from "./MountBlock";
 
 const DEFAULT_DISK_SLEEP_MINUTES = 10;
 
@@ -20,12 +21,15 @@ export function KeepSafe({ device }: { device: string }) {
       .finally(() => setLooking(false));
   }, []);
   useEffect(() => look(), [look, device]);
+  const [blocked] = useMountBlocks();
 
   const volumes = report?.volumes ?? [];
   const drive = volumes.find((volume) => volume.device === device)?.wholeDisk;
-  const onDrive = volumes.filter((volume) => drive && volume.wholeDisk === drive && volume.fstabLine && volume.uuid);
+  const onDrive = volumes.filter((volume) => drive && volume.wholeDisk === drive && volume.canOpen && volume.uuid);
   if (onDrive.length === 0) return null;
-  const waiting = onDrive.filter((volume) => !volume.protected);
+  const waiting = onDrive.filter((volume) => !blocked.has((volume.uuid ?? "").toUpperCase()));
+  // Lines an older version of the app asked people to add. They do not reliably stop a mount.
+  const oldLines = onDrive.filter((volume) => volume.protected);
   const names = onDrive.map((volume) => volume.name || t("unnamed volume")).join(t(" and "));
   const diskSleep = report?.diskSleepMinutes ?? null;
   const sleepsNever = diskSleep === 0;
@@ -42,13 +46,11 @@ export function KeepSafe({ device }: { device: string }) {
         <span className="keep-step-mark" aria-hidden="true">{waiting.length === 0 ? "✓" : "○"}</span>
         <div className="keep-step-body">
           {waiting.length === 0 ? (
-            <p><strong>{t("macOS will not mount {names}.", { names })}</strong> {t("After the next reconnect, check that it stayed unmounted.")}</p>
+            <p><strong>{t("macOS cannot mount {names} while Captain Salvage is open.", { names })}</strong> {t("When the app is closed, macOS mounts it as usual, so plug the disk in only with the app open.")}</p>
           ) : (
-            <>
-              <p><strong>{t("Stop macOS mounting {names}.", { names })}</strong> {t("Run this in Terminal. It has not been proven on a damaged disk yet, so after the next reconnect, check that it stayed unmounted.")}</p>
-              {waiting.map((volume) => <Command key={volume.device} text={`printf '\\n%s\\n' '${volume.fstabLine}' | sudo tee -a /etc/fstab`} />)}
-            </>
+            <p><strong>{t("Stop macOS mounting {names}.", { names })}</strong> {t("While Captain Salvage is open, it refuses every mount of a blocked volume: from plugging the disk in, Finder, Disk Utility or diskutil.")}</p>
           )}
+          {onDrive.map((volume) => <MountBlockToggle key={volume.device} uuid={volume.uuid ?? ""} name={volume.name || t("unnamed volume")} mounted={Boolean(volume.mountPoint)} />)}
         </div>
       </div>
 
@@ -67,9 +69,14 @@ export function KeepSafe({ device }: { device: string }) {
       </div>
 
       <h4>{t("To go back to normal afterwards")}</h4>
-      {onDrive.map((volume) => <Command key={volume.device} text={`sudo sed -i '' '/^UUID=${volume.uuid} /d' /etc/fstab`} />)}
+      <p className="keep-safe-after">{t("Turn Block mounting off, and macOS mounts the disk as usual the next time it is plugged in.")}</p>
       <Command text={`sudo pmset -a disksleep ${restoreSleep}`} />
-      <p className="keep-safe-after">{t("Then reconnect the disk, and macOS mounts it as usual.")}</p>
+      {oldLines.length > 0 && (
+        <>
+          <p className="keep-safe-after">{t("An {file} line for this disk is still in place from before. It did not reliably stop mounting, and blocking replaces it. To remove it:", { file: "/etc/fstab" })}</p>
+          {oldLines.map((volume) => <Command key={volume.device} text={`sudo sed -i '' '/^UUID=${volume.uuid} /d' /etc/fstab`} />)}
+        </>
+      )}
     </section>
   );
 }

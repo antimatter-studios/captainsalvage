@@ -104,6 +104,8 @@ macOS can, though, and that can happen before the app is open. See
   again from the destination.
 - Only the person using the app can start a copy or choose a salvage drive. An AI can
   plan a copy, but not start one.
+- While the app is open, macOS cannot mount a volume the person blocked. See
+  [Before you plug the disk in](#before-you-plug-the-disk-in).
 
 ### Before you plug the disk in
 
@@ -114,17 +116,18 @@ unmounted it. In that time macOS changed 36 directory entries, about 0.8 MB, ins
 Those clusters could have held lost data.
 
 Captain Salvage does not unmount anything itself, because unmounting writes to the disk too.
-The start screen shows these commands for the disk attached, with its real UUID. Set them up
-before you start:
+Set this up before you start:
 
-1. Stop macOS mounting the volume. A UUID is shown by `diskutil info`, once per volume:
+1. Block mounting. Each volume on the start screen, and on the Overview of the open disk, has
+   **Block mounting while Captain Salvage is open**. While the app is open, macOS refuses
+   every mount of a blocked volume: when the disk is plugged in, from Finder, from Disk Utility
+   and from `diskutil mount`. It needs no administrator rights and changes nothing on the
+   system. When the app quits, macOS mounts as usual again, so plug the disk in only with the
+   app open. Volumes you have opened before can be blocked before the disk is attached. A new
+   one is mounted once when first plugged in: block it, then unmount it once.
 
-   ```
-   printf '\n%s\n' 'UUID=YOUR-VOLUME-UUID none exfat rw,noauto' | sudo tee -a /etc/fstab
-   ```
-
-   We have not yet proven this on a damaged volume, so check that `mount` does not list the
-   volume the next time it attaches.
+   An `/etc/fstab` line with `noauto` is not enough. On one real recovery, macOS mounted the
+   volume about 20 seconds after it was attached, with the line in place.
 2. Keep disks awake when the app is closed too. While it is open, it does this for you.
 
    ```
@@ -137,15 +140,20 @@ If the volume is already mounted, the choice is yours. Staying mounted lets macO
 and unmounting flushes pending writes, so both change the disk. One real unmount added 23 write
 operations and 98 KB. If the disk keeps dropping off, check the cable and power, and avoid hubs.
 
+An agent can block a volume over MCP, because that only protects it. Only the person using
+the app can turn a block off.
+
 ### Going back to normal
 
+Turn **Block mounting** off for the volume, and set disk sleep back:
+
 ```
-sudo sed -i '' '/^UUID=YOUR-VOLUME-UUID /d' /etc/fstab
 sudo pmset -a disksleep 10
 ```
 
-Use the value `disksleep` had before if it was not 10. Then reconnect the disk, and macOS
-mounts it as usual.
+Use the value `disksleep` had before if it was not 10. If you added an `/etc/fstab` line for
+the volume with an earlier version, remove it with
+`sudo sed -i '' '/^UUID=YOUR-VOLUME-UUID /d' /etc/fstab`.
 
 ## How far to trust the results
 

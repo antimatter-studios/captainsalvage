@@ -64,6 +64,8 @@ pub struct StartupVolume {
     pub fstab_line: Option<String>,
     /// Whether that line, or one like it, is already in place.
     pub protected: bool,
+    /// Whether the person asked Captain Salvage to keep this volume unmounted.
+    pub mount_blocked: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -168,6 +170,7 @@ pub fn parse_volume(info: &str) -> Option<StartupVolume> {
             .as_deref()
             .and_then(|uuid| fstab_line(uuid, format)),
         protected: false,
+        mount_blocked: false,
         uuid: parse_volume_uuid(info),
         readable: can_read(&device),
         device,
@@ -311,6 +314,10 @@ pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
             .uuid
             .as_deref()
             .is_some_and(|uuid| is_protected(&fstab, uuid));
+        volume.mount_blocked = volume
+            .uuid
+            .as_deref()
+            .is_some_and(crate::mountblock::is_blocked);
     }
     report.disk_sleep_minutes = Command::new(PMSET)
         .arg("-g")
