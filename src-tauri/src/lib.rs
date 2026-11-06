@@ -6,10 +6,10 @@ mod finder;
 mod preview;
 
 use chat::ChatState;
-use lens_core::engine::{Engine, AUTHOR_USER};
-use lens_core::mcp::{self, McpInfo};
-use lens_core::media::{MediaInfo, MediaServer};
-use lens_core::session::{Layer, Lens, Scope, MAX_READ_BYTES};
+use salvage_core::engine::{Engine, AUTHOR_USER};
+use salvage_core::mcp::{self, McpInfo};
+use salvage_core::media::{MediaInfo, MediaServer};
+use salvage_core::session::{Layer, Lens, Scope, MAX_READ_BYTES};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,8 +37,7 @@ pub(crate) struct AppState {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join("Library/Application Support/exfat-lens"))
+    salvage_core::workspace::app_support().ok()
 }
 
 fn text_error(error: impl std::fmt::Display) -> String {
@@ -275,10 +274,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            lens_core::mount::keep_disks_awake();
+            salvage_core::mount::keep_disks_awake();
             let engine = Engine::new();
             let handle = app.handle().clone();
-            let allow_test_scripts = std::env::var_os("LENS_TEST_UI").is_some();
+            let allow_test_scripts = std::env::var_os("SALVAGE_TEST_UI").is_some();
             engine.set_ui_sink(Arc::new(move |event, payload| {
                 if event == "test-eval" {
                     // Inert unless this launch explicitly enabled it, for testing the window.
@@ -291,25 +290,25 @@ pub fn run() {
                     }
                     return;
                 }
-                let _ = handle.emit(&format!("lens-{event}"), payload);
+                let _ = handle.emit(&format!("salvage-{event}"), payload);
             }));
             let (info, error) = match mcp::start(engine.clone()) {
                 Ok(info) => (Some(info), None),
                 Err(error) => (None, Some(format!("{error:#}"))),
             };
             // Lets a test instance run beside a window the user is working in.
-            if std::env::var_os("LENS_TEST_HIDDEN").is_some() {
+            if std::env::var_os("SALVAGE_TEST_HIDDEN").is_some() {
                 // Off screen, not hidden: a hidden web view cannot take its own picture.
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_position(tauri::LogicalPosition::new(-6000.0, 40.0));
-                    if std::env::var_os("LENS_TEST_DARK").is_some() {
+                    if std::env::var_os("SALVAGE_TEST_DARK").is_some() {
                         let _ = window.set_theme(Some(tauri::Theme::Dark));
                     }
                 }
             }
             if let Some(window) = app.get_webview_window("main") {
                 let saved = window_theme(&get_theme());
-                if saved.is_some() && std::env::var_os("LENS_TEST_DARK").is_none() {
+                if saved.is_some() && std::env::var_os("SALVAGE_TEST_DARK").is_none() {
                     let _ = window.set_theme(saved);
                 }
             }

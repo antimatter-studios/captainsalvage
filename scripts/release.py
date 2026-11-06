@@ -54,9 +54,9 @@ Each release lists the pull requests merged into it, and nothing else. The same 
 appear on the [releases page](https://github.com/{REPO}/releases). `scripts/release.py`
 writes this file.
 """
-CARGO_MANIFESTS = ["crates/lens-core/Cargo.toml", "src-tauri/Cargo.toml"]
+CARGO_MANIFESTS = ["crates/salvage-core/Cargo.toml", "src-tauri/Cargo.toml"]
 JSON_MANIFESTS = ["src-tauri/tauri.conf.json", "package.json"]
-LOCKED_CRATES = ["exfat-lens", "lens-core"]
+LOCKED_CRATES = ["captain-salvage", "salvage-core"]
 
 
 def parse_subject(subject):

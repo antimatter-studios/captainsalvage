@@ -674,7 +674,7 @@ function ConnectTab() {
   }, []);
   if (!details) return null;
   if (!details.info) return <div className="detail"><p className="warn">{t("The MCP server did not start: {error}", { error: fromEngine(details.error) })}</p></div>;
-  const command = `claude mcp add --transport http exfat-lens ${details.info.url} --header "Authorization: Bearer ${details.info.token}"`;
+  const command = `claude mcp add --transport http captain-salvage ${details.info.url} --header "Authorization: Bearer ${details.info.token}"`;
   return (
     <div className="detail">
       <p>{t("Connect another MCP client, such as Claude Code or T3 Code, to work with this same view. The server only accepts connections from this Mac.")}</p>

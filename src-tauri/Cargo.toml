@@ -1,11 +1,11 @@
 [package]
-name = "exfat-lens"
+name = "captain-salvage"
 version = "0.1.0"
 license = "MIT"
 edition = "2021"
 
 [lib]
-name = "exfat_lens_lib"
+name = "captain_salvage_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -16,7 +16,7 @@ tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-lens-core = { path = "../crates/lens-core" }
+salvage-core = { path = "../crates/salvage-core" }
 objc2 = "0.6.5"
 objc2-foundation = "0.3.2"
 block2 = "0.6.2"

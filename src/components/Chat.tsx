@@ -18,7 +18,7 @@ interface Message {
   about?: string;
 }
 
-const TOOL_PREFIX = "mcp__exfat-lens__";
+const TOOL_PREFIX = "mcp__captain-salvage__";
 
 export function describeSelection(selection: Selection): string {
   switch (selection.kind) {

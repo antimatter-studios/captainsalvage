@@ -8,7 +8,7 @@
 
 use crate::AppState;
 use anyhow::{bail, Context, Result};
-use lens_core::media::serial_text;
+use salvage_core::media::serial_text;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::Write;
@@ -26,9 +26,9 @@ pub struct CanvasRevision {
     revision: String,
 }
 
-/// The helper, if it is installed: named by LENS_FINDER_HELPER, or in an Applications folder.
+/// The helper, if it is installed: named by SALVAGE_FINDER_HELPER, or in an Applications folder.
 fn helper() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("LENS_FINDER_HELPER") {
+    if let Some(path) = std::env::var_os("SALVAGE_FINDER_HELPER") {
         return Some(PathBuf::from(path)).filter(|path| path.is_file());
     }
     let mut places = vec![PathBuf::from("/Applications")];
@@ -113,7 +113,7 @@ pub fn finder_show(
         request["revision"] = json!(revision);
         let reply = run("show", request)?;
         // A hidden test copy opens no windows on the screen of the person using the Mac.
-        let hidden = std::env::var_os("LENS_TEST_HIDDEN").is_some();
+        let hidden = std::env::var_os("SALVAGE_TEST_HIDDEN").is_some();
         if let (Some(folder), false) = (reply["folder"].as_str(), hidden) {
             let _ = Command::new("/usr/bin/open").arg(folder).status();
         }

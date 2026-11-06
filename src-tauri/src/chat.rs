@@ -6,7 +6,7 @@
 //! to the examined disk.
 
 use anyhow::{bail, Context, Result};
-use lens_core::mcp::{McpInfo, INSTRUCTIONS, SERVER_NAME};
+use salvage_core::mcp::{McpInfo, INSTRUCTIONS, SERVER_NAME};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs::PermissionsExt;
@@ -56,8 +56,7 @@ fn find_claude() -> Result<PathBuf> {
 }
 
 fn write_client_config(info: &McpInfo) -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    let path = PathBuf::from(home).join("Library/Application Support/exfat-lens/mcp-client.json");
+    let path = salvage_core::workspace::app_support()?.join("mcp-client.json");
     let config = json!({
         "mcpServers": {
             SERVER_NAME: {

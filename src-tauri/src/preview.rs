@@ -4,9 +4,9 @@
 //! load straight from a file's clusters without a copy anywhere.
 //! `lens://localhost/thumb/<id>` returns a small JPEG decoded from the file's real bytes.
 
-use lens_core::browse::{content_type, parse_range, Thumb};
-use lens_core::engine::Engine;
-use lens_core::media::MediaServer;
+use salvage_core::browse::{content_type, parse_range, Thumb};
+use salvage_core::engine::Engine;
+use salvage_core::media::MediaServer;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::http::{header, Request, Response, StatusCode};

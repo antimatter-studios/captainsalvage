@@ -1,5 +1,5 @@
 [package]
-name = "lens-core"
+name = "salvage-core"
 version = "0.1.0"
 license = "MIT"
 edition = "2021"
@@ -8,8 +8,8 @@ edition = "2021"
 path = "src/lib.rs"
 
 [[bin]]
-name = "lens-scan"
-path = "src/bin/lens-scan.rs"
+name = "salvage-scan"
+path = "src/bin/salvage-scan.rs"
 
 [dependencies]
 anyhow = "1.0.104"

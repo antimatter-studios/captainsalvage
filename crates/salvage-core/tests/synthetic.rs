@@ -1,16 +1,16 @@
 //! End-to-end tests against a hand-built exFAT volume with known damage.
 
-use lens_core::content::{CLASS_DIRECTORY, CLASS_JPEG, CLASS_MP3, CLASS_ZEROS};
-use lens_core::engine::{Engine, AUTHOR_CLAUDE};
-use lens_core::exfat::{boot_checksum, FAT_END};
-use lens_core::map::MapDb;
-use lens_core::mcp::{handle_message, tool_definitions};
-use lens_core::scan::{read_progress, run_scan, ScanOptions};
-use lens_core::session::{whole_disk_path, Layer, Lens, Session};
-use lens_core::source::{BlockSource, MemorySource};
-use lens_core::verify::{verify_mp3, verify_png};
-use lens_core::volume::{Volume, ALLOC_ALLOCATED, ALLOC_FREE_FAT, ALLOC_FREE_ZERO};
-use lens_core::workspace::Workspace;
+use salvage_core::content::{CLASS_DIRECTORY, CLASS_JPEG, CLASS_MP3, CLASS_ZEROS};
+use salvage_core::engine::{Engine, AUTHOR_CLAUDE};
+use salvage_core::exfat::{boot_checksum, FAT_END};
+use salvage_core::map::MapDb;
+use salvage_core::mcp::{handle_message, tool_definitions};
+use salvage_core::scan::{read_progress, run_scan, ScanOptions};
+use salvage_core::session::{whole_disk_path, Layer, Lens, Session};
+use salvage_core::source::{BlockSource, MemorySource};
+use salvage_core::verify::{verify_mp3, verify_png};
+use salvage_core::volume::{Volume, ALLOC_ALLOCATED, ALLOC_FREE_FAT, ALLOC_FREE_ZERO};
+use salvage_core::workspace::Workspace;
 use serde_json::json;
 use std::path::Path;
 use std::path::PathBuf;
@@ -307,7 +307,7 @@ fn open_volume() -> Volume {
 }
 
 fn temp_workspace(label: &str) -> (Workspace, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("lens-test-{}-{label}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("salvage-test-{}-{label}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     (Workspace::at(&dir).expect("workspace"), dir)
 }
@@ -978,7 +978,7 @@ fn the_map_query_tool_cannot_write() {
 #[test]
 fn custom_structures_decode_with_labels_and_repeat() {
     let (engine, _session, dir) = engine_with_volume("struct");
-    let offset = lens_core_cluster_offset(30);
+    let offset = salvage_core_cluster_offset(30);
     let fields = call(
         &engine,
         "decode_struct",
@@ -1001,7 +1001,7 @@ fn custom_structures_decode_with_labels_and_repeat() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-fn lens_core_cluster_offset(cluster: u32) -> u64 {
+fn salvage_core_cluster_offset(cluster: u32) -> u64 {
     (HEAP_OFFSET as u64) * SECTOR as u64 + u64::from(cluster - 2) * CLUSTER as u64
 }
 
@@ -1015,7 +1015,7 @@ fn byte_search_finds_patterns_with_alignment_and_resumes() {
         .iter()
         .map(|hit| hit.as_u64().expect("offset"))
         .collect();
-    assert!(hits.contains(&lens_core_cluster_offset(30)));
+    assert!(hits.contains(&salvage_core_cluster_offset(30)));
     assert_eq!(found["finished"], true);
     let limited = call(&engine, "find_bytes", json!({"text": "ID3", "limit": 1}));
     assert_eq!(limited["hits"].as_array().expect("hits").len(), 1);
@@ -1035,7 +1035,7 @@ fn mcp_protocol_lists_every_tool_and_reports_tool_errors_in_band() {
         "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}},
     })).expect("reply");
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(init["result"]["serverInfo"]["name"], "exfat-lens");
+    assert_eq!(init["result"]["serverInfo"]["name"], "captain-salvage");
 
     assert!(handle_message(
         &engine,
@@ -1154,11 +1154,11 @@ fn the_jpeg_walker_sees_an_end_marker_in_the_last_two_bytes() {
     let mut jpeg = vec![
         0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0x11, 0x22, 0xFF, 0x00, 0x33, 0xFF, 0xD9,
     ];
-    let report = lens_core::verify::verify_jpeg(&jpeg);
+    let report = salvage_core::verify::verify_jpeg(&jpeg);
     assert!(report.reached_end, "{report:?}");
     assert_eq!(report.valid_fraction, 1.0);
     jpeg.truncate(jpeg.len() - 2);
-    assert!(!lens_core::verify::verify_jpeg(&jpeg).reached_end);
+    assert!(!salvage_core::verify::verify_jpeg(&jpeg).reached_end);
 }
 
 #[test]
@@ -1170,7 +1170,7 @@ fn opening_the_same_volume_again_reuses_the_session() {
 }
 
 fn copy_destination(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("lens-copy-{}-{label}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("salvage-copy-{}-{label}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
@@ -1180,7 +1180,7 @@ fn copy_and_wait(
     engine: &Engine,
     session: &Session,
     args: serde_json::Value,
-) -> lens_core::export::CopyStatus {
+) -> salvage_core::export::CopyStatus {
     engine
         .call("copy_start", &args, "you")
         .expect("copy starts");
@@ -1194,7 +1194,7 @@ fn copy_and_wait(
 }
 
 fn manifest_rows(destination: &Path) -> Vec<serde_json::Value> {
-    std::fs::read_to_string(destination.join(lens_core::export::MANIFEST_NAME))
+    std::fs::read_to_string(destination.join(salvage_core::export::MANIFEST_NAME))
         .expect("manifest")
         .lines()
         .map(|line| serde_json::from_str(line).expect("json"))
@@ -1429,7 +1429,7 @@ fn a_preview_reads_any_range_of_a_file_from_its_clusters() {
 
 #[test]
 fn byte_ranges_are_read_the_way_players_send_them() {
-    use lens_core::browse::parse_range;
+    use salvage_core::browse::parse_range;
     assert_eq!(parse_range("bytes=0-1", 100), Some((0, 2)));
     assert_eq!(parse_range("bytes=10-", 100), Some((10, 90)));
     assert_eq!(parse_range("bytes=-20", 100), Some((80, 20)));
@@ -1442,7 +1442,7 @@ fn byte_ranges_are_read_the_way_players_send_them() {
 
 #[test]
 fn thumbnails_are_decoded_from_real_bytes_and_damage_fails_plainly() {
-    use lens_core::browse::{make_thumbnail, Thumb};
+    use salvage_core::browse::{make_thumbnail, Thumb};
     let mut png = Vec::new();
     image::RgbImage::from_pixel(600, 300, image::Rgb([200, 40, 40]))
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
@@ -1473,9 +1473,9 @@ fn thumbnails_are_decoded_from_real_bytes_and_damage_fails_plainly() {
 }
 
 /// A short real video made by ffmpeg, or `None` where ffmpeg is not installed.
-fn sample_video(label: &str) -> Option<(lens_core::media::Tools, PathBuf)> {
-    let tools = lens_core::media::detect_tools()?;
-    let path = std::env::temp_dir().join(format!("lens-{}-{label}.avi", std::process::id()));
+fn sample_video(label: &str) -> Option<(salvage_core::media::Tools, PathBuf)> {
+    let tools = salvage_core::media::detect_tools()?;
+    let path = std::env::temp_dir().join(format!("salvage-{}-{label}.avi", std::process::id()));
     let made = std::process::Command::new(&tools.ffmpeg)
         .args([
             "-hide_banner",
@@ -1497,8 +1497,8 @@ fn sample_video(label: &str) -> Option<(lens_core::media::Tools, PathBuf)> {
 
 #[test]
 fn ffmpeg_is_found_where_it_is_and_missing_is_a_plain_answer() {
-    use lens_core::media::find_tool;
-    let dir = std::env::temp_dir().join(format!("lens-tools-{}", std::process::id()));
+    use salvage_core::media::find_tool;
+    let dir = std::env::temp_dir().join(format!("salvage-tools-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("dir");
     assert_eq!(find_tool("ffmpeg", std::slice::from_ref(&dir)), None);
     std::fs::write(dir.join("ffmpeg"), b"").expect("write");
@@ -1511,7 +1511,7 @@ fn ffmpeg_is_found_where_it_is_and_missing_is_a_plain_answer() {
 
 #[test]
 fn a_playlist_covers_the_whole_file_in_short_pieces() {
-    use lens_core::media::{playlist, SEGMENT_SECONDS};
+    use salvage_core::media::{playlist, SEGMENT_SECONDS};
     let text = playlist(SEGMENT_SECONDS * 2.0 + 1.5, "secret");
     assert!(text.starts_with("#EXTM3U"));
     assert!(text.trim_end().ends_with("#EXT-X-ENDLIST"));
@@ -1522,7 +1522,7 @@ fn a_playlist_covers_the_whole_file_in_short_pieces() {
 
 #[test]
 fn conversion_only_ever_writes_to_a_pipe() {
-    use lens_core::media::{frame_command, segment_command, Probe, Tools};
+    use salvage_core::media::{frame_command, segment_command, Probe, Tools};
     let tools = Tools {
         ffmpeg: "ffmpeg".into(),
         ffprobe: "ffprobe".into(),
@@ -1554,7 +1554,7 @@ fn conversion_only_ever_writes_to_a_pipe() {
 
 #[test]
 fn ffmpeg_converts_a_real_video_when_it_is_installed() {
-    use lens_core::media::{frame_command, probe, segment_command, spawn_output};
+    use salvage_core::media::{frame_command, probe, segment_command, spawn_output};
     use std::io::Read;
     let Some((tools, path)) = sample_video("convert") else {
         eprintln!("ffmpeg is not installed, so this test has nothing to check");
@@ -1614,7 +1614,7 @@ fn local_get(port: &str, path: &str, range: Option<&str>) -> (u16, Vec<u8>) {
 
 #[test]
 fn the_media_port_needs_its_token_and_serves_exact_ranges() {
-    use lens_core::media::MediaServer;
+    use salvage_core::media::MediaServer;
     let (engine, session, dir) = engine_with_volume("port");
     let media = MediaServer::start(engine.clone()).expect("start");
     let info = media.info();
@@ -1658,7 +1658,7 @@ fn encoded_image(format: image::ImageFormat) -> Vec<u8> {
 
 #[test]
 fn a_whole_image_passes_and_a_damaged_one_fails_with_a_reason() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
     let png = encoded_image(image::ImageFormat::Png);
     let good = judge("a.png", &png);
     assert_eq!(good.outcome, OUTCOME_PASSED, "{}", good.note);
@@ -1689,7 +1689,7 @@ fn sample_jpeg(scan: &[u8], after: &[u8]) -> Vec<u8> {
 
 #[test]
 fn a_jpeg_walk_catches_what_a_wrong_cluster_leaves() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
     let image_data: Vec<u8> = (0..60_000u32).map(|n| (n % 251) as u8 + 1).collect();
     assert_eq!(
         judge("a.jpg", &sample_jpeg(&image_data, b"")).outcome,
@@ -1746,7 +1746,7 @@ fn a_jpeg_walk_catches_what_a_wrong_cluster_leaves() {
 
 #[test]
 fn image_types_with_no_walker_are_judged_by_decoding() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
     let gif = encoded_image(image::ImageFormat::Gif);
     assert_eq!(judge("a.gif", &gif).outcome, OUTCOME_PASSED);
     assert_eq!(
@@ -1776,7 +1776,7 @@ fn sample_pdf() -> Vec<u8> {
 
 #[test]
 fn a_pdf_is_checked_against_its_own_table_of_objects() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
     let pdf = sample_pdf();
     let good = judge("a.pdf", &pdf);
     assert_eq!(good.outcome, OUTCOME_PASSED, "{}", good.note);
@@ -1794,7 +1794,7 @@ fn a_pdf_is_checked_against_its_own_table_of_objects() {
 
 #[test]
 fn a_pdf_with_unused_entries_or_an_unreadable_table_is_not_called_damaged() {
-    use lens_core::filetest::{judge, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_PASSED};
     let pdf = String::from_utf8(sample_pdf()).expect("text");
     // Some writers mark unused objects as in use at offset zero. Same length as a free
     // entry, so the table stays where the file says it is.
@@ -1817,7 +1817,7 @@ fn a_pdf_with_unused_entries_or_an_unreadable_table_is_not_called_damaged() {
 
 #[test]
 fn a_file_is_judged_by_its_contents_before_its_name() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED, OUTCOME_UNTESTED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED, OUTCOME_UNTESTED};
     // A macOS alias named as a picture was found on a real disk. It is not damaged.
     let alias = judge("holiday.png", b"book\0\0\0\0mark\0\0\0\0 target");
     assert_eq!(alias.outcome, OUTCOME_UNTESTED);
@@ -1871,7 +1871,7 @@ const SAMPLE_DISK_INFO: &str = "
 
 #[test]
 fn the_start_screen_reads_what_diskutil_says() {
-    use lens_core::startup::{parse_partitions, parse_volume};
+    use salvage_core::startup::{parse_partitions, parse_volume};
     let list = "/dev/disk12 (external, physical):
    #:                       TYPE NAME                    SIZE       IDENTIFIER
    0:     FDisk_partition_scheme                        *2.0 TB     disk12
@@ -1926,7 +1926,7 @@ fn the_start_screen_reads_what_diskutil_says() {
 
 #[test]
 fn the_start_screen_offers_the_right_protection_for_each_volume() {
-    use lens_core::startup::{is_protected, parse_disk_sleep, parse_volume};
+    use salvage_core::startup::{is_protected, parse_disk_sleep, parse_volume};
     let uuid = "52D6C729-7E3F-310C-9073-7142E9EA7C05";
     let line = format!("UUID={uuid} none exfat rw,noauto");
     assert_eq!(
@@ -1970,8 +1970,10 @@ fn the_start_screen_offers_the_right_protection_for_each_volume() {
 /// Disk numbers change on every attach, so a volume must be known by its UUID alone.
 #[test]
 fn a_volume_is_recognised_by_uuid_under_any_disk_number() {
-    use lens_core::startup::{join_known, known_volumes, parse_volume, write_record, VolumeRecord};
-    let root = std::env::temp_dir().join(format!("lens-known-{}", std::process::id()));
+    use salvage_core::startup::{
+        join_known, known_volumes, parse_volume, write_record, VolumeRecord,
+    };
+    let root = std::env::temp_dir().join(format!("salvage-known-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let (workspace, _) = (
         Workspace::at(root.join("vol-db8aa101")).expect("workspace"),
@@ -2132,7 +2134,7 @@ fn a_disk_that_goes_during_a_scan_leaves_the_map_alone() {
     .expect_err("the scan stops");
     assert!(format!("{error:#}").contains("disconnected"), "{error:#}");
     let database = MapDb::open(&session.workspace.database()).expect("map");
-    let progress = lens_core::scan::read_progress(&database, &session.volume).expect("progress");
+    let progress = salvage_core::scan::read_progress(&database, &session.volume).expect("progress");
     assert_eq!(progress.read_errors, 0);
     assert_eq!(progress.clusters_scanned, 0);
     let _ = std::fs::remove_dir_all(dir);
@@ -2156,7 +2158,7 @@ fn a_disk_that_goes_during_a_copy_stops_it_and_leaves_no_file_of_zeros() {
         .into_iter()
         .filter(|path| {
             path.file_name()
-                .is_some_and(|name| name != lens_core::export::MANIFEST_NAME)
+                .is_some_and(|name| name != salvage_core::export::MANIFEST_NAME)
         })
         .collect();
     assert!(copied.is_empty(), "{copied:?}");
@@ -2192,7 +2194,7 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn disks_are_kept_awake_once_and_only_when_asked() {
-    use lens_core::mount::{disks_kept_awake, keep_disks_awake};
+    use salvage_core::mount::{disks_kept_awake, keep_disks_awake};
     keep_disks_awake();
     assert!(disks_kept_awake());
     // A second call must not leave a second process behind.
@@ -2206,7 +2208,7 @@ fn a_test_disconnect_is_refused_outside_a_test_run() {
     assert!(!tool_definitions()
         .iter()
         .any(|tool| tool.to_string().contains("test_disconnect")));
-    if std::env::var_os("LENS_TEST_UI").is_none() {
+    if std::env::var_os("SALVAGE_TEST_UI").is_none() {
         assert!(engine
             .call("test_disconnect", &json!({}), AUTHOR_CLAUDE)
             .is_err());
@@ -2216,7 +2218,7 @@ fn a_test_disconnect_is_refused_outside_a_test_run() {
 
 #[test]
 fn only_a_lost_device_counts_as_gone() {
-    use lens_core::source::means_device_gone;
+    use salvage_core::source::means_device_gone;
     assert!(means_device_gone(&std::io::Error::from_raw_os_error(
         libc::ENXIO
     )));
@@ -2239,7 +2241,7 @@ fn only_a_lost_device_counts_as_gone() {
 
 #[test]
 fn a_volume_is_found_again_under_a_new_disk_number() {
-    use lens_core::mount::{parse_disk_return, parse_volume_uuid, DiskReturn};
+    use salvage_core::mount::{parse_disk_return, parse_volume_uuid, DiskReturn};
     // As diskutil printed it for a real volume, unmounted and then mounted.
     let unmounted = "
    Device Identifier:         disk14s2
@@ -2357,7 +2359,7 @@ fn zip_reader(data: &[u8]) -> impl Fn(u64, u64) -> anyhow::Result<Vec<u8>> + '_ 
 
 #[test]
 fn a_zip_lists_what_its_directory_says() {
-    use lens_core::archive::{list_zip, SOURCE_DIRECTORY};
+    use salvage_core::archive::{list_zip, SOURCE_DIRECTORY};
     let zip = sample_zip();
     let listing = list_zip(zip.len() as u64, &zip_reader(&zip)).unwrap();
     assert_eq!(listing.source, SOURCE_DIRECTORY);
@@ -2384,7 +2386,7 @@ fn a_zip_lists_what_its_directory_says() {
 }
 
 fn zip_offset(zip: &[u8], index: usize) -> u64 {
-    use lens_core::archive::list_zip;
+    use salvage_core::archive::list_zip;
     list_zip(zip.len() as u64, &zip_reader(zip))
         .unwrap()
         .members[index]
@@ -2393,7 +2395,7 @@ fn zip_offset(zip: &[u8], index: usize) -> u64 {
 
 #[test]
 fn a_zip_with_no_directory_is_listed_from_its_file_headers() {
-    use lens_core::archive::{list_zip, SOURCE_HEADERS};
+    use salvage_core::archive::{list_zip, SOURCE_HEADERS};
     let zip = sample_zip();
     let directory_at = zip.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
 
@@ -2432,7 +2434,7 @@ fn a_zip_with_no_directory_is_listed_from_its_file_headers() {
 
 #[test]
 fn a_zip_with_a_broken_directory_keeps_the_longer_list() {
-    use lens_core::archive::{list_zip, SOURCE_DIRECTORY, SOURCE_HEADERS};
+    use salvage_core::archive::{list_zip, SOURCE_DIRECTORY, SOURCE_HEADERS};
     let zip = sample_zip();
     let directory_at = zip.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
     let second = zip[directory_at + 4..]
@@ -2462,7 +2464,7 @@ fn a_zip_with_a_broken_directory_keeps_the_longer_list() {
 
 #[test]
 fn a_zip_member_is_checked_against_its_checksum() {
-    use lens_core::archive::{
+    use salvage_core::archive::{
         check_member, list_zip, CHECK_DAMAGED, CHECK_INTACT, CHECK_UNCHECKED,
     };
     let zip = sample_zip();
@@ -2696,7 +2698,7 @@ fn the_folders_macos_keeps_on_a_volume_date_its_visits() {
 
 #[test]
 fn the_write_counter_is_read_for_the_right_disk() {
-    use lens_core::mount::{parse_write_counter, WriteCounter};
+    use salvage_core::mount::{parse_write_counter, WriteCounter};
     let ioreg = r#"
 +-o IOBlockStorageDriver  <class IOBlockStorageDriver>
   |   "Statistics" = {"Operations (Write)"=3454,"Latency Time (Write)"=0,"Bytes (Write)"=99,"Operations (Read)"=7}
@@ -2725,7 +2727,7 @@ fn the_write_counter_is_read_for_the_right_disk() {
 
 #[test]
 fn a_moved_write_counter_counts_from_when_the_volume_opened() {
-    use lens_core::mount::{DiskWrites, WriteCounter};
+    use salvage_core::mount::{DiskWrites, WriteCounter};
     let counter = |operations, bytes| WriteCounter { operations, bytes };
     let open = Some(counter(310, 1_000));
 
@@ -2755,7 +2757,7 @@ fn a_disk_image_has_no_write_counter() {
 
 #[test]
 fn a_damaged_jpeg_is_described_by_what_survives() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED};
     let image_data: Vec<u8> = (0..60_000u32).map(|n| (n % 251) as u8 + 1).collect();
     let scan_start = sample_jpeg(b"", b"").len() - 2;
 
@@ -2783,7 +2785,7 @@ fn a_damaged_jpeg_is_described_by_what_survives() {
 
 #[test]
 fn a_damaged_picture_says_whether_it_still_opens() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED};
     let jpeg = encoded_image(image::ImageFormat::Jpeg);
 
     // Everything but the end marker is there, so a viewer can still show it.
@@ -2826,7 +2828,7 @@ fn forgetting_results_puts_the_old_score_back() {
 
 #[test]
 fn an_office_file_is_checked_against_its_own_allocation_table() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
     let mut doc = vec![0u8; 512 * 4];
     doc[..8].copy_from_slice(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1");
     doc[30] = 9;
@@ -2844,7 +2846,7 @@ fn an_office_file_is_checked_against_its_own_allocation_table() {
 
 #[test]
 fn a_text_file_with_a_binary_stretch_fails() {
-    use lens_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
+    use salvage_core::filetest::{judge, OUTCOME_DAMAGED, OUTCOME_PASSED};
     let text = "ordinary words, line after line.\n"
         .repeat(1000)
         .into_bytes();
@@ -2856,11 +2858,11 @@ fn a_text_file_with_a_binary_stretch_fails() {
 
 #[test]
 fn a_file_type_with_no_test_changes_nothing() {
-    use lens_core::filetest::{judge, OUTCOME_UNTESTED};
+    use salvage_core::filetest::{judge, OUTCOME_UNTESTED};
     assert_eq!(judge("a.iso", b"anything").outcome, OUTCOME_UNTESTED);
 }
 
-fn wait_for_file_tests(session: &Session) -> lens_core::filetest::FileTestStatus {
+fn wait_for_file_tests(session: &Session) -> salvage_core::filetest::FileTestStatus {
     loop {
         let status = session.file_test_status().expect("status");
         if status.state != "running" {
@@ -2910,7 +2912,7 @@ fn background_tests_change_the_score_and_survive_a_rebuild() {
     let track_id = track["id"].as_i64().expect("id");
     session
         .with_database(|database| {
-            database.save_file_tests(&[lens_core::filetest::FileTest {
+            database.save_file_tests(&[salvage_core::filetest::FileTest {
                 id: track_id,
                 first_cluster: track["firstCluster"].as_u64().expect("cluster") as u32,
                 length: track["length"].as_u64().expect("length"),
@@ -2943,7 +2945,7 @@ fn a_test_of_old_clusters_does_not_apply_to_a_changed_entry() {
     let id = row["id"].as_i64().expect("id");
     session
         .with_database(|database| {
-            database.save_file_tests(&[lens_core::filetest::FileTest {
+            database.save_file_tests(&[salvage_core::filetest::FileTest {
                 id,
                 first_cluster: 999_999,
                 length: 1,
@@ -2971,7 +2973,7 @@ fn identical_files_can_be_shown_as_one() {
     let first = find("photo.jpg");
     let second = find("reused.jpg");
     let same = "ab".repeat(32);
-    let stored = |row: &serde_json::Value| lens_core::filetest::FileTest {
+    let stored = |row: &serde_json::Value| salvage_core::filetest::FileTest {
         id: row["id"].as_i64().expect("id"),
         first_cluster: row["firstCluster"].as_u64().expect("cluster") as u32,
         length: row["length"].as_u64().expect("length"),
@@ -3081,7 +3083,7 @@ fn only_the_person_can_start_or_stop_a_copy() {
 
 #[test]
 fn a_destination_on_the_source_disk_is_refused_and_unknowns_fail_closed() {
-    use lens_core::export::{destination_problem, parse_physical_disks};
+    use salvage_core::export::{destination_problem, parse_physical_disks};
     let apfs = "   Part of Whole:             disk7\n   APFS Physical Store:       disk5s1\n";
     assert_eq!(
         parse_physical_disks("/dev/disk7s1", apfs),
@@ -3112,7 +3114,7 @@ fn a_destination_on_the_source_disk_is_refused_and_unknowns_fail_closed() {
 
 #[test]
 fn nothing_a_damaged_name_says_can_escape_the_destination() {
-    use lens_core::export::relative_target;
+    use salvage_core::export::relative_target;
     let escape = relative_target("[orphan @5]/../../etc", "../passwd");
     assert!(
         escape.components().all(|part| !matches!(
@@ -3233,10 +3235,10 @@ fn ntfs_record_names_are_read_and_other_data_is_ignored() {
     }
     record[attribute + 0x80..attribute + 0x84].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
     assert_eq!(
-        lens_core::regions::ntfs_record_name(&record).as_deref(),
+        salvage_core::regions::ntfs_record_name(&record).as_deref(),
         Some("a.txt")
     );
-    assert_eq!(lens_core::regions::ntfs_record_name(&[0u8; 1024]), None);
+    assert_eq!(salvage_core::regions::ntfs_record_name(&[0u8; 1024]), None);
 }
 
 /// Builds a one-member stored zip archive.
@@ -3273,12 +3275,12 @@ fn stored_zip(name: &str, contents: &[u8], crc: u32) -> Vec<u8> {
 fn the_zip_check_catches_a_single_changed_byte() {
     // CRC-32 of "hello world", from the published check value for this algorithm.
     const HELLO_CRC: u32 = 0x0D4A_1185;
-    let good = lens_core::verify::verify_zip(&stored_zip("a.txt", b"hello world", HELLO_CRC));
+    let good = salvage_core::verify::verify_zip(&stored_zip("a.txt", b"hello world", HELLO_CRC));
     assert_eq!(good.units, 1);
     assert_eq!(good.valid_fraction, 1.0, "{good:?}");
     assert!(good.breaks.is_empty());
 
-    let bad = lens_core::verify::verify_zip(&stored_zip("a.txt", b"hello worlD", HELLO_CRC));
+    let bad = salvage_core::verify::verify_zip(&stored_zip("a.txt", b"hello worlD", HELLO_CRC));
     assert_eq!(bad.breaks.len(), 1);
     assert_eq!(bad.valid_fraction, 0.0);
     assert!(
@@ -3289,7 +3291,7 @@ fn the_zip_check_catches_a_single_changed_byte() {
     );
 
     let truncated = stored_zip("a.txt", b"hello world", HELLO_CRC);
-    let report = lens_core::verify::verify_zip(&truncated[..truncated.len() - 30]);
+    let report = salvage_core::verify::verify_zip(&truncated[..truncated.len() - 30]);
     assert!(
         !report.reached_end,
         "a zip with no central directory cannot pass"
@@ -3548,7 +3550,7 @@ fn another_process_can_see_a_copy_and_ask_it_to_stop() {
 #[test]
 fn a_recorded_copy_that_stopped_reporting_is_not_shown_as_running() {
     let (_engine, session, dir) = engine_with_volume("stale");
-    let old = lens_core::export::CopyStatus {
+    let old = salvage_core::export::CopyStatus {
         state: "running".into(),
         updated_at_millis: 1000,
         ..Default::default()
@@ -3626,12 +3628,12 @@ fn build_jigsaw_volume() -> Vec<u8> {
 
 fn call_as_person(engine: &Engine, tool: &str, args: serde_json::Value) -> serde_json::Value {
     engine
-        .call(tool, &args, lens_core::engine::AUTHOR_USER)
+        .call(tool, &args, salvage_core::engine::AUTHOR_USER)
         .unwrap_or_else(|error| panic!("{tool} failed: {error:#}"))
 }
 
 fn refusal(engine: &Engine, tool: &str, args: serde_json::Value) -> String {
-    match engine.call(tool, &args, lens_core::engine::AUTHOR_USER) {
+    match engine.call(tool, &args, salvage_core::engine::AUTHOR_USER) {
         Ok(value) => panic!("{tool} should have been refused, and gave {value}"),
         Err(error) => format!("{error:#}"),
     }
@@ -3904,13 +3906,13 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Writes the jigsaw volume to `LENS_JIGSAW_IMAGE`, for testing the window against it.
-/// Run with: LENS_JIGSAW_IMAGE=/path/jigsaw.img cargo test -p lens-core --test synthetic -- --ignored write_the_jigsaw
+/// Writes the jigsaw volume to `SALVAGE_JIGSAW_IMAGE`, for testing the window against it.
+/// Run with: SALVAGE_JIGSAW_IMAGE=/path/jigsaw.img cargo test -p salvage-core --test synthetic -- --ignored write_the_jigsaw
 #[test]
 #[ignore]
 fn write_the_jigsaw_volume_for_window_tests() {
-    let path =
-        std::env::var("LENS_JIGSAW_IMAGE").expect("LENS_JIGSAW_IMAGE names where to write it");
+    let path = std::env::var("SALVAGE_JIGSAW_IMAGE")
+        .expect("SALVAGE_JIGSAW_IMAGE names where to write it");
     std::fs::write(path, build_jigsaw_volume()).expect("written");
 }
 
@@ -4211,7 +4213,7 @@ fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
 
 #[test]
 fn finder_reads_a_canvas_through_the_media_port_and_only_for_the_open_disk() {
-    use lens_core::media::{serial_text, MediaServer};
+    use salvage_core::media::{serial_text, MediaServer};
     let (engine, session, dir) = engine_with_image("finder", build_jigsaw_volume());
     let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Finder"}))["id"]
         .as_i64()
@@ -4409,4 +4411,68 @@ fn a_canvas_survives_a_restart_a_new_scan_and_a_map_rebuild() {
     );
 
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_old_app_folder_moves_to_the_real_name_whole_and_only_once() {
+    use salvage_core::workspace::app_folder_in;
+    let support = std::env::temp_dir().join(format!("salvage-support-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&support);
+    let old = support.join("exfat-lens");
+    std::fs::create_dir_all(old.join("vol-12345678")).expect("old folder");
+    std::fs::write(old.join("vol-12345678/map.sqlite"), b"weeks of work").expect("map");
+    std::fs::write(old.join("theme"), b"dark").expect("theme");
+
+    let folder = app_folder_in(&support).expect("folder");
+    assert_eq!(folder, support.join("Captain Salvage"));
+    assert_eq!(
+        std::fs::read(folder.join("vol-12345678/map.sqlite")).expect("moved map"),
+        b"weeks of work"
+    );
+    // The old name still leads to the same files, for a copy of the app from before.
+    assert!(std::fs::symlink_metadata(&old)
+        .expect("link")
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        std::fs::read(old.join("theme")).expect("through link"),
+        b"dark"
+    );
+
+    // Once moved, nothing moves again, and a folder already under the real name is never replaced.
+    std::fs::write(folder.join("theme"), b"light").expect("theme");
+    assert_eq!(app_folder_in(&support).expect("again"), folder);
+    assert_eq!(std::fs::read(folder.join("theme")).expect("kept"), b"light");
+
+    let both = std::env::temp_dir().join(format!("salvage-support-both-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&both);
+    std::fs::create_dir_all(both.join("exfat-lens")).expect("old");
+    std::fs::create_dir_all(both.join("Captain Salvage")).expect("new");
+    std::fs::write(both.join("Captain Salvage/theme"), b"new").expect("new theme");
+    app_folder_in(&both).expect("both");
+    assert!(
+        both.join("exfat-lens").is_dir(),
+        "an old folder beside a new one is left alone"
+    );
+    assert_eq!(
+        std::fs::read(both.join("Captain Salvage/theme")).expect("new"),
+        b"new"
+    );
+
+    let _ = std::fs::remove_dir_all(&support);
+    let _ = std::fs::remove_dir_all(&both);
+}
+
+#[test]
+fn a_copy_started_under_the_old_manifest_name_keeps_it() {
+    use salvage_core::export::{manifest_path, MANIFEST_NAME};
+    let destination = copy_destination("old-manifest");
+    std::fs::create_dir_all(&destination).expect("destination");
+    assert_eq!(manifest_path(&destination), destination.join(MANIFEST_NAME));
+    std::fs::write(destination.join("exfat-lens-manifest.jsonl"), b"").expect("old");
+    assert_eq!(
+        manifest_path(&destination),
+        destination.join("exfat-lens-manifest.jsonl")
+    );
+    let _ = std::fs::remove_dir_all(&destination);
 }
