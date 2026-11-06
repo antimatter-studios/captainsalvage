@@ -4301,3 +4301,112 @@ fn finder_reads_a_canvas_through_the_media_port_and_only_for_the_open_disk() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_canvas_survives_a_restart_a_new_scan_and_a_map_rebuild() {
+    let (engine, session, dir) = engine_with_image("canvas-keeps", build_jigsaw_volume());
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Weeks of work"}))["id"]
+        .as_i64()
+        .expect("id");
+    let root = call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20}),
+    )["id"]
+        .as_i64()
+        .expect("root");
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 30, "merge": true}),
+    );
+    let made = call_as_person(
+        &engine,
+        "canvas_folder",
+        json!({"canvas": canvas, "name": "Music", "place": {"item": root}}),
+    )["id"]
+        .as_i64()
+        .expect("folder");
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 40, "place": {"item": made}}),
+    );
+    // The person prefers the wiped copy of the clashing file, for their own reasons.
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    let wiped = top["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .flat_map(|file| file["copies"].as_array().expect("copies").clone())
+        .find(|copy| copy["firstCluster"] == 23)
+        .expect("wiped")["id"]
+        .clone();
+    call_as_person(
+        &engine,
+        "canvas_choose",
+        json!({"canvas": canvas, "path": ["SHARED.jpg"], "entry": wiped}),
+    );
+    call(
+        &engine,
+        "canvas_suggest",
+        json!({"canvas": canvas, "head": 50, "place": {"item": made}, "note": "More music."}),
+    );
+    let before = (
+        call(&engine, "canvas_tree", json!({"canvas": canvas})),
+        call(
+            &engine,
+            "canvas_tree",
+            json!({"canvas": canvas, "path": ["Music"]}),
+        ),
+        call(&engine, "canvas_suggestions", json!({"canvas": canvas})),
+    );
+    let image = build_jigsaw_volume();
+    drop(engine);
+    drop(session);
+
+    // Weeks later: the app starts again on the same workspace, scans again and rebuilds the map.
+    let workspace = Workspace::at(&dir).expect("workspace");
+    let session = Session::with_source(
+        Path::new("/test/image"),
+        Arc::new(MemorySource::new(image)),
+        workspace,
+    )
+    .expect("session");
+    scan(&session.volume, &session.workspace);
+    session.resolve().expect("rebuild the map");
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+
+    let after = (
+        call(&engine, "canvas_tree", json!({"canvas": canvas})),
+        call(
+            &engine,
+            "canvas_tree",
+            json!({"canvas": canvas, "path": ["Music"]}),
+        ),
+        call(&engine, "canvas_suggestions", json!({"canvas": canvas})),
+    );
+    assert_eq!(
+        after.0, before.0,
+        "the top of the tree, with the person's choice"
+    );
+    assert_eq!(
+        after.1, before.1,
+        "the folder they made, with what they put in it"
+    );
+    assert_eq!(after.2, before.2, "the suggestion still waiting for them");
+    let shared = after.0["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["byPerson"] == true)
+        .expect("their choice");
+    assert_eq!(shared["chosen"]["firstCluster"], 23);
+    assert_eq!(
+        call(&engine, "canvas_list", json!({}))[0]["name"],
+        "Weeks of work"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
