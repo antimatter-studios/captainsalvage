@@ -281,6 +281,47 @@ one line of JSON instead. Each agent sees only the app's tools. Claude Code gets
 tools at all. opencode's own file, shell and web tools are turned off. Codex keeps its shell,
 but in its read-only sandbox.
 
+## Libraries and licenses
+
+Captain Salvage is meant to be sold, so everything linked into it must be usable under a
+permissive license. MIT is preferred. Apache-2.0, BSD, ISC, Zlib, Unicode and public-domain
+style licenses are allowed too. MPL-2.0 is allowed for libraries used unmodified. Nothing
+under the GPL family. CI runs `scripts/licenses.py check` on everything the app ships, and
+`THIRD-PARTY-LICENSES.md`, bundled inside the app, holds each library's license text.
+
+The libraries the app names itself:
+
+<!-- dependencies:start -->
+| Library | Version | License | Used by |
+|---|---|---|---|
+| `@tauri-apps/api` | 2.12.4 | Apache-2.0 OR MIT | window |
+| `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
+| `block2` | 0.6.2 | MIT | captain-salvage |
+| `bzip2` | 0.6.1 | MIT OR Apache-2.0 | salvage-core |
+| `flate2` | 1.1.10 | MIT OR Apache-2.0 | salvage-core |
+| `image` | 0.25.10 | MIT OR Apache-2.0 | salvage-core |
+| `libc` | 0.2.191 | MIT OR Apache-2.0 | salvage-core |
+| `lzma-rust2` | 0.23.0 | Apache-2.0 | salvage-core |
+| `objc2` | 0.6.5 | MIT | captain-salvage |
+| `objc2-foundation` | 0.3.2 | MIT | captain-salvage |
+| `react` | 19.3.1 | MIT | window |
+| `react-dom` | 19.3.1 | MIT | window |
+| `rhai` | 1.27.0 | MIT OR Apache-2.0 | salvage-core |
+| `rusqlite` | 0.41.1 | MIT | salvage-core |
+| `ruzstd` | 0.9.1 | MIT | salvage-core |
+| `salvage-core` | 0.1.0 | MIT | captain-salvage |
+| `serde` | 1.0.229 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
+| `serde_json` | 1.0.154 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
+| `sevenz-rust2` | 0.24.2 | Apache-2.0 | salvage-core |
+| `sha2` | 0.11.1 | MIT OR Apache-2.0 | salvage-core |
+| `tar` | 0.4.46 | MIT OR Apache-2.0 | salvage-core |
+| `tauri` | 2.12.5 | Apache-2.0 OR MIT | captain-salvage |
+| `tiny_http` | 0.12.0 | MIT OR Apache-2.0 | salvage-core |
+<!-- dependencies:end -->
+
+Run `python3 scripts/licenses.py write` after changing a dependency, to update this list and
+the bundled notices.
+
 ## Distribution
 
 The aim is the Mac App Store, but **the current design cannot ship there**. See
