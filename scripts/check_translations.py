@@ -20,6 +20,8 @@ SOURCE = ROOT / "src"
 LOCALES = SOURCE / "locales"
 ENGINE_TEXT = SOURCE / "engineText.ts"
 RUST = [ROOT / "crates" / "lens-core" / "src", ROOT / "src-tauri" / "src"]
+# The Finder helper's errors reach the window through the app, like the engine's.
+SWIFT = ROOT / "macos" / "finder"
 LANGUAGES = ["fr", "de", "es"]
 # t( preceded by something that cannot end a name, so other functions ending in t are skipped.
 CALL = re.compile(r'(?<![\w.$])t\(\s*')
@@ -62,8 +64,9 @@ def engine_lists() -> dict[str, list[str]]:
 
 
 def engine_drift(templates: list[str]) -> list[str]:
-    """Each piece of an engine sentence must still be in the Rust source, or it is stale."""
+    """Each piece of an engine sentence must still be in the source, or it is stale."""
     source = "".join(path.read_text() for folder in RUST for path in folder.rglob("*.rs"))
+    source += "".join(path.read_text() for path in SWIFT.glob("*.swift"))
     source = re.sub(r"\\\n\s*", "", source)
     problems = []
     for template in templates:

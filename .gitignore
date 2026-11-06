@@ -14,3 +14,6 @@ diag-baseline/
 docs/findings.md
 target-dev/
 __pycache__/
+
+# The Finder helper, built and signed locally.
+macos/finder/build/

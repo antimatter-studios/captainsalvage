@@ -303,7 +303,7 @@ fn is_partial(row: &Row) -> bool {
 
 /// Parses an entry's stored date. exFAT dates are local, so this is approximate
 /// by up to the time zone difference, and is used only as the copy's date.
-fn modified_time(text: &str) -> Option<SystemTime> {
+pub(crate) fn modified_time(text: &str) -> Option<SystemTime> {
     let digits: Vec<i64> = text
         .split(|c: char| !c.is_ascii_digit())
         .filter(|part| !part.is_empty())

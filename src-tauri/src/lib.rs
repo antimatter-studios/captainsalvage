@@ -2,6 +2,7 @@
 
 mod capture;
 mod chat;
+mod finder;
 mod preview;
 
 use chat::ChatState;
@@ -27,10 +28,10 @@ const LANGUAGES: [&str; 4] = ["en", "fr", "de", "es"];
 /// Longest piece of a file the window reads at once as text.
 const MAX_TEXT_READ_BYTES: u64 = 1024 * 1024;
 
-struct AppState {
-    engine: Arc<Engine>,
+pub(crate) struct AppState {
+    pub(crate) engine: Arc<Engine>,
     thumbs: preview::ThumbQueue,
-    media: Option<Arc<MediaServer>>,
+    pub(crate) media: Option<Arc<MediaServer>>,
     mcp: Option<McpInfo>,
     mcp_error: Option<String>,
 }
@@ -352,7 +353,16 @@ pub fn run() {
             chat_send,
             chat_cancel,
             chat_reset,
+            finder::finder_status,
+            finder::finder_show,
+            finder::finder_hide,
+            finder::finder_sync,
         ])
-        .run(tauri::generate_context!())
-        .expect("the app failed to start");
+        .build(tauri::generate_context!())
+        .expect("the app failed to start")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                finder::go_offline();
+            }
+        });
 }

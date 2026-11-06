@@ -1,5 +1,6 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from "react";
-import { call, type Canvas, type CanvasItem, type CopyStatus, type CanvasSuggestion, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
+import { call, type Canvas, type CanvasItem, type CopyStatus, type FinderState, type CanvasSuggestion, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
@@ -440,9 +441,12 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
 }
 
 /** The Rebuild view: one canvas, its rebuilt tree, and the pieces left to place. */
-export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry, copy }: {
+export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry, copy, finder, onFinder, mapRevision }: {
   canvases: Canvas[];
   copy: CopyStatus | null;
+  finder: FinderState;
+  onFinder: (state: FinderState) => void;
+  mapRevision: number;
   canvas: number | null;
   onCanvas: (id: number | null) => void;
   revision: number;
@@ -457,6 +461,8 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [holding, setHolding] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [finderNote, setFinderNote] = useState<string | null>(null);
+  const [finderBusy, setFinderBusy] = useState(false);
   const fail = useCallback((reason: unknown) => setError(String(reason)), []);
 
   useEffect(() => {
@@ -549,6 +555,37 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
 
   const root = items.find((item) => item.parentItem === null);
   const current = canvases.find((found) => found.id === canvas);
+  const inFinder = canvas !== null && finder.shown.includes(canvas);
+
+  // Adding it again when it is already there just opens it.
+  async function showInFinder() {
+    if (!current) return;
+    setFinderBusy(true);
+    setFinderNote(null);
+    try {
+      const shown = await invoke<{ folder: string | null; note?: string }>("finder_show", { canvas: current.id, name: current.name, revision: `${current.updatedAtMillis}-${mapRevision}` });
+      onFinder({ available: true, shown: [...finder.shown.filter((id) => id !== current.id), current.id] });
+      if (!shown.folder) setFinderNote(t("Turn on Captain Salvage in System Settings, General, Login Items & Extensions, File Providers, then try again."));
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setFinderBusy(false);
+    }
+  }
+
+  async function removeFromFinder() {
+    if (canvas === null) return;
+    setFinderBusy(true);
+    setFinderNote(null);
+    try {
+      await invoke("finder_hide", { canvas });
+      onFinder({ available: true, shown: finder.shown.filter((id) => id !== canvas) });
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setFinderBusy(false);
+    }
+  }
   const shared: Shared | null = canvas === null ? null : { canvas, items: new Map(items.map((item) => [item.id, item])), revision, changed, fail, onEntry };
 
   let body: ReactNode;
@@ -646,10 +683,19 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         {root && unused && unused.total > 0 && (
           <button onClick={() => void putRestAway()} title={t("Put every piece not yet placed into one folder called Leftovers")}>{t("Put the rest away")}</button>
         )}
+        {root && finder.available && (inFinder ? (
+          <>
+            <button disabled={finderBusy} onClick={() => void showInFinder()} title={t("Open this canvas's folder in Finder")}>{t("Open in Finder")}</button>
+            <button className="link" disabled={finderBusy} onClick={() => void removeFromFinder()}>{t("Remove from Finder")}</button>
+          </>
+        ) : (
+          <button disabled={finderBusy} onClick={() => void showInFinder()} title={t("Show the rebuilt tree as a folder in Finder, read only, straight from the disk")}>{t("Show in Finder")}</button>
+        ))}
         {root && !copying && (
           <button onClick={() => setCopying(true)} title={t("Copy every file to where this canvas puts it")}>{t("Copy out")}</button>
         )}
       </div>
+      {finderNote && <p className="muted rebuild-error">{finderNote}</p>}
       {error && <p className="warn rebuild-error">{fromEngine(error.replace(/^Error: /, ""))}</p>}
       <div className="rebuild-body">
         {copying && root && canvas !== null && <CanvasCopy canvas={canvas} copy={copy} revision={revision} onClose={() => setCopying(false)} />}
