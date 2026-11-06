@@ -500,6 +500,15 @@ export default function App() {
   }, [testState, bump]);
 
   const scanning = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
+
+  // A scan can start and finish between two status polls, so it is never seen running.
+  // Any change in the scan's state, such as reaching complete, reads everything again.
+  const scanState = status ? `${status.scan.status}:${status.scan.startedAtMillis}` : null;
+  const lastScanState = useRef(scanState);
+  useEffect(() => {
+    if (lastScanState.current !== null && scanState !== lastScanState.current) bump();
+    lastScanState.current = scanState;
+  }, [scanState, bump]);
   useEffect(() => {
     if (!scanning) return;
     const timer = setInterval(bump, MAP_REFRESH_DURING_SCAN_MILLIS);
