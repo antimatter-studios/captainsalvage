@@ -17,7 +17,7 @@ import {
 import { bytes, count, percent, stamp, verdictLabel } from "../format";
 import { fromEngine, t, useLanguage } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
-import { isZipName } from "./ZipView";
+import { isArchiveName } from "./ZipView";
 
 const PAGE_ROWS = 120;
 const TILE_WIDTH = 150;
@@ -405,7 +405,7 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
             <button className="icon-button" disabled={position + 1 >= total} onClick={() => onMove(1)} aria-label={t("Next file")}><Icon name="chevronRight" /></button>
           </span>
         )}
-        {isZipName(row.name) && <button onClick={onInside}>{t("Look inside")}</button>}
+        {isArchiveName(row.name) && <button onClick={onInside}>{t("Look inside")}</button>}
         <button onClick={onBytes}>{t("Show bytes")}</button>
         <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
       </div>

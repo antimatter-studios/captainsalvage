@@ -33,7 +33,7 @@ import { RebuildView } from "./components/RebuildView";
 import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
 import { StartScreen } from "./components/StartScreen";
-import { isZipName, ZipView } from "./components/ZipView";
+import { isArchiveName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, decimal, duration, lostFolderName } from "./format";
 import { fromEngine, LANGUAGES, locale, t, useLanguage } from "./i18n";
@@ -548,7 +548,7 @@ export default function App() {
     if (row.id === null) return;
     const full = await noteEntry(row.id);
     if (centerNow.current === "bytes") return;
-    if (isZipName(full.name)) {
+    if (isArchiveName(full.name)) {
       setCenter("zip");
       return;
     }
@@ -710,7 +710,7 @@ export default function App() {
     );
   }
 
-  const zipEntry = entry && entry.row.kind === "file" && isZipName(entry.row.name) ? entry.row : null;
+  const zipEntry = entry && entry.row.kind === "file" && isArchiveName(entry.row.name) ? entry.row : null;
   const selectedKey = entry ? `entry:${entry.row.id}` : folder ? `folder:${folder.head}` : chain ? `chain:${chain.head}` : region ? `region:${region.startCluster}` : null;
 
   return (
@@ -763,7 +763,7 @@ export default function App() {
             <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>{t("Overview")}</button>
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
             <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>
-            <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside zip")}</button>
+            <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside archive")}</button>
           </div>
         </div>
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}

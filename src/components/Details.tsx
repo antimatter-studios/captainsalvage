@@ -21,7 +21,7 @@ import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, sta
 import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
 import { SimilarPieces } from "./SimilarPieces";
-import { isZipName } from "./ZipView";
+import { isArchiveName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
 
 const MAX_COPIES_SHOWN = 20;
@@ -101,7 +101,7 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, on
         <div className="detail-actions">
           <button className="primary" onClick={onCopy}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
           <button onClick={() => onPreview(row)}>{t("Open large")}</button>
-          {isZipName(row.name) && <button onClick={onInsideZip}>{t("Look inside")}</button>}
+          {isArchiveName(row.name) && <button onClick={onInsideZip}>{t("Look inside")}</button>}
           <button onClick={runTest} disabled={busy !== null}>{busy === "test" ? t("Testing") : t("Test format")}</button>
         </div>
       )}

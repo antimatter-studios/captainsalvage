@@ -121,6 +121,8 @@ export interface ZipMember {
 }
 
 export interface ZipListing {
+  /** zip, tar, tar.gz, gz, 7z and so on. */
+  format: string;
   source: "directory" | "headers";
   members: ZipMember[];
   complete: boolean;
