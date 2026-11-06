@@ -3,6 +3,7 @@
 pub mod archive;
 pub mod basket;
 pub mod browse;
+pub mod canvas;
 pub mod content;
 pub mod engine;
 pub mod exfat;

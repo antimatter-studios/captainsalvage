@@ -2,6 +2,7 @@
 
 use crate::basket::BasketOptions;
 use crate::browse::BrowseQuery;
+use crate::canvas::Place;
 use crate::content::GROUP_NAMES;
 use crate::exfat::find_sets;
 use crate::export::{list_volumes, CopyRequest};
@@ -104,6 +105,45 @@ fn extents_of(args: &Value, key: &str) -> Result<Option<Vec<u32>>> {
     let extents: Vec<Extent> = serde_json::from_value(value.clone())
         .with_context(|| format!("{key} must be a list of {{first, count}}"))?;
     Ok(Some(from_extents(&extents)))
+}
+
+/// Where a canvas tool puts something: `{"item": id, "head": cluster}`, either or both left out.
+fn place_of(args: &Value) -> Result<Place> {
+    let Some(place) = args.get("place").filter(|place| !place.is_null()) else {
+        return Ok(Place::default());
+    };
+    Ok(Place {
+        item: place.get("item").and_then(Value::as_i64),
+        head: place
+            .get("head")
+            .and_then(Value::as_u64)
+            .map(u32::try_from)
+            .transpose()
+            .context("head is not a cluster number")?,
+    })
+}
+
+fn path_of_names(args: &Value) -> Result<Vec<String>> {
+    match args.get("path") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .map(|part| {
+                part.as_str()
+                    .map(str::to_string)
+                    .context("path holds a name that is not text")
+            })
+            .collect(),
+        Some(_) => bail!("path must be a list of folder names"),
+    }
+}
+
+/// Changing a canvas is the person's to do. Claude reads canvases, and suggests.
+fn only_the_person(author: &str) -> Result<()> {
+    if author != AUTHOR_USER {
+        bail!("Only the person using the app changes a canvas. Suggest a placement instead.");
+    }
+    Ok(())
 }
 
 fn parse_hex(text: &str) -> Result<Vec<u8>> {
@@ -632,6 +672,105 @@ impl Engine {
                 Ok(json!({"stopRequested": true}))
             }
             "copy_status" => Ok(serde_json::to_value(session.copy_status()?)?),
+            "canvas_list" => Ok(serde_json::to_value(
+                session.with_database(|database| database.canvases())?,
+            )?),
+            "canvas_items" => {
+                let canvas = need_i64(args, "canvas")?;
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.canvas_items(canvas),
+                )?)?)
+            }
+            "canvas_tree" => {
+                let canvas = need_i64(args, "canvas")?;
+                let path = path_of_names(args)?;
+                let offset = u64_of(args, "offset").unwrap_or(0);
+                let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.canvas_list(canvas, &path, offset, limit),
+                )?)?)
+            }
+            "canvas_unused" => {
+                let canvas = need_i64(args, "canvas")?;
+                let offset = u64_of(args, "offset").unwrap_or(0);
+                let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.canvas_unused(canvas, offset, limit),
+                )?)?)
+            }
+            "canvas_create" | "canvas_rename" | "canvas_delete" | "canvas_place"
+            | "canvas_folder" | "canvas_move" | "canvas_rename_item" | "canvas_remove"
+            | "canvas_leftovers" | "canvas_choose" => {
+                only_the_person(author)?;
+                let result = session.with_database(|database| -> Result<Value> {
+                    Ok(match tool {
+                        "canvas_create" => {
+                            json!({"id": database.canvas_create(need_str(args, "name")?)?})
+                        }
+                        "canvas_rename" => {
+                            database.canvas_rename(
+                                need_i64(args, "canvas")?,
+                                need_str(args, "name")?,
+                            )?;
+                            json!({"ok": true})
+                        }
+                        "canvas_delete" => {
+                            database.canvas_delete(need_i64(args, "canvas")?)?;
+                            json!({"ok": true})
+                        }
+                        "canvas_place" => json!({"id": database.canvas_place(
+                            need_i64(args, "canvas")?,
+                            need_u32(args, "head")?,
+                            place_of(args)?,
+                            bool_of(args, "merge", false),
+                        )?}),
+                        "canvas_folder" => json!({"id": database.canvas_folder(
+                            need_i64(args, "canvas")?,
+                            need_str(args, "name")?,
+                            place_of(args)?,
+                        )?}),
+                        "canvas_move" => {
+                            database.canvas_move(
+                                need_i64(args, "canvas")?,
+                                need_i64(args, "item")?,
+                                place_of(args)?,
+                                args.get("merge").and_then(Value::as_bool),
+                            )?;
+                            json!({"ok": true})
+                        }
+                        "canvas_rename_item" => {
+                            database.canvas_rename_item(
+                                need_i64(args, "canvas")?,
+                                need_i64(args, "item")?,
+                                str_of(args, "name"),
+                            )?;
+                            json!({"ok": true})
+                        }
+                        "canvas_remove" => json!({"removed": database.canvas_remove(
+                            need_i64(args, "canvas")?,
+                            need_i64(args, "item")?,
+                        )?}),
+                        "canvas_leftovers" => {
+                            let (folder, pieces) = database.canvas_leftovers(
+                                need_i64(args, "canvas")?,
+                                need_str(args, "name")?,
+                                u64_of(args, "maxFiles"),
+                            )?;
+                            json!({"folder": folder, "pieces": pieces})
+                        }
+                        _ => {
+                            database.canvas_choose(
+                                need_i64(args, "canvas")?,
+                                &path_of_names(args)?,
+                                args.get("entry").and_then(Value::as_i64),
+                            )?;
+                            json!({"ok": true})
+                        }
+                    })
+                })?;
+                self.emit("canvas-changed", json!({"canvas": args.get("canvas")}));
+                Ok(result)
+            }
             "basket_list" => Ok(serde_json::to_value(session.basket_items()?)?),
             "basket_add" => {
                 let kind = need_str(args, "kind")?;
