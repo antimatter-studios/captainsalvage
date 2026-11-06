@@ -26,6 +26,8 @@ pub const VERDICT_TESTED_BAD: &str = "tested-bad";
 /// A file that passed its test is trusted, and one that failed is not, whatever else says.
 pub const TESTED_GOOD_CONFIDENCE: f64 = 0.99;
 pub const TESTED_BAD_CONFIDENCE: f64 = 0.1;
+/// Deeper than this, a walk up the folders is taken to be a loop.
+const MAX_TREE_DEPTH: usize = 256;
 
 /// A file waiting to be tested.
 pub struct FileTestCandidate {
@@ -855,6 +857,39 @@ impl MapDb {
         Ok(Some(row))
     }
 
+    /// The folders from a top-level folder down to `head`, top first, so the sidebar can open
+    /// down to a selection. A loop in the parents stops the walk.
+    pub fn folder_heads(&self, head: u32) -> Result<Vec<u32>> {
+        let mut heads = Vec::new();
+        let mut current = Some(head);
+        while let Some(found) = current {
+            if heads.contains(&found) || heads.len() > MAX_TREE_DEPTH {
+                break;
+            }
+            heads.push(found);
+            current = self
+                .connection
+                .query_row("SELECT parent FROM nodes WHERE head = ?1", [found], |row| {
+                    row.get::<_, Option<u32>>(0)
+                })
+                .optional()?
+                .flatten();
+        }
+        heads.reverse();
+        Ok(heads)
+    }
+
+    /// The folder in the tree that holds an entry, if the map placed it in one.
+    pub fn folder_of_entry(&self, id: i64) -> Result<Option<u32>> {
+        Ok(self
+            .connection
+            .query_row("SELECT node FROM sets WHERE id = ?1", [id], |row| {
+                row.get::<_, Option<u32>>(0)
+            })
+            .optional()?
+            .flatten())
+    }
+
     /// Readable path of a node. Orphan roots are shown as `[orphan @cluster]`.
     pub fn path_of(&self, node: Option<u32>) -> Result<String> {
         let mut parts = Vec::new();
@@ -862,7 +897,7 @@ impl MapDb {
         let mut guard = 0;
         while let Some(head) = current {
             guard += 1;
-            if guard > 256 {
+            if guard > MAX_TREE_DEPTH {
                 break;
             }
             let found: Option<(Option<String>, Option<u32>, String)> = self
