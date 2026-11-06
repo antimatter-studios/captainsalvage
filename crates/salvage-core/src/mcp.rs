@@ -7,7 +7,7 @@
 
 use crate::engine::{Engine, AUTHOR_CLAUDE};
 use anyhow::{anyhow, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Read;
@@ -35,7 +35,7 @@ what the entry points at. Scores are estimates. Test reassemblies with test_stre
 a guess, and record conclusions as overlays or with log_finding so the user can see and reverse them. \
 Use query_map and run_script when no fixed tool fits. call get_selection to see what the user has selected.";
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpInfo {
     pub url: String,
@@ -294,6 +294,14 @@ pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
         }
         other => rpc_error(id, -32601, &format!("method not found: {other}")),
     })
+}
+
+/// Where the running app tells clients how to reach it: its address and its token.
+pub fn published_info() -> Result<McpInfo> {
+    let path = config_dir()?.join("mcp.json");
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {}. Is Captain Salvage open?", path.display()))?;
+    Ok(serde_json::from_str(&text)?)
 }
 
 fn config_dir() -> Result<PathBuf> {

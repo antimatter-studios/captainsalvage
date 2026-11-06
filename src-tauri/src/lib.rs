@@ -229,18 +229,24 @@ fn set_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn chat_agents() -> Vec<salvage_core::agent::AgentInfo> {
+    ChatState::agents()
+}
+
+#[tauri::command]
 fn chat_send(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     chat: State<'_, ChatState>,
+    agent: String,
     message: String,
     selection: Value,
 ) -> Result<(), String> {
     let info = state
         .mcp
         .clone()
-        .ok_or("the MCP server is not running, so Claude has no tools")?;
-    chat.send(app, &info, &message, &selection)
+        .ok_or("the MCP server is not running, so the agent has no tools")?;
+    chat.send(app, &info, &agent, &message, &selection)
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -360,6 +366,7 @@ pub fn run() {
             set_theme,
             get_language,
             set_language,
+            chat_agents,
             chat_send,
             chat_cancel,
             chat_reset,

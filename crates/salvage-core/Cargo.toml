@@ -8,6 +8,10 @@ edition = "2021"
 path = "src/lib.rs"
 
 [[bin]]
+name = "salvage-agent"
+path = "src/bin/salvage-agent.rs"
+
+[[bin]]
 name = "salvage-scan"
 path = "src/bin/salvage-scan.rs"
 
