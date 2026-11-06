@@ -207,7 +207,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   background: var(--window);
   min-width: 0;
 }
-.brand { display: flex; flex-direction: column; line-height: 1.2; flex: none; pointer-events: none; }
+.brand { display: flex; flex-direction: column; line-height: 1.2; flex: 0 1 auto; min-width: 80px; pointer-events: none; }
+/* A long path shortens from the left, so the file or device name at its end stays readable. */
+.brand-device { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .brand strong { font-size: 13.5px; font-weight: 650; }
 .brand span { font-size: 11px; color: var(--muted); }
 .scan { flex: 1; min-width: 180px; max-width: 520px; pointer-events: none; }

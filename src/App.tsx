@@ -288,7 +288,7 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
   return (
     <header className="toolbar" data-tauri-drag-region>
       <div className="brand">
-        <strong>{overview.device}</strong>
+        <strong className="brand-device" title={overview.device}><bdi>{overview.device}</bdi></strong>
         <span>{bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>{t("Change disk")}</button></span>
       </div>
       <div className="scan">
