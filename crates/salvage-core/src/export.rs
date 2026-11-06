@@ -3,7 +3,9 @@
 //! This is the only code in the crate that writes user-visible files, and it
 //! writes only under the destination. It refuses any destination on the disk
 //! being examined, checks free space first, and never overwrites a file. Each copy
-//! is hashed while it is read and hashed again after it is written. Reading stays
+//! is hashed while it is read and hashed again after it is written. Files are pushed
+//! to the destination one by one, and its cache is committed about once a minute, so a
+//! power cut can only touch the newest copies, which the next run checks again. Reading stays
 //! best-effort: unreadable clusters become zeros and are recorded, so one bad spot
 //! never costs the rest of a file. A manifest says exactly what was recovered.
 
@@ -18,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +37,12 @@ const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 /// Files larger than this are copied and hashed, but not walked by format.
 const MAX_FORMAT_CHECK_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NAME_BYTES: usize = 240;
+/// How often a copy asks the destination to commit its cache. Doing it after every file
+/// cost a real SD card 94% of its speed: 0.83 MB/s against 13.5 MB/s with plain `fsync`.
+const COMMIT_INTERVAL: Duration = Duration::from_secs(60);
+/// Copies this close to the newest one may not have survived a power cut. Every copy
+/// older than the last commit is safe, and that is never more than `COMMIT_INTERVAL` back.
+const RECHECK_WINDOW_MILLIS: u64 = 2 * 60 * 1000;
 const LARGEST_SHOWN: usize = 10;
 const STATE_SALVAGE_DRIVE: &str = "salvage_destination";
 const STATE_COPY_STATUS: &str = "copy_status";
@@ -156,6 +165,43 @@ fn read_manifest(path: &Path) -> HashMap<i64, ManifestRow> {
 
 fn still_on_destination(previous: &ManifestRow) -> bool {
     fs::metadata(&previous.target).is_ok_and(|metadata| metadata.len() == previous.bytes_written)
+}
+
+/// Hands a file's bytes to the destination without waiting for its cache to commit.
+/// `File::sync_all` is the full commit on macOS, which is far slower.
+fn push_to_destination(file: &File) -> Result<()> {
+    // SAFETY: the descriptor belongs to `file`, which outlives this call.
+    if unsafe { libc::fsync(file.as_raw_fd()) } != 0 {
+        bail!("{}", std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// After a power cut, a recent copy can have the right length and the wrong bytes.
+/// Any that fail their hash are renamed, never deleted, so this run copies them again.
+/// Returns how many failed.
+fn recheck_recent_copies(manifest_path: &Path) -> usize {
+    let done = read_manifest(manifest_path);
+    let newest = done
+        .values()
+        .map(|row| row.copied_at_millis)
+        .max()
+        .unwrap_or(0);
+    let mut failed = 0;
+    for row in done.values() {
+        if row.copied_at_millis + RECHECK_WINDOW_MILLIS < newest || !still_on_destination(row) {
+            continue;
+        }
+        let target = Path::new(&row.target);
+        if hash_file(target).is_ok_and(|hash| hash == row.sha256) {
+            continue;
+        }
+        let aside = unused_path(Path::new(&format!("{}.failed-check", row.target)), row.id);
+        if fs::rename(target, aside).is_ok() {
+            failed += 1;
+        }
+    }
+    failed
 }
 
 struct Filesystem {
@@ -693,6 +739,14 @@ impl Session {
         };
         let session = Arc::clone(self);
         *slot = Some(std::thread::spawn(move || {
+            let failed = recheck_recent_copies(&manifest);
+            if failed > 0 {
+                session.update_copy(|status| {
+                    status.error = Some(format!(
+                        "{failed} recent copies failed their hash after an interrupted run. They were renamed with .failed-check and are being copied again."
+                    ));
+                });
+            }
             let mut seen = HashSet::new();
             let mut outcome = Ok(true);
             for group in &groups {
@@ -738,9 +792,11 @@ impl Session {
             .create(true)
             .append(true)
             .open(manifest_path)?;
+        let mut last_commit = Instant::now();
 
         for row in rows {
             if self.should_stop() {
+                let _ = manifest.sync_all();
                 return Ok(false);
             }
             let id = row.id.context("entry has no id")?;
@@ -756,6 +812,10 @@ impl Session {
                 Ok(Some(result)) => {
                     writeln!(manifest, "{}", serde_json::to_string(&result)?)?;
                     manifest.flush()?;
+                    if last_commit.elapsed() >= COMMIT_INTERVAL {
+                        manifest.sync_all()?;
+                        last_commit = Instant::now();
+                    }
                     self.update_copy(|status| {
                         status.files_done += 1;
                         // The rest of a file whose chain ended early, so the total still adds up.
@@ -766,7 +826,10 @@ impl Session {
                         }
                     });
                 }
-                Ok(None) => return Ok(false),
+                Ok(None) => {
+                    let _ = manifest.sync_all();
+                    return Ok(false);
+                }
                 // Every file after this one would fail the same way.
                 Err(error) if self.volume.source().is_gone() => return Err(error),
                 Err(error) => {
@@ -785,6 +848,7 @@ impl Session {
                 }
             }
         }
+        manifest.sync_all()?;
         Ok(true)
     }
 
@@ -869,7 +933,7 @@ impl Session {
             index += run;
             self.update_copy(|status| status.bytes_done += take as u64);
         }
-        file.sync_all()?;
+        push_to_destination(&file)?;
         drop(file);
 
         let sha256: String = hasher
