@@ -764,3 +764,6 @@ video.inline-preview { max-height: 380px; background: #000; }
 .list-row-size { flex: none; width: 72px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .list-row-date { flex: none; width: 130px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .list-row-verdict { flex: none; width: 150px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); overflow: hidden; white-space: nowrap; }
+.strip-focus { position: relative; border-radius: 6px; outline: none; }
+.strip-focus:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+.scrub-speed { position: absolute; top: 0; right: 4px; z-index: 2; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--accent); }

@@ -8,6 +8,13 @@ const MIN_WINDOW_CLUSTERS = 64;
 const WHEEL_ZOOM_STEP = 1.25;
 const DRAG_THRESHOLD_PIXELS = 4;
 const MAX_BUCKETS = 8192;
+/** Fast scrubbing: how often a held arrow steps, how long each speed lasts, and how much
+ * each stage multiplies the step by. The step never passes one magnified view's width. */
+const SCRUB_TICK_MILLIS = 60;
+const SCRUB_STAGE_MILLIS = 1500;
+const SCRUB_STAGE_FACTOR = 10;
+/** The selection behind the marker follows at most this often, so the bytes view keeps up. */
+const SCRUB_PICK_MILLIS = 150;
 /** Height of one band unit in a stacked map column, in CSS pixels. */
 const CSS_PIXELS_PER_ROW = 2;
 
@@ -285,6 +292,72 @@ export function Strips(props: StripsProps) {
   }
 
   const pan = (delta: number) => onView(clampView(view[0] + delta, view[1] + delta));
+
+  // Fast scrubbing: hold an arrow on the magnified view to move through the clusters. The step
+  // grows by stages while held, up to one view's width, and stops the moment the key is let go.
+  const [scrubStep, setScrubStep] = useState<number | null>(null);
+  const [scrubAt, setScrubAt] = useState<number | null>(null);
+  const scrub = useRef<{ timer: number; at: number; step: number; direction: number; stageAt: number; pickedAt: number } | null>(null);
+  const shown = scrubAt ?? marker;
+  // A held key's timer outlives the draw it started in, so it reads the view from here.
+  const viewNow = useRef(view);
+  viewNow.current = view;
+  const moveTo = (cluster: number, final: boolean) => {
+    const target = Math.min(Math.max(cluster, first), last - 1);
+    const [left, right] = viewNow.current;
+    const width = right - left;
+    if (target < left || target >= right) {
+      const next = clampView(target - width / 2, target + width / 2);
+      viewNow.current = next;
+      onView(next);
+    }
+    const held = scrub.current;
+    if (final || !held || performance.now() - held.pickedAt >= SCRUB_PICK_MILLIS) {
+      onPick(target);
+      if (held) held.pickedAt = performance.now();
+    }
+    return target;
+  };
+  const stopScrub = () => {
+    const held = scrub.current;
+    if (!held) return;
+    window.clearInterval(held.timer);
+    scrub.current = null;
+    setScrubStep(null);
+    setScrubAt(null);
+    moveTo(held.at, true);
+  };
+  useEffect(() => () => {
+    if (scrub.current) window.clearInterval(scrub.current.timer);
+  }, []);
+  const scrubKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const width = Math.max(1, view[1] - view[0]);
+    const from = shown ?? Math.floor((view[0] + view[1]) / 2);
+    if (event.shiftKey) {
+      // One whole view at once, for when it is far.
+      moveTo(from + direction * width, true);
+      return;
+    }
+    if (event.repeat || scrub.current) return;
+    const held = { timer: 0, at: from, step: 1, direction, stageAt: performance.now(), pickedAt: 0 };
+    const tick = () => {
+      const now = performance.now();
+      if (now - held.stageAt >= SCRUB_STAGE_MILLIS) {
+        held.step = Math.min(held.step * SCRUB_STAGE_FACTOR, Math.max(1, viewNow.current[1] - viewNow.current[0]));
+        held.stageAt = now;
+        setScrubStep(held.step);
+      }
+      held.at = moveTo(held.at + held.direction * held.step, false);
+      setScrubAt(held.at);
+    };
+    scrub.current = held;
+    setScrubStep(1);
+    tick();
+    held.timer = window.setInterval(tick, SCRUB_TICK_MILLIS);
+  };
   const zoom = (center: number, factor: number) => {
     const width = (view[1] - view[0]) * factor;
     const position = (center - view[0]) / (view[1] - view[0]);
@@ -337,6 +410,18 @@ export function Strips(props: StripsProps) {
         }}
         onDragRange={(start, end) => onView(clampView(start, end))}
       />
+      <div
+        className="strip-focus"
+        tabIndex={0}
+        aria-label={t("Magnified view. Hold the left or right arrow to move through the clusters, faster the longer you hold. Shift and an arrow jumps a whole view.")}
+        onKeyDown={scrubKey}
+        onKeyUp={(event) => {
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") stopScrub();
+        }}
+        onBlur={stopScrub}
+        onPointerDown={(event) => event.currentTarget.focus()}
+      >
+      {scrubStep !== null && <span className="scrub-speed" aria-live="polite">×{count(scrubStep)}</span>}
       <Strip
         layer={layer}
         start={view[0]}
@@ -346,13 +431,14 @@ export function Strips(props: StripsProps) {
         revision={revision}
         height={74}
         highlight={highlight}
-        marker={marker}
+        marker={shown}
         clusterSize={clusterSize}
-        label={t("Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect", { count: count(view[1] - view[0]) })}
+        label={t("Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub", { count: count(view[1] - view[0]) })}
         onPick={onPick}
         onPan={pan}
         onZoom={zoom}
       />
+      </div>
       <div className="ruler" aria-hidden="true">
         {[0, 0.2, 0.4, 0.6, 0.8, 1].map((fraction) => (
           <span key={fraction} style={{ left: `${fraction * 100}%` }}>
