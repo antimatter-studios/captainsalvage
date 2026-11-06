@@ -1,6 +1,7 @@
 //! The desktop shell: exposes the engine to the window and starts the MCP server.
 
 mod app_tools;
+mod awake;
 mod capture;
 mod chat;
 mod file_provider;
@@ -357,6 +358,7 @@ pub fn run() {
             engine.set_app_hook(Arc::new(move |tool, args| {
                 app_tools::app_tool(&hook_handle, tool, args)
             }));
+            awake::keep_awake_while_open();
             let capture_handle = app.handle().clone();
             engine.set_screenshot_hook(Arc::new(move || capture::capture_window(&capture_handle)));
 
