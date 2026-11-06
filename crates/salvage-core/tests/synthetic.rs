@@ -585,6 +585,38 @@ fn call(engine: &Engine, tool: &str, args: serde_json::Value) -> serde_json::Val
 }
 
 #[test]
+fn tree_path_leads_from_the_top_folder_down_to_a_selection() {
+    let (engine, _session, dir) = engine_with_volume("tree-path");
+    let track = call(&engine, "search", json!({"query": "track.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    let heads: Vec<u64> = call(&engine, "tree_path", json!({"entry": track}))["heads"]
+        .as_array()
+        .expect("heads")
+        .iter()
+        .map(|head| head.as_u64().expect("head"))
+        .collect();
+    assert_eq!(heads.last(), Some(&20), "{heads:?}");
+    let roots = call(&engine, "roots", json!({}));
+    let top = roots["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| row["head"].as_u64())
+        .collect::<Vec<_>>();
+    assert!(
+        top.contains(&heads[0]),
+        "{heads:?} starts at a top folder of {top:?}"
+    );
+    assert_eq!(
+        call(&engine, "tree_path", json!({"folder": 20}))["heads"],
+        json!(heads)
+    );
+    assert!(engine.call("tree_path", &json!({}), AUTHOR_CLAUDE).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_damaged_entry_is_followed_to_the_real_folder_behind_it() {
     let (engine, _session, dir) = engine_with_volume("follow");
 

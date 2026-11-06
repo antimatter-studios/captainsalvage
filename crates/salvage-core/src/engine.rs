@@ -444,6 +444,23 @@ impl Engine {
                     session.with_database(|database| database.node(head))?,
                 )?)
             }
+            "tree_path" => {
+                let heads = session.with_database(|database| {
+                    let folder = match (
+                        u64_of(args, "folder").and_then(|head| u32::try_from(head).ok()),
+                        args.get("entry").and_then(Value::as_i64),
+                    ) {
+                        (Some(folder), _) => Some(folder),
+                        (None, Some(id)) => database.folder_of_entry(id)?,
+                        (None, None) => bail!("tree_path needs folder or entry"),
+                    };
+                    match folder {
+                        Some(head) => database.folder_heads(head),
+                        None => Ok(Vec::new()),
+                    }
+                })?;
+                Ok(json!({"heads": heads}))
+            }
             "entry" => {
                 let id = need_i64(args, "id")?;
                 session.with_database(|database| {

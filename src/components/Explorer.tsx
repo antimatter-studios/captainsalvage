@@ -9,6 +9,9 @@ const PAGE_SIZE = 200;
 /** Holding an arrow key should not open every file it passes. */
 const KEY_SELECT_WAIT_MILLIS = 120;
 const RECENT_KEY_MILLIS = 1000;
+// How long the tree is given to load the folders around a selection before the row is scrolled to.
+const REVEAL_TRY_MILLIS = 150;
+const REVEAL_TRIES = 20;
 const NAVIGATION_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
 /** A folder's click also opens it, so the arrow keys reach these instead. */
@@ -42,6 +45,8 @@ interface RowProps {
   onFolder: (row: Row) => void;
   basket: Set<string>;
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
+  /** Folders to open so the selection shows, from a selection made outside the tree. */
+  reveal?: number[] | null;
 }
 
 function BasketCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange: (add: boolean) => void }) {
@@ -84,6 +89,11 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
   const [loaded, setLoaded] = useState(PAGE_SIZE);
   const [error, setError] = useState<string | null>(null);
   const head = row.head as number;
+
+  // Something picked on the map or in the grid opens the tree down to it, once.
+  useEffect(() => {
+    if (props.reveal?.includes(head)) setOpen(true);
+  }, [props.reveal, head]);
 
   useEffect(() => {
     if (!open) return;
@@ -324,6 +334,34 @@ export function Explorer(props: ExplorerProps) {
   const selectTimer = useRef<number | undefined>(undefined);
   const lastKey = useRef(0);
 
+  const [reveal, setReveal] = useState<number[] | null>(null);
+  useEffect(() => {
+    const [kind, value] = (props.selectedKey ?? "").split(":");
+    const target = Number(value);
+    if ((kind !== "entry" && kind !== "folder") || !Number.isFinite(target)) return;
+    let current = true;
+    call<{ heads: number[] }>("tree_path", kind === "entry" ? { entry: target } : { folder: target })
+      // A folder's own row is left as it is: only the folders around it open.
+      .then((found) => current && setReveal(kind === "folder" ? found.heads.filter((head) => head !== target) : found.heads))
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [props.selectedKey]);
+
+  // The selected row may appear only once its folders have loaded, so look for it a few times.
+  useEffect(() => {
+    if (!reveal) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      const row = panel.current?.querySelector(".row-selected");
+      tries += 1;
+      if (row) row.scrollIntoView({ block: "nearest" });
+      if (row || tries >= REVEAL_TRIES) window.clearInterval(timer);
+    }, REVEAL_TRY_MILLIS);
+    return () => window.clearInterval(timer);
+  }, [reveal]);
+
   const clearCursor = () => panel.current?.querySelectorAll(".row-cursor").forEach((row) => row.classList.remove("row-cursor"));
 
   useEffect(() => {
@@ -425,7 +463,7 @@ export function Explorer(props: ExplorerProps) {
           <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} openKey={props.openKey} basket={props.basket} onBasket={props.onBasket} />
         ) : (
           <>
-            {tab === "folders" && <Folders {...props} />}
+            {tab === "folders" && <Folders {...props} reveal={reveal} />}
             {tab === "nameless" && <Nameless onChain={props.onChain} selectedKey={props.selectedKey} revision={props.revision} classNames={props.classNames} clusterSize={props.clusterSize} />}
             {tab === "broken" && <Broken onEntry={props.onEntry} selectedKey={props.selectedKey} revision={props.revision} basket={props.basket} onBasket={props.onBasket} />}
             {tab === "unexplained" && <Unexplained onRegion={props.onRegion} selectedKey={props.selectedKey} revision={props.revision} />}
