@@ -600,6 +600,8 @@ video.inline-preview { max-height: 380px; background: #000; }
   --chart-ink: #12303f;
   --chart-sounding: #4f7689;
   --chart-caution: #a61e68;
+  --chart-land: #efe6cf;
+  --chart-land-edge: #8a7a55;
   display: grid;
   grid-template-columns: minmax(380px, 42%) minmax(0, 1fr);
   height: 100%;
@@ -613,19 +615,33 @@ video.inline-preview { max-height: 380px; background: #000; }
     --chart-ink: #dbe9ef;
     --chart-sounding: #6f97aa;
     --chart-caution: #f07ab8;
+    --chart-land: #3b4a3f;
+    --chart-land-edge: #9fb79a;
   }
 }
 .start-chart { position: relative; overflow: hidden; background: var(--chart-water); color: var(--chart-ink); }
 .start-chart-art { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* So a press anywhere on the chart lands on the drag region behind these. */
 .start-chart-art, .start-brand, .start-promises, .start-version { pointer-events: none; }
-.start-contour { fill: var(--chart-shoal); fill-opacity: 0.13; stroke: var(--chart-line); stroke-width: 0.8; }
-.start-sounding { fill: var(--chart-sounding); font: italic 11px "Iowan Old Style", "Palatino", serif; text-anchor: middle; }
-.start-wreck-ring { fill: none; stroke: var(--chart-caution); stroke-width: 1.2; stroke-dasharray: 2 3; }
-.start-wreck { fill: none; stroke: var(--chart-caution); stroke-width: 1.8; stroke-linecap: round; }
-.start-wreck-label { fill: var(--chart-ink); font: 600 15px "Iowan Old Style", "Palatino", serif; }
-.start-wreck-detail { fill: var(--chart-caution); font: italic 13px "Iowan Old Style", "Palatino", serif; }
-.start-ping { fill: none; stroke: var(--chart-caution); stroke-width: 1.2; opacity: 0; transform-origin: 372px 470px; animation: start-ping 2.4s ease-out 0.5s 1; }
+.start-grid { stroke: var(--chart-line); stroke-opacity: 0.18; stroke-width: 0.6; }
+.start-contour { fill: var(--chart-shoal); fill-opacity: 0.1; stroke: var(--chart-line); stroke-width: 0.7; stroke-opacity: 0.7; }
+.start-sounding { fill: var(--chart-sounding); font: italic 10.5px "Iowan Old Style", "Palatino", serif; text-anchor: middle; }
+.start-course { fill: none; stroke: var(--chart-caution); stroke-width: 1.3; stroke-dasharray: 1 5; stroke-linecap: round; opacity: 0.85; }
+.start-land { fill: var(--chart-land); stroke: var(--chart-land-edge); stroke-width: 1.1; }
+.start-land-contour { fill: none; stroke: var(--chart-land-edge); stroke-width: 0.6; stroke-opacity: 0.6; }
+.start-island-uncharted .start-land { fill-opacity: 0.35; stroke-dasharray: 3 3; }
+.start-island-uncharted .start-land-contour { display: none; }
+.start-isle-name { fill: var(--chart-ink); font: 500 12.5px "Iowan Old Style", "Palatino", serif; letter-spacing: 1.2px; text-transform: uppercase; }
+.start-isle-detail { fill: var(--chart-sounding); font: italic 11px "Iowan Old Style", "Palatino", serif; }
+.start-home-label .start-isle-name { font: 600 15px "Iowan Old Style", "Palatino", serif; letter-spacing: 0; text-transform: none; }
+.start-home-label .start-isle-detail { fill: var(--chart-caution); font-size: 13px; }
+.start-anchorage { fill: none; stroke: var(--chart-caution); stroke-width: 1.6; }
+.start-anchorage-dot { fill: var(--chart-caution); }
+.start-rose circle { fill: none; stroke: var(--chart-ink); stroke-opacity: 0.75; stroke-width: 0.8; }
+.start-rose-point { fill: var(--chart-ink); fill-opacity: 0.55; }
+.start-rose-north { fill: var(--chart-caution); fill-opacity: 0.9; }
+.start-rose-label { fill: var(--chart-ink); font: 11px "Iowan Old Style", "Palatino", serif; text-anchor: middle; }
+.start-ping { fill: none; stroke: var(--chart-caution); stroke-width: 1.2; opacity: 0; animation: start-ping 2.4s ease-out 0.5s 1; }
 @keyframes start-ping {
   0% { opacity: 0.8; transform: scale(0.8); }
   100% { opacity: 0; transform: scale(5); }

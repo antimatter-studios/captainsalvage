@@ -77,6 +77,9 @@ export interface DiskWrites {
 
 export interface KnownVolume {
   record: { uuid: string | null; name: string; bytes: number; lastOpenedMillis: number };
+  /** What was found, by kind of file, largest first. */
+  kinds: { group: string; files: number; bytes: number }[];
+  lostFolders: number;
   scanned: boolean;
   filesFound: number;
   bytesFound: number;

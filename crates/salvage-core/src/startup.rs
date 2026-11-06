@@ -39,11 +39,23 @@ pub struct VolumeRecord {
 #[serde(rename_all = "camelCase")]
 pub struct KnownVolume {
     pub record: VolumeRecord,
+    /// What was found, by kind of file, largest first, for the start screen's chart.
+    pub kinds: Vec<KindTotal>,
+    /// Found folders whose parent is gone.
+    pub lost_folders: u64,
     pub scanned: bool,
     pub files_found: u64,
     pub bytes_found: u64,
     pub files_passed: u64,
     pub files_damaged: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KindTotal {
+    pub group: String,
+    pub files: u64,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -255,6 +267,17 @@ fn known_volume(dir: &Path) -> Option<KnownVolume> {
             known.bytes_found += total.bytes;
         }
     }
+    if let Ok(kinds) = database.kind_totals(FOUND_VERDICTS) {
+        known.kinds = kinds
+            .into_iter()
+            .map(|(group, files, bytes)| KindTotal {
+                group: group.to_string(),
+                files,
+                bytes,
+            })
+            .collect();
+    }
+    known.lost_folders = database.lost_folder_count().unwrap_or(0);
     if let Ok((passed, damaged, _)) = database.file_test_counts() {
         known.files_passed = passed;
         known.files_damaged = damaged;

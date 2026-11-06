@@ -9,70 +9,191 @@ import { MountBlockToggle } from "./MountBlock";
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 900;
-const WRECK_X = 372;
-const WRECK_Y = 470;
-const CONTOUR_RADII = [64, 118, 176, 240, 312, 392, 480, 580];
-const CONTOUR_POINTS = 120;
-const SOUNDING_COUNT = 46;
-const SOUNDING_CLEAR_RADIUS = 96;
-const METRES_PER_PIXEL = 1 / 26;
-/** The brand and the promises sit over the chart here, so no figures may land under them. */
+/** The disk's own island, in the middle of the chart. */
+const HOME_X = 360;
+const HOME_Y = 480;
+/** The islands for each kind of file sit evenly round the disk's island, on this ellipse,
+ * clockwise from the upper left, so the course between them runs round the edge. */
+const RING_X = 205;
+const RING_Y = 232;
+const RING_START = (-150 * Math.PI) / 180;
+const MAX_ISLANDS = 7;
+const HOME_RADIUS = 50;
+const SHORE_POINTS = 96;
+const SMALLEST_ISLAND = 13;
+const ISLAND_GROWTH = 29;
+/** The shallow water round an island, as rings at these multiples of its size. */
+const SHOAL_RINGS = [1.65, 1.3];
+/** How far a label sits below its island's shore. */
+const LABEL_GAP = 16;
+const SOUNDING_COUNT = 64;
+const SOUNDING_SPACE = 6;
+const PIXELS_PER_METRE = 9;
+/** The brand and the promises sit over the chart here, so nothing busy may land under them. */
 const TEXT_CLEAR_TOP = 225;
 const TEXT_CLEAR_BOTTOM = 770;
-/** Nor under the wreck's label, which runs out to the right of it. */
-const LABEL_CLEAR_RIGHT = 210;
-const LABEL_CLEAR_HEIGHT = 44;
+const ROSE_X = 568;
+const ROSE_Y = 765;
+const ROSE_RADIUS = 30;
+const KIND_LABELS: Record<string, () => string> = {
+  photos: () => t("Photos"),
+  videos: () => t("Videos"),
+  music: () => t("Music"),
+  documents: () => t("Documents"),
+  archives: () => t("Archives"),
+  other: () => t("Other"),
+};
 
-function contourPath(radius: number, seed: number): string {
+interface Island {
+  x: number;
+  y: number;
+  radius: number;
+  seed: number;
+  label: string;
+  detail: string;
+  home: boolean;
+}
+
+/** An island's shore: a circle pushed in and out by a few waves, the same every time. */
+function shore(x: number, y: number, radius: number, seed: number): string {
   const points: string[] = [];
-  for (let index = 0; index < CONTOUR_POINTS; index += 1) {
-    const angle = (index / CONTOUR_POINTS) * Math.PI * 2;
-    const wobble = 1 + 0.17 * Math.sin(3 * angle + seed) + 0.08 * Math.sin(5 * angle + seed * 2.1) + 0.04 * Math.sin(9 * angle + seed * 3.3);
-    const x = WRECK_X + radius * wobble * Math.cos(angle) * 0.92;
-    const y = WRECK_Y + radius * wobble * Math.sin(angle) * 1.08;
-    points.push(`${x.toFixed(1)} ${y.toFixed(1)}`);
+  for (let index = 0; index < SHORE_POINTS; index += 1) {
+    const angle = (index / SHORE_POINTS) * Math.PI * 2;
+    const wobble = 1 + 0.22 * Math.sin(3 * angle + seed) + 0.12 * Math.sin(5 * angle + seed * 1.7) + 0.06 * Math.sin(11 * angle + seed * 2.9);
+    points.push(`${(x + radius * wobble * Math.cos(angle)).toFixed(1)} ${(y + radius * wobble * Math.sin(angle)).toFixed(1)}`);
   }
   return `M${points.join("L")}Z`;
 }
 
-/** Depths on a chart get smaller toward a shoal, so these do too. The same chart every time. */
-function soundings(): { x: number; y: number; depth: number }[] {
+function slot(index: number, total: number): [number, number] {
+  const angle = RING_START + (index / Math.max(total, 1)) * Math.PI * 2;
+  return [Math.round(HOME_X + RING_X * Math.cos(angle)), Math.round(HOME_Y + RING_Y * Math.sin(angle))];
+}
+
+/** The disk in the middle, and an island for each kind of file found, sized by its bytes.
+ * Before anything is known, the same islands stand uncharted, without names. */
+function islands(known: KnownVolume | null, label: string, detail: string): Island[] {
+  const kinds = (known?.kinds ?? []).filter((kind) => kind.files > 0).slice(0, MAX_ISLANDS - 1);
+  const largest = Math.max(1, ...kinds.map((kind) => kind.bytes));
+  const found: Island[] = [{ x: HOME_X, y: HOME_Y, radius: HOME_RADIUS, seed: 0.7, label, detail, home: true }];
+  if (kinds.length === 0) {
+    for (let index = 0; index < MAX_ISLANDS; index += 1) {
+      const [x, y] = slot(index, MAX_ISLANDS);
+      found.push({ x, y, radius: SMALLEST_ISLAND + 8 + (index % 3) * 6, seed: 1.3 + index * 0.91, label: "", detail: "", home: false });
+    }
+    return found;
+  }
+  const total = kinds.length + (known?.lostFolders ? 1 : 0);
+  kinds.forEach((kind, index) => {
+    const [x, y] = slot(index, total);
+    found.push({
+      x, y,
+      radius: SMALLEST_ISLAND + ISLAND_GROWTH * Math.sqrt(kind.bytes / largest),
+      seed: 1.3 + index * 0.91,
+      label: (KIND_LABELS[kind.group] ?? KIND_LABELS.other)(),
+      detail: t("{count} files, {bytes}", { count: count(kind.files), bytes: bytes(kind.bytes) }),
+      home: false,
+    });
+  });
+  if (known?.lostFolders) {
+    const [x, y] = slot(kinds.length, total);
+    found.push({ x, y, radius: SMALLEST_ISLAND + 6, seed: 5.1, label: t("Lost folders"), detail: t("{count} pieces", { count: count(known.lostFolders) }), home: false });
+  }
+  return found;
+}
+
+/** Depths get smaller toward land, as on a real chart. The same chart every time. */
+function soundings(placed: Island[]): { x: number; y: number; depth: number }[] {
   const found: { x: number; y: number; depth: number }[] = [];
-  let state = 20261104;
+  let state = 20261106;
   const next = () => {
     state = (state * 1664525 + 1013904223) % 4294967296;
     return state / 4294967296;
   };
-  while (found.length < SOUNDING_COUNT) {
-    const x = next() * CHART_WIDTH;
-    const y = next() * CHART_HEIGHT;
-    const distance = Math.hypot(x - WRECK_X, y - WRECK_Y);
-    const underLabel = x > WRECK_X && x < WRECK_X + LABEL_CLEAR_RIGHT && Math.abs(y - WRECK_Y) < LABEL_CLEAR_HEIGHT;
-    if (distance < SOUNDING_CLEAR_RADIUS || underLabel || y < TEXT_CLEAR_TOP || y > TEXT_CLEAR_BOTTOM) continue;
-    found.push({ x, y, depth: Math.max(2, Math.round(distance * METRES_PER_PIXEL)) });
+  for (let tries = 0; found.length < SOUNDING_COUNT && tries < 4000; tries += 1) {
+    const x = 18 + next() * (CHART_WIDTH - 36);
+    const y = TEXT_CLEAR_TOP + 20 + next() * (TEXT_CLEAR_BOTTOM - TEXT_CLEAR_TOP - 40);
+    const clear = Math.min(...placed.map((island) => Math.hypot(x - island.x, y - island.y) - island.radius * (SHOAL_RINGS[0] + 0.35)));
+    // Nor on a label under an island, nor on the compass rose.
+    const onLabel = placed.some((island) => island.label && Math.abs(x - island.x) < 70 && y > island.y && y < island.y + island.radius * 1.15 + LABEL_GAP + 24);
+    const onRose = Math.hypot(x - ROSE_X, y - ROSE_Y) < ROSE_RADIUS + 26;
+    if (clear < SOUNDING_SPACE || onLabel || onRose) continue;
+    found.push({ x, y, depth: Math.max(3, Math.round(clear / PIXELS_PER_METRE)) });
   }
   return found;
+}
+
+/** A course from island to island, bowing outward from the disk so it runs round the
+ * islands and clear of their labels. */
+function course(placed: Island[]): string {
+  const stops = placed.filter((island) => !island.home);
+  if (stops.length === 0) return "";
+  const home = placed[0];
+  let path = `M${stops[0].x} ${stops[0].y}`;
+  const bow = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const out = Math.hypot(middle.x - home.x, middle.y - home.y) || 1;
+    return `Q${(middle.x + ((middle.x - home.x) / out) * 46).toFixed(0)} ${(middle.y + ((middle.y - home.y) / out) * 46).toFixed(0)} ${to.x} ${to.y}`;
+  };
+  for (let index = 1; index < stops.length; index += 1) path += ` ${bow(stops[index - 1], stops[index])}`;
+  return path;
 }
 
 function foundText(known: KnownVolume): string {
   return known.scanned ? t("{bytes} found", { bytes: bytes(known.bytesFound) }) : t("not scanned yet");
 }
 
-/** A real chart's symbol for a wreck, with the disk it stands for beside it. */
-function Chart({ label, detail }: { label: string; detail: string }) {
-  const contours = useMemo(() => CONTOUR_RADII.map((radius, index) => contourPath(radius, 1.3 + index * 0.37)), []);
-  const depths = useMemo(soundings, []);
+/** A chart of what was found: the disk as an island, with an island for each kind of file
+ * round it, sized by how much there is, and a course linking them. */
+function Chart({ known, label, detail }: { known: KnownVolume | null; label: string; detail: string }) {
+  const placed = useMemo(() => islands(known, label, detail), [known, label, detail]);
+  const depths = useMemo(() => soundings(placed), [placed]);
+  const route = useMemo(() => course(placed), [placed]);
+  const charted = (known?.kinds ?? []).length > 0;
+  const home = placed[0];
   return (
     <svg className="start-chart-art" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      {[...contours].reverse().map((path) => <path key={path} d={path} className="start-contour" />)}
+      {[80, 240, 400, 560].map((x) => <line key={`x${x}`} x1={x} y1={0} x2={x} y2={CHART_HEIGHT} className="start-grid" />)}
+      {[60, 220, 380, 540, 700, 860].map((y) => <line key={`y${y}`} x1={0} y1={y} x2={CHART_WIDTH} y2={y} className="start-grid" />)}
+      {placed.map((island) => SHOAL_RINGS.map((ring) => (
+        <path key={`${island.x}-${ring}`} d={shore(island.x, island.y, island.radius * ring, island.seed + ring)} className="start-contour" />
+      )))}
       {depths.map((depth) => (
         <text key={`${depth.x}-${depth.y}`} x={depth.x} y={depth.y} className="start-sounding">{depth.depth}</text>
       ))}
-      <circle cx={WRECK_X} cy={WRECK_Y} r="30" className="start-ping" />
-      <ellipse cx={WRECK_X} cy={WRECK_Y} rx="27" ry="15" className="start-wreck-ring" />
-      <path d={`M${WRECK_X - 18} ${WRECK_Y}H${WRECK_X + 18}M${WRECK_X - 9} ${WRECK_Y - 6}V${WRECK_Y + 6}M${WRECK_X} ${WRECK_Y - 6}V${WRECK_Y + 6}M${WRECK_X + 9} ${WRECK_Y - 6}V${WRECK_Y + 6}`} className="start-wreck" />
-      <text x={WRECK_X + 38} y={WRECK_Y - 3} className="start-wreck-label">{label}</text>
-      <text x={WRECK_X + 38} y={WRECK_Y + 15} className="start-wreck-detail">{detail}</text>
+      {charted && <path d={route} className="start-course" />}
+      {placed.map((island) => (
+        <g key={`${island.x}-${island.y}`} className={charted || island.home ? "start-island" : "start-island start-island-uncharted"}>
+          <path d={shore(island.x, island.y, island.radius, island.seed)} className="start-land" />
+          <path d={shore(island.x, island.y, island.radius * 0.62, island.seed + 0.4)} className="start-land-contour" />
+        </g>
+      ))}
+      {placed.filter((island) => island.label).map((island) => {
+        // Under the island, where nothing else on the ring is.
+        const y = island.y + island.radius * 1.15 + LABEL_GAP;
+        return (
+          <g key={`label-${island.x}-${island.y}`} className={island.home ? "start-home-label" : "start-isle-label"} textAnchor="middle">
+            <text x={island.x} y={y} className="start-isle-name">{island.label}</text>
+            <text x={island.x} y={y + 15} className="start-isle-detail">{island.detail}</text>
+          </g>
+        );
+      })}
+      <circle cx={home.x} cy={home.y} r="30" className="start-ping" style={{ transformOrigin: `${home.x}px ${home.y}px` }} />
+      <circle cx={home.x} cy={home.y} r="5" className="start-anchorage" />
+      <circle cx={home.x} cy={home.y} r="1.6" className="start-anchorage-dot" />
+      <g className="start-rose">
+        <circle cx={ROSE_X} cy={ROSE_Y} r={ROSE_RADIUS} />
+        <circle cx={ROSE_X} cy={ROSE_Y} r={ROSE_RADIUS - 6} strokeDasharray="1 3" />
+        {Array.from({ length: 8 }, (_, index) => {
+          const angle = (index / 8) * Math.PI * 2 - Math.PI / 2;
+          const reach = index % 2 === 0 ? ROSE_RADIUS + 8 : ROSE_RADIUS - 10;
+          const tip = [ROSE_X + Math.cos(angle) * reach, ROSE_Y + Math.sin(angle) * reach];
+          const left = [ROSE_X + Math.cos(angle + 0.22) * 6, ROSE_Y + Math.sin(angle + 0.22) * 6];
+          const right = [ROSE_X + Math.cos(angle - 0.22) * 6, ROSE_Y + Math.sin(angle - 0.22) * 6];
+          return <path key={index} d={`M${left.join(" ")}L${tip.join(" ")}L${right.join(" ")}Z`} className={index === 0 ? "start-rose-north" : "start-rose-point"} />;
+        })}
+        <text x={ROSE_X} y={ROSE_Y - ROSE_RADIUS - 12} className="start-rose-label">N</text>
+      </g>
     </svg>
   );
 }
@@ -165,7 +286,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
   return (
     <main className="start">
       <section className="start-chart" data-tauri-drag-region>
-        <Chart label={recognised?.record.name || t("Uncharted")} detail={recognised ? foundText(recognised) : t("your disk goes here")} />
+        <Chart known={recognised} label={recognised?.record.name || t("Uncharted")} detail={recognised ? foundText(recognised) : t("your disk goes here")} />
         <div className="start-brand">
           <h1>Captain Salvage</h1>
           <p>{t("Charts what is left on a damaged disk, and helps you bring it home.")}</p>
