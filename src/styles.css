@@ -783,3 +783,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 .strip-focus { position: relative; border-radius: 6px; outline: none; }
 .strip-focus:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
 .scrub-speed { position: absolute; top: 0; right: 4px; z-index: 2; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--accent); }
+.canvas-clash-needs-you { color: var(--critical, #c0392b); font-weight: 600; }
+.canvas-clash-summary { font-size: 11.5px; color: var(--muted); padding: 2px 0 4px; }
+.canvas-clash-summary-needs-you { color: var(--critical, #c0392b); }
+.canvas-decided { margin: 4px 0 2px; font-size: 11.5px; max-width: 60ch; }

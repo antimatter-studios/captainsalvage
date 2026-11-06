@@ -738,6 +738,17 @@ impl Engine {
                     |database| database.canvas_list(canvas, &path, offset, limit),
                 )?)?)
             }
+            "canvas_clashes" => {
+                let canvas = need_i64(args, "canvas")?;
+                let need_you = args
+                    .get("needYou")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let (offset, limit) = page(args);
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.canvas_clashes(canvas, need_you, offset, limit),
+                )?)?)
+            }
             "canvas_suggestions" => {
                 let canvas = need_i64(args, "canvas")?;
                 Ok(serde_json::to_value(session.with_database(

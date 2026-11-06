@@ -17,6 +17,7 @@ use crate::workspace::now_millis;
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A folder the person made up, because the disk lost the real one.
@@ -93,6 +94,11 @@ pub struct RebuiltFile {
     pub chosen: Row,
     /// The person picked this copy, rather than the best one being picked for them.
     pub by_person: bool,
+    /// For a clash, what decided the pick: "person", "quality" (tested, whole, checksum or
+    /// size), "date" (the newer copy) or "layer" (the upper layer, when all else ties).
+    pub decided_by: Option<String>,
+    /// The copies differ, and nothing measured tells them apart, so the person should look.
+    pub needs_you: bool,
     /// Every distinct copy, best first. More than one is a clash.
     pub copies: Vec<Row>,
 }
@@ -105,6 +111,10 @@ pub struct Listing {
     pub files: Vec<RebuiltFile>,
     pub total_files: u64,
     pub clashes: u64,
+    /// Clashes the app picked a copy for, from what it measured.
+    pub clashes_picked: u64,
+    /// Clashes whose copies differ but measure the same, which the person should look at.
+    pub clashes_need_you: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -138,11 +148,31 @@ fn verdict_rank(verdict: &str) -> u8 {
     }
 }
 
-fn best_first(a: &Row, b: &Row) -> std::cmp::Ordering {
-    verdict_rank(&a.verdict)
-        .cmp(&verdict_rank(&b.verdict))
+/// Whether a copy's clusters are all there, with none claimed twice.
+fn whole(row: &Row) -> bool {
+    row.clusters_found >= row.clusters_needed && row.clusters_conflict == 0
+}
+
+/// What tells two copies of a file apart, best first: tested or judged good, all its clusters
+/// there, a valid entry checksum, and its size as the entry says. Equal here means the
+/// measures cannot choose.
+fn quality(row: &Row) -> (u8, bool, bool, bool) {
+    (
+        verdict_rank(&row.verdict),
+        !whole(row),
+        !row.checksum_ok,
+        row.valid_length != row.length,
+    )
+}
+
+/// The order copies are picked in: by quality, then the newer, then the upper layer.
+fn pick_order(a: &Row, b: &Row, layers: &HashMap<i64, i64>) -> std::cmp::Ordering {
+    let layer = |row: &Row| row.id.and_then(|id| layers.get(&id)).copied().unwrap_or(0);
+    quality(a)
+        .cmp(&quality(b))
         .then(b.confidence.total_cmp(&a.confidence))
-        .then(b.length.cmp(&a.length))
+        .then(b.modified.cmp(&a.modified))
+        .then(layer(b).cmp(&layer(a)))
         .then(a.id.cmp(&b.id))
 }
 
@@ -641,6 +671,8 @@ impl MapDb {
             files: Vec::new(),
             total_files: 0,
             clashes: 0,
+            clashes_picked: 0,
+            clashes_need_you: 0,
         };
         let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
             if !path.is_empty() {
@@ -668,10 +700,13 @@ impl MapDb {
             .folders
             .sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
         let choices = tree.choices()?;
-        let mut rebuilt = rebuild_files(files, path, &choices);
+        let hashes = tree.hashes(&files)?;
+        let mut rebuilt = rebuild_files(files, path, &choices, &tree.file_layers.borrow(), &hashes);
         rebuilt.sort_by_key(|file| key(&file.name));
         listing.total_files = rebuilt.len() as u64;
         listing.clashes = rebuilt.iter().filter(|file| file.copies.len() > 1).count() as u64;
+        listing.clashes_need_you = rebuilt.iter().filter(|file| file.needs_you).count() as u64;
+        listing.clashes_picked = listing.clashes - listing.clashes_need_you;
         listing.files = rebuilt
             .into_iter()
             .skip(offset as usize)
@@ -690,17 +725,25 @@ pub struct CanvasFile {
 }
 
 /// Turns the copies found under each name into files, picking the person's choice or the best.
+/// Copies at the same clusters, or tested and found to hold the same bytes, are one copy.
 fn rebuild_files(
     files: BTreeMap<String, Vec<Row>>,
     path: &[String],
     choices: &HashMap<String, i64>,
+    layers: &HashMap<i64, i64>,
+    hashes: &HashMap<i64, String>,
 ) -> Vec<RebuiltFile> {
     files
         .into_values()
         .map(|mut copies| {
-            copies.sort_by(best_first);
+            copies.sort_by(|a, b| pick_order(a, b, layers));
             let mut seen = HashSet::new();
-            copies.retain(|copy| seen.insert((copy.first_cluster, copy.length)));
+            let mut same_bytes = HashSet::new();
+            copies.retain(|copy| {
+                let hash = copy.id.and_then(|id| hashes.get(&id));
+                seen.insert((copy.first_cluster, copy.length))
+                    && hash.is_none_or(|hash| same_bytes.insert(hash.clone()))
+            });
             let name = copies[0].name.clone();
             let mut chosen_path = path.to_vec();
             chosen_path.push(name.clone());
@@ -710,10 +753,26 @@ fn rebuild_files(
                 .cloned();
             let by_person = chosen.is_some();
             let chosen = chosen.unwrap_or_else(|| copies[0].clone());
+            let (decided_by, needs_you) = match copies.get(1) {
+                None => (None, false),
+                Some(_) if by_person => (Some("person"), false),
+                Some(second) => {
+                    let first = &copies[0];
+                    if quality(first) != quality(second) || first.confidence != second.confidence {
+                        (Some("quality"), false)
+                    } else if first.modified != second.modified {
+                        (Some("date"), true)
+                    } else {
+                        (Some("layer"), true)
+                    }
+                }
+            };
             // The name is the chosen copy's, since copies can differ in case.
             RebuiltFile {
                 name: chosen.name.clone(),
                 by_person,
+                decided_by: decided_by.map(str::to_string),
+                needs_you,
                 chosen,
                 copies,
             }
@@ -721,9 +780,32 @@ fn rebuild_files(
         .collect()
 }
 
+/// A file where copies clash, anywhere in the rebuilt tree.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Clash {
+    /// The rebuilt folders it sits in, as path names to pass back, then the file's name.
+    pub path: Vec<String>,
+    /// The same folders as shown, with lost names as `Lost folder <cluster>`.
+    pub shown: Vec<String>,
+    pub file: RebuiltFile,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClashPage {
+    pub clashes: Vec<Clash>,
+    pub total: u64,
+    pub need_you: u64,
+}
+
 impl MapDb {
-    /// Every file of the rebuilt tree, each as the copy that would fill it, for copying out.
-    pub fn canvas_files(&self, canvas: i64) -> Result<Vec<CanvasFile>> {
+    /// Visits every file of the rebuilt tree with its folders' path names and shown names.
+    fn walk_canvas(
+        &self,
+        canvas: i64,
+        mut visit: impl FnMut(&[String], &[String], RebuiltFile),
+    ) -> Result<()> {
         self.need_canvas(canvas)?;
         let items = self.canvas_items(canvas)?;
         let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
@@ -731,7 +813,6 @@ impl MapDb {
         };
         let tree = Tree::new(self, canvas, &items)?;
         let choices = tree.choices()?;
-        let mut out = Vec::new();
         let mut visited: HashSet<Vec<Source>> = HashSet::new();
         // Each folder: what it is made of, its path for choices, and its folder names on disk.
         let mut pending = vec![(vec![Source::Item(root.id)], Vec::new(), Vec::new())];
@@ -740,11 +821,10 @@ impl MapDb {
                 continue;
             }
             let (subfolders, files) = tree.contents(&sources)?;
-            for file in rebuild_files(files, &path, &choices) {
-                out.push(CanvasFile {
-                    folders: folders.clone(),
-                    row: file.chosen,
-                });
+            let hashes = tree.hashes(&files)?;
+            let layers = tree.file_layers.borrow().clone();
+            for file in rebuild_files(files, &path, &choices, &layers, &hashes) {
+                visit(&path, &folders, file);
             }
             for group in subfolders.into_values() {
                 let shown = match (&group.name, group.lost_head) {
@@ -759,7 +839,58 @@ impl MapDb {
                 pending.push((group.sources, next_path, next_folders));
             }
         }
+        Ok(())
+    }
+
+    /// Every file of the rebuilt tree, each as the copy that would fill it, for copying out.
+    pub fn canvas_files(&self, canvas: i64) -> Result<Vec<CanvasFile>> {
+        let mut out = Vec::new();
+        self.walk_canvas(canvas, |_, folders, file| {
+            out.push(CanvasFile {
+                folders: folders.to_vec(),
+                row: file.chosen,
+            });
+        })?;
         Ok(out)
+    }
+
+    /// Every clash in the rebuilt tree, those that need the person first.
+    pub fn canvas_clashes(
+        &self,
+        canvas: i64,
+        need_you_only: bool,
+        offset: u64,
+        limit: u64,
+    ) -> Result<ClashPage> {
+        let mut found = Vec::new();
+        self.walk_canvas(canvas, |path, folders, file| {
+            if file.copies.len() > 1 && (file.needs_you || !need_you_only) {
+                let mut full = path.to_vec();
+                full.push(file.name.clone());
+                found.push(Clash {
+                    path: full,
+                    shown: folders.to_vec(),
+                    file,
+                });
+            }
+        })?;
+        found.sort_by(|a, b| {
+            b.file
+                .needs_you
+                .cmp(&a.file.needs_you)
+                .then(a.path.cmp(&b.path))
+        });
+        let need_you = found.iter().filter(|clash| clash.file.needs_you).count() as u64;
+        let total = found.len() as u64;
+        Ok(ClashPage {
+            clashes: found
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect(),
+            total,
+            need_you,
+        })
     }
 }
 
@@ -912,6 +1043,11 @@ struct Tree<'a> {
     items: HashMap<i64, CanvasItem>,
     /// Items in each place, in the order placed.
     inside: HashMap<Source, Vec<i64>>,
+    /// The layer each found folder's files came from: the canvas item that brought it, whose
+    /// id grows with each drop, so a later drop is an upper layer.
+    folder_layers: RefCell<HashMap<u32, i64>>,
+    /// The same, for each file seen, by entry id.
+    file_layers: RefCell<HashMap<i64, i64>>,
 }
 
 impl<'a> Tree<'a> {
@@ -930,6 +1066,8 @@ impl<'a> Tree<'a> {
             canvas,
             items: items.iter().map(|item| (item.id, item.clone())).collect(),
             inside,
+            folder_layers: RefCell::new(HashMap::new()),
+            file_layers: RefCell::new(HashMap::new()),
         })
     }
 
@@ -956,6 +1094,7 @@ impl<'a> Tree<'a> {
             out.push(source);
             if let Source::Item(id) = source {
                 if let Some(head) = self.items.get(&id).and_then(|item| item.head) {
+                    self.folder_layers.borrow_mut().insert(head, id);
                     queue.push(Source::Found(head));
                 }
             }
@@ -1011,6 +1150,7 @@ impl<'a> Tree<'a> {
             let Source::Found(head) = source else {
                 continue;
             };
+            let layer = self.folder_layers.borrow().get(&head).copied().unwrap_or(0);
             let sql = format!("SELECT {NODE_COLUMNS} FROM nodes WHERE parent = ?1");
             let mut statement = self.database.connection.prepare_cached(&sql)?;
             let subfolders = statement
@@ -1018,6 +1158,10 @@ impl<'a> Tree<'a> {
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             for folder in subfolders {
                 let Some(child) = folder.head else { continue };
+                self.folder_layers
+                    .borrow_mut()
+                    .entry(child)
+                    .or_insert(layer);
                 if folder.name.is_empty() {
                     add_folder(lost_key(child), None, Some(child), Source::Found(child));
                 } else {
@@ -1036,6 +1180,9 @@ impl<'a> Tree<'a> {
             let mut statement = self.database.connection.prepare_cached(&sql)?;
             for row in statement.query_map([head], file_row)? {
                 let row = row?;
+                if let Some(id) = row.id {
+                    self.file_layers.borrow_mut().insert(id, layer);
+                }
                 files.entry(key(&row.name)).or_default().push(row);
             }
         }
@@ -1044,6 +1191,29 @@ impl<'a> Tree<'a> {
             group.sources.dedup();
         }
         Ok((folders, files))
+    }
+
+    /// The content hash of each copy that has been tested, to tell identical copies apart
+    /// from ones that only share a name.
+    fn hashes(&self, files: &BTreeMap<String, Vec<Row>>) -> Result<HashMap<i64, String>> {
+        let ids: Vec<String> = files
+            .values()
+            .filter(|copies| copies.len() > 1)
+            .flatten()
+            .filter_map(|row| row.id)
+            .map(|id| id.to_string())
+            .collect();
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut statement = self.database.connection.prepare(&format!(
+            "SELECT id, sha256 FROM file_tests WHERE sha256 IS NOT NULL AND id IN ({})",
+            ids.join(",")
+        ))?;
+        let found = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<HashMap<i64, String>>>()?;
+        Ok(found)
     }
 
     /// The name an item has in the rebuilt tree, or the found folder whose name was lost.

@@ -307,6 +307,10 @@ export interface RebuiltFile {
   name: string;
   chosen: Row;
   byPerson: boolean;
+  /** For a clash, what picked the copy: person, quality, date, or layer (the later drop). */
+  decidedBy: "person" | "quality" | "date" | "layer" | null;
+  /** The copies differ but measure the same, so the person should look. */
+  needsYou: boolean;
   copies: Row[];
 }
 
@@ -316,6 +320,8 @@ export interface CanvasListing {
   files: RebuiltFile[];
   totalFiles: number;
   clashes: number;
+  clashesPicked: number;
+  clashesNeedYou: number;
 }
 
 /** Where Claude thinks a piece belongs, waiting for the person to accept or dismiss it. */

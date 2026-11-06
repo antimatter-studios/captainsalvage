@@ -824,6 +824,14 @@ const strings: Record<string, string> = {
   "Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub": "Ampliado, {count} clústeres. Desplace para ampliar, arrastre para mover, haga clic para inspeccionar, flechas para recorrer",
   "Lost folders": "Carpetas perdidas",
   "{count} pieces": "{count} piezas",
+  "Picked because it measured better: tested or judged good, all its clusters there, a valid entry, or the size its entry says.": "Elegida porque mide mejor: probada o considerada buena, todos sus clústeres presentes, una entrada válida o el tamaño que indica su entrada.",
+  "These copies differ, and nothing measured tells them apart. Look, and choose one.": "Estas copias difieren y nada de lo medido las distingue. Mírelas y elija una.",
+  "These measure the same and have the same date, so the copy from the upper layer, the later drop, was picked. Look at both if it matters.": "Miden lo mismo y tienen la misma fecha, así que se eligió la copia de la capa superior, la soltada más tarde. Mire ambas si importa.",
+  "These measure the same, so the newer copy was picked. Look at both if it matters.": "Miden lo mismo, así que se eligió la copia más reciente. Mire ambas si importa.",
+  "You chose this copy.": "Usted eligió esta copia.",
+  "{count} copies, choose": "{count} copias, elija",
+  "{picked} clashes picked for you": "{picked} conflictos resueltos para usted",
+  "{picked} clashes picked for you, {needed} need you": "{picked} conflictos resueltos para usted, {needed} necesitan su atención",
 };
 
 export default strings;
