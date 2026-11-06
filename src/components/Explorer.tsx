@@ -51,7 +51,7 @@ function BasketCheck({ checked, label, onChange }: { checked: boolean; label: st
       type="checkbox"
       checked={checked}
       aria-label={label}
-      title={checked ? t("In the recovery basket") : t("Add to the recovery basket")}
+      title={checked ? t("On the treasure list") : t("Add to the treasure list")}
       onChange={(event) => onChange(event.target.checked)}
     />
   );
@@ -72,7 +72,7 @@ function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }:
       <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
     </button>
     {row.kind === "file" && row.length > 0 && (
-      <BasketCheck checked={basket.has(`entry:${id}`)} label={t("Add {name} to the recovery basket", { name: row.name })} onChange={(add) => onBasket("entry", id, add)} />
+      <BasketCheck checked={basket.has(`entry:${id}`)} label={t("Add {name} to the treasure list", { name: row.name })} onChange={(add) => onBasket("entry", id, add)} />
     )}
     </div>
   );
@@ -138,7 +138,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         ) : null}
       </button>
       {row.nodeKind !== "root" && (
-        <BasketCheck checked={props.basket.has(`folder:${head}`)} label={t("Add {name} to the recovery basket", { name })} onChange={(add) => props.onBasket("folder", head, add)} />
+        <BasketCheck checked={props.basket.has(`folder:${head}`)} label={t("Add {name} to the treasure list", { name })} onChange={(add) => props.onBasket("folder", head, add)} />
       )}
       </div>
       {open && error && <div className="empty" style={{ paddingLeft: 20 + depth * 14 }}>{fromEngine(error)}</div>}

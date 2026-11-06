@@ -105,8 +105,8 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
         type="checkbox"
         className="basket-check tile-check"
         checked={inBasket}
-        aria-label={t("Add {name} to the basket", { name: row.name })}
-        title={t("Add to the basket")}
+        aria-label={t("Add {name} to the treasure list", { name: row.name })}
+        title={t("Add to the treasure list")}
         onChange={(event) => onBasket(event.target.checked)}
       />
     </div>
@@ -367,7 +367,7 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
         )}
         {isZipName(row.name) && <button onClick={onInside}>{t("Look inside")}</button>}
         <button onClick={onBytes}>{t("Show bytes")}</button>
-        <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? t("In your basket") : t("Add to basket")}</button>
+        <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
       </div>
       <PreviewBody row={row} />
       <div className="preview-foot muted">{t("Read live from the disk. Nothing is copied.")}</div>

@@ -900,7 +900,7 @@ impl Engine {
             "basket_start" => {
                 // Writing files is the person's decision. An AI can fill the basket, but not start it.
                 if author != AUTHOR_USER {
-                    bail!("Only the person using the app can start copying. Add to the basket, and ask them to start it.");
+                    bail!("Only the person using the app can start copying. Add to the treasure list, and ask them to start it.");
                 }
                 let options: BasketOptions =
                     serde_json::from_value(args.clone()).context("invalid basket options")?;
