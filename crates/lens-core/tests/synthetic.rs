@@ -4144,3 +4144,67 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
+    let (engine, session, dir) = engine_with_image("canvas-copy", build_jigsaw_volume());
+    let destination = copy_destination("canvas-copy");
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Rebuilt one"}))["id"]
+        .as_i64()
+        .expect("id");
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 40}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 30, "merge": true}),
+    );
+    let args = json!({"canvas": canvas, "destination": destination.display().to_string()});
+
+    // Claude can plan the copy, but only the person starts it.
+    let plan = call(&engine, "canvas_copy_plan", args.clone());
+    assert_eq!(plan["files"], 5, "a1, b1, the whole shared, deep and c");
+    let target = destination.join("Rebuilt one");
+    assert_eq!(plan["destination"], target.display().to_string());
+    assert!(engine
+        .call("canvas_copy_start", &args, AUTHOR_CLAUDE)
+        .is_err());
+
+    call_as_person(&engine, "canvas_copy_start", args);
+    let status = loop {
+        let status = session.copy_status().expect("status");
+        if status.state != "running" {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(status.state, "finished", "{:?}", status.error);
+    assert_eq!(status.files_done, 5);
+
+    // Each file is where the canvas puts it, and the piece left off the canvas is not copied.
+    for path in [
+        "a1.jpg",
+        "b1.mp3",
+        "SHARED.jpg",
+        "sub/deep.mp3",
+        "Lost folder 40/c.mp3",
+    ] {
+        assert!(target.join(path).is_file(), "{path} is copied");
+    }
+    assert!(!target.join("d.mp3").exists());
+    // The whole copy of the clashing file is the one copied, not the wiped one.
+    let shared = std::fs::read(target.join("SHARED.jpg")).expect("shared");
+    assert_eq!(&shared[..4], &[0xFF, 0xD8, 0xFF, 0xE0]);
+    assert_eq!(manifest_rows(&target).len(), 5);
+
+    let _ = std::fs::remove_dir_all(&destination);
+    let _ = std::fs::remove_dir_all(dir);
+}

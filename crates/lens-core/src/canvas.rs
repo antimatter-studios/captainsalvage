@@ -668,30 +668,7 @@ impl MapDb {
             .folders
             .sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
         let choices = tree.choices()?;
-        let mut rebuilt: Vec<RebuiltFile> = files
-            .into_values()
-            .map(|mut copies| {
-                copies.sort_by(best_first);
-                let mut seen = HashSet::new();
-                copies.retain(|copy| seen.insert((copy.first_cluster, copy.length)));
-                let name = copies[0].name.clone();
-                let mut chosen_path = path.to_vec();
-                chosen_path.push(name.clone());
-                let picked = choices.get(&choice_key(&chosen_path)).copied();
-                let chosen = picked
-                    .and_then(|entry| copies.iter().find(|copy| copy.id == Some(entry)))
-                    .cloned();
-                let by_person = chosen.is_some();
-                let chosen = chosen.unwrap_or_else(|| copies[0].clone());
-                // The name is the chosen copy's, since copies can differ in case.
-                RebuiltFile {
-                    name: chosen.name.clone(),
-                    by_person,
-                    chosen,
-                    copies,
-                }
-            })
-            .collect();
+        let mut rebuilt = rebuild_files(files, path, &choices);
         rebuilt.sort_by_key(|file| key(&file.name));
         listing.total_files = rebuilt.len() as u64;
         listing.clashes = rebuilt.iter().filter(|file| file.copies.len() > 1).count() as u64;
@@ -701,6 +678,88 @@ impl MapDb {
             .take(limit as usize)
             .collect();
         Ok(listing)
+    }
+}
+
+/// One file of the whole rebuilt tree, with the folders it sits in and the copy that fills it.
+#[derive(Clone, Debug)]
+pub struct CanvasFile {
+    /// Folder names from the top of the tree down, with lost names as `Lost folder <cluster>`.
+    pub folders: Vec<String>,
+    pub row: Row,
+}
+
+/// Turns the copies found under each name into files, picking the person's choice or the best.
+fn rebuild_files(
+    files: BTreeMap<String, Vec<Row>>,
+    path: &[String],
+    choices: &HashMap<String, i64>,
+) -> Vec<RebuiltFile> {
+    files
+        .into_values()
+        .map(|mut copies| {
+            copies.sort_by(best_first);
+            let mut seen = HashSet::new();
+            copies.retain(|copy| seen.insert((copy.first_cluster, copy.length)));
+            let name = copies[0].name.clone();
+            let mut chosen_path = path.to_vec();
+            chosen_path.push(name.clone());
+            let picked = choices.get(&choice_key(&chosen_path)).copied();
+            let chosen = picked
+                .and_then(|entry| copies.iter().find(|copy| copy.id == Some(entry)))
+                .cloned();
+            let by_person = chosen.is_some();
+            let chosen = chosen.unwrap_or_else(|| copies[0].clone());
+            // The name is the chosen copy's, since copies can differ in case.
+            RebuiltFile {
+                name: chosen.name.clone(),
+                by_person,
+                chosen,
+                copies,
+            }
+        })
+        .collect()
+}
+
+impl MapDb {
+    /// Every file of the rebuilt tree, each as the copy that would fill it, for copying out.
+    pub fn canvas_files(&self, canvas: i64) -> Result<Vec<CanvasFile>> {
+        self.need_canvas(canvas)?;
+        let items = self.canvas_items(canvas)?;
+        let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
+            bail!("This canvas is empty.");
+        };
+        let tree = Tree::new(self, canvas, &items)?;
+        let choices = tree.choices()?;
+        let mut out = Vec::new();
+        let mut visited: HashSet<Vec<Source>> = HashSet::new();
+        // Each folder: what it is made of, its path for choices, and its folder names on disk.
+        let mut pending = vec![(vec![Source::Item(root.id)], Vec::new(), Vec::new())];
+        while let Some((sources, path, folders)) = pending.pop() {
+            if path.len() > MAX_DEPTH || !visited.insert(sources.clone()) {
+                continue;
+            }
+            let (subfolders, files) = tree.contents(&sources)?;
+            for file in rebuild_files(files, &path, &choices) {
+                out.push(CanvasFile {
+                    folders: folders.clone(),
+                    row: file.chosen,
+                });
+            }
+            for group in subfolders.into_values() {
+                let shown = match (&group.name, group.lost_head) {
+                    (Some(name), _) => name.clone(),
+                    (None, Some(head)) => format!("Lost folder {head}"),
+                    (None, None) => group.path_name.clone(),
+                };
+                let mut next_path = path.clone();
+                next_path.push(group.path_name.clone());
+                let mut next_folders = folders.clone();
+                next_folders.push(shown);
+                pending.push((group.sources, next_path, next_folders));
+            }
+        }
+        Ok(out)
     }
 }
 

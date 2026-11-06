@@ -49,6 +49,8 @@ pub struct CopyRequest {
     pub min_confidence: f64,
     /// Also copy files with missing clusters, or clusters reused by current files.
     pub include_partial: bool,
+    /// Copy this canvas's rebuilt tree, each file at its rebuilt path.
+    pub canvas: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -262,6 +264,16 @@ fn sanitize_segment(segment: &str) -> String {
     trimmed
 }
 
+/// Turns a canvas's folder names into a safe relative path under the destination.
+pub fn canvas_target(folders: &[String], name: &str) -> PathBuf {
+    let mut target = PathBuf::new();
+    for folder in folders {
+        target.push(sanitize_segment(folder));
+    }
+    target.push(sanitize_segment(name));
+    target
+}
+
 /// Turns a map path into a safe relative path under the destination. Nothing a
 /// damaged entry says can move a file outside it.
 pub fn relative_target(path: &str, name: &str) -> PathBuf {
@@ -347,9 +359,20 @@ fn unused_path(path: &Path, id: i64) -> PathBuf {
 }
 
 impl Session {
-    fn copy_rows(&self, request: &CopyRequest) -> Result<Vec<Row>> {
+    /// The files a request names, and where a canvas puts each of them, by entry id.
+    fn copy_rows(&self, request: &CopyRequest) -> Result<(Vec<Row>, HashMap<i64, PathBuf>)> {
         self.with_database(|database| {
             let mut rows = Vec::new();
+            let mut targets = HashMap::new();
+            if let Some(canvas) = request.canvas {
+                for file in database.canvas_files(canvas)? {
+                    let Some(id) = file.row.id else { continue };
+                    if file.row.kind == "file" && file.row.length > 0 {
+                        targets.insert(id, canvas_target(&file.folders, &file.row.name));
+                        rows.push(file.row);
+                    }
+                }
+            }
             for &id in &request.entry_ids {
                 if let Some(row) = database.entry(id)? {
                     if row.kind == "file" && row.length > 0 {
@@ -362,7 +385,7 @@ impl Session {
             }
             rows.sort_by_key(|row| row.id);
             rows.dedup_by_key(|row| row.id);
-            Ok(rows)
+            Ok((rows, targets))
         })
     }
 
@@ -410,7 +433,7 @@ impl Session {
         let (selected, below_floor, skipped_partial, skipped_partial_bytes) = {
             let mut selected = Vec::new();
             let (mut below, mut partial, mut partial_bytes) = (0, 0, 0);
-            for row in self.copy_rows(request)? {
+            for row in self.copy_rows(request)?.0 {
                 if row.confidence < request.min_confidence {
                     below += 1;
                 } else if is_partial(&row) && !request.include_partial {
@@ -611,6 +634,7 @@ impl Session {
             .iter()
             .flat_map(|group| group.folders.clone())
             .collect();
+        request.canvas = groups.iter().find_map(|group| group.canvas);
         let plan = self.copy_plan(&request)?;
         if let Some(reason) = &plan.refused {
             bail!("{reason}");
@@ -686,7 +710,7 @@ impl Session {
         manifest_path: &Path,
         seen: &mut HashSet<i64>,
     ) -> Result<bool> {
-        let mut rows = self.copy_rows(request)?;
+        let (mut rows, targets) = self.copy_rows(request)?;
         rows.retain(|row| {
             row.confidence >= request.min_confidence
                 && (request.include_partial || !is_partial(row))
@@ -714,7 +738,7 @@ impl Session {
                 continue;
             }
             self.update_copy(|status| status.current = row.name.clone());
-            match self.copy_one(&row, id, destination) {
+            match self.copy_one(&row, id, destination, targets.get(&id)) {
                 Ok(Some(result)) => {
                     writeln!(manifest, "{}", serde_json::to_string(&result)?)?;
                     manifest.flush()?;
@@ -751,13 +775,19 @@ impl Session {
     }
 
     /// Copies one file. Returns `None` if asked to stop partway.
-    fn copy_one(&self, row: &Row, id: i64, destination: &Path) -> Result<Option<ManifestRow>> {
+    fn copy_one(
+        &self,
+        row: &Row,
+        id: i64,
+        destination: &Path,
+        rebuilt: Option<&PathBuf>,
+    ) -> Result<Option<ManifestRow>> {
         let clusters = self.with_database(|database| database.entry_clusters(&self.volume, row))?;
         let source_path = row.path.clone().unwrap_or_default();
-        let wanted = unused_path(
-            &destination.join(relative_target(&source_path, &row.name)),
-            id,
-        );
+        let relative = rebuilt
+            .cloned()
+            .unwrap_or_else(|| relative_target(&source_path, &row.name));
+        let wanted = unused_path(&destination.join(relative), id);
         let parent = wanted.parent().context("target has no parent")?;
         fs::create_dir_all(parent)?;
         let temporary = parent.join(format!(".exfat-lens-partial-{id}"));
