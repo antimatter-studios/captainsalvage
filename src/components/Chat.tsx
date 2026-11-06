@@ -62,7 +62,13 @@ function Formatted({ text }: { text: string }) {
   );
 }
 
-export function Chat({ selection }: { selection: Selection }) {
+/** Says whether the agent is answering, and how many replies there are, for the tab's dot. */
+export interface ChatActivity {
+  busy: boolean;
+  replies: number;
+}
+
+export function Chat({ selection, onActivity }: { selection: Selection; onActivity?: (activity: ChatActivity) => void }) {
   const { language } = useLanguage();
   // The language Claude was last told in this conversation, so it is only told again on a change.
   const toldLanguage = useRef<Language | null>(null);
@@ -70,6 +76,8 @@ export function Chat({ selection }: { selection: Selection }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const replies = messages.filter((message) => message.role !== "you").length;
+  useEffect(() => onActivity?.({ busy, replies }), [busy, replies, onActivity]);
 
   useEffect(() => {
     const appendToLast = (change: (message: Message) => Message) =>
@@ -105,7 +113,7 @@ export function Chat({ selection }: { selection: Selection }) {
           });
         }
       } else if (payload.type === "result" && payload.is_error) {
-        setMessages((current) => [...current, { role: "error", text: String(payload.result ?? t("Claude reported an error.")), tools: [] }]);
+        setMessages((current) => [...current, { role: "error", text: String(payload.result ?? t("The agent reported an error.")), tools: [] }]);
       } else if (payload.type === "chat-end") {
         setBusy(false);
         if (payload.code !== 0 && payload.code !== null && payload.stderr) {
@@ -147,14 +155,13 @@ export function Chat({ selection }: { selection: Selection }) {
   }
 
   return (
-    <section className="chat" aria-label={t("Ask Claude")}>
+    <section className="chat" aria-label={t("Ask agent")}>
       <div className="chat-head">
-        <strong><Icon name="sparkle" size={15} /> {t("Ask Claude")}</strong>
         <button className="link" onClick={startOver} disabled={messages.length === 0}>{t("New conversation")}</button>
       </div>
       <div ref={scroller} className="chat-log" aria-live="polite">
         {messages.length === 0 && (
-          <p className="empty">{t("Select something on the map, in the list or in the bytes, then ask about it. Claude can read the whole disk and test ideas, and has no way to write to it.")}</p>
+          <p className="empty">{t("Select something on the map, in the list or in the bytes, then ask about it. The agent can read the whole disk and test ideas, and has no way to write to it.")}</p>
         )}
         {messages.map((message, index) => (
           <div key={index} className={`chat-message chat-${message.role}`}>
@@ -178,7 +185,7 @@ export function Chat({ selection }: { selection: Selection }) {
             value={draft}
             rows={2}
             placeholder={t("What is this? Where does it lead?")}
-            aria-label={t("Question for Claude")}
+            aria-label={t("Question for the agent")}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {

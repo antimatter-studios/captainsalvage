@@ -614,7 +614,7 @@ function HypothesesTab({ revision, onChanged }: { revision: number; onChanged: (
   return (
     <div className="detail">
       <p className="muted">{t("Each hypothesis changes how this app reads the disk, never the disk. Switch one off to see the map without it.")}</p>
-      {items.length === 0 && <p className="empty">{t("No hypotheses yet. Ask Claude to investigate, and any it proposes appear here.")}</p>}
+      {items.length === 0 && <p className="empty">{t("No hypotheses yet. Ask an agent to investigate, and any it proposes appear here.")}</p>}
       {items.map((item) => (
         <div key={item.id} className={item.active ? "hypothesis" : "hypothesis hypothesis-off"}>
           <label className="check">
@@ -648,7 +648,7 @@ function ActivityTab({ revision }: { revision: number }) {
   };
   return (
     <div className="detail">
-      {items.length === 0 && <p className="empty">{t("Nothing yet. Every action by you or Claude is listed here.")}</p>}
+      {items.length === 0 && <p className="empty">{t("Nothing yet. Every action by you or an agent is listed here.")}</p>}
       {items.map((item) =>
         item.action === "log_finding" ? (
           <div key={item.id} className="finding">
@@ -694,7 +694,7 @@ function ConnectTab() {
   );
 }
 
-export type DetailsTab = "selected" | "rebuild" | "copy" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
+export type DetailsTab = "selected" | "rebuild" | "agent" | "copy" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
 
 export interface DetailsProps {
   overview: Overview;
@@ -714,6 +714,10 @@ export interface DetailsProps {
   onTab: (tab: DetailsTab) => void;
   /** The Rebuild tab's canvas, which pieces are dragged onto from the sidebar. */
   rebuild: ReactNode;
+  /** The conversation with Claude. It stays mounted on other tabs, so a reply keeps arriving. */
+  agent: ReactNode;
+  /** Claude is answering, or has answered since the tab was last open. */
+  agentActive: boolean;
   floor: number;
   basket: BasketItem[];
   onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
@@ -724,7 +728,7 @@ export interface DetailsProps {
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild } = props;
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild, agent, agentActive } = props;
   const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
   const [tab, setTab] = useState<DetailsTab>("selected");
   useEffect(() => {
@@ -733,7 +737,8 @@ export function Details(props: DetailsProps) {
   useEffect(() => onTab(tab), [tab, onTab]);
   const tabs: [DetailsTab, string, IconName][] = [
     ["selected", t("Selected"), "info"],
-    ["rebuild", t("Rebuild"), "puzzle"],
+    ["rebuild", t("Rebuild"), "truck"],
+    ["agent", t("Ask agent"), "robot"],
     ["copy", t("Recovery basket"), "basket"],
     ["hypotheses", t("Hypotheses"), "bulb"],
     ["lens", t("Lens"), "aperture"],
@@ -749,12 +754,14 @@ export function Details(props: DetailsProps) {
           <button key={id} role="tab" aria-selected={tab === id} aria-label={label} title={label} onClick={() => setTab(id)}>
             <Icon name={icon} size={16} />
             {id === "copy" && basket.length > 0 && <span className="tab-badge">{basket.length}</span>}
+            {id === "agent" && agentActive && tab !== "agent" && <span className="tab-dot" />}
           </button>
         ))}
       </div>
       <div className="inspector-title">{tabTitle}</div>
       {tab === "rebuild" && rebuild}
-      <div className="panel-body" hidden={tab === "rebuild"}>
+      <div className="details-agent" hidden={tab !== "agent"}>{agent}</div>
+      <div className="panel-body" hidden={tab === "rebuild" || tab === "agent"}>
         {tab === "selected" && (
           <>
             {entry && (
