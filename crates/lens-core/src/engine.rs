@@ -690,6 +690,13 @@ impl Engine {
                     |database| database.canvas_list(canvas, &path, offset, limit),
                 )?)?)
             }
+            "similar_pieces" => {
+                let head = need_u32(args, "head")?;
+                let limit = u64_of(args, "limit").unwrap_or(20) as usize;
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.similar_pieces(head, limit),
+                )?)?)
+            }
             "canvas_unused" => {
                 let canvas = need_i64(args, "canvas")?;
                 let offset = u64_of(args, "offset").unwrap_or(0);
@@ -700,7 +707,7 @@ impl Engine {
             }
             "canvas_create" | "canvas_rename" | "canvas_delete" | "canvas_place"
             | "canvas_folder" | "canvas_move" | "canvas_rename_item" | "canvas_remove"
-            | "canvas_leftovers" | "canvas_choose" => {
+            | "canvas_leftovers" | "canvas_choose" | "canvas_swap" => {
                 only_the_person(author)?;
                 let result = session.with_database(|database| -> Result<Value> {
                     Ok(match tool {
@@ -743,6 +750,14 @@ impl Engine {
                                 need_i64(args, "canvas")?,
                                 need_i64(args, "item")?,
                                 str_of(args, "name"),
+                            )?;
+                            json!({"ok": true})
+                        }
+                        "canvas_swap" => {
+                            database.canvas_swap(
+                                need_i64(args, "canvas")?,
+                                need_i64(args, "item")?,
+                                need_u32(args, "head")?,
                             )?;
                             json!({"ok": true})
                         }

@@ -721,3 +721,12 @@ video.inline-preview { max-height: 380px; background: #000; }
 .row-used { opacity: 0.55; }
 .row-used .row-name::after { content: " ✓"; color: var(--good); }
 .row[draggable="true"] { cursor: grab; }
+
+/* Pieces that are near copies of one another. */
+.similar-list { display: flex; flex-direction: column; gap: 6px; }
+.similar-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.similar-row > svg { flex: none; color: var(--accent); margin-top: 2px; }
+.similar-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.similar-name { text-align: left; font-weight: 600; }
+.similar-wait { font-size: 12px; }
+.canvas-similar { margin: 2px 8px 6px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }

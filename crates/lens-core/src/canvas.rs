@@ -440,6 +440,46 @@ impl MapDb {
         Ok(())
     }
 
+    /// Swaps the piece behind an item for another unused piece, keeping where it sits and
+    /// everything placed in it. For trading a piece for a similar one with better data.
+    pub fn canvas_swap(&self, canvas: i64, item: i64, head: u32) -> Result<()> {
+        let found = self.canvas_item(canvas, item)?;
+        if found.kind == ITEM_FOLDER {
+            bail!("A folder you made has no piece to swap.");
+        }
+        let top: Option<Option<u32>> = self
+            .connection
+            .query_row("SELECT parent FROM nodes WHERE head = ?1", [head], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        match top {
+            None => bail!("there is no folder at cluster {head}"),
+            Some(Some(_)) => {
+                bail!("That folder is inside another piece. Place the piece it belongs to instead.")
+            }
+            Some(None) => {}
+        }
+        if self.used_heads(canvas)?.contains(&head) {
+            bail!("That piece is already on this canvas.");
+        }
+        // Things placed in a found folder of the old piece have nowhere to be in the new one.
+        let stranded: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM canvas_items WHERE canvas = ?1 AND parent_item = ?2 AND parent_head IS NOT NULL",
+            params![canvas, item],
+            |row| row.get(0),
+        )?;
+        if stranded > 0 {
+            bail!("Something is placed inside a folder of this piece. Move it out first.");
+        }
+        self.connection.execute(
+            "UPDATE canvas_items SET head = ?2 WHERE id = ?1",
+            params![item, head],
+        )?;
+        self.touch_canvas(canvas)?;
+        Ok(())
+    }
+
     /// Names an item in the rebuilt tree. For a piece, no name puts back the folder's own.
     pub fn canvas_rename_item(&self, canvas: i64, item: i64, name: Option<&str>) -> Result<()> {
         let found = self.canvas_item(canvas, item)?;

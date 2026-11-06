@@ -3913,3 +3913,88 @@ fn write_the_jigsaw_volume_for_window_tests() {
         std::env::var("LENS_JIGSAW_IMAGE").expect("LENS_JIGSAW_IMAGE names where to write it");
     std::fs::write(path, build_jigsaw_volume()).expect("written");
 }
+
+#[test]
+fn similar_pieces_are_found_by_shared_files_and_can_be_swapped_in() {
+    let (engine, _session, dir) = engine_with_image("similar", build_jigsaw_volume());
+
+    // A and B both hold shared.jpg, of the same size, whatever the case of the name.
+    let similar = call(&engine, "similar_pieces", json!({"head": 20}));
+    assert_eq!(
+        similar["files"], 3,
+        "a1.jpg, shared.jpg and deep.mp3 in its subfolder"
+    );
+    let found = similar["similar"].as_array().expect("similar");
+    assert_eq!(found.len(), 1, "only B shares files with A");
+    assert_eq!(found[0]["piece"]["head"], 30);
+    assert_eq!(found[0]["shared"], 1);
+    assert!((found[0]["covers"].as_f64().expect("covers") - 1.0 / 3.0).abs() < 1e-9);
+    assert!((found[0]["coveredBy"].as_f64().expect("covered") - 0.5).abs() < 1e-9);
+    assert!(
+        engine
+            .call("similar_pieces", &json!({"head": 21}), AUTHOR_CLAUDE)
+            .is_err(),
+        "a subfolder is not a piece"
+    );
+    assert_eq!(
+        call(&engine, "similar_pieces", json!({"head": 40}))["similar"]
+            .as_array()
+            .expect("none")
+            .len(),
+        0
+    );
+
+    // A placed piece can be swapped for another, keeping its place.
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Swap"}))["id"]
+        .as_i64()
+        .expect("id");
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20}),
+    );
+    let c = call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 40}),
+    )["id"]
+        .as_i64()
+        .expect("C");
+    call_as_person(
+        &engine,
+        "canvas_swap",
+        json!({"canvas": canvas, "item": c, "head": 50}),
+    );
+    let swapped = call(
+        &engine,
+        "canvas_tree",
+        json!({"canvas": canvas, "path": ["lost:50"]}),
+    );
+    assert_eq!(names(&swapped, "files"), ["d.mp3"]);
+    assert_eq!(
+        call(&engine, "canvas_unused", json!({"canvas": canvas}))["total"],
+        3,
+        "C is free again, D is used"
+    );
+    assert!(refusal(
+        &engine,
+        "canvas_swap",
+        json!({"canvas": canvas, "item": c, "head": 20})
+    )
+    .contains("already on this canvas"));
+    let made = call_as_person(
+        &engine,
+        "canvas_folder",
+        json!({"canvas": canvas, "name": "Made"}),
+    )["id"]
+        .as_i64()
+        .expect("folder");
+    assert!(refusal(
+        &engine,
+        "canvas_swap",
+        json!({"canvas": canvas, "item": made, "head": 40})
+    )
+    .contains("no piece to swap"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}

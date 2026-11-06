@@ -18,6 +18,7 @@ pub mod resolve;
 pub mod scan;
 pub mod script;
 pub mod session;
+pub mod similar;
 pub mod source;
 pub mod startup;
 pub mod verify;

@@ -20,6 +20,7 @@ import {
 import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, stamp, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
+import { SimilarPieces } from "./SimilarPieces";
 import { isZipName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
 
@@ -191,6 +192,8 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
 }
 
 function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket: boolean; onCopy: () => void; onBrowse: (row: Row) => void }) {
+  const [similar, setSimilar] = useState(false);
+  useEffect(() => setSimilar(false), [row.head]);
   return (
     <div className="detail">
       <h3 className="detail-name">{row.name || t("Folder with no name, at cluster {cluster}", { cluster: count(row.firstCluster) })}</h3>
@@ -207,7 +210,16 @@ function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket
       <div className="detail-actions">
         <button className="primary" onClick={onCopy}>{inBasket ? t("In your basket") : t("Add folder to basket")}</button>
         <button onClick={() => onBrowse(row)}>{t("Browse files")}</button>
+        {(row.nodeKind === "orphan" || row.nodeKind === "root") && !similar && (
+          <button onClick={() => setSimilar(true)}>{t("Find similar pieces")}</button>
+        )}
       </div>
+      {similar && row.head !== null && (
+        <>
+          <h4>{t("Similar pieces")}</h4>
+          <SimilarPieces head={row.head} onOpen={onBrowse} />
+        </>
+      )}
     </div>
   );
 }
