@@ -56,12 +56,16 @@ def license_allowed(part):
     return name in ALLOWED and (not exception or exception.strip() in EXCEPTIONS)
 
 
-def rust_packages():
-    """The crates linked into the app: reached through normal dependencies, not macros."""
-    metadata = json.loads(subprocess.run(
+def cargo_metadata():
+    return json.loads(subprocess.run(
         ["cargo", "metadata", "--format-version", "1", "--locked"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout)
+
+
+def rust_packages():
+    """The crates linked into the app: reached through normal dependencies, not macros."""
+    metadata = cargo_metadata()
     workspace = set(metadata["workspace_members"])
     packages = {package["id"]: package for package in metadata["packages"]}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
@@ -80,6 +84,21 @@ def rust_packages():
         packages[found] for found in seen
         if found not in workspace and not is_macro(packages[found])
     ], [packages[found] for found in workspace]
+
+
+def direct_packages():
+    """Each crate the app's own packages name, at the exact version each one uses."""
+    metadata = cargo_metadata()
+    packages = {package["id"]: package for package in metadata["packages"]}
+    nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+    found = []
+    for member in metadata["workspace_members"]:
+        for dependency in nodes[member]["deps"]:
+            package = packages[dependency["pkg"]]
+            normal = any(kind["kind"] is None for kind in dependency["dep_kinds"])
+            if normal and not is_macro(package):
+                found.append((package, packages[member]["name"]))
+    return found
 
 
 def is_macro(package):
@@ -170,18 +189,10 @@ def notices():
 
 def readme_block():
     """The libraries the app itself names, which are the ones chosen for it."""
-    _, workspace = rust_packages()
-    metadata_packages = {}
-    rust, _ = rust_packages()
-    for package in rust:
-        metadata_packages[package["name"]] = package
-    rows = []
-    for member in workspace:
-        for dependency in member["dependencies"]:
-            if dependency.get("kind") is not None or dependency["name"] not in metadata_packages:
-                continue
-            package = metadata_packages[dependency["name"]]
-            rows.append((package["name"], package["version"], package.get("license") or "", member["name"]))
+    rows = [
+        (package["name"], package["version"], package.get("license") or "", user)
+        for package, user in direct_packages()
+    ]
     lock = json.loads((ROOT / "package.json").read_text())
     for name in sorted(lock.get("dependencies", {})):
         found = next((package for package in npm_packages() if package["name"] == name), None)
@@ -221,6 +232,10 @@ def main():
             (README.name, README.read_text(), readme_text()),
         ] if now != wanted]
         if stale:
+            import difflib
+            if README.name in stale:
+                sys.stdout.writelines(difflib.unified_diff(
+                    README.read_text().splitlines(True), readme_text().splitlines(True), "README.md", "wanted"))
             print("out of date, run scripts/licenses.py write: " + ", ".join(stale))
             return 1
         print("license notices are current")
