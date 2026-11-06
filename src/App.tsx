@@ -23,7 +23,7 @@ import {
 } from "./api";
 import { useColumnWidths } from "./columns";
 import { BrowseView, type BrowseScope } from "./components/BrowseView";
-import { Chat } from "./components/Chat";
+import { Chat, type ChatActivity } from "./components/Chat";
 import { ColumnHandle } from "./components/ColumnHandle";
 import { Details, type DetailsTab } from "./components/Details";
 import { Explorer } from "./components/Explorer";
@@ -351,6 +351,12 @@ export default function App() {
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
   const [center, setCenter] = useState<CenterView>("overview");
   const [detailsTab, setDetailsTab] = useState<DetailsTab>("selected");
+  // The tab shows a dot while the agent answers, and after, until the tab is opened.
+  const [chatActivity, setChatActivity] = useState<ChatActivity>({ busy: false, replies: 0 });
+  const [repliesSeen, setRepliesSeen] = useState(0);
+  useEffect(() => {
+    if (detailsTab === "agent") setRepliesSeen(chatActivity.replies);
+  }, [detailsTab, chatActivity.replies]);
   const [browseScope, setBrowseScope] = useState<BrowseScope | null>(null);
   const [standalone, setStandalone] = useState<BrowseRow | null>(null);
   const [previewInCenter, setPreviewInCenter] = useState<number | null>(null);
@@ -813,6 +819,8 @@ export default function App() {
           onBrowseFolder={browseFolder}
           previewInCenter={previewInCenter}
           onTab={setDetailsTab}
+          agent={<Chat selection={selection} onActivity={setChatActivity} />}
+          agentActive={chatActivity.busy || chatActivity.replies > repliesSeen}
           rebuild={
             <RebuildView
               canvases={canvases}
@@ -828,7 +836,6 @@ export default function App() {
             />
           }
         />
-        <Chat selection={selection} />
       </div>
     </div>
   );

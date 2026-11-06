@@ -37,6 +37,10 @@ const PATHS = {
   pencil: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
   puzzle: "M10 4h4v3a2 2 0 1 0 4 0V4h2v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4V4z",
   home: "M4 10.5L12 4l8 6.5M6.5 9v11h4v-5.5h3V20h4V9",
+  // A dump truck, for building: the Rebuild tab.
+  truck: "M2 7.5h10.5l1 6.5H4zM13.5 9H17l3.5 4V16h-7zM15 10.5h1.6l1.8 2h-3.4zM3 16h2M9 16h7M9 17.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM20 17.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z",
+  // A generic robot head, standing for an agent.
+  robot: "M7 8h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3zM12 8V4.5M12 3.5h.01M9.5 13h.01M14.5 13h.01M10 16.5h4M2 13v2.5M22 13v2.5",
   sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
 } as const;
 
