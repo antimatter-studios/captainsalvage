@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
-    "app": "python3 scripts/release.py build"
+    "app": "python3 scripts/release.py build",
+    "install:user": "python3 scripts/release.py install user",
+    "install:system": "python3 scripts/release.py install system"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

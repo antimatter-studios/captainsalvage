@@ -174,8 +174,15 @@ You need macOS, Rust and Node.js.
 ```sh
 npm install
 npm run app
-open "target/release/bundle/macos/Captain Salvage.app"
+npm run install:user
+open "$HOME/Applications/Captain Salvage.app"
 ```
+
+`npm run install:user` copies the build into `~/Applications`, for this user only.
+`npm run install:system` copies it into `/Applications`, for everyone on the Mac, and needs an
+administrator account. Either replaces the copy already there, and stops if that copy is
+running. To try a build without installing it, open
+`target/release/bundle/macos/Captain Salvage.app`.
 
 **First, keep the damaged volume unmounted, and don't run First Aid or `fsck` on it.**
 A repair may be what made your files disappear, and it could overwrite what is left.
