@@ -25,9 +25,13 @@ const XZ_MAGIC: &[u8] = &[0xFD, b'7', b'z', b'X', b'Z', 0x00];
 const BZIP2_MAGIC: &[u8] = b"BZh";
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xB5, 0x2F, 0xFD];
 const SEVEN_Z_MAGIC: &[u8] = &[b'7', b'z', 0xBC, 0xAF, 0x27, 0x1C];
+const RAR_MAGIC: &[u8] = b"Rar!\x1a\x07";
 const ZIP_MAGIC: &[u8] = b"PK";
 
 type ReadRange<'a> = &'a dyn Fn(u64, u64) -> Result<Vec<u8>>;
+/// Reads a range of the archive from the disk, and can be kept: the rar reader holds its
+/// source for as long as the archive is open, so it needs one it owns.
+pub type SharedRead = std::sync::Arc<dyn Fn(u64, u64) -> Result<Vec<u8>> + Send + Sync>;
 
 /// How a stream of bytes is compressed, if at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +52,7 @@ pub enum Format {
     /// One file, compressed.
     Packed(Packing),
     SevenZ,
+    Rar,
 }
 
 impl Packing {
@@ -71,6 +76,7 @@ impl Format {
             Format::Tar(packing) => format!("tar.{}", packing.name()),
             Format::Packed(packing) => packing.name().into(),
             Format::SevenZ => "7z".into(),
+            Format::Rar => "rar".into(),
         }
     }
 }
@@ -107,6 +113,8 @@ pub fn format_by_name(name: &str) -> Option<Format> {
         Format::Packed(Packing::Zstd)
     } else if ends(".7z") {
         Format::SevenZ
+    } else if ends(".rar") {
+        Format::Rar
     } else {
         let extension = name.rsplit_once('.')?.1;
         if !ZIP_EXTENSIONS.contains(&extension) {
@@ -129,6 +137,8 @@ pub fn format_by_bytes(head: &[u8]) -> Option<Format> {
         Packing::Zstd
     } else if head.starts_with(SEVEN_Z_MAGIC) {
         return Some(Format::SevenZ);
+    } else if head.starts_with(RAR_MAGIC) {
+        return Some(Format::Rar);
     } else if head.starts_with(ZIP_MAGIC) {
         return Some(Format::Zip);
     } else if is_tar(head) {
@@ -217,6 +227,51 @@ impl Read for Source<'_> {
 }
 
 impl Seek for Source<'_> {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        let target = match to {
+            SeekFrom::Start(at) => Some(at),
+            SeekFrom::End(back) => self.total.checked_add_signed(back),
+            SeekFrom::Current(step) => self.position.checked_add_signed(step),
+        };
+        self.position = target.ok_or_else(|| io::Error::other("seek outside the archive"))?;
+        Ok(self.position)
+    }
+}
+
+/// The same as `Source`, over a reader it owns, for the rar reader.
+struct OwnedSource {
+    read: SharedRead,
+    total: u64,
+    position: u64,
+    held_at: u64,
+    held: Vec<u8>,
+}
+
+impl Read for OwnedSource {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.position >= self.total {
+            return Ok(0);
+        }
+        let inside =
+            self.position >= self.held_at && self.position < self.held_at + self.held.len() as u64;
+        if !inside {
+            let length = CHUNK_BYTES.min(self.total - self.position);
+            self.held = (self.read)(self.position, length)
+                .map_err(|error| io::Error::other(format!("{error:#}")))?;
+            self.held_at = self.position;
+            if self.held.is_empty() {
+                return Ok(0);
+            }
+        }
+        let from = (self.position - self.held_at) as usize;
+        let count = buffer.len().min(self.held.len() - from);
+        buffer[..count].copy_from_slice(&self.held[from..from + count]);
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Seek for OwnedSource {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         let target = match to {
             SeekFrom::Start(at) => Some(at),
@@ -360,7 +415,8 @@ fn listing(
 }
 
 /// What an archive holds. A tar is read from its start to as far as it goes.
-pub fn list(format: Format, name: &str, total: u64, read: ReadRange) -> Result<ZipListing> {
+pub fn list(format: Format, name: &str, total: u64, shared: &SharedRead) -> Result<ZipListing> {
+    let read: ReadRange = &**shared;
     match format {
         Format::Zip => crate::archive::list_zip(total, read),
         Format::Tar(packing) => list_tar(format, packing, total, read),
@@ -371,6 +427,7 @@ pub fn list(format: Format, name: &str, total: u64, read: ReadRange) -> Result<Z
             None,
         )),
         Format::SevenZ => list_seven_z(total, read),
+        Format::Rar => list_rar(total, shared),
     }
 }
 
@@ -428,6 +485,114 @@ fn list_tar(format: Format, packing: Packing, total: u64, read: ReadRange) -> Re
         bail!("this does not read as a tar");
     }
     Ok(listing(format, members, total, stopped))
+}
+
+/// Opens a rar on the disk. The reader reads its headers now, and a file's data only when
+/// that file is unpacked, so nothing like the whole archive is held in memory.
+fn open_rar(total: u64, shared: &SharedRead) -> Result<rars::Archive> {
+    let source = OwnedSource {
+        read: shared.clone(),
+        total,
+        position: 0,
+        held_at: 0,
+        held: Vec::new(),
+    };
+    rars::ArchiveReader::read_reader(source)
+        .map_err(|error| anyhow::anyhow!("this rar's list of files cannot be read: {error}"))
+}
+
+fn list_rar(total: u64, shared: &SharedRead) -> Result<ZipListing> {
+    let archive = open_rar(total, shared)?;
+    let members = archive
+        .members()
+        .enumerate()
+        .map(|(index, entry)| {
+            let meta = &entry.meta;
+            let mut found = member(
+                index,
+                String::from_utf8_lossy(&meta.name).replace('\\', "/"),
+                meta.is_directory,
+                Some(meta.unpacked_size),
+            );
+            found.packed = Some(meta.packed_size);
+            found.encrypted = meta.is_encrypted;
+            found.modified = meta
+                .modification_time()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|since| unix_stamp(since.as_secs() as i64));
+            found
+        })
+        .collect();
+    Ok(listing(Format::Rar, members, total, None))
+}
+
+fn check_rar(wanted: &ZipMember, total: u64, shared: &SharedRead) -> Result<ZipMemberCheck> {
+    if wanted.encrypted {
+        return Ok(verdict(
+            CHECK_UNCHECKED,
+            "It is encrypted, so it cannot be checked without its password.",
+        ));
+    }
+    let archive = match open_rar(total, shared) {
+        Ok(archive) => archive,
+        Err(error) => return Ok(verdict(CHECK_DAMAGED, format!("{error}."))),
+    };
+    // The reader checks each file's checksum as it unpacks it. A solid rar's files depend
+    // on the ones before, so those are unpacked too, and only this one is counted.
+    let target = wanted.index as usize;
+    let mut position = 0usize;
+    let mut seen: Option<u64> = None;
+    let counted = std::sync::Arc::new(std::sync::Mutex::new(0u64));
+    const STOP: &str = "captain-salvage: the file is checked";
+    let result = archive.extract_to(None, |_meta| {
+        let index = position;
+        position += 1;
+        if index > target {
+            // The file before this one has been unpacked and checked, so the rest can wait.
+            return Err(rars::Error::from(io::Error::other(STOP)));
+        }
+        if index == target {
+            seen = Some(0);
+            let counted = counted.clone();
+            Ok(Box::new(SharedCounter(counted)) as Box<dyn std::io::Write>)
+        } else {
+            Ok(Box::new(std::io::sink()) as Box<dyn std::io::Write>)
+        }
+    });
+    let bytes = *counted
+        .lock()
+        .map_err(|_| anyhow::anyhow!("count lock poisoned"))?;
+    Ok(match (result, seen) {
+        (_, None) => verdict(
+            CHECK_DAMAGED,
+            "The archive cannot be unpacked as far as this file.",
+        ),
+        (Ok(()), Some(_)) => verdict(
+            CHECK_INTACT,
+            format!("It unpacks whole, {bytes} bytes, and its checksum agrees."),
+        ),
+        (Err(error), Some(_)) if error.to_string().contains(STOP) => verdict(
+            CHECK_INTACT,
+            format!("It unpacks whole, {bytes} bytes, and its checksum agrees."),
+        ),
+        (Err(error), Some(_)) => verdict(CHECK_DAMAGED, format!("It cannot be unpacked: {error}.")),
+    })
+}
+
+/// Counts what one rar file unpacks to, shared with the checker that reads the count after.
+struct SharedCounter(std::sync::Arc<std::sync::Mutex<u64>>);
+
+impl std::io::Write for SharedCounter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if let Ok(mut count) = self.0.lock() {
+            *count += data.len() as u64;
+        }
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn list_seven_z(total: u64, read: ReadRange) -> Result<ZipListing> {
@@ -488,8 +653,9 @@ pub fn check(
     listing: &ZipListing,
     index: u32,
     total: u64,
-    read: ReadRange,
+    shared: &SharedRead,
 ) -> Result<ZipMemberCheck> {
+    let read: ReadRange = &**shared;
     let wanted = listing
         .members
         .get(index as usize)
@@ -511,6 +677,7 @@ pub fn check(
         }
         Format::Tar(packing) => check_tar(packing, wanted, total, read),
         Format::SevenZ => check_seven_z(wanted, total, read),
+        Format::Rar => check_rar(wanted, total, shared),
     }
 }
 

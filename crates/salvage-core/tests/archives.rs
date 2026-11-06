@@ -3,8 +3,9 @@
 //! say which files cannot be trusted.
 
 use salvage_core::archive::{CHECK_DAMAGED, CHECK_INTACT};
-use salvage_core::archives::{check, format_of, list, Format, Packing};
+use salvage_core::archives::{check, format_of, list, Format, Packing, SharedRead};
 use std::io::Write;
+use std::sync::Arc;
 
 const FIRST: &[u8] = b"the first file, which is short";
 
@@ -53,10 +54,18 @@ fn zstd(data: &[u8]) -> Vec<u8> {
     ruzstd::encoding::compress_to_vec(data, ruzstd::encoding::CompressionLevel::Fastest)
 }
 
+/// Reads ranges of an archive held in memory, the way the app reads them from a disk.
+fn reader(data: &[u8]) -> SharedRead {
+    let data = Arc::new(data.to_vec());
+    Arc::new(move |start: u64, length: u64| {
+        let to = (start + length).min(data.len() as u64) as usize;
+        Ok(data[(start as usize).min(to)..to].to_vec())
+    })
+}
+
 fn names(data: &[u8], name: &str) -> (Format, Vec<String>, bool) {
-    let read =
-        |start: u64, length: u64| Ok(data[start as usize..(start + length) as usize].to_vec());
-    let format = format_of(name, data.len() as u64, &read).expect("a known format");
+    let read = reader(data);
+    let format = format_of(name, data.len() as u64, &*read).expect("a known format");
     let listed = list(format, name, data.len() as u64, &read).unwrap();
     (
         format,
@@ -70,9 +79,8 @@ fn names(data: &[u8], name: &str) -> (Format, Vec<String>, bool) {
 }
 
 fn status(data: &[u8], name: &str, index: u32) -> &'static str {
-    let read =
-        |start: u64, length: u64| Ok(data[start as usize..(start + length) as usize].to_vec());
-    let format = format_of(name, data.len() as u64, &read).unwrap();
+    let read = reader(data);
+    let format = format_of(name, data.len() as u64, &*read).unwrap();
     let listed = list(format, name, data.len() as u64, &read).unwrap();
     check(format, &listed, index, data.len() as u64, &read)
         .unwrap()
@@ -126,9 +134,8 @@ fn a_compressed_file_checks_against_its_own_checksum() {
 fn a_cut_short_tar_lists_what_is_left_and_says_so() {
     let packed = gzip(&tar_bytes());
     let cut = &packed[..packed.len() * 3 / 5];
-    let read =
-        |start: u64, length: u64| Ok(cut[start as usize..(start + length) as usize].to_vec());
-    let format = format_of("a.tar.gz", cut.len() as u64, &read).unwrap();
+    let read = reader(cut);
+    let format = format_of("a.tar.gz", cut.len() as u64, &*read).unwrap();
     let listed = list(format, "a.tar.gz", cut.len() as u64, &read).unwrap();
     assert_eq!(
         listed.members.first().map(|member| member.path.as_str()),
@@ -166,4 +173,67 @@ fn a_seven_z_lists_and_checks_and_notices_damage() {
     damaged[200] ^= 0x5A;
     assert_eq!(status(&damaged, "a.7z", index), CHECK_DAMAGED);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+fn rar(version: rars::ArchiveVersion, solid: bool) -> Vec<u8> {
+    let mut builder = rars::Builder::new(version).solid(solid);
+    builder
+        .add_bytes(
+            b"docs/first.txt".to_vec(),
+            FIRST.to_vec(),
+            Some(1_700_000_000),
+            None,
+        )
+        .unwrap();
+    builder
+        .add_bytes(
+            b"docs/second.bin".to_vec(),
+            second()[..120_000].to_vec(),
+            Some(1_700_000_000),
+            None,
+        )
+        .unwrap();
+    let mut out = Vec::new();
+    builder
+        .write_to(&mut out, &rars::WriterResources::default(), None)
+        .unwrap();
+    out
+}
+
+#[test]
+fn a_rar_lists_and_checks_and_notices_damage() {
+    for (version, solid) in [
+        (rars::ArchiveVersion::Rar50, false),
+        (rars::ArchiveVersion::Rar50, true),
+        (rars::ArchiveVersion::Rar29, false),
+    ] {
+        let data = rar(version, solid);
+        let (format, found, complete) = names(&data, "a.rar");
+        assert_eq!(format, Format::Rar, "{version:?}");
+        assert!(complete);
+        assert!(
+            found.iter().any(|name| name.ends_with("first.txt")),
+            "{version:?}: {found:?}"
+        );
+        let index = found
+            .iter()
+            .position(|name| name.ends_with("second.bin"))
+            .unwrap() as u32;
+        assert_eq!(
+            status(&data, "a.rar", index),
+            CHECK_INTACT,
+            "{version:?} solid {solid}"
+        );
+        // Known by its bytes when the name is gone.
+        assert_eq!(names(&data, "lost").0, Format::Rar);
+        // One byte changed well inside the compressed data.
+        let mut damaged = data.clone();
+        let middle = damaged.len() * 2 / 3;
+        damaged[middle] ^= 0x5A;
+        assert_eq!(
+            status(&damaged, "a.rar", index),
+            CHECK_DAMAGED,
+            "{version:?} solid {solid}"
+        );
+    }
 }

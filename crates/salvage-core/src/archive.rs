@@ -722,7 +722,16 @@ fn compare(member: &ZipMember, crc: u32, seen: u64, expected: Option<u32>) -> Zi
 }
 
 impl Session {
-    fn zip_listing(&self, id: i64) -> Result<Arc<ZipListing>> {
+    /// Reads ranges of one file from the disk, as a reader an archive library can keep.
+    fn shared_reader(self: &Arc<Self>, id: i64) -> crate::archives::SharedRead {
+        let session = Arc::clone(self);
+        Arc::new(move |start, length| {
+            session.note_viewing();
+            Ok(session.read_entry_range(id, start, length)?.data)
+        })
+    }
+
+    fn zip_listing(self: &Arc<Self>, id: i64) -> Result<Arc<ZipListing>> {
         self.note_viewing();
         let (total, name) = self.entry_total(id)?;
         {
@@ -733,29 +742,26 @@ impl Session {
                 }
             }
         }
-        let read = |start, length| Ok(self.read_entry_range(id, start, length)?.data);
+        let shared = self.shared_reader(id);
         // Anything not recognised is read as a zip, which says plainly if it is not one.
-        let format =
-            crate::archives::format_of(&name, total, &read).unwrap_or(crate::archives::Format::Zip);
-        let listing = Arc::new(crate::archives::list(format, &name, total, &read)?);
+        let format = crate::archives::format_of(&name, total, &*shared)
+            .unwrap_or(crate::archives::Format::Zip);
+        let listing = Arc::new(crate::archives::list(format, &name, total, &shared)?);
         *self.zip.lock().map_err(|_| anyhow!("zip lock poisoned"))? = Some((id, listing.clone()));
         Ok(listing)
     }
 
-    /// What a zip holds, read from the disk. A listing can be large, so it is kept.
-    pub fn zip_contents(&self, id: i64) -> Result<ZipListing> {
+    /// What an archive holds, read from the disk. A listing can be large, so it is kept.
+    pub fn zip_contents(self: &Arc<Self>, id: i64) -> Result<ZipListing> {
         Ok((*self.zip_listing(id)?).clone())
     }
 
-    pub fn zip_member_check(&self, id: i64, index: u32) -> Result<ZipMemberCheck> {
+    pub fn zip_member_check(self: &Arc<Self>, id: i64, index: u32) -> Result<ZipMemberCheck> {
         let listing = self.zip_listing(id)?;
         let (total, name) = self.entry_total(id)?;
-        let read = |start, length| {
-            self.note_viewing();
-            Ok(self.read_entry_range(id, start, length)?.data)
-        };
-        let format =
-            crate::archives::format_of(&name, total, &read).unwrap_or(crate::archives::Format::Zip);
-        crate::archives::check(format, &listing, index, listing.total_bytes, &read)
+        let shared = self.shared_reader(id);
+        let format = crate::archives::format_of(&name, total, &*shared)
+            .unwrap_or(crate::archives::Format::Zip);
+        crate::archives::check(format, &listing, index, listing.total_bytes, &shared)
     }
 }

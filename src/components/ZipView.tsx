@@ -9,7 +9,7 @@ const ROWS_BEYOND_VIEW = 12;
 const NAVIGATION_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
 const ARCHIVE_EXTENSIONS = new Set([
   "zip", "jar", "apk", "ipa", "epub", "cbz", "docx", "xlsx", "pptx", "odt", "ods", "odp", "pages", "numbers", "key",
-  "tar", "gz", "tgz", "xz", "txz", "bz2", "tbz", "tbz2", "zst", "tzst", "7z",
+  "tar", "gz", "tgz", "xz", "txz", "bz2", "tbz", "tbz2", "zst", "tzst", "7z", "rar",
 ]);
 
 /** Names of archives the app can look inside. Some may not be, and the list then says so. A
