@@ -1,3 +1,4 @@
 ### Added
 
-- **Browse files now shows all files by default and offers icon or compact list layouts.** You can switch views and find files across types more easily.
+- **Browse files as a list or as icons.** The list shows each file's size, date and verdict.
+- **Browse files opens on All**, the first kind, and remembers the kind and layout you chose across restarts.
