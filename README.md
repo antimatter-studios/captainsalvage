@@ -104,7 +104,9 @@ macOS can, though, and that can happen before the app is open. See
 - Copy out refuses any destination on the disk being recovered, including through
   an APFS container, and refuses if it cannot tell which disk a destination is on.
 - Copy out never overwrites a file. Each copy is hashed as it is read, then hashed
-  again from the destination.
+  again from the destination. The copy report shows every file copied, complete or partial,
+  and can read every copy again later to catch one changed or lost since. It reads only the
+  destination.
 - Only the person using the app can start a copy or choose a salvage drive. An AI can
   plan a copy, but not start one.
 - While the app is open, macOS cannot mount a volume the person blocked. See

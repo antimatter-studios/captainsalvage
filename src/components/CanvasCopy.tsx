@@ -1,3 +1,4 @@
+import { CopyReport } from "./CopyReport";
 import { useEffect, useState } from "react";
 import { call, type CopyPlan, type CopyStatus } from "../api";
 import { bytes, count } from "../format";
@@ -13,6 +14,7 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
   revision: number;
   onClose: () => void;
 }) {
+  const [reportOpen, setReportOpen] = useState(false);
   const [destination, setDestination] = useState<string | null>(null);
   const [includePartial, setIncludePartial] = useState(false);
   const [plan, setPlan] = useState<CopyPlan | null>(null);
@@ -101,9 +103,13 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
           {copy.filesPartial > 0 && <div>{t("{count} partial. The manifest says what is missing from each.", { count: count(copy.filesPartial) })}</div>}
           {copy.filesFailed > 0 && <div className="warn">{t("{count} failed.", { count: count(copy.filesFailed) })}</div>}
           {copy.error && <div className="warn">{fromEngine(copy.error)}</div>}
-          {running && <div className="detail-actions"><button onClick={() => call("copy_stop")}>{t("Stop copying")}</button></div>}
+          <div className="detail-actions">
+            {running && <button onClick={() => call("copy_stop")}>{t("Stop copying")}</button>}
+            <button onClick={() => setReportOpen(true)}>{t("Open the copy report")}</button>
+          </div>
         </div>
       )}
+      {reportOpen && copy?.destination && <CopyReport destination={copy.destination} onClose={() => setReportOpen(false)} />}
       <div className="detail-actions">
         <button className="primary" onClick={() => void start()} disabled={!plan || Boolean(plan.refused) || !plan.fits || plan.files === 0 || running}>
           {plan ? t("Copy {count} files", { count: count(plan.files) }) : t("Copy")}

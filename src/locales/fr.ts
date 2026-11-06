@@ -834,6 +834,21 @@ const strings: Record<string, string> = {
   "Place a folder as a piece instead.": "Placez plutôt un dossier comme pièce.",
   "A file cannot be the top of the tree.": "Un fichier ne peut pas être le sommet de l'arbre.",
   "Place a piece or make a folder first.": "Placez d'abord une pièce ou créez un dossier.",
+  "Changed since": "Modifié depuis",
+  "Check the copies again": "Vérifier à nouveau les copies",
+  "Checked again: {same} the same, {changed} changed, {missing} missing": "Vérifiées à nouveau : {same} identiques, {changed} modifiées, {missing} manquantes",
+  "Checking the copies": "Vérification des copies",
+  "Close": "Fermer",
+  "Complete": "Complet",
+  "Copy report": "Rapport de copie",
+  "Missing": "Manquant",
+  "No files here.": "Aucun fichier ici.",
+  "Not checked": "Non vérifié",
+  "Open the copy report": "Ouvrir le rapport de copie",
+  "Read every copy again and compare it with what was copied. Only the copies are read.": "Relit chaque copie et la compare à ce qui a été copié. Seules les copies sont lues.",
+  "The same": "Identique",
+  "{count} complete": "{count} complets",
+  "{count} partial": "{count} partiels",
 };
 
 export default strings;
