@@ -73,9 +73,9 @@ treats damage as something to route around:
 - **It looks inside zips.** Open a zip to see its files as a tree, read live from the
   disk. If the zip has lost its directory, the list is rebuilt from the headers of the
   files inside, and each file can be checked against its own checksum.
-- **An AI can investigate with you.** Select anything and ask Claude about it.
-  Claude works through the same tools as the app, over MCP, and has no write path
-  to the disk.
+- **An AI can investigate with you.** Select anything and ask an agent about it, in the
+  Ask agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
+  through the same tools as the app, over MCP, and has no write path to the disk.
 
 ## Safety
 
@@ -259,6 +259,24 @@ The app runs an MCP server on localhost, protected by a token. Its **Connect** t
 the command that adds it to Claude Code. There are more than 40 tools, covering raw reads,
 FAT chains, pattern search, read-only SQL on the map, format tests, overlays and sandboxed
 scripts.
+
+
+### Asking an agent from a terminal
+
+`salvage-agent` asks the same agents as the Ask agent tab, about the disk open in the app.
+The app must be running.
+
+```sh
+cargo run -p salvage-core --bin salvage-agent -- list
+cargo run -p salvage-core --bin salvage-agent -- models codex
+cargo run -p salvage-core --bin salvage-agent -- ask --agent codex "How many clusters does this volume have?"
+```
+
+The answer prints as it arrives, each tool the agent uses shows on standard error, and the
+last line there is the session, to continue with `--session`. `--json` prints every event as
+one line of JSON instead. Each agent sees only the app's tools. Claude Code gets no built-in
+tools at all. opencode's own file, shell and web tools are turned off. Codex keeps its shell,
+but in its read-only sandbox.
 
 ## Distribution
 
