@@ -19,5 +19,5 @@ anyhow = "1"
 salvage-core = { path = "../crates/salvage-core" }
 objc2 = "0.6.5"
 objc2-file-provider = { version = "0.3.2", default-features = false, features = ["std", "block2", "Extension", "NSFileProviderDomain", "NSFileProviderItem"] }
-objc2-foundation = { version = "0.3.2", features = ["NSFileManager", "NSURL", "NSArray", "NSError", "NSString"] }
+objc2-foundation = { version = "0.3.2", features = ["NSFileManager", "NSURL", "NSArray", "NSError", "NSString", "NSProcessInfo"] }
 block2 = "0.6.2"
