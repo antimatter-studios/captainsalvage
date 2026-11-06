@@ -22,6 +22,7 @@ const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
 const LAST_DEVICE_FILE: &str = "last-device";
 const THEME_FILE: &str = "theme";
 const THEME_SYSTEM: &str = "system";
+const UI_SETTINGS_FILE: &str = "ui-settings.json";
 const LANGUAGE_FILE: &str = "language";
 /// The window's languages. An unset or unknown choice follows macOS, decided by the window.
 const LANGUAGES: [&str; 4] = ["en", "fr", "de", "es"];
@@ -228,19 +229,51 @@ fn set_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command(async)]
+fn chat_models(agent: String) -> Result<Vec<salvage_core::agent::Model>, String> {
+    ChatState::models(&agent).map_err(|error| format!("{error:#}"))
+}
+
+/// The window's remembered choices, such as which agent to ask, kept in the app's folder so
+/// they last across restarts.
+#[tauri::command]
+fn ui_settings() -> Value {
+    config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join(UI_SETTINGS_FILE)).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+#[tauri::command]
+fn set_ui_setting(key: String, value: Value) -> Result<(), String> {
+    let mut settings = ui_settings();
+    settings[key.as_str()] = value;
+    if let Some(dir) = config_dir() {
+        std::fs::write(dir.join(UI_SETTINGS_FILE), settings.to_string()).map_err(text_error)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn chat_agents() -> Vec<salvage_core::agent::AgentInfo> {
+    ChatState::agents()
+}
+
 #[tauri::command]
 fn chat_send(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     chat: State<'_, ChatState>,
+    agent: String,
+    model: Option<String>,
     message: String,
     selection: Value,
 ) -> Result<(), String> {
     let info = state
         .mcp
         .clone()
-        .ok_or("the MCP server is not running, so Claude has no tools")?;
-    chat.send(app, &info, &message, &selection)
+        .ok_or("the MCP server is not running, so the agent has no tools")?;
+    chat.send(app, &info, &agent, model.as_deref(), &message, &selection)
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -360,6 +393,10 @@ pub fn run() {
             set_theme,
             get_language,
             set_language,
+            chat_agents,
+            chat_models,
+            ui_settings,
+            set_ui_setting,
             chat_send,
             chat_cancel,
             chat_reset,

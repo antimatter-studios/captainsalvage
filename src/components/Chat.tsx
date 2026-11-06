@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Selection } from "../api";
 import { count } from "../format";
 import { fromEngine, questionFor, t, useLanguage, type Language } from "../i18n";
+import { Command } from "./Command";
 import { Icon } from "./icons";
 
 interface ToolCall {
@@ -18,7 +19,27 @@ interface Message {
   about?: string;
 }
 
-const TOOL_PREFIX = "mcp__captain-salvage__";
+interface AgentInfo {
+  id: string;
+  name: string;
+  installed: boolean;
+  install: string;
+}
+
+interface Model {
+  id: string;
+  name: string;
+}
+
+/** What any agent said or did, already read from its own output by the app. */
+type AgentEvent =
+  | { type: "session"; id: string }
+  | { type: "text"; text: string }
+  | { type: "tool"; name: string; input: string }
+  | { type: "error"; text: string }
+  | { type: "end"; code: number | null; stderr: string };
+
+const AGENT_SETTING = "agent";
 
 export function describeSelection(selection: Selection): string {
   switch (selection.kind) {
@@ -76,6 +97,40 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [agent, setAgent] = useState("claude");
+  const [models, setModels] = useState<Model[]>([]);
+  const [model, setModel] = useState("");
+  const loaded = useRef(false);
+
+  // Which agents are on this Mac, and the choice remembered from last time.
+  useEffect(() => {
+    void Promise.all([invoke<AgentInfo[]>("chat_agents"), invoke<Record<string, any>>("ui_settings")]).then(([found, settings]) => {
+      setAgents(found);
+      const saved = settings[AGENT_SETTING] as { agent?: string; model?: string } | undefined;
+      const known = found.find((item) => item.id === saved?.agent);
+      setAgent(known?.id ?? found.find((item) => item.installed)?.id ?? "claude");
+      setModel(known ? saved?.model ?? "" : "");
+      loaded.current = true;
+    });
+  }, []);
+  // Codex and opencode are asked for their models, which takes a moment.
+  useEffect(() => {
+    setModels([]);
+    if (!agents.find((item) => item.id === agent)?.installed) return;
+    let current = true;
+    invoke<Model[]>("chat_models", { agent })
+      .then((found) => current && setModels(found))
+      .catch(() => current && setModels([{ id: "", name: t("Default") }]));
+    return () => {
+      current = false;
+    };
+  }, [agent, agents]);
+  useEffect(() => {
+    if (loaded.current) void invoke("set_ui_setting", { key: AGENT_SETTING, value: { agent, model } });
+  }, [agent, model]);
+  const chosen = agents.find((item) => item.id === agent);
+
   const replies = messages.filter((message) => message.role !== "you").length;
   useEffect(() => onActivity?.({ busy, replies }), [busy, replies, onActivity]);
 
@@ -87,34 +142,14 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
         return [...current.slice(0, -1), change(last)];
       });
 
-    const stop = listen<Record<string, any>>("chat-event", ({ payload }) => {
-      if (payload.type === "stream_event") {
-        const event = payload.event;
-        if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
-          appendToLast((message) => ({ ...message, text: message.text + event.delta.text }));
-        }
-        if (event?.type === "content_block_start" && event.content_block?.type === "tool_use") {
-          const name = String(event.content_block.name).replace(TOOL_PREFIX, "");
-          appendToLast((message) => ({ ...message, tools: [...message.tools, { name, input: "" }] }));
-        }
-      } else if (payload.type === "assistant") {
-        const used = (payload.message?.content ?? []).filter((block: any) => block.type === "tool_use");
-        if (used.length > 0) {
-          appendToLast((message) => {
-            const tools = [...message.tools];
-            for (const block of used) {
-              const name = String(block.name).replace(TOOL_PREFIX, "");
-              const index = tools.findIndex((tool) => tool.name === name && tool.input === "");
-              const input = JSON.stringify(block.input);
-              if (index >= 0) tools[index] = { name, input };
-              else tools.push({ name, input });
-            }
-            return { ...message, tools };
-          });
-        }
-      } else if (payload.type === "result" && payload.is_error) {
-        setMessages((current) => [...current, { role: "error", text: String(payload.result ?? t("The agent reported an error.")), tools: [] }]);
-      } else if (payload.type === "chat-end") {
+    const stop = listen<AgentEvent>("chat-event", ({ payload }) => {
+      if (payload.type === "text") {
+        appendToLast((message) => ({ ...message, text: message.text + payload.text }));
+      } else if (payload.type === "tool") {
+        appendToLast((message) => ({ ...message, tools: [...message.tools, { name: payload.name, input: payload.input }] }));
+      } else if (payload.type === "error") {
+        setMessages((current) => [...current, { role: "error", text: payload.text || t("The agent reported an error."), tools: [] }]);
+      } else if (payload.type === "end") {
         setBusy(false);
         if (payload.code !== 0 && payload.code !== null && payload.stderr) {
           setMessages((current) => [...current, { role: "error", text: String(payload.stderr).trim(), tools: [] }]);
@@ -139,7 +174,7 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
     setMessages((current) => [...current, { role: "you", text, tools: [], about }]);
     try {
       // The person sees their own words. Claude also hears which language to answer in.
-      await invoke("chat_send", { message: questionFor(text, language, toldLanguage.current), selection });
+      await invoke("chat_send", { agent, model: model || null, message: questionFor(text, language, toldLanguage.current), selection });
       toldLanguage.current = language;
     } catch (reason) {
       setBusy(false);
@@ -157,8 +192,36 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
   return (
     <section className="chat" aria-label={t("Ask agent")}>
       <div className="chat-head">
+        <select
+          value={agent}
+          aria-label={t("Agent")}
+          disabled={busy}
+          onChange={(event) => {
+            // A conversation belongs to one agent, so another agent starts a new one.
+            setAgent(event.target.value);
+            setModel("");
+            void startOver();
+          }}
+        >
+          {agents.map((item) => (
+            <option key={item.id} value={item.id}>{item.installed ? item.name : t("{name} (not installed)", { name: item.name })}</option>
+          ))}
+        </select>
+        {models.length > 0 && (
+          <select value={model} aria-label={t("Model")} disabled={busy} onChange={(event) => setModel(event.target.value)}>
+            {!models.some((item) => item.id === model) && <option value={model}>{model}</option>}
+            {models.map((item) => <option key={item.id} value={item.id}>{item.id ? item.name : t("Default model")}</option>)}
+          </select>
+        )}
+        <span className="toolbar-spacer" />
         <button className="link" onClick={startOver} disabled={messages.length === 0}>{t("New conversation")}</button>
       </div>
+      {chosen && !chosen.installed && (
+        <div className="chat-install">
+          <p>{t("{name} is not installed on this Mac. Install it in Terminal, then choose it again:", { name: chosen.name })}</p>
+          <Command text={chosen.install} />
+        </div>
+      )}
       <div ref={scroller} className="chat-log" aria-live="polite">
         {messages.length === 0 && (
           <p className="empty">{t("Select something on the map, in the list or in the bytes, then ask about it. The agent can read the whole disk and test ideas, and has no way to write to it.")}</p>
