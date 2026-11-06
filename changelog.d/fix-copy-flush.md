@@ -1,3 +1,3 @@
 ### Fixed
 
-- **Copies to a destination are faster, and recent files are checked and recopied after an interrupted run if needed.** This helps recover intact files without redoing older copies.
+- **Copies to an SD card or other slow drive are up to 16 times faster.** A copy no longer waits for the drive to fully commit after every file. If a run is cut off, the next one checks the newest copies again and copies any that came out wrong.
