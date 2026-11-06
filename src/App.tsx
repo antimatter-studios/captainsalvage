@@ -25,7 +25,7 @@ import { useColumnWidths } from "./columns";
 import { BrowseView, type BrowseScope } from "./components/BrowseView";
 import { Chat } from "./components/Chat";
 import { ColumnHandle } from "./components/ColumnHandle";
-import { Details } from "./components/Details";
+import { Details, type DetailsTab } from "./components/Details";
 import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
 import { Icon, type IconName } from "./components/icons";
@@ -46,7 +46,7 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 /** While a scan runs, the tree and totals are rebuilt from what it has found. */
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
-type CenterView = "overview" | "browse" | "rebuild" | "bytes" | "zip";
+type CenterView = "overview" | "browse" | "bytes" | "zip";
 const CANVAS_STORAGE_KEY = "salvage-canvas";
 
 function rememberedCanvas(): number | null {
@@ -350,6 +350,7 @@ export default function App() {
   const [canvasUsed, setCanvasUsed] = useState<Set<number>>(new Set());
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
   const [center, setCenter] = useState<CenterView>("overview");
+  const [detailsTab, setDetailsTab] = useState<DetailsTab>("selected");
   const [browseScope, setBrowseScope] = useState<BrowseScope | null>(null);
   const [standalone, setStandalone] = useState<BrowseRow | null>(null);
   const [previewInCenter, setPreviewInCenter] = useState<number | null>(null);
@@ -730,7 +731,7 @@ export default function App() {
         revision={revision}
         selectedKey={selectedKey}
         openKey={browseScope ? `folder:${browseScope.head}` : null}
-        canvasPieces={center === "rebuild" && canvas !== null ? canvasUsed : null}
+        canvasPieces={detailsTab === "rebuild" && canvas !== null ? canvasUsed : null}
         onEntry={openEntry}
         onFolder={openFolder}
         onChain={selectChain}
@@ -747,7 +748,6 @@ export default function App() {
           <div className="segmented" role="tablist">
             <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>{t("Overview")}</button>
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
-            <button role="tab" aria-selected={center === "rebuild"} onClick={() => setCenter("rebuild")}>{t("Rebuild")}</button>
             <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>
             <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside zip")}</button>
           </div>
@@ -755,20 +755,6 @@ export default function App() {
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
         {center === "zip" && !zipEntry && <section className="center-panel"><p className="muted zip-message">{t("Choose a zip file to see inside it.")}</p></section>}
         {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} onChanged={bump} />}
-        {center === "rebuild" && (
-          <RebuildView
-            canvases={canvases}
-            canvas={canvas}
-            onCanvas={setCanvas}
-            revision={canvasRevision}
-            onChanged={bumpCanvas}
-            onEntry={(row) => row.id !== null && void noteEntry(row.id)}
-            copy={status?.copy ?? null}
-            finder={finder}
-            onFinder={setFinder}
-            mapRevision={revision}
-          />
-        )}
         {center === "browse" && (
           <BrowseView
             floor={floor}
@@ -826,6 +812,21 @@ export default function App() {
           onInsideZip={() => setCenter("zip")}
           onBrowseFolder={browseFolder}
           previewInCenter={previewInCenter}
+          onTab={setDetailsTab}
+          rebuild={
+            <RebuildView
+              canvases={canvases}
+              canvas={canvas}
+              onCanvas={setCanvas}
+              revision={canvasRevision}
+              onChanged={bumpCanvas}
+              onEntry={(row) => row.id !== null && void noteEntry(row.id)}
+              copy={status?.copy ?? null}
+              finder={finder}
+              onFinder={setFinder}
+              mapRevision={revision}
+            />
+          }
         />
         <Chat selection={selection} />
       </div>

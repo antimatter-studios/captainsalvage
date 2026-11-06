@@ -687,6 +687,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 }
 
 /* Rebuild: the person's own tree, made from the pieces the scan found. */
+.rebuild { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; border-top: 0.5px solid var(--line); }
 .rebuild-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 0.5px solid var(--line-strong); flex-wrap: wrap; }
 .rebuild-bar select { max-width: 220px; }
 .rebuild-left { font-size: 12px; font-variant-numeric: tabular-nums; }

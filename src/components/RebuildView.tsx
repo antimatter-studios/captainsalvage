@@ -440,7 +440,8 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
   );
 }
 
-/** The Rebuild view: one canvas, its rebuilt tree, and the pieces left to place. */
+/** The Rebuild tab in the right panel: one canvas and its rebuilt tree, which pieces are dragged
+ * onto from the sidebar while the middle shows what is in them. */
 export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry, copy, finder, onFinder, mapRevision }: {
   canvases: Canvas[];
   copy: CopyStatus | null;
@@ -649,7 +650,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   }
 
   return (
-    <section className="center-panel rebuild" aria-label={t("Rebuild")}>
+    <section className="rebuild" aria-label={t("Rebuild")}>
       <div className="rebuild-bar">
         {canvases.length > 0 && (
           <select value={canvas ?? ""} onChange={(event) => onCanvas(event.target.value ? Number(event.target.value) : null)} aria-label={t("Canvas")}>

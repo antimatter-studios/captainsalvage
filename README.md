@@ -217,7 +217,7 @@ image before committing it, because bytes and chat answers can still hold names.
 
 ## Showing a canvas in Finder
 
-A canvas in the Rebuild tab can appear in Finder as a folder, with the rebuilt tree inside. It
+A canvas in the Rebuild tab of the right panel can appear in Finder as a folder, with the rebuilt tree inside. It
 is read only: folders are listed and files are read through the app's private port, straight
 from the map, and nothing done in Finder reaches the disk. The app must be open on that disk
 for Finder to read it.
