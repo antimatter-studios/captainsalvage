@@ -145,6 +145,18 @@ CREATE TABLE IF NOT EXISTS canvas_items (
     created_at_millis INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS canvas_items_canvas ON canvas_items (canvas, parent_item);
+CREATE TABLE IF NOT EXISTS canvas_suggestions (
+    id INTEGER PRIMARY KEY,
+    canvas INTEGER NOT NULL,
+    head INTEGER NOT NULL,
+    place_item INTEGER,
+    place_head INTEGER,
+    merge INTEGER NOT NULL,
+    note TEXT NOT NULL,
+    author TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at_millis INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS canvas_choices (
     canvas INTEGER NOT NULL,
     path TEXT NOT NULL,
