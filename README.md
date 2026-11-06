@@ -240,18 +240,25 @@ rebuilt tree inside. It is read only: folders are listed and files are read thro
 private port, straight from the map, and nothing done in Finder reaches the disk. The app must
 be open on that disk for Finder to read it.
 
-This needs **Captain Salvage Finder**, a small helper app that holds the File Provider
-extension. macOS only runs such an extension when the team's signature and provisioning
-profiles are on it, so it is built separately, and the profiles and key stay outside the repo:
+The File Provider extension that does this is built into `Captain Salvage.app`, with a small
+helper that adds and removes the Finder locations. macOS only runs such an extension when the
+app is signed by the team, with provisioning profiles for the app and the extension, so a build
+includes it only when the key and profiles are given. They stay outside the repo:
 
 ```sh
 CS_SIGN_KEY=development.key.pem CS_SIGN_CERT=development.cer.pem \
 CS_APP_PROFILE=app.provisionprofile CS_EXT_PROFILE=fileprovider.provisionprofile \
-  macos/finder/build.sh --install
+  npm run app
+npm run install:user
 ```
 
-The first time, turn it on in System Settings, General, Login Items & Extensions, File
-Providers. When the helper is installed, the Rebuild tab shows **Show in Finder**.
+Without them the app builds and runs as before, without Show in Finder. The signed app keeps
+the same signature from build to build, so a network filter's rule for it, such as Little
+Snitch's, keeps working. Installing removes the separate "Captain Salvage Finder" app that
+earlier versions used, which had the same identifier.
+
+The first time, turn the extension on in System Settings, General, Login Items & Extensions,
+File Providers. Then the Rebuild tab shows **Show in Finder**.
 
 Finder lets a program write into the folder, but the extension refuses every change, so a file
 saved there stays on this Mac only and is never sent anywhere.
@@ -302,6 +309,7 @@ The libraries the app names itself:
 | `image` | 0.25.10 | MIT OR Apache-2.0 | salvage-core |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | salvage-core |
 | `objc2` | 0.6.5 | MIT | captain-salvage |
+| `objc2-file-provider` | 0.3.2 | Zlib OR Apache-2.0 OR MIT | captain-salvage |
 | `objc2-foundation` | 0.3.2 | MIT | captain-salvage |
 | `rars` | 0.12.4 | Apache-2.0 | salvage-core |
 | `react` | 19.3.1 | MIT | window |

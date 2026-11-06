@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Captain Salvage",
   "version": "0.1.0",
-  "identifier": "dev.exfatlens.desktop",
+  "identifier": "com.antimatterstudios.captainsalvage",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
