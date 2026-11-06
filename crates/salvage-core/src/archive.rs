@@ -70,6 +70,8 @@ pub struct ZipMember {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZipListing {
+    /// What kind of archive it is: zip, tar, tar.gz, gz, 7z and so on.
+    pub format: String,
     /// Where the list came from: the zip's own directory, or a search for file headers.
     pub source: &'static str,
     pub members: Vec<ZipMember>,
@@ -375,6 +377,7 @@ pub fn list_zip(total: u64, read: ReadRange) -> Result<ZipListing> {
     }) = directory
     {
         return Ok(ZipListing {
+            format: "zip".into(),
             source: SOURCE_DIRECTORY,
             members,
             complete: true,
@@ -387,6 +390,7 @@ pub fn list_zip(total: u64, read: ReadRange) -> Result<ZipListing> {
     let partial_count = partial.len();
     if partial_count >= search.members.len() && partial_count > 0 {
         return Ok(ZipListing {
+            format: "zip".into(),
             source: SOURCE_DIRECTORY,
             members: partial,
             complete: false,
@@ -408,6 +412,7 @@ pub fn list_zip(total: u64, read: ReadRange) -> Result<ZipListing> {
             .to_string()
     };
     Ok(ZipListing {
+        format: "zip".into(),
         source: SOURCE_HEADERS,
         complete: false,
         members: search.members,
@@ -586,7 +591,7 @@ fn compare(member: &ZipMember, crc: u32, seen: u64, expected: Option<u32>) -> Zi
 impl Session {
     fn zip_listing(&self, id: i64) -> Result<Arc<ZipListing>> {
         self.note_viewing();
-        let (total, _) = self.entry_total(id)?;
+        let (total, name) = self.entry_total(id)?;
         {
             let cache = self.zip.lock().map_err(|_| anyhow!("zip lock poisoned"))?;
             if let Some((cached, listing)) = cache.as_ref() {
@@ -595,9 +600,11 @@ impl Session {
                 }
             }
         }
-        let listing = Arc::new(list_zip(total, &|start, length| {
-            Ok(self.read_entry_range(id, start, length)?.data)
-        })?);
+        let read = |start, length| Ok(self.read_entry_range(id, start, length)?.data);
+        // Anything not recognised is read as a zip, which says plainly if it is not one.
+        let format =
+            crate::archives::format_of(&name, total, &read).unwrap_or(crate::archives::Format::Zip);
+        let listing = Arc::new(crate::archives::list(format, &name, total, &read)?);
         *self.zip.lock().map_err(|_| anyhow!("zip lock poisoned"))? = Some((id, listing.clone()));
         Ok(listing)
     }
@@ -609,13 +616,13 @@ impl Session {
 
     pub fn zip_member_check(&self, id: i64, index: u32) -> Result<ZipMemberCheck> {
         let listing = self.zip_listing(id)?;
-        let member = listing
-            .members
-            .get(index as usize)
-            .ok_or_else(|| anyhow!("this zip has no file number {index}"))?;
-        check_member(member, listing.total_bytes, &|start, length| {
+        let (total, name) = self.entry_total(id)?;
+        let read = |start, length| {
             self.note_viewing();
             Ok(self.read_entry_range(id, start, length)?.data)
-        })
+        };
+        let format =
+            crate::archives::format_of(&name, total, &read).unwrap_or(crate::archives::Format::Zip);
+        crate::archives::check(format, &listing, index, listing.total_bytes, &read)
     }
 }

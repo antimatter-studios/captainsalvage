@@ -7,12 +7,15 @@ import { fileIcon, Icon } from "./icons";
 const ROW_HEIGHT = 28;
 const ROWS_BEYOND_VIEW = 12;
 const NAVIGATION_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
-const ZIP_EXTENSIONS = new Set(["zip", "jar", "apk", "ipa", "epub", "cbz", "docx", "xlsx", "pptx", "odt", "ods", "odp", "pages", "numbers", "key"]);
+const ARCHIVE_EXTENSIONS = new Set([
+  "zip", "jar", "apk", "ipa", "epub", "cbz", "docx", "xlsx", "pptx", "odt", "ods", "odp", "pages", "numbers", "key",
+  "tar", "gz", "tgz", "xz", "txz", "bz2", "tbz", "tbz2", "zst", "tzst", "7z",
+]);
 
-/** Names that are zip files inside. Some may not be, and the list then says so. A name
- * starting "._" is a macOS companion file, which only borrows the name of the real one. */
-export function isZipName(name: string): boolean {
-  return !name.startsWith("._") && ZIP_EXTENSIONS.has(name.split(".").pop()?.toLowerCase() ?? "");
+/** Names of archives the app can look inside. Some may not be, and the list then says so. A
+ * name starting "._" is a macOS companion file, which only borrows the name of the real one. */
+export function isArchiveName(name: string): boolean {
+  return !name.startsWith("._") && ARCHIVE_EXTENSIONS.has(name.split(".").pop()?.toLowerCase() ?? "");
 }
 
 interface TreeNode {
@@ -303,7 +306,7 @@ export function ZipView({ id, name, onBack }: { id: number; name: string; onBack
             <span className="muted">
               {selected.member.size === null ? t("Size unknown") : bytes(selected.member.size)}
               {selected.member.packed !== null && `, ${t("{bytes} packed", { bytes: bytes(selected.member.packed) })}`}
-              {`, ${METHODS[selected.member.method] === "stored" ? t("stored") : METHODS[selected.member.method] ?? t("method {number}", { number: selected.member.method })}`}
+              {listing?.format === "zip" && `, ${METHODS[selected.member.method] === "stored" ? t("stored") : METHODS[selected.member.method] ?? t("method {number}", { number: selected.member.method })}`}
               {selected.member.encrypted && t(", encrypted")}
             </span>
             {checks.get(selected.member.index) && <span>{fromEngine(checks.get(selected.member.index)?.note)}</span>}

@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod archive;
+pub mod archives;
 pub mod basket;
 pub mod browse;
 pub mod canvas;

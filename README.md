@@ -70,9 +70,12 @@ treats damage as something to route around:
   recalculates, and the disk is never touched.
 - **It tests its guesses.** It walks PNG chunks, JPEG markers, MP3 frames and zip
   CRCs through a reassembled file, and reports where the file breaks.
-- **It looks inside zips.** Open a zip to see its files as a tree, read live from the
-  disk. If the zip has lost its directory, the list is rebuilt from the headers of the
-  files inside, and each file can be checked against its own checksum.
+- **It looks inside archives.** Open a zip, tar, tar.gz, tar.xz, tar.bz2, tar.zst, gz, xz,
+  bz2, zst or 7z to see its files as a tree, read live from the disk. A file whose name was
+  lost is recognised by its first bytes. If a zip has lost its directory, the list is rebuilt
+  from the headers of the files inside. A damaged tar lists as far as it can be read. Each
+  file can be checked: against its own checksum in a zip or 7z, and against the stream's
+  checksum for a compressed file.
 - **An AI can investigate with you.** Select anything and ask an agent about it, in the
   Ask agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
   through the same tools as the app, over MCP, and has no write path to the disk.
