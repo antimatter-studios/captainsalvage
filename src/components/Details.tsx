@@ -20,6 +20,7 @@ import {
 import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, stamp, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
+import { CopyReport } from "./CopyReport";
 import { SimilarPieces } from "./SimilarPieces";
 import { isArchiveName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
@@ -225,6 +226,7 @@ function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket
 }
 
 function BasketTab({ items, status, floor }: { items: BasketItem[]; status: CopyStatus | null; floor: number }) {
+  const [reportOpen, setReportOpen] = useState(false);
   const [volumes, setVolumes] = useState<VolumeChoice[] | null>(null);
   const [destination, setDestination] = useState("");
   const [minConfidence, setMinConfidence] = useState(Math.max(floor, 0.5));
@@ -356,9 +358,13 @@ function BasketTab({ items, status, floor }: { items: BasketItem[]; status: Copy
           {status.badClusters > 0 && <div className="warn">{t("{count} unreadable clusters were filled with zeros.", { count: count(status.badClusters) })}</div>}
           {status.filesFailed > 0 && <div className="warn">{t("{count} failed.", { count: count(status.filesFailed) })}</div>}
           {status.error && <div className="warn">{fromEngine(status.error)}</div>}
-          {running && <div className="detail-actions"><button onClick={() => call("copy_stop")}>{t("Stop copying")}</button></div>}
+          <div className="detail-actions">
+            {running && <button onClick={() => call("copy_stop")}>{t("Stop copying")}</button>}
+            {status.destination && <button onClick={() => setReportOpen(true)}>{t("Open the copy report")}</button>}
+          </div>
         </div>
       )}
+      {reportOpen && status?.destination && <CopyReport destination={status.destination} onClose={() => setReportOpen(false)} />}
 
       {items.length > 0 && (
         <>

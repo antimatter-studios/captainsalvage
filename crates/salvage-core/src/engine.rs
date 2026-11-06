@@ -720,6 +720,28 @@ impl Engine {
                 Ok(json!({"stopRequested": true}))
             }
             "copy_status" => Ok(serde_json::to_value(session.copy_status()?)?),
+            "copy_report" | "copy_check" => {
+                let destination = match str_of(args, "destination").filter(|path| !path.is_empty())
+                {
+                    Some(path) => PathBuf::from(path),
+                    None => PathBuf::from(session.copy_status()?.destination),
+                };
+                if destination.as_os_str().is_empty() {
+                    bail!("Nothing has been copied yet.");
+                }
+                if tool == "copy_check" {
+                    crate::report::check_copies(&destination)?;
+                    return Ok(json!({"checking": true}));
+                }
+                let (offset, limit) = page(args);
+                let filter = str_of(args, "filter").unwrap_or("all");
+                Ok(serde_json::to_value(crate::report::copy_report(
+                    &destination,
+                    filter,
+                    offset as usize,
+                    limit as usize,
+                )?)?)
+            }
             "canvas_list" => Ok(serde_json::to_value(
                 session.with_database(|database| database.canvases())?,
             )?),

@@ -18,6 +18,7 @@ pub mod media;
 pub mod mount;
 pub mod mountblock;
 pub mod regions;
+pub mod report;
 pub mod resolve;
 pub mod scan;
 pub mod script;
