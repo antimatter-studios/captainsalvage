@@ -955,6 +955,12 @@ impl Engine {
                 }
             }
             "list_volumes" => Ok(json!(list_volumes(Some(&session.path))?)),
+            "carve_candidates" => {
+                let (offset, limit) = page(args);
+                Ok(serde_json::to_value(
+                    session.carve_candidates(offset as usize, limit as usize)?,
+                )?)
+            }
             "unexplained_runs" => {
                 let (offset, limit) = page(args);
                 let minimum =

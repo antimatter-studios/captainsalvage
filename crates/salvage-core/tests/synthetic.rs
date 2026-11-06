@@ -4557,3 +4557,47 @@ fn every_engine_tool_the_window_uses_is_listed_over_mcp() {
         "the window uses these, but MCP does not list them: {missing:?}"
     );
 }
+
+/// A PNG left in free space, with no entry and no chain, is found by carving, and its end
+/// is read from its own chunks.
+#[test]
+fn a_lost_png_in_free_space_is_carved_with_its_measured_length() {
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    for (kind, body) in [
+        (&b"IHDR"[..], vec![0u8; 13]),
+        (b"IDAT", vec![7u8; 6000]),
+        (b"IEND", Vec::new()),
+    ] {
+        png.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        png.extend_from_slice(kind);
+        png.extend_from_slice(&body);
+        png.extend_from_slice(&[0u8; 4]);
+    }
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+        ],
+    );
+    // Not allocated and named by nothing: a deleted file whose entry is gone.
+    b.put(40, 0, &png);
+    let (engine, _session, dir) = engine_with_image("carve", b.image);
+    let page = call(&engine, "carve_candidates", json!({}));
+    let found: Vec<&serde_json::Value> = page["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|candidate| candidate["kind"] == "png")
+        .collect();
+    assert_eq!(found.len(), 1, "{page}");
+    assert_eq!(found[0]["startCluster"], 40);
+    assert_eq!(found[0]["bytes"], png.len() as u64);
+    assert_eq!(found[0]["endBy"], "structure");
+    let _ = std::fs::remove_dir_all(dir);
+}
