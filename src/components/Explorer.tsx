@@ -102,8 +102,9 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
   }, [open, head, loaded, props.floor, props.revision]);
 
   const name = row.name || (row.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
-  // Only top-level folders are pieces. Folders inside them come along when their piece is placed.
-  const piece = depth === 0 && props.canvasPieces !== null;
+  // Top-level folders are the pieces. A folder inside one can be placed too, as a layer of its
+  // own, and is only marked used when it was placed itself.
+  const piece = props.canvasPieces !== null;
   const used = piece && (props.canvasPieces?.has(head) ?? false);
   const key = `folder:${head}`;
   return (

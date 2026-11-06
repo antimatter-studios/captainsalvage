@@ -477,7 +477,6 @@ const strings: Record<string, string> = {
   "Pieces hold more than one copy of this file": "Die Teile enthalten mehr als eine Kopie dieser Datei",
   "Place a first piece before putting the rest away.": "Platzieren Sie ein erstes Teil, bevor Sie den Rest wegräumen.",
   "Place in tree": "Platz im Baum",
-  "Place the piece it belongs to instead.": "Platzieren Sie stattdessen das Teil, zu dem er gehört.",
   "Plausible": "Plausibel",
   "PNG signature is missing.": "Die PNG-Signatur fehlt.",
   "PNG start": "PNG-Beginn",
@@ -593,7 +592,6 @@ const strings: Record<string, string> = {
   "Text": "Text",
   "text": "Text",
   "That entry is not a copy of this file.": "Dieser Eintrag ist keine Kopie dieser Datei.",
-  "That folder is inside another piece.": "Dieser Ordner liegt in einem anderen Teil.",
   "That piece is already on this canvas.": "Dieses Teil ist schon auf dieser Leinwand.",
   "The baseline only covers changes after it was recorded.": "Die Referenz erfasst nur Änderungen nach ihrer Aufnahme.",
   "The canvas has no root to move it into.": "Die Leinwand hat keine Spitze, in die es verschoben werden kann.",
@@ -832,6 +830,10 @@ const strings: Record<string, string> = {
   "{count} copies, choose": "{count} Kopien, wählen",
   "{picked} clashes picked for you": "{picked} Konflikte für Sie entschieden",
   "{picked} clashes picked for you, {needed} need you": "{picked} Konflikte für Sie entschieden, {needed} brauchen Sie",
+  "That is a folder.": "Das ist ein Ordner.",
+  "Place a folder as a piece instead.": "Platzieren Sie einen Ordner stattdessen als Teil.",
+  "A file cannot be the top of the tree.": "Eine Datei kann nicht die Spitze des Baums sein.",
+  "Place a piece or make a folder first.": "Platzieren Sie zuerst ein Teil oder legen Sie einen Ordner an.",
 };
 
 export default strings;

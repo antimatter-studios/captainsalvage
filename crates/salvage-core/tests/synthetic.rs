@@ -3829,12 +3829,19 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
         json!({"canvas": canvas, "head": 20})
     )
     .contains("already on this canvas"));
-    assert!(refusal(
+    // A folder from inside a piece can be placed as a layer of its own, and taken off again.
+    let inner = call_as_person(
         &engine,
         "canvas_place",
-        json!({"canvas": canvas, "head": 21})
-    )
-    .contains("inside another piece"));
+        json!({"canvas": canvas, "head": 21}),
+    )["id"]
+        .as_i64()
+        .expect("inner");
+    call_as_person(
+        &engine,
+        "canvas_remove",
+        json!({"canvas": canvas, "item": inner}),
+    );
     assert!(refusal(
         &engine,
         "canvas_move",
@@ -4493,6 +4500,7 @@ fn every_engine_tool_the_window_uses_is_listed_over_mcp() {
         "canvas_leftovers",
         "canvas_move",
         "canvas_place",
+        "canvas_place_file",
         "canvas_remove",
         "canvas_rename",
         "canvas_rename_item",
@@ -4697,5 +4705,78 @@ fn clashing_copies_that_measure_the_same_go_to_the_upper_layer_and_ask_the_perso
     let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
     assert_eq!(top["files"][0]["decidedBy"], "person");
     assert_eq!(top["clashesNeedYou"], 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// One file from a piece can be placed on its own, and takes its place as the upper layer.
+#[test]
+fn a_single_file_can_be_laid_over_a_folder_as_its_own_layer() {
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+        ],
+    );
+    for (folder, song) in [(20u32, 21u32), (30, 31)] {
+        b.directory(
+            folder,
+            &[entry_set(
+                "song.mp3",
+                false,
+                song,
+                CLUSTER as u64,
+                true,
+                true,
+            )],
+        );
+        b.put(song, 0, b"ID3\x04");
+        b.put(song, 16, &noise(song, CLUSTER - 16));
+    }
+    let (engine, _session, dir) = engine_with_image("file-layer", b.image);
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Files"}))["id"]
+        .as_i64()
+        .expect("id");
+    let root = call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 20}),
+    )["id"]
+        .as_i64()
+        .expect("root");
+    let found = call(&engine, "search", json!({"query": "song.mp3"}));
+    let other = found["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["firstCluster"] == 31)
+        .expect("the copy in piece 30")["id"]
+        .clone();
+    assert!(refusal(
+        &engine,
+        "canvas_place_file",
+        json!({"canvas": canvas, "entry": 999_999, "place": {"item": root}})
+    )
+    .contains("no file"));
+    call_as_person(
+        &engine,
+        "canvas_place_file",
+        json!({"canvas": canvas, "entry": other, "place": {"item": root}}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    assert_eq!(
+        top["files"][0]["copies"].as_array().expect("copies").len(),
+        2
+    );
+    assert_eq!(
+        top["files"][0]["chosen"]["firstCluster"], 31,
+        "the file placed later is on top"
+    );
+    assert_eq!(top["files"][0]["decidedBy"], "layer");
     let _ = std::fs::remove_dir_all(dir);
 }
