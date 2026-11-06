@@ -55,9 +55,9 @@ export function clock(millis: number): string {
   return new Date(millis).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Shows an exFAT date as a date and time, without the ISO separator. */
+/** Shows an exFAT date as a date and time, without the ISO separator, and its zone when the entry recorded one. */
 export function stamp(value: string | null): string {
-  return value ? value.replace("T", " ") : t("unknown");
+  return value ? value.replace("T", " ").replace(/([+-]\d\d:\d\d)$/, " UTC$1") : t("unknown");
 }
 
 const VERDICT_LABELS: Record<string, () => string> = {

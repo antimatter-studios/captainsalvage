@@ -37,6 +37,8 @@ const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 /// Files larger than this are copied and hashed, but not walked by format.
 const MAX_FORMAT_CHECK_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NAME_BYTES: usize = 240;
+/// "2024-05-01": an offset sign can only come after the date.
+const DATE_LENGTH: usize = 10;
 /// How often a copy asks the destination to commit its cache. Doing it after every file
 /// cost a real SD card 94% of its speed: 0.83 MB/s against 13.5 MB/s with plain `fsync`.
 const COMMIT_INTERVAL: Duration = Duration::from_secs(60);
@@ -364,7 +366,8 @@ fn is_partial(row: &Row) -> bool {
 /// Parses an entry's stored date. exFAT dates are local, so this is approximate
 /// by up to the time zone difference, and is used only as the copy's date.
 pub(crate) fn modified_time(text: &str) -> Option<SystemTime> {
-    let digits: Vec<i64> = text
+    let (clock, offset) = split_offset(text);
+    let digits: Vec<i64> = clock
         .split(|c: char| !c.is_ascii_digit())
         .filter(|part| !part.is_empty())
         .filter_map(|part| part.parse().ok())
@@ -372,16 +375,67 @@ pub(crate) fn modified_time(text: &str) -> Option<SystemTime> {
     let [year, month, day, hour, minute, second] = digits[..] else {
         return None;
     };
+    let seconds = match offset {
+        // The entry said which zone it was written in.
+        Some(offset) => seconds_as_utc(year, month, day, hour, minute, second) - offset,
+        // exFAT then keeps the local time of an unknown zone. The zone of this Mac is the
+        // best guess, which is what macOS itself assumes.
+        None => local_seconds(year, month, day, hour, minute, second)?,
+    };
+    u64::try_from(seconds)
+        .ok()
+        .map(|value| UNIX_EPOCH + Duration::from_secs(value))
+}
+
+/// Splits "2024-05-01T12:00:00+02:00" into the clock time and the offset in seconds.
+fn split_offset(text: &str) -> (&str, Option<i64>) {
+    let Some(position) = text
+        .rfind(['+', '-'])
+        .filter(|&position| position > DATE_LENGTH)
+    else {
+        return (text, None);
+    };
+    let (clock, offset) = text.split_at(position);
+    let sign = if offset.starts_with('-') { -1 } else { 1 };
+    let mut parts = offset[1..].split(':').map(|part| part.parse::<i64>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(hours), Some(minutes)) => (clock, Some(sign * (hours * 3600 + minutes * 60))),
+        _ => (text, None),
+    }
+}
+
+fn seconds_as_utc(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64) -> i64 {
     let shifted = if month <= 2 { year - 1 } else { year };
     let era = shifted.div_euclid(400);
     let year_of_era = shifted.rem_euclid(400);
     let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     let days = era * 146_097 + day_of_era - 719_468;
-    let seconds = days * 86_400 + hour * 3600 + minute * 60 + second;
-    u64::try_from(seconds)
-        .ok()
-        .map(|value| UNIX_EPOCH + Duration::from_secs(value))
+    days * 86_400 + hour * 3600 + minute * 60 + second
+}
+
+/// A clock time in this Mac's zone, with its summer time rules, as seconds since 1970.
+fn local_seconds(
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+) -> Option<i64> {
+    // SAFETY: a zeroed `tm` is a valid starting value, and mktime only reads and fills it.
+    let mut fields: libc::tm = unsafe { std::mem::zeroed() };
+    fields.tm_year = i32::try_from(year - 1900).ok()?;
+    fields.tm_mon = i32::try_from(month - 1).ok()?;
+    fields.tm_mday = i32::try_from(day).ok()?;
+    fields.tm_hour = i32::try_from(hour).ok()?;
+    fields.tm_min = i32::try_from(minute).ok()?;
+    fields.tm_sec = i32::try_from(second).ok()?;
+    // Let the zone's own rules decide whether summer time applied.
+    fields.tm_isdst = -1;
+    // SAFETY: `fields` is a valid, initialised `tm`.
+    let seconds = unsafe { libc::mktime(&mut fields) };
+    (seconds != -1).then_some(seconds)
 }
 
 fn hash_file(path: &Path) -> Result<String> {
@@ -1039,4 +1093,39 @@ pub fn list_volumes(source: Option<&Path>) -> Result<Vec<Value>> {
         }));
     }
     Ok(volumes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_copy_date_uses_the_recorded_zone_or_else_this_macs() {
+        let seconds = |text: &str| {
+            modified_time(text)
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|since| since.as_secs() as i64)
+        };
+        // 12:00 at UTC+2 is 10:00 UTC.
+        assert_eq!(seconds("2024-05-01T12:00:00+02:00"), Some(1_714_557_600));
+        assert_eq!(seconds("2024-05-01T05:00:00-05:00"), Some(1_714_557_600));
+        // With no zone recorded, the clock time is read in this Mac's zone, so turning the
+        // result back into local time gives the same clock time.
+        let local = seconds("2024-05-01T12:00:00").expect("local time");
+        // SAFETY: a zeroed `tm` is valid, and localtime_r fills it from a valid time.
+        let mut fields: libc::tm = unsafe { std::mem::zeroed() };
+        let at: libc::time_t = local;
+        unsafe { libc::localtime_r(&at, &mut fields) };
+        assert_eq!(
+            (
+                fields.tm_year + 1900,
+                fields.tm_mon + 1,
+                fields.tm_mday,
+                fields.tm_hour,
+                fields.tm_min
+            ),
+            (2024, 5, 1, 12, 0)
+        );
+        assert_eq!(seconds("not a date"), None);
+    }
 }
