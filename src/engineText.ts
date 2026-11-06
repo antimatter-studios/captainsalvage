@@ -196,6 +196,11 @@ export const ENGINE_TEXT: string[] = [
   "Claude is still answering.",
   "Stop it first, or wait for it to finish.",
   "starting claude",
+  // Keeping volumes unmounted.
+  "Only the person using the app can let a volume mount again.",
+  "A volume UUID is needed.",
+  "blocked must be true or false",
+  "saving the mount blocks",
   // Rebuilding the tree on a canvas.
   "A choice needs the path of a file.",
   "A folder name cannot contain a slash.",

@@ -13,6 +13,7 @@ pub mod map;
 pub mod mcp;
 pub mod media;
 pub mod mount;
+pub mod mountblock;
 pub mod regions;
 pub mod resolve;
 pub mod scan;

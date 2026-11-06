@@ -302,6 +302,21 @@ impl Engine {
                     internal,
                 )?)?)
             }
+            "mount_blocks" => Ok(json!({"blocks": crate::mountblock::list()})),
+            "mount_block_set" => {
+                let blocked = args
+                    .get("blocked")
+                    .and_then(Value::as_bool)
+                    .context("blocked must be true or false")?;
+                let blocks = crate::mountblock::set(
+                    &crate::workspace::Workspace::root()?,
+                    need_str(args, "uuid")?,
+                    str_of(args, "name").unwrap_or_default(),
+                    blocked,
+                    author == AUTHOR_USER,
+                )?;
+                Ok(json!({"blocks": blocks}))
+            }
             "open_volume" => {
                 let session = self.open(need_str(args, "path")?)?;
                 Ok(session.overview())
