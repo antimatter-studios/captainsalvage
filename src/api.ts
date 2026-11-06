@@ -306,6 +306,18 @@ export interface CanvasListing {
   clashes: number;
 }
 
+/** Where Claude thinks a piece belongs, waiting for the person to accept or dismiss it. */
+export interface CanvasSuggestion {
+  id: number;
+  head: number;
+  placeItem: number | null;
+  placeHead: number | null;
+  merge: boolean;
+  note: string;
+  author: string;
+  createdAtMillis: number;
+}
+
 export interface UnusedPieces {
   rows: Row[];
   total: number;

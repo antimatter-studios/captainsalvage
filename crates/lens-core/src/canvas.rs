@@ -214,6 +214,7 @@ impl MapDb {
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute("DELETE FROM canvas_items WHERE canvas = ?1", [canvas])?;
         transaction.execute("DELETE FROM canvas_choices WHERE canvas = ?1", [canvas])?;
+        transaction.execute("DELETE FROM canvas_suggestions WHERE canvas = ?1", [canvas])?;
         transaction.execute("DELETE FROM canvases WHERE id = ?1", [canvas])?;
         transaction.commit()?;
         Ok(())
@@ -700,6 +701,133 @@ impl MapDb {
             .take(limit as usize)
             .collect();
         Ok(listing)
+    }
+}
+
+/// A placement someone other than the person proposed, for the person to accept or dismiss.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Suggestion {
+    pub id: i64,
+    pub head: u32,
+    pub place_item: Option<i64>,
+    pub place_head: Option<u32>,
+    pub merge: bool,
+    pub note: String,
+    pub author: String,
+    pub created_at_millis: u64,
+}
+
+impl MapDb {
+    /// Records where a piece might go, without placing it. Claude suggests; the person decides.
+    pub fn canvas_suggest(
+        &self,
+        canvas: i64,
+        head: u32,
+        place: Place,
+        merge: bool,
+        note: &str,
+        author: &str,
+    ) -> Result<i64> {
+        self.need_canvas(canvas)?;
+        let top: Option<Option<u32>> = self
+            .connection
+            .query_row("SELECT parent FROM nodes WHERE head = ?1", [head], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        match top {
+            None => bail!("there is no folder at cluster {head}"),
+            Some(Some(_)) => {
+                bail!("That folder is inside another piece. Place the piece it belongs to instead.")
+            }
+            Some(None) => {}
+        }
+        if self.used_heads(canvas)?.contains(&head) {
+            bail!("That piece is already on this canvas.");
+        }
+        // Checked now, so a suggestion that names a place that does not exist is refused at once.
+        let resolved = self.resolve_place(canvas, place)?;
+        let (item, at) = match resolved {
+            None => (None, None),
+            Some((item, at)) => (Some(item), at),
+        };
+        if note.trim().is_empty() {
+            bail!("A suggestion needs a note saying why.");
+        }
+        self.connection.execute(
+            "INSERT INTO canvas_suggestions (canvas, head, place_item, place_head, merge, note, author, state, created_at_millis) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8)",
+            params![canvas, head, item, at, merge, note.trim(), author, now_millis() as i64],
+        )?;
+        Ok(self.connection.last_insert_rowid())
+    }
+
+    /// Suggestions still waiting for the person, oldest first.
+    pub fn canvas_suggestions(&self, canvas: i64) -> Result<Vec<Suggestion>> {
+        self.need_canvas(canvas)?;
+        // One whose piece has since been placed, or whose place is gone, has nothing left to ask.
+        let used = self.used_heads(canvas)?;
+        let items: HashSet<i64> = self
+            .canvas_items(canvas)?
+            .iter()
+            .map(|item| item.id)
+            .collect();
+        let mut statement = self.connection.prepare_cached(
+            "SELECT id, head, place_item, place_head, merge, note, author, created_at_millis FROM canvas_suggestions \
+             WHERE canvas = ?1 AND state = 'open' ORDER BY id",
+        )?;
+        let rows = statement
+            .query_map([canvas], |row| {
+                Ok(Suggestion {
+                    id: row.get(0)?,
+                    head: row.get(1)?,
+                    place_item: row.get(2)?,
+                    place_head: row.get(3)?,
+                    merge: row.get(4)?,
+                    note: row.get(5)?,
+                    author: row.get(6)?,
+                    created_at_millis: row.get::<_, i64>(7)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| {
+                !used.contains(&row.head) && row.place_item.is_none_or(|item| items.contains(&item))
+            })
+            .collect())
+    }
+
+    /// Places a suggested piece where it was suggested, and closes the suggestion.
+    pub fn canvas_accept(&self, canvas: i64, suggestion: i64) -> Result<i64> {
+        let found = self
+            .canvas_suggestions(canvas)?
+            .into_iter()
+            .find(|row| row.id == suggestion)
+            .with_context(|| format!("there is no open suggestion {suggestion}"))?;
+        let place = Place {
+            item: found.place_item,
+            head: found.place_head,
+        };
+        let item = self.canvas_place(canvas, found.head, place, found.merge)?;
+        self.connection.execute(
+            "UPDATE canvas_suggestions SET state = 'accepted' WHERE id = ?1",
+            [suggestion],
+        )?;
+        Ok(item)
+    }
+
+    pub fn canvas_dismiss(&self, canvas: i64, suggestion: i64) -> Result<()> {
+        self.need_canvas(canvas)?;
+        let changed = self.connection.execute(
+            "UPDATE canvas_suggestions SET state = 'dismissed' WHERE id = ?1 AND canvas = ?2 AND state = 'open'",
+            params![suggestion, canvas],
+        )?;
+        if changed == 0 {
+            bail!("there is no open suggestion {suggestion}");
+        }
+        Ok(())
     }
 }
 

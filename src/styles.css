@@ -730,3 +730,11 @@ video.inline-preview { max-height: 380px; background: #000; }
 .similar-name { text-align: left; font-weight: 600; }
 .similar-wait { font-size: 12px; }
 .canvas-similar { margin: 2px 8px 6px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
+
+/* Claude's suggestions for a canvas. */
+.suggestions { margin: 4px 6px 12px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--surface)); border: 0.5px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.suggestions h4 { margin: 0 0 6px; font-size: 12px; display: flex; align-items: center; gap: 5px; }
+.suggestion { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 0.5px solid var(--line); }
+.suggestion:first-of-type { border-top: 0; }
+.suggestion-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
+.suggestion button { flex: none; font-size: 12px; }

@@ -229,6 +229,8 @@ export const ENGINE_TEXT: string[] = [
   "A folder you made has no piece to swap.",
   "Something is placed inside a folder of this piece.",
   "Move it out first.",
+  "A suggestion needs a note saying why.",
+  "there is no open suggestion {suggestion}",
 ];
 
 /** Errors macOS itself gives, which the engine passes on. They are not in the Rust source. */

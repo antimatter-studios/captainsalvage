@@ -690,6 +690,26 @@ impl Engine {
                     |database| database.canvas_list(canvas, &path, offset, limit),
                 )?)?)
             }
+            "canvas_suggestions" => {
+                let canvas = need_i64(args, "canvas")?;
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.canvas_suggestions(canvas),
+                )?)?)
+            }
+            "canvas_suggest" => {
+                let id = session.with_database(|database| {
+                    database.canvas_suggest(
+                        need_i64(args, "canvas")?,
+                        need_u32(args, "head")?,
+                        place_of(args)?,
+                        bool_of(args, "merge", false),
+                        need_str(args, "note")?,
+                        author,
+                    )
+                })?;
+                self.emit("canvas-changed", json!({"canvas": args.get("canvas")}));
+                Ok(json!({"id": id}))
+            }
             "similar_pieces" => {
                 let head = need_u32(args, "head")?;
                 let limit = u64_of(args, "limit").unwrap_or(20) as usize;
@@ -707,7 +727,8 @@ impl Engine {
             }
             "canvas_create" | "canvas_rename" | "canvas_delete" | "canvas_place"
             | "canvas_folder" | "canvas_move" | "canvas_rename_item" | "canvas_remove"
-            | "canvas_leftovers" | "canvas_choose" | "canvas_swap" => {
+            | "canvas_leftovers" | "canvas_choose" | "canvas_swap" | "canvas_accept"
+            | "canvas_dismiss" => {
                 only_the_person(author)?;
                 let result = session.with_database(|database| -> Result<Value> {
                     Ok(match tool {
@@ -750,6 +771,17 @@ impl Engine {
                                 need_i64(args, "canvas")?,
                                 need_i64(args, "item")?,
                                 str_of(args, "name"),
+                            )?;
+                            json!({"ok": true})
+                        }
+                        "canvas_accept" => json!({"id": database.canvas_accept(
+                            need_i64(args, "canvas")?,
+                            need_i64(args, "suggestion")?,
+                        )?}),
+                        "canvas_dismiss" => {
+                            database.canvas_dismiss(
+                                need_i64(args, "canvas")?,
+                                need_i64(args, "suggestion")?,
                             )?;
                             json!({"ok": true})
                         }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from "react";
-import { call, type Canvas, type CanvasItem, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
+import { call, type Canvas, type CanvasItem, type CanvasSuggestion, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
@@ -369,6 +369,75 @@ function FolderContents({ path, depth, around, shared }: { path: string[]; depth
   );
 }
 
+/** A found folder's name in the window, or the name the disk lost. */
+function foundName(row: Row | null | undefined, head: number): string {
+  return row?.name || (row?.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
+}
+
+/** Claude's suggestions for this canvas, each with its reason, for the person to take or leave. */
+function Suggestions({ canvas, suggestions, items, changed, fail }: {
+  canvas: number;
+  suggestions: CanvasSuggestion[];
+  items: Map<number, CanvasItem>;
+  changed: () => void;
+  fail: (reason: unknown) => void;
+}) {
+  const [names, setNames] = useState<Map<number, Row | null>>(new Map());
+  // The folders to name, as a key that only changes when they do. Depending on the items map
+  // itself would run this on every draw, since the map is rebuilt each time.
+  const heads = new Set<number>();
+  for (const item of suggestions) {
+    heads.add(item.head);
+    if (item.placeHead !== null) heads.add(item.placeHead);
+    const target = item.placeItem !== null ? items.get(item.placeItem) : undefined;
+    if (target?.head != null) heads.add(target.head);
+  }
+  const key = [...heads].sort((a, b) => a - b).join(",");
+  useEffect(() => {
+    let current = true;
+    const wanted = key ? key.split(",").map(Number) : [];
+    Promise.all(wanted.map((head) => call<Row | null>("node", { head }).then((row) => [head, row] as const).catch(() => [head, null] as const)))
+      .then((pairs) => current && setNames(new Map(pairs)))
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [key]);
+
+  const where = (item: CanvasSuggestion): string => {
+    if (item.placeItem === null) return t("as the top of the tree");
+    if (item.placeHead !== null) return t("inside {folder}", { folder: foundName(names.get(item.placeHead), item.placeHead) });
+    const target = items.get(item.placeItem);
+    const name = target?.name ?? (target?.head != null ? foundName(names.get(target.head), target.head) : t("Unnamed folder"));
+    return item.merge ? t("merged with {folder}", { folder: name }) : t("inside {folder}", { folder: name });
+  };
+
+  async function act(tool: "canvas_accept" | "canvas_dismiss", suggestion: number) {
+    try {
+      await call(tool, { canvas, suggestion });
+      changed();
+    } catch (reason) {
+      fail(reason);
+    }
+  }
+
+  return (
+    <div className="suggestions">
+      <h4><Icon name="sparkle" size={13} /> {t("Claude suggests")}</h4>
+      {suggestions.map((item) => (
+        <div key={item.id} className="suggestion">
+          <div className="suggestion-text">
+            <strong>{t("Put {piece} {where}", { piece: foundName(names.get(item.head), item.head), where: where(item) })}</strong>
+            <span className="muted">{item.note}</span>
+          </div>
+          <button className="primary" onClick={() => void act("canvas_accept", item.id)}>{t("Accept")}</button>
+          <button onClick={() => void act("canvas_dismiss", item.id)}>{t("Dismiss")}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The Rebuild view: one canvas, its rebuilt tree, and the pieces left to place. */
 export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry }: {
   canvases: Canvas[];
@@ -380,6 +449,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
 }) {
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [unused, setUnused] = useState<UnusedPieces | null>(null);
+  const [suggestions, setSuggestions] = useState<CanvasSuggestion[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [naming, setNaming] = useState<"canvas" | "rename" | "root" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -398,11 +468,13 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     Promise.all([
       call<CanvasItem[]>("canvas_items", { canvas }),
       call<UnusedPieces>("canvas_unused", { canvas, limit: 1 }),
+      call<CanvasSuggestion[]>("canvas_suggestions", { canvas }),
     ])
-      .then(([found, left]) => {
+      .then(([found, left, ideas]) => {
         if (!current) return;
         setItems(found);
         setUnused(left);
+        setSuggestions(ideas);
       })
       .catch((reason) => current && fail(reason));
     return () => {
@@ -508,6 +580,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         <Icon name="folder" size={28} />
         <p>{t("Drag a piece from the sidebar here. The first piece becomes the top of the tree.")}</p>
         <p className="muted">{t("The sidebar lists the largest pieces first, so start with those.")}</p>
+        <p className="muted">{t("Or ask Claude, in the chat, where the pieces belong. Its suggestions appear here for you to accept or dismiss.")}</p>
         {naming === "root" ? (
           <NameInput initial="" onDone={(name) => void startWithFolder(name)} />
         ) : (
@@ -571,7 +644,12 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         )}
       </div>
       {error && <p className="warn rebuild-error">{fromEngine(error.replace(/^Error: /, ""))}</p>}
-      <div className="rebuild-body">{body}</div>
+      <div className="rebuild-body">
+        {shared && suggestions.length > 0 && (
+          <Suggestions canvas={shared.canvas} suggestions={suggestions} items={shared.items} changed={changed} fail={fail} />
+        )}
+        {body}
+      </div>
       <p className="rebuild-foot muted">{t("This only changes how the app arranges what it found. Nothing is written to the disk.")}</p>
     </section>
   );

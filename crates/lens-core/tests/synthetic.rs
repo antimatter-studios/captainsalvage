@@ -3998,3 +3998,149 @@ fn similar_pieces_are_found_by_shared_files_and_can_be_swapped_in() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn claude_suggests_placements_and_only_the_person_accepts_them() {
+    let (engine, _session, dir) = engine_with_image("suggest", build_jigsaw_volume());
+    let canvas = call_as_person(&engine, "canvas_create", json!({"name": "Ideas"}))["id"]
+        .as_i64()
+        .expect("id");
+
+    // Claude may suggest, with a reason, and the canvas is unchanged until the person acts.
+    let first = call(
+        &engine,
+        "canvas_suggest",
+        json!({"canvas": canvas, "head": 20, "note": "Holds the most files."}),
+    )["id"]
+        .as_i64()
+        .expect("id");
+    assert_eq!(
+        call(&engine, "canvas_items", json!({"canvas": canvas}))
+            .as_array()
+            .expect("items")
+            .len(),
+        0
+    );
+    assert!(
+        engine
+            .call(
+                "canvas_suggest",
+                &json!({"canvas": canvas, "head": 40, "note": "  "}),
+                AUTHOR_CLAUDE
+            )
+            .is_err(),
+        "a suggestion needs a reason"
+    );
+    assert!(
+        engine
+            .call(
+                "canvas_accept",
+                &json!({"canvas": canvas, "suggestion": first}),
+                AUTHOR_CLAUDE
+            )
+            .is_err(),
+        "Claude cannot accept its own"
+    );
+
+    let root = call_as_person(
+        &engine,
+        "canvas_accept",
+        json!({"canvas": canvas, "suggestion": first}),
+    )["id"]
+        .as_i64()
+        .expect("root");
+    assert_eq!(
+        call(&engine, "canvas_suggestions", json!({"canvas": canvas}))
+            .as_array()
+            .expect("open")
+            .len(),
+        0
+    );
+    assert_eq!(
+        call(&engine, "canvas_items", json!({"canvas": canvas}))[0]["head"],
+        20
+    );
+
+    // A suggestion into a place, and a merge, carry over when accepted.
+    let merge = call(&engine, "canvas_suggest", json!({"canvas": canvas, "head": 30, "place": {"item": root}, "merge": true, "note": "Shares shared.jpg."}))["id"].as_i64().expect("id");
+    let inside = call(&engine, "canvas_suggest", json!({"canvas": canvas, "head": 50, "place": {"item": root, "head": 21}, "note": "Also music."}))["id"].as_i64().expect("id");
+    let dismissed = call(
+        &engine,
+        "canvas_suggest",
+        json!({"canvas": canvas, "head": 40, "note": "Probably nothing."}),
+    )["id"]
+        .as_i64()
+        .expect("id");
+    let open = call(&engine, "canvas_suggestions", json!({"canvas": canvas}));
+    assert_eq!(open.as_array().expect("open").len(), 3);
+    assert_eq!(open[0]["author"], "claude");
+    call_as_person(
+        &engine,
+        "canvas_accept",
+        json!({"canvas": canvas, "suggestion": merge}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_accept",
+        json!({"canvas": canvas, "suggestion": inside}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_dismiss",
+        json!({"canvas": canvas, "suggestion": dismissed}),
+    );
+    let top = call(&engine, "canvas_tree", json!({"canvas": canvas}));
+    assert!(
+        names(&top, "files").contains(&"b1.mp3".to_string()),
+        "merged into the top"
+    );
+    assert_eq!(
+        names(
+            &call(
+                &engine,
+                "canvas_tree",
+                json!({"canvas": canvas, "path": ["sub"]})
+            ),
+            "folders"
+        ),
+        ["lost:50"]
+    );
+    assert_eq!(
+        call(&engine, "canvas_suggestions", json!({"canvas": canvas}))
+            .as_array()
+            .expect("open")
+            .len(),
+        0
+    );
+
+    // A suggestion whose piece was placed by hand meanwhile drops out by itself.
+    call(
+        &engine,
+        "canvas_suggest",
+        json!({"canvas": canvas, "head": 40, "note": "Second thoughts."}),
+    );
+    call_as_person(
+        &engine,
+        "canvas_place",
+        json!({"canvas": canvas, "head": 40}),
+    );
+    assert_eq!(
+        call(&engine, "canvas_suggestions", json!({"canvas": canvas}))
+            .as_array()
+            .expect("open")
+            .len(),
+        0
+    );
+    assert!(
+        engine
+            .call(
+                "canvas_suggest",
+                &json!({"canvas": canvas, "head": 40, "note": "Again."}),
+                AUTHOR_CLAUDE
+            )
+            .is_err(),
+        "a used piece cannot be suggested"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
