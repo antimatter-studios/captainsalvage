@@ -226,6 +226,9 @@ export const ENGINE_TEXT: string[] = [
   "head is not a cluster number",
   "path holds a name that is not text",
   "path must be a list of folder names",
+  "A folder you made has no piece to swap.",
+  "Something is placed inside a folder of this piece.",
+  "Move it out first.",
 ];
 
 /** Errors macOS itself gives, which the engine passes on. They are not in the Rust source. */

@@ -3,6 +3,7 @@ import { call, type Canvas, type CanvasItem, type CanvasListing, type CanvasPlac
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
+import { SimilarPieces } from "./SimilarPieces";
 
 /** What a dragged sidebar piece carries: the first cluster of its folder. */
 export const PIECE_TYPE = "application/x-salvage-piece";
@@ -129,6 +130,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   const [open, setOpen] = useState(Boolean(startOpen));
   const [holding, setHolding] = useState(false);
   const [naming, setNaming] = useState<"new" | "rename" | null>(null);
+  const [similar, setSimilar] = useState(false);
   const item = folder.items.length === 1 ? shared.items.get(folder.items[0]) : undefined;
   const place = placeOf(folder, around);
   const inside = folder.items.length > 0 ? folder.items[0] : around;
@@ -157,6 +159,17 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
     if (!item) return;
     try {
       await call("canvas_rename_item", { canvas: shared.canvas, item: item.id, name: name ?? (item.kind === "folder" ? label : null) });
+      shared.changed();
+    } catch (reason) {
+      shared.fail(reason);
+    }
+  }
+
+  async function swap(piece: Row) {
+    if (!item || piece.head === null) return;
+    try {
+      await call("canvas_swap", { canvas: shared.canvas, item: item.id, head: piece.head });
+      setSimilar(false);
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -227,6 +240,11 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
                 <Icon name="plus" size={13} />
               </button>
             )}
+            {item?.head != null && (
+              <button className="icon-button" title={t("Similar pieces")} aria-label={t("Similar pieces")} aria-expanded={similar} onClick={() => setSimilar(!similar)}>
+                <Icon name="puzzle" size={13} />
+              </button>
+            )}
             {item && (
               <button className="icon-button" title={t("Rename")} aria-label={t("Rename")} onClick={() => setNaming("rename")}>
                 <Icon name="pencil" size={13} />
@@ -244,6 +262,11 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
         <div className="canvas-new-folder" style={{ paddingLeft: 26 + (depth + 1) * INDENT }}>
           <Icon name="folder" />
           <NameInput initial="" onDone={(name) => void makeFolder(name)} />
+        </div>
+      )}
+      {similar && item?.head != null && (
+        <div className="canvas-similar" style={{ marginLeft: 23 + depth * INDENT }}>
+          <SimilarPieces head={item.head} onSwap={(piece) => void swap(piece)} used={new Set([...shared.items.values()].flatMap((found) => (found.head !== null ? [found.head] : [])))} />
         </div>
       )}
       {open && <FolderContents path={path} depth={depth + 1} around={inside} shared={shared} />}
