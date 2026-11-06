@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
 import { bytes, count, displayPath, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
+import { startPieceDrag } from "./RebuildView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 
 const PAGE_SIZE = 200;
@@ -35,6 +36,8 @@ interface RowProps {
   selectedKey: string | null;
   /** The folder whose files are showing. It stays marked while other things are selected. */
   openKey: string | null;
+  /** While a canvas is showing, top-level folders are its pieces: unused ones can be dragged. */
+  canvasPieces: Set<number> | null;
   onEntry: (row: Row) => void;
   onFolder: (row: Row) => void;
   basket: Set<string>;
@@ -99,6 +102,9 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
   }, [open, head, loaded, props.floor, props.revision]);
 
   const name = row.name || (row.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
+  // Only top-level folders are pieces. Folders inside them come along when their piece is placed.
+  const piece = depth === 0 && props.canvasPieces !== null;
+  const used = piece && (props.canvasPieces?.has(head) ?? false);
   const key = `folder:${head}`;
   return (
     <>
@@ -107,12 +113,14 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         ref={(element) => {
           if (element) folderActions.set(element, { isOpen: open, setOpen, select: () => props.onFolder(row) });
         }}
-        className={rowClass(key, props.selectedKey, props.openKey)}
+        className={rowClass(key, props.selectedKey, props.openKey) + (used ? " row-used" : "")}
         aria-current={props.openKey === key ? "true" : undefined}
         style={{ paddingLeft: 6 + depth * 14 }}
         aria-expanded={open}
         data-depth={depth}
-        title={row.hint ? t("Contains: {hint}", { hint: row.hint }) : undefined}
+        draggable={piece && !used}
+        onDragStart={(event) => startPieceDrag(event, head)}
+        title={used ? t("Already on the canvas") : piece ? t("Drag onto the canvas") : row.hint ? t("Contains: {hint}", { hint: row.hint }) : undefined}
         onClick={() => {
           setOpen(!open);
           props.onFolder(row);

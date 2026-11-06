@@ -3903,3 +3903,13 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Writes the jigsaw volume to `LENS_JIGSAW_IMAGE`, for testing the window against it.
+/// Run with: LENS_JIGSAW_IMAGE=/path/jigsaw.img cargo test -p lens-core --test synthetic -- --ignored write_the_jigsaw
+#[test]
+#[ignore]
+fn write_the_jigsaw_volume_for_window_tests() {
+    let path =
+        std::env::var("LENS_JIGSAW_IMAGE").expect("LENS_JIGSAW_IMAGE names where to write it");
+    std::fs::write(path, build_jigsaw_volume()).expect("written");
+}

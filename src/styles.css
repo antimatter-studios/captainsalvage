@@ -685,3 +685,39 @@ video.inline-preview { max-height: 380px; background: #000; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { animation: none !important; transition: none !important; }
 }
+
+/* Rebuild: the person's own tree, made from the pieces the scan found. */
+.rebuild-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 0.5px solid var(--line-strong); flex-wrap: wrap; }
+.rebuild-bar select { max-width: 220px; }
+.rebuild-left { font-size: 12px; font-variant-numeric: tabular-nums; }
+.rebuild-confirm { font-size: 12px; }
+.rebuild-error { margin: 8px 14px 0; }
+.rebuild-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 16px; }
+.rebuild-foot { margin: 0; padding: 6px 14px 10px; font-size: 11.5px; }
+.canvas-start { max-width: 60ch; margin: 40px auto; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.canvas-start p { color: var(--ink-2); }
+.canvas-drop-first { margin: 24px; padding: 40px 24px; border: 2px dashed var(--line-strong); border-radius: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--ink-2); }
+.canvas-drop-first-holding { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.canvas-tree { min-height: 100%; }
+.canvas-row { position: relative; }
+.canvas-row-holding > .row { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.canvas-actions { display: flex; gap: 2px; opacity: 0; flex: none; }
+.canvas-row:hover .canvas-actions, .canvas-actions:focus-within { opacity: 1; }
+.drop-choices { display: flex; gap: 4px; flex: none; }
+.drop-zone { font-size: 11.5px; padding: 3px 8px; border-radius: 6px; background: var(--accent-fill); color: var(--on-accent); cursor: copy; white-space: nowrap; }
+.drop-merge { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); color: var(--ink); }
+.row-icon-made { color: var(--accent); opacity: 0.6; }
+.canvas-origin-made .row-name { font-style: italic; }
+.canvas-name { flex: 1; min-width: 0; }
+.canvas-name input { width: 100%; font-size: 12.5px; padding: 1px 4px; }
+.canvas-new-folder { display: flex; align-items: center; gap: 6px; padding: 3px 6px; color: var(--accent); }
+.canvas-empty-folder { font-size: 12px; }
+.canvas-clash { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 9px; background: color-mix(in srgb, var(--serious, #c98500) 18%, transparent); box-shadow: none; }
+.canvas-copies { display: flex; flex-direction: column; gap: 3px; margin: 2px 8px 6px; padding: 6px 8px; border-radius: 8px; background: var(--hover); font-size: 12px; }
+.canvas-copy { display: flex; align-items: center; gap: 8px; }
+.canvas-copy-text { flex: 1; min-width: 0; }
+.canvas-copy-chosen { font-weight: 600; }
+/* A piece already placed on the canvas, which cannot be used again. */
+.row-used { opacity: 0.55; }
+.row-used .row-name::after { content: " ✓"; color: var(--good); }
+.row[draggable="true"] { cursor: grab; }

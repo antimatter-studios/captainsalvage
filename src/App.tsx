@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   call,
   type BasketItem,
+  type Canvas,
+  type CanvasItem,
   type BrowseRow,
   type ClusterInfo,
   type DiskAccess,
@@ -26,6 +28,7 @@ import { Details } from "./components/Details";
 import { Explorer } from "./components/Explorer";
 import { HexView } from "./components/HexView";
 import { Icon, type IconName } from "./components/icons";
+import { RebuildView } from "./components/RebuildView";
 import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
 import { StartScreen } from "./components/StartScreen";
@@ -42,7 +45,17 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 /** While a scan runs, the tree and totals are rebuilt from what it has found. */
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
-type CenterView = "overview" | "browse" | "bytes" | "zip";
+type CenterView = "overview" | "browse" | "rebuild" | "bytes" | "zip";
+const CANVAS_STORAGE_KEY = "lens-canvas";
+
+function rememberedCanvas(): number | null {
+  try {
+    const saved = Number(localStorage.getItem(CANVAS_STORAGE_KEY));
+    return Number.isFinite(saved) && saved > 0 ? saved : null;
+  } catch {
+    return null;
+  }
+}
 const DISK_ACCESS_CHECK_MS = 3000;
 
 function asBrowseRow(row: Row): BrowseRow {
@@ -329,6 +342,10 @@ export default function App() {
   const [highlight, setHighlight] = useState<Extent[]>([]);
   const [byteRange, setByteRange] = useState<[number, number] | null>(null);
   const [basket, setBasket] = useState<BasketItem[]>([]);
+  const [canvases, setCanvases] = useState<Canvas[]>([]);
+  const [canvas, setCanvas] = useState<number | null>(rememberedCanvas);
+  const [canvasRevision, setCanvasRevision] = useState(0);
+  const [canvasUsed, setCanvasUsed] = useState<Set<number>>(new Set());
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
   const [center, setCenter] = useState<CenterView>("overview");
   const [browseScope, setBrowseScope] = useState<BrowseScope | null>(null);
@@ -353,6 +370,42 @@ export default function App() {
     if (add && !existing) void call("basket_add", { kind, target });
     if (!add && existing) void call("basket_remove", { id: existing.id });
   }, [basket]);
+
+  // The canvases, and which pieces the one showing has used, kept as the person rebuilds.
+  const bumpCanvas = useCallback(() => setCanvasRevision((value) => value + 1), []);
+  useEffect(() => {
+    if (!overview) return;
+    let current = true;
+    call<Canvas[]>("canvas_list")
+      .then((found) => {
+        if (!current) return;
+        setCanvases(found);
+        setCanvas((chosen) => (chosen !== null && found.some((item) => item.id === chosen) ? chosen : found[0]?.id ?? null));
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [overview, canvasRevision]);
+  useEffect(() => {
+    try {
+      if (canvas === null) localStorage.removeItem(CANVAS_STORAGE_KEY);
+      else localStorage.setItem(CANVAS_STORAGE_KEY, String(canvas));
+    } catch {
+      // Remembering the canvas is only a convenience.
+    }
+    if (canvas === null) {
+      setCanvasUsed(new Set());
+      return;
+    }
+    let current = true;
+    call<CanvasItem[]>("canvas_items", { canvas })
+      .then((items) => current && setCanvasUsed(new Set(items.flatMap((item) => (item.head !== null ? [item.head] : [])))))
+      .catch(() => current && setCanvasUsed(new Set()));
+    return () => {
+      current = false;
+    };
+  }, [canvas, canvasRevision]);
 
   const basketKeys = useMemo(() => new Set(basket.map((item) => `${item.kind}:${item.target}`)), [basket]);
 
@@ -537,6 +590,7 @@ export default function App() {
     const stops = [
       listen("lens-map-changed", bump),
       listen("lens-basket-changed", loadBasket),
+      listen("lens-canvas-changed", bumpCanvas),
       listen("lens-activity", () => setActivityRevision((value) => value + 1)),
       listen<{ kind: string; value?: number; start?: number; end?: number }>("lens-focus", async ({ payload }) => {
         if (payload.kind === "cluster" && payload.value !== undefined) {
@@ -652,6 +706,7 @@ export default function App() {
         revision={revision}
         selectedKey={selectedKey}
         openKey={browseScope ? `folder:${browseScope.head}` : null}
+        canvasPieces={center === "rebuild" && canvas !== null ? canvasUsed : null}
         onEntry={openEntry}
         onFolder={openFolder}
         onChain={selectChain}
@@ -668,6 +723,7 @@ export default function App() {
           <div className="segmented" role="tablist">
             <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>{t("Overview")}</button>
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
+            <button role="tab" aria-selected={center === "rebuild"} onClick={() => setCenter("rebuild")}>{t("Rebuild")}</button>
             <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>
             <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside zip")}</button>
           </div>
@@ -675,6 +731,16 @@ export default function App() {
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
         {center === "zip" && !zipEntry && <section className="center-panel"><p className="muted zip-message">{t("Choose a zip file to see inside it.")}</p></section>}
         {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} onChanged={bump} />}
+        {center === "rebuild" && (
+          <RebuildView
+            canvases={canvases}
+            canvas={canvas}
+            onCanvas={setCanvas}
+            revision={canvasRevision}
+            onChanged={bumpCanvas}
+            onEntry={(row) => row.id !== null && void noteEntry(row.id)}
+          />
+        )}
         {center === "browse" && (
           <BrowseView
             floor={floor}
