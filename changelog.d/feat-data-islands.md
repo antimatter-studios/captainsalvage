@@ -1,3 +1,3 @@
-### Added
+### Changed
 
-- **The start screen maps the damaged disk and recovered file types as islands.** You can see what was found and how much, including folders left behind.
+- **The start screen charts your disk as an archipelago.** Each kind of file found is an island round the disk, sized by how much there is, with the lost folders still to fit together.
