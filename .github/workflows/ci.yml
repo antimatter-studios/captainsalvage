@@ -54,6 +54,14 @@ jobs:
         run: |
           swiftc -typecheck -parse-as-library -application-extension macos/finder/Extension.swift
           swiftc -typecheck macos/finder/Helper.swift
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deny@0.20.2
+      - name: every library has an allowed license
+        run: |
+          cargo deny --locked check licenses
+          python3 scripts/licenses.py check
+          python3 scripts/licenses.py current
       - name: formatting
         run: cargo fmt --all --check
       - name: lint
