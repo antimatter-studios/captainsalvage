@@ -3059,6 +3059,67 @@ fn a_resumed_copy_only_needs_space_for_what_is_not_there_yet() {
 }
 
 #[test]
+fn a_new_run_copies_again_a_recent_file_that_fails_its_hash() {
+    let (engine, session, dir) = engine_with_volume("recheck");
+    let destination = copy_destination("recheck");
+    let track_id = call(&engine, "search", json!({"query": "track.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("id");
+    let request = json!({"destination": destination, "entryIds": [track_id]});
+    copy_and_wait(&engine, &session, request.clone());
+
+    // What a power cut can leave: the right length, the wrong bytes.
+    let row = &manifest_rows(&destination)[0];
+    let target = row["target"].as_str().expect("target").to_string();
+    let good = std::fs::read(&target).expect("read");
+    let mut damaged = good.clone();
+    damaged[0] ^= 0xff;
+    std::fs::write(&target, &damaged).expect("write");
+
+    let second = copy_and_wait(&engine, &session, request);
+    assert_eq!(second.files_skipped, 0);
+    assert_eq!(second.files_done, 1);
+    assert!(second
+        .error
+        .is_some_and(|text| text.contains("failed their hash")));
+    assert_eq!(std::fs::read(&target).expect("read"), good);
+    // The bad copy is kept, because this app never deletes a finished file.
+    let aside = format!("{target}.failed-check");
+    assert_eq!(std::fs::read(aside).expect("read"), damaged);
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(destination);
+}
+
+#[test]
+fn a_new_run_trusts_copies_older_than_the_last_commit() {
+    let (engine, session, dir) = engine_with_volume("older");
+    let destination = copy_destination("older");
+    let request = json!({"destination": destination, "folders": [20]});
+    copy_and_wait(&engine, &session, request.clone());
+
+    let manifest = destination.join(salvage_core::export::MANIFEST_NAME);
+    let mut rows = manifest_rows(&destination);
+    assert!(rows.len() >= 2, "needs two files, found {}", rows.len());
+    let newest = rows[0]["copiedAtMillis"].as_u64().expect("time");
+    rows[0]["copiedAtMillis"] = json!(newest - 10 * 60 * 1000);
+    let lines: Vec<String> = rows.iter().map(|row| row.to_string()).collect();
+    std::fs::write(&manifest, lines.join("\n") + "\n").expect("write");
+
+    let target = rows[0]["target"].as_str().expect("target").to_string();
+    let mut changed = std::fs::read(&target).expect("read");
+    changed[0] ^= 0xff;
+    std::fs::write(&target, &changed).expect("write");
+
+    let second = copy_and_wait(&engine, &session, request);
+    assert_eq!(second.files_done, 0);
+    assert_eq!(std::fs::read(&target).expect("read"), changed);
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(destination);
+}
+
+#[test]
 fn only_the_person_can_start_or_stop_a_copy() {
     let (engine, _session, dir) = engine_with_volume("consent");
     let args = json!({"destination": copy_destination("consent"), "folders": [20]});
