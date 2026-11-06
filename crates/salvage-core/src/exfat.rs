@@ -26,6 +26,8 @@ const NAME_CHARS_PER_ENTRY: usize = 15;
 const MIN_SECONDARY_COUNT: usize = 2;
 const MAX_SECONDARY_COUNT: usize = 18;
 const STREAM_FLAG_NO_FAT_CHAIN: u8 = 0x02;
+const UTC_OFFSET_VALID: u8 = 0x80;
+const MINUTES_PER_OFFSET_STEP: i32 = 15;
 
 fn u16_at(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
@@ -151,6 +153,30 @@ pub fn decode_timestamp(value: u32) -> Option<String> {
     ))
 }
 
+/// The UTC offset byte beside a timestamp, as "+HH:MM", when its OffsetValid bit is set.
+/// Microsoft's exFAT specification, the File directory entry's UtcOffset fields: bit 7 is OffsetValid, and bits 0 to 6 are a
+/// signed count of 15-minute steps from UTC. Without it the time is local to an unknown zone.
+fn decode_utc_offset(byte: u8) -> Option<String> {
+    if byte & UTC_OFFSET_VALID == 0 {
+        return None;
+    }
+    // Sign-extend the low seven bits.
+    let steps = i32::from(((byte & 0x7F) << 1) as i8 >> 1);
+    let minutes = steps * MINUTES_PER_OFFSET_STEP;
+    let sign = if minutes < 0 { '-' } else { '+' };
+    let minutes = minutes.abs();
+    Some(format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60))
+}
+
+/// A timestamp with its UTC offset after it when the entry recorded one.
+fn decode_timestamp_with_offset(value: u32, offset: u8) -> Option<String> {
+    let time = decode_timestamp(value)?;
+    Some(match decode_utc_offset(offset) {
+        Some(offset) => time + offset.as_str(),
+        None => time,
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub cluster_count: u32,
@@ -265,9 +291,9 @@ pub fn parse_set(data: &[u8], position: usize, limits: Limits) -> Option<EntrySe
         length,
         valid_length: u64_at(stream, 8),
         no_fat_chain: stream[1] & STREAM_FLAG_NO_FAT_CHAIN != 0,
-        created: decode_timestamp(u32_at(set, 8)),
-        modified: decode_timestamp(u32_at(set, 12)),
-        accessed: decode_timestamp(u32_at(set, 16)),
+        created: decode_timestamp_with_offset(u32_at(set, 8), set[22]),
+        modified: decode_timestamp_with_offset(u32_at(set, 12), set[23]),
+        accessed: decode_timestamp_with_offset(u32_at(set, 16), set[24]),
         slots,
     })
 }
@@ -299,4 +325,39 @@ pub fn find_bitmap_entry(root: &[u8]) -> Option<(u32, u64)> {
     root.chunks_exact(ENTRY_SIZE)
         .find(|entry| entry[0] == TYPE_BITMAP)
         .map(|entry| (u32_at(entry, 20), u64_at(entry, 24)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_utc_offset_is_kept_only_when_marked_valid() {
+        // 2024-05-01 12:00:00, as exFAT packs it.
+        let time = (44 << 25) | (5 << 21) | (1 << 16) | (12 << 11);
+        assert_eq!(
+            decode_timestamp_with_offset(time, 0x00).as_deref(),
+            Some("2024-05-01T12:00:00")
+        );
+        // Valid, plus eight steps of 15 minutes: UTC+2.
+        assert_eq!(
+            decode_timestamp_with_offset(time, 0x88).as_deref(),
+            Some("2024-05-01T12:00:00+02:00")
+        );
+        // Valid, minus 20 steps: UTC-5, written as seven-bit two's complement.
+        assert_eq!(
+            decode_timestamp_with_offset(time, 0x80 | (128 - 20)).as_deref(),
+            Some("2024-05-01T12:00:00-05:00")
+        );
+        // Valid with no offset is UTC itself.
+        assert_eq!(
+            decode_timestamp_with_offset(time, 0x80).as_deref(),
+            Some("2024-05-01T12:00:00+00:00")
+        );
+        // India is UTC+5:30, which is 22 steps.
+        assert_eq!(
+            decode_timestamp_with_offset(time, 0x80 | 22).as_deref(),
+            Some("2024-05-01T12:00:00+05:30")
+        );
+    }
 }
