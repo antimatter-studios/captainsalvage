@@ -297,11 +297,10 @@ The libraries the app names itself:
 | `@tauri-apps/api` | 2.12.4 | Apache-2.0 OR MIT | window |
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
 | `block2` | 0.6.2 | MIT | captain-salvage |
-| `bzip2` | 0.6.1 | MIT OR Apache-2.0 | salvage-core |
+| `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | salvage-core |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | salvage-core |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | salvage-core |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | salvage-core |
-| `lzma-rust2` | 0.23.0 | Apache-2.0 | salvage-core |
 | `objc2` | 0.6.5 | MIT | captain-salvage |
 | `objc2-foundation` | 0.3.2 | MIT | captain-salvage |
 | `react` | 19.3.1 | MIT | window |
@@ -317,6 +316,8 @@ The libraries the app names itself:
 | `tar` | 0.4.46 | MIT OR Apache-2.0 | salvage-core |
 | `tauri` | 2.12.5 | Apache-2.0 OR MIT | captain-salvage |
 | `tiny_http` | 0.12.0 | MIT OR Apache-2.0 | salvage-core |
+| `xz4rust` | 0.2.3 | MIT | salvage-core |
+| `zip` | 9.4.1 | MIT | salvage-core |
 <!-- dependencies:end -->
 
 Run `python3 scripts/licenses.py write` after changing a dependency, to update this list and
