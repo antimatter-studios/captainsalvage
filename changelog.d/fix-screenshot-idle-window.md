@@ -1,3 +1,3 @@
 ### Fixed
 
-- **Screenshots now recover when the app window has been idle or covered.** You can capture the app without waiting for a redraw that never comes.
+- **The app can take a picture of its own window after the window has been idle or covered.** Agents asking for a screenshot used to get a timeout instead.
