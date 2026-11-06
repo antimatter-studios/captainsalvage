@@ -71,10 +71,10 @@ treats damage as something to route around:
 - **It tests its guesses.** It walks PNG chunks, JPEG markers, MP3 frames and zip
   CRCs through a reassembled file, and reports where the file breaks.
 - **It looks inside archives.** Open a zip, tar, tar.gz, tar.xz, tar.bz2, tar.zst, gz, xz,
-  bz2, zst or 7z to see its files as a tree, read live from the disk. A file whose name was
+  bz2, zst, 7z or rar to see its files as a tree, read live from the disk. A file whose name was
   lost is recognised by its first bytes. If a zip has lost its directory, the list is rebuilt
   from the headers of the files inside. A damaged tar lists as far as it can be read. Each
-  file can be checked: against its own checksum in a zip or 7z, and against the stream's
+  file can be checked: against its own checksum in a zip, 7z or rar, and against the stream's
   checksum for a compressed file.
 - **An AI can investigate with you.** Select anything and ask an agent about it, in the
   Ask agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
@@ -303,6 +303,7 @@ The libraries the app names itself:
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | salvage-core |
 | `objc2` | 0.6.5 | MIT | captain-salvage |
 | `objc2-foundation` | 0.3.2 | MIT | captain-salvage |
+| `rars` | 0.12.4 | Apache-2.0 | salvage-core |
 | `react` | 19.3.1 | MIT | window |
 | `react-dom` | 19.3.1 | MIT | window |
 | `rhai` | 1.27.0 | MIT OR Apache-2.0 | salvage-core |

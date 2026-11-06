@@ -251,6 +251,7 @@ write` keeps this file current.
 - **quote** 1.0.47, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **r-efi** 5.3.0, MIT OR Apache-2.0 OR LGPL-2.1-or-later: no license file shipped
 - **r-efi** 6.0.0, MIT OR Apache-2.0 OR LGPL-2.1-or-later: no license file shipped
+- **rars** 0.12.4, Apache-2.0: [text 35](#text-35)
 - **raw-window-handle** 0.6.2, MIT OR Apache-2.0 OR Zlib: [text 1](#text-1), [text 165](#text-165), [text 166](#text-166)
 - **react** 19.3.1, MIT: [text 167](#text-167)
 - **react-dom** 19.3.1, MIT: [text 167](#text-167)

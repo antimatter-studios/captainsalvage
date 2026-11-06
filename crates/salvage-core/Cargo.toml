@@ -21,6 +21,7 @@ bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
+rars = { version = "0.12.4", default-features = false }
 rhai = { version = "1.27.0", features = ["serde", "sync"] }
 ruzstd = "0.9.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
@@ -37,4 +38,5 @@ zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2
 # Only to build archives for the tests: the app itself never writes one.
 bzip2 = "0.6.1"
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }
+rars = { version = "0.12.4", default-features = false, features = ["write"] }
 sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip2", "deflate", "ppmd", "compress", "util"] }
