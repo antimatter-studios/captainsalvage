@@ -63,6 +63,7 @@ LOCKED_CRATES = ["captain-salvage", "salvage-core"]
 APP_NAME = "Captain Salvage.app"
 BUILT_APP = ROOT / "target/release/bundle/macos" / APP_NAME
 INSTALL_FOLDERS = {"user": Path.home() / "Applications", "system": Path("/Applications")}
+OLD_FINDER_HELPER = "Captain Salvage Finder.app"
 LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 
@@ -304,6 +305,9 @@ def command_build(_):
     print(f"Building version {version}")
     config = json.dumps({"version": version})
     subprocess.run(["npx", "tauri", "build", "--bundles", "app", "--config", config], cwd=ROOT, check=True)
+    # The Finder extension goes inside, and the app is signed, when signing material is given.
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
+    subprocess.run([str(ROOT / "macos/finder/package.sh"), str(target / "release/bundle/macos" / APP_NAME)], cwd=ROOT, check=True)
 
 
 def command_prepare(args):
@@ -377,10 +381,29 @@ def install_app(source, folder, running):
     return target
 
 
-def command_install(args):
-    target = install_app(BUILT_APP, INSTALL_FOLDERS[args.where], running_programs())
+def retire_finder_helper(folder):
+    """The Finder helper used to be an app of its own, with the identifier the app now has.
+    Two apps with one identifier confuse macOS, so the old helper goes."""
+    old = Path(folder) / OLD_FINDER_HELPER
+    if not old.exists():
+        return None
     if Path(LSREGISTER).exists():
-        subprocess.run([LSREGISTER, "-f", str(target)], check=False)
+        subprocess.run([LSREGISTER, "-u", str(old)], check=False, capture_output=True)
+    shutil.rmtree(old)
+    return old
+
+
+def command_install(args):
+    folder = INSTALL_FOLDERS[args.where]
+    target = install_app(BUILT_APP, folder, running_programs())
+    if Path(LSREGISTER).exists():
+        subprocess.run([LSREGISTER, "-f", "-R", "-trusted", str(target)], check=False)
+    extension = target / "Contents/PlugIns/Captain Salvage.appex"
+    if extension.exists():
+        subprocess.run(["pluginkit", "-a", str(extension)], check=False)
+    retired = retire_finder_helper(folder)
+    if retired:
+        print(f"Removed {retired}: the Finder extension is inside the app now")
     print(f"Installed {target}")
 
 

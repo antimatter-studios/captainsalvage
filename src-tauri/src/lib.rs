@@ -3,6 +3,7 @@
 mod app_tools;
 mod capture;
 mod chat;
+mod file_provider;
 mod finder;
 mod preview;
 

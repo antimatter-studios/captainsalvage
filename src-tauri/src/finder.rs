@@ -1,23 +1,18 @@
-//! Shows canvases in Finder, through the Captain Salvage Finder helper app.
+//! Shows canvases in Finder, through the File Provider extension inside the app.
 //!
-//! macOS lets only the app that holds a File Provider extension add its Finder locations, and
-//! the extension must be signed into an app group, so a small signed helper does that. This
-//! runs it with a command and a JSON request, and reads back one line of JSON. The helper
-//! never reads the disk: the extension lists folders and reads files through the media port,
-//! so nothing here gives Finder a way to write to the disk being recovered.
+//! `file_provider` adds and removes the Finder locations, in the app itself. The extension
+//! lists folders and reads files through the media port, so nothing here gives Finder a way to
+//! write to the disk being recovered. A build without signing material has no extension, and
+//! Show in Finder is not offered.
 
 use crate::AppState;
 use anyhow::{bail, Context, Result};
 use salvage_core::media::serial_text;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use tauri::State;
 
-const HELPER_APP: &str = "Captain Salvage Finder.app";
-const HELPER_BINARY: &str = "Contents/MacOS/captain-salvage-finder";
+use std::process::Command;
+use tauri::State;
 
 #[derive(Deserialize)]
 pub struct CanvasRevision {
@@ -26,43 +21,16 @@ pub struct CanvasRevision {
     revision: String,
 }
 
-/// The helper, if it is installed: named by SALVAGE_FINDER_HELPER, or in an Applications folder.
-fn helper() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("SALVAGE_FINDER_HELPER") {
-        return Some(PathBuf::from(path)).filter(|path| path.is_file());
-    }
-    let mut places = vec![PathBuf::from("/Applications")];
-    if let Some(home) = std::env::var_os("HOME") {
-        places.insert(0, PathBuf::from(home).join("Applications"));
-    }
-    places
-        .into_iter()
-        .map(|place| place.join(HELPER_APP).join(HELPER_BINARY))
-        .find(|path| path.is_file())
+/// Whether this copy of the app can show canvases in Finder.
+fn helper() -> Option<()> {
+    crate::file_provider::available().then_some(())
 }
 
 fn run(command: &str, request: Value) -> Result<Value> {
-    let path = helper().context("The Captain Salvage Finder helper is not installed.")?;
-    let mut child = Command::new(path)
-        .arg(command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("starting the Finder helper")?;
-    // The port's token goes over a pipe, never on a command line other processes can see.
-    child
-        .stdin
-        .take()
-        .context("the Finder helper has no input")?
-        .write_all(request.to_string().as_bytes())?;
-    let output = child.wait_with_output()?;
-    let reply: Value = serde_json::from_slice(&output.stdout)
-        .with_context(|| format!("the Finder helper gave no answer to {command}"))?;
-    if let Some(error) = reply.get("error").and_then(Value::as_str) {
-        bail!("{error}");
+    if !crate::file_provider::available() {
+        bail!("This copy of Captain Salvage was built without its Finder extension.");
     }
-    Ok(reply)
+    crate::file_provider::run(command, &request)
 }
 
 /// The port and the open disk, which every location of this disk is told about.

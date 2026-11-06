@@ -219,6 +219,7 @@ write` keeps this file current.
 - **objc2-core-text** 0.3.2, Zlib OR Apache-2.0 OR MIT: no license file shipped
 - **objc2-encode** 4.1.0, MIT: no license file shipped
 - **objc2-exception-helper** 0.1.1, Zlib OR Apache-2.0 OR MIT: no license file shipped
+- **objc2-file-provider** 0.3.2, Zlib OR Apache-2.0 OR MIT: no license file shipped
 - **objc2-foundation** 0.3.2, MIT: no license file shipped
 - **objc2-io-surface** 0.3.2, Zlib OR Apache-2.0 OR MIT: no license file shipped
 - **objc2-quartz-core** 0.3.2, Zlib OR Apache-2.0 OR MIT: no license file shipped

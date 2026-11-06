@@ -307,6 +307,7 @@ dependencies = [
  "anyhow",
  "block2",
  "objc2",
+ "objc2-file-provider",
  "objc2-foundation",
  "salvage-core",
  "serde",
@@ -2431,6 +2432,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7a1c5fbb72d7735b076bb47b578523aedc40f3c439bea6dfd595c089d79d98a"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "objc2-file-provider"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e75524f6dcc079d5722a85797b2d29079ebecb0b88352f0ecb18011f7d84655"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
