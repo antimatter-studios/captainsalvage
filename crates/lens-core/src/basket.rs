@@ -3,13 +3,14 @@
 //! The basket only records intentions, on this Mac. Nothing is read or written
 //! until the person starts it, and removing an item touches no disk.
 
-use crate::export::{CopyPlan, CopyRequest};
+use crate::export::{canvas_target, CopyPlan, CopyRequest};
 use crate::map::{MapDb, VERDICT_FOLDER};
 use crate::session::Session;
 use crate::workspace::now_millis;
 use anyhow::{bail, Context, Result};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 
 pub const KIND_ENTRY: &str = "entry";
@@ -182,6 +183,7 @@ impl Session {
                 },
                 min_confidence: options.min_confidence,
                 include_partial: options.include_partial,
+                canvas: None,
             })
             .collect())
     }
@@ -201,6 +203,7 @@ impl Session {
                 .collect(),
             min_confidence: options.min_confidence,
             include_partial: options.include_partial,
+            canvas: None,
         };
         self.copy_plan(&combined)
     }
@@ -212,5 +215,52 @@ impl Session {
             bail!("The basket is empty. Add files or folders first.");
         }
         self.copy_start_groups(groups)
+    }
+
+    /// Where a canvas copies to: a folder named after it, inside the destination.
+    fn canvas_request(&self, canvas: i64, options: &BasketOptions) -> Result<CopyRequest> {
+        let name = self
+            .with_database(|database| database.canvases())?
+            .into_iter()
+            .find(|found| found.id == canvas)
+            .map(|found| found.name)
+            .with_context(|| format!("there is no canvas {canvas}"))?;
+        let base = if options.destination.trim().is_empty() {
+            self.salvage_drive()?.unwrap_or_default()
+        } else {
+            options.destination.clone()
+        };
+        // Left empty, the plan refuses it and says to choose a destination.
+        let destination = if base.trim().is_empty() {
+            String::new()
+        } else {
+            Path::new(&base)
+                .join(canvas_target(&[], &name))
+                .display()
+                .to_string()
+        };
+        Ok(CopyRequest {
+            destination,
+            min_confidence: options.min_confidence,
+            include_partial: options.include_partial,
+            canvas: Some(canvas),
+            ..CopyRequest::default()
+        })
+    }
+
+    /// What copying a canvas's rebuilt tree would do, without writing.
+    pub fn canvas_copy_plan(&self, canvas: i64, options: &BasketOptions) -> Result<CopyPlan> {
+        let request = self.canvas_request(canvas, options)?;
+        self.copy_plan(&request)
+    }
+
+    /// Copies a canvas's rebuilt tree, each file at its rebuilt path.
+    pub fn canvas_copy_start(
+        self: &Arc<Self>,
+        canvas: i64,
+        options: &BasketOptions,
+    ) -> Result<CopyPlan> {
+        let request = self.canvas_request(canvas, options)?;
+        self.copy_start(request)
     }
 }

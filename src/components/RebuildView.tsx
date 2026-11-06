@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from "react";
-import { call, type Canvas, type CanvasItem, type CanvasSuggestion, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
+import { call, type Canvas, type CanvasItem, type CopyStatus, type CanvasSuggestion, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
+import { CanvasCopy } from "./CanvasCopy";
 import { SimilarPieces } from "./SimilarPieces";
 
 /** What a dragged sidebar piece carries: the first cluster of its folder. */
@@ -439,8 +440,9 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
 }
 
 /** The Rebuild view: one canvas, its rebuilt tree, and the pieces left to place. */
-export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry }: {
+export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry, copy }: {
   canvases: Canvas[];
+  copy: CopyStatus | null;
   canvas: number | null;
   onCanvas: (id: number | null) => void;
   revision: number;
@@ -454,11 +456,13 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   const [naming, setNaming] = useState<"canvas" | "rename" | "root" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [holding, setHolding] = useState(false);
+  const [copying, setCopying] = useState(false);
   const fail = useCallback((reason: unknown) => setError(String(reason)), []);
 
   useEffect(() => {
     setError(null);
     setConfirmDelete(false);
+    setCopying(false);
     if (canvas === null) {
       setItems([]);
       setUnused(null);
@@ -642,9 +646,13 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         {root && unused && unused.total > 0 && (
           <button onClick={() => void putRestAway()} title={t("Put every piece not yet placed into one folder called Leftovers")}>{t("Put the rest away")}</button>
         )}
+        {root && !copying && (
+          <button onClick={() => setCopying(true)} title={t("Copy every file to where this canvas puts it")}>{t("Copy out")}</button>
+        )}
       </div>
       {error && <p className="warn rebuild-error">{fromEngine(error.replace(/^Error: /, ""))}</p>}
       <div className="rebuild-body">
+        {copying && root && canvas !== null && <CanvasCopy canvas={canvas} copy={copy} revision={revision} onClose={() => setCopying(false)} />}
         {shared && suggestions.length > 0 && (
           <Suggestions canvas={shared.canvas} suggestions={suggestions} items={shared.items} changed={changed} fail={fail} />
         )}

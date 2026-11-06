@@ -858,6 +858,23 @@ impl Engine {
                     serde_json::from_value(args.clone()).context("invalid basket options")?;
                 Ok(serde_json::to_value(session.basket_start(&options)?)?)
             }
+            "canvas_copy_plan" => {
+                let options: BasketOptions =
+                    serde_json::from_value(args.clone()).context("invalid copy options")?;
+                Ok(serde_json::to_value(
+                    session.canvas_copy_plan(need_i64(args, "canvas")?, &options)?,
+                )?)
+            }
+            "canvas_copy_start" => {
+                if author != AUTHOR_USER {
+                    bail!("Only the person using the app can start copying. Use canvas_copy_plan, and ask them to start it.");
+                }
+                let options: BasketOptions =
+                    serde_json::from_value(args.clone()).context("invalid copy options")?;
+                Ok(serde_json::to_value(
+                    session.canvas_copy_start(need_i64(args, "canvas")?, &options)?,
+                )?)
+            }
             "get_salvage_drive" => match session.salvage_drive()? {
                 Some(destination) => {
                     let request = CopyRequest {

@@ -739,6 +739,7 @@ export default function App() {
             revision={canvasRevision}
             onChanged={bumpCanvas}
             onEntry={(row) => row.id !== null && void noteEntry(row.id)}
+            copy={status?.copy ?? null}
           />
         )}
         {center === "browse" && (
