@@ -446,7 +446,7 @@ impl Engine {
             "mount_history" => Ok(serde_json::to_value(session.mount_history()?)?),
             // Only for driving the window in a test: never offered, and refused otherwise.
             "test_disconnect" => {
-                if std::env::var_os("LENS_TEST_UI").is_none() {
+                if std::env::var_os("SALVAGE_TEST_UI").is_none() {
                     bail!("this is only for testing");
                 }
                 session.volume.source().simulate_disconnect();

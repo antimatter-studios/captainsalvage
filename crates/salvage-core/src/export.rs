@@ -25,7 +25,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub const MANIFEST_NAME: &str = "exfat-lens-manifest.jsonl";
+pub const MANIFEST_NAME: &str = "captain-salvage-manifest.jsonl";
+/// The manifest's name from before the app had its real name. A destination that already has
+/// one keeps using it, so a copy started then still resumes where it stopped.
+const OLD_MANIFEST_NAME: &str = "exfat-lens-manifest.jsonl";
 const MAX_RUN_BYTES: u64 = 8 * 1024 * 1024;
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 /// Files larger than this are copied and hashed, but not walked by format.
@@ -125,6 +128,17 @@ pub struct ManifestRow {
     pub format_valid_fraction: Option<f64>,
     pub format_breaks: Option<u64>,
     pub copied_at_millis: u64,
+}
+
+/// The manifest in a destination: the old name's, when only that one is there.
+pub fn manifest_path(destination: &Path) -> PathBuf {
+    let current = destination.join(MANIFEST_NAME);
+    let old = destination.join(OLD_MANIFEST_NAME);
+    if !current.exists() && old.exists() {
+        old
+    } else {
+        current
+    }
 }
 
 /// What earlier runs recorded, by entry id. A missing manifest means nothing is done.
@@ -495,7 +509,7 @@ impl Session {
         };
         // A resumed copy skips these, and they already count against the free space.
         let already_copied_bytes = if destination.is_absolute() {
-            let done = read_manifest(&destination.join(MANIFEST_NAME));
+            let done = read_manifest(&manifest_path(&destination));
             selected
                 .iter()
                 .filter(|row| {
@@ -662,7 +676,7 @@ impl Session {
         let destination = PathBuf::from(&request.destination);
         fs::create_dir_all(&destination)
             .with_context(|| format!("creating {}", destination.display()))?;
-        let manifest = destination.join(MANIFEST_NAME);
+        let manifest = manifest_path(&destination);
         *self
             .copy
             .status
@@ -790,7 +804,7 @@ impl Session {
         let wanted = unused_path(&destination.join(relative), id);
         let parent = wanted.parent().context("target has no parent")?;
         fs::create_dir_all(parent)?;
-        let temporary = parent.join(format!(".exfat-lens-partial-{id}"));
+        let temporary = parent.join(format!(".captain-salvage-partial-{id}"));
         let _ = fs::remove_file(&temporary);
         let mut file = OpenOptions::new()
             .write(true)

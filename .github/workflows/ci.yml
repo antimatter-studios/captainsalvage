@@ -59,4 +59,4 @@ jobs:
       - name: lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: test
-        run: cargo test -p lens-core --locked
+        run: cargo test -p salvage-core --locked

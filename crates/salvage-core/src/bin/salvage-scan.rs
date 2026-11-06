@@ -1,14 +1,14 @@
 //! Runs or resumes the full scan from the command line.
 //!
-//! Usage: lens-scan <device-or-image> [--verify-only | --resolve-only]
+//! Usage: salvage-scan <device-or-image> [--verify-only | --resolve-only]
 
 use anyhow::{bail, Context, Result};
-use lens_core::engine::{Engine, AUTHOR_USER};
-use lens_core::map::MapDb;
-use lens_core::scan::{run_scan, ScanOptions};
-use lens_core::source::{mount_line, os_denies_writes, FileSource};
-use lens_core::volume::Volume;
-use lens_core::workspace::Workspace;
+use salvage_core::engine::{Engine, AUTHOR_USER};
+use salvage_core::map::MapDb;
+use salvage_core::scan::{run_scan, ScanOptions};
+use salvage_core::source::{mount_line, os_denies_writes, FileSource};
+use salvage_core::volume::Volume;
+use salvage_core::workspace::Workspace;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let device = arguments
         .first()
-        .context("usage: lens-scan <device-or-image> [--verify-only | --resolve-only]")?;
+        .context("usage: salvage-scan <device-or-image> [--verify-only | --resolve-only]")?;
     let mode = arguments.get(1).map(String::as_str);
     let path = Path::new(device);
 

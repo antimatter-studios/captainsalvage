@@ -39,16 +39,16 @@ start() {
     git config user.name test
     git config core.hooksPath .git/hooks
     export GH_LOG="$where/gh.log"
-    mkdir -p scripts changelog.d crates/lens-core src-tauri
+    mkdir -p scripts changelog.d crates/salvage-core src-tauri
     cp "$HERE/create-release" "$HERE/release.py" "$HERE/changelog-check.sh" "$HERE/changelog-gather.sh" scripts/
     echo notes >changelog.d/README.md
     printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.0] — 2026-01-01\n\n### Added\n\n- **First.** One.\n' >CHANGELOG.md
     printf 'Top\n\n<!-- changelog:start -->\n\n### v0.1.0 — 2026-01-01\n\n<!-- changelog:end -->\n\nBottom\n' >README.md
-    printf '[package]\nversion = "0.1.0"\n' >crates/lens-core/Cargo.toml
+    printf '[package]\nversion = "0.1.0"\n' >crates/salvage-core/Cargo.toml
     printf '[package]\nversion = "0.1.0"\n' >src-tauri/Cargo.toml
     printf '{\n  "version": "0.1.0"\n}\n' >src-tauri/tauri.conf.json
     printf '{\n  "version": "0.1.0"\n}\n' >package.json
-    printf 'name = "lens-core"\nversion = "0.1.0"\n\nname = "exfat-lens"\nversion = "0.1.0"\n' >Cargo.lock
+    printf 'name = "salvage-core"\nversion = "0.1.0"\n\nname = "captain-salvage"\nversion = "0.1.0"\n' >Cargo.lock
     printf '{\n  "version": "0.1.0",\n  "packages": { "": { "version": "0.1.0" } }\n}\n' >package-lock.json
     git add -A
     git commit -q -m "chore(release): v0.1.0 (#1)"
@@ -106,7 +106,7 @@ check "fragment is gone" "$([ -e changelog.d/new-thing.md ] && echo kept || echo
 check "notes file stays" "$([ -e changelog.d/README.md ] && echo kept || echo gone)" kept
 check "readme has the version" "$(grep -c '^### v0.2.0' README.md)" 1
 check "readme keeps its surroundings" "$(grep -c '^Bottom$' README.md)" 1
-for file in crates/lens-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json; do
+for file in crates/salvage-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json; do
     check "$file is bumped" "$(grep -c '0\.2\.0' "$file")" 1
 done
 check "nothing left over" "$(git status --porcelain | wc -l | tr -d ' ')" 0

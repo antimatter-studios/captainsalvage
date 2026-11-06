@@ -9,7 +9,6 @@ finds, and helps you get your files back, without ever writing to the disk.
 
 > **Early development.** It works on one filesystem, exFAT, and has been tested
 > on one real damaged volume plus synthetic test volumes. It is not released yet.
-> The code and app window still use the working name, exFAT Lens.
 
 ## Development so far
 
@@ -195,8 +194,8 @@ Then open the app, and enter the partition's device, such as `/dev/rdisk4s2`.
 ### Scanning from a terminal
 
 ```sh
-cargo build --release -p lens-core
-./target/release/lens-scan /dev/rdisk4s2
+cargo build --release -p salvage-core
+./target/release/salvage-scan /dev/rdisk4s2
 ```
 
 A scan reads the whole partition once, and can stop and resume at any time.
@@ -204,7 +203,7 @@ A scan reads the whole partition once, and can stop and resume at any time.
 ### Tests
 
 ```sh
-cargo test -p lens-core
+cargo test -p salvage-core
 ```
 
 ### Screenshots

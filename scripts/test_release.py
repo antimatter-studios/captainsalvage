@@ -114,14 +114,14 @@ class Files(unittest.TestCase):
         files = {
             "x/Cargo.toml": '[package]\nversion = "0.1.0"\n\n[dependencies]\nserde = { version = "1.0.0" }\nother = "1"\n',
             "package.json": '{\n  "name": "a",\n  "version": "0.1.0",\n  "dep": { "version": "9" }\n}\n',
-            "Cargo.lock": 'name = "lens-core"\nversion = "0.1.0"\n\nname = "serde"\nversion = "1.0.0"\n',
+            "Cargo.lock": 'name = "salvage-core"\nversion = "0.1.0"\n\nname = "serde"\nversion = "1.0.0"\n',
             "package-lock.json": '{"version": "0.1.0", "packages": {"": {"version": "0.1.0"}, "a": {"version": "9"}}}',
         }
         new = release.set_versions(files, "0.2.0")
         self.assertIn('[package]\nversion = "0.2.0"', new["x/Cargo.toml"])
         self.assertIn('serde = { version = "1.0.0" }', new["x/Cargo.toml"])
         self.assertIn('"dep": { "version": "9" }', new["package.json"])
-        self.assertIn('name = "lens-core"\nversion = "0.2.0"', new["Cargo.lock"])
+        self.assertIn('name = "salvage-core"\nversion = "0.2.0"', new["Cargo.lock"])
         self.assertIn('name = "serde"\nversion = "1.0.0"', new["Cargo.lock"])
         self.assertEqual(new["package-lock.json"].count('"0.2.0"'), 2)
         self.assertIn('"a": {"version": "9"}', new["package-lock.json"])

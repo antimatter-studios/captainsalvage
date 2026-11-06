@@ -6,6 +6,33 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Where the app keeps everything it knows, under the user's Application Support folder.
+const APP_FOLDER: &str = "Captain Salvage";
+/// The working name's folder, from before the app had its real name.
+const OLD_APP_FOLDER: &str = "exfat-lens";
+
+/// The app's own folder: settings, and one workspace per volume with its map and canvases.
+///
+/// The first time, a folder kept under the working name is moved here whole. A move within one
+/// disk changes no file, so a map and weeks of canvas work arrive exactly as they were. The old
+/// name is left as a link, so a copy of the app from before still finds the same files.
+pub fn app_support() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").context("HOME is not set")?;
+    app_folder_in(&Path::new(&home).join("Library/Application Support"))
+}
+
+/// The app's folder inside one Application Support folder, moving the old one there first.
+pub fn app_folder_in(support: &Path) -> Result<PathBuf> {
+    let folder = support.join(APP_FOLDER);
+    let old = support.join(OLD_APP_FOLDER);
+    let old_is_folder = fs::symlink_metadata(&old).is_ok_and(|found| found.is_dir());
+    if old_is_folder && !folder.exists() && fs::rename(&old, &folder).is_ok() {
+        let _ = std::os::unix::fs::symlink(APP_FOLDER, &old);
+    }
+    fs::create_dir_all(&folder).with_context(|| format!("creating {}", folder.display()))?;
+    Ok(folder)
+}
+
 pub fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -44,8 +71,7 @@ impl Workspace {
 
     /// The folder that holds one workspace per volume.
     pub fn root() -> Result<PathBuf> {
-        let home = std::env::var_os("HOME").context("HOME is not set")?;
-        Ok(Path::new(&home).join("Library/Application Support/exfat-lens"))
+        app_support()
     }
 
     pub fn for_serial(serial: u32) -> Result<Self> {

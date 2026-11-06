@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "src"
 LOCALES = SOURCE / "locales"
 ENGINE_TEXT = SOURCE / "engineText.ts"
-RUST = [ROOT / "crates" / "lens-core" / "src", ROOT / "src-tauri" / "src"]
+RUST = [ROOT / "crates" / "salvage-core" / "src", ROOT / "src-tauri" / "src"]
 # The Finder helper's errors reach the window through the app, like the engine's.
 SWIFT = ROOT / "macos" / "finder"
 LANGUAGES = ["fr", "de", "es"]

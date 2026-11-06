@@ -21,8 +21,14 @@ pub fn capture_window(app: &tauri::AppHandle) -> Result<Vec<u8>> {
         .get_webview_window("main")
         .context("the app window is not open")?;
     let directory = std::env::temp_dir();
-    let tiff = directory.join(format!("exfat-lens-capture-{}.tiff", std::process::id()));
-    let png = directory.join(format!("exfat-lens-capture-{}.png", std::process::id()));
+    let tiff = directory.join(format!(
+        "captain-salvage-capture-{}.tiff",
+        std::process::id()
+    ));
+    let png = directory.join(format!(
+        "captain-salvage-capture-{}.png",
+        std::process::id()
+    ));
     let (sender, receiver) = mpsc::channel::<bool>();
     let tiff_text = tiff.display().to_string();
 

@@ -15,7 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub const SERVER_NAME: &str = "exfat-lens";
+pub const SERVER_NAME: &str = "captain-salvage";
 const PREFERRED_PORT: u16 = 47821;
 const WORKER_THREADS: usize = 8;
 const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
@@ -26,7 +26,7 @@ const DEFAULT_VERSION: &str = "2025-06-18";
 const SCREENSHOT_TOOL: &str = "screenshot_app";
 
 pub const INSTRUCTIONS: &str = "\
-exfat-lens examines a damaged exFAT volume, and has no way to write to the disk. Read tools reach the whole disk. \
+Captain Salvage examines a damaged exFAT volume, and has no way to write to the disk. Read tools reach the whole disk. \
 Overlays and parameters change only how the map on this Mac interprets the disk, so hypotheses cost nothing and can \
 be withdrawn. If access is refused, call disk_access and give the user the exact command it returns. \
 Treat damage as something to route around, not a stop sign. Start from the bird's-eye view: status, map_region, \
@@ -289,10 +289,7 @@ pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
 }
 
 fn config_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    let dir = PathBuf::from(home).join("Library/Application Support/exfat-lens");
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
+    crate::workspace::app_support()
 }
 
 fn write_private(path: &PathBuf, contents: &str) -> Result<()> {

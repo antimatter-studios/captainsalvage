@@ -22,10 +22,10 @@ import time
 import urllib.request
 from pathlib import Path
 
-CONFIG = Path.home() / "Library/Application Support/exfat-lens"
+CONFIG = Path.home() / "Library/Application Support/Captain Salvage"
 BINARY = Path(os.environ.get(
-    "LENS_BINARY",
-    Path(__file__).resolve().parent.parent / "target/release/bundle/macos/Captain Salvage.app/Contents/MacOS/exfat-lens",
+    "SALVAGE_BINARY",
+    Path(__file__).resolve().parent.parent / "target/release/bundle/macos/Captain Salvage.app/Contents/MacOS/captain-salvage",
 ))
 OUTPUT_WIDTH = "1600"
 HIDE_NAMES = """
@@ -58,11 +58,11 @@ class App:
             "HOME": os.environ["HOME"],
             "USER": os.environ.get("USER", ""),
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "LENS_TEST_UI": "1",
-            "LENS_TEST_HIDDEN": "1",
+            "SALVAGE_TEST_UI": "1",
+            "SALVAGE_TEST_HIDDEN": "1",
         }
         if dark:
-            environment["LENS_TEST_DARK"] = "1"
+            environment["SALVAGE_TEST_DARK"] = "1"
         self.process = subprocess.Popen([str(BINARY)], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(60):
             time.sleep(0.5)

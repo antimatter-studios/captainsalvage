@@ -47,7 +47,7 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
 type CenterView = "overview" | "browse" | "rebuild" | "bytes" | "zip";
-const CANVAS_STORAGE_KEY = "lens-canvas";
+const CANVAS_STORAGE_KEY = "salvage-canvas";
 
 function rememberedCanvas(): number | null {
   try {
@@ -612,11 +612,11 @@ export default function App() {
   // Claude can move the view with show_in_app, and changes reach the map at once.
   useEffect(() => {
     const stops = [
-      listen("lens-map-changed", bump),
-      listen("lens-basket-changed", loadBasket),
-      listen("lens-canvas-changed", bumpCanvas),
-      listen("lens-activity", () => setActivityRevision((value) => value + 1)),
-      listen<{ kind: string; value?: number; start?: number; end?: number }>("lens-focus", async ({ payload }) => {
+      listen("salvage-map-changed", bump),
+      listen("salvage-basket-changed", loadBasket),
+      listen("salvage-canvas-changed", bumpCanvas),
+      listen("salvage-activity", () => setActivityRevision((value) => value + 1)),
+      listen<{ kind: string; value?: number; start?: number; end?: number }>("salvage-focus", async ({ payload }) => {
         if (payload.kind === "cluster" && payload.value !== undefined) {
           pickCluster(payload.value);
           const half = 256;

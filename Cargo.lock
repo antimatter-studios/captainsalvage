@@ -269,6 +269,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "captain-salvage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block2",
+ "objc2",
+ "objc2-foundation",
+ "salvage-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -854,21 +869,6 @@ dependencies = [
  "serde",
  "serde_core",
  "typeid",
-]
-
-[[package]]
-name = "exfat-lens"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "block2",
- "lens-core",
- "objc2",
- "objc2-foundation",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
 ]
 
 [[package]]
@@ -1893,22 +1893,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lens-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flate2",
- "image",
- "libc",
- "rhai",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tiny_http",
-]
-
-[[package]]
 name = "libappindicator"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2854,6 +2838,22 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "salvage-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "image",
+ "libc",
+ "rhai",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tiny_http",
+]
 
 [[package]]
 name = "same-file"
