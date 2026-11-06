@@ -13,6 +13,7 @@ whose subject is the pull request's title, ending in (#number).
     scripts/release.py check v0.2.0                    fail unless a tag matches the files
     scripts/release.py version                         print this build's version
     scripts/release.py build                           build the app with that version
+    scripts/release.py install user|system             copy the build to ~/Applications or /Applications
 
 scripts/create-release is what you run to cut a release: it calls these.
 
@@ -27,7 +28,9 @@ the README's list is a copy of the newest versions there, so the two cannot disa
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -57,6 +60,10 @@ writes this file.
 CARGO_MANIFESTS = ["crates/salvage-core/Cargo.toml", "src-tauri/Cargo.toml"]
 JSON_MANIFESTS = ["src-tauri/tauri.conf.json", "package.json"]
 LOCKED_CRATES = ["captain-salvage", "salvage-core"]
+APP_NAME = "Captain Salvage.app"
+BUILT_APP = ROOT / "target/release/bundle/macos" / APP_NAME
+INSTALL_FOLDERS = {"user": Path.home() / "Applications", "system": Path("/Applications")}
+LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 
 def parse_subject(subject):
@@ -334,6 +341,49 @@ def command_check(args):
     print(f"{args.tag} matches the versions and the changelog.")
 
 
+def running_programs():
+    """The path of every program running now, for this user or any other."""
+    listed = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True, check=True)
+    return [line.strip() for line in listed.stdout.splitlines()]
+
+
+def install_app(source, folder, running):
+    """Copies the built app into folder, replacing the copy there. The new copy is written
+    next to the old one and swapped in, so a failed copy leaves the old one as it was.
+    Returns the installed path, or raises SystemExit with what to do."""
+    source, folder = Path(source), Path(folder)
+    if not (source / "Contents/Info.plist").is_file():
+        raise SystemExit(f"There is no build at {source}. Run `npm run app` first.")
+    target = folder / source.name
+    inside = str(target) + "/"
+    if any(program.startswith(inside) for program in running):
+        raise SystemExit(f"{target} is running. Quit it, then install again.")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        staging = folder / f".{source.name}.installing"
+        old = folder / f".{source.name}.old"
+        for leftover in (staging, old):
+            if leftover.exists():
+                shutil.rmtree(leftover)
+        # ditto keeps the bundle's symlinks, permissions and extended attributes.
+        subprocess.run(["ditto", str(source), str(staging)], check=True)
+        if target.exists():
+            os.rename(target, old)
+        os.rename(staging, target)
+        if old.exists():
+            shutil.rmtree(old)
+    except PermissionError:
+        raise SystemExit(f"You cannot write to {folder}. Use an administrator account, or install for this user only.")
+    return target
+
+
+def command_install(args):
+    target = install_app(BUILT_APP, INSTALL_FOLDERS[args.where], running_programs())
+    if Path(LSREGISTER).exists():
+        subprocess.run([LSREGISTER, "-f", str(target)], check=False)
+    print(f"Installed {target}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(required=True)
@@ -356,6 +406,9 @@ def main():
     section.set_defaults(run=command_section)
     commands.add_parser("version").set_defaults(run=command_version)
     commands.add_parser("build").set_defaults(run=command_build)
+    install = commands.add_parser("install")
+    install.add_argument("where", choices=sorted(INSTALL_FOLDERS))
+    install.set_defaults(run=command_install)
     args = parser.parse_args()
     args.run(args)
 

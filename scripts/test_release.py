@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Tests for release.py. Needs no git history and no network."""
 
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -125,6 +127,70 @@ class Files(unittest.TestCase):
         self.assertIn('name = "serde"\nversion = "1.0.0"', new["Cargo.lock"])
         self.assertEqual(new["package-lock.json"].count('"0.2.0"'), 2)
         self.assertIn('"a": {"version": "9"}', new["package-lock.json"])
+
+
+class Install(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.source = self.root / "build" / release.APP_NAME
+        self.write(self.source, "new")
+        self.folder = self.root / "Applications"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write(self, app, text):
+        (app / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
+        (app / "Contents/Info.plist").write_text("<plist/>")
+        (app / "Contents/MacOS/captain-salvage").write_text(text)
+
+    def binary(self, app):
+        return (app / "Contents/MacOS/captain-salvage").read_text()
+
+    def test_a_first_install_makes_the_folder_and_copies_the_app(self):
+        target = release.install_app(self.source, self.folder, [])
+        self.assertEqual(target, self.folder / release.APP_NAME)
+        self.assertEqual(self.binary(target), "new")
+
+    def test_an_install_replaces_the_old_copy_whole(self):
+        old = self.folder / release.APP_NAME
+        self.write(old, "old")
+        (old / "Contents/stale").write_text("left over")
+        release.install_app(self.source, self.folder, [])
+        self.assertEqual(self.binary(old), "new")
+        self.assertFalse((old / "Contents/stale").exists())
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [release.APP_NAME])
+
+    def test_a_running_copy_is_left_alone(self):
+        old = self.folder / release.APP_NAME
+        self.write(old, "old")
+        running = [str(old / "Contents/MacOS/captain-salvage")]
+        with self.assertRaises(SystemExit):
+            release.install_app(self.source, self.folder, running)
+        self.assertEqual(self.binary(old), "old")
+
+    def test_a_copy_running_from_the_build_does_not_stop_an_install(self):
+        running = [str(self.source / "Contents/MacOS/captain-salvage")]
+        self.assertEqual(self.binary(release.install_app(self.source, self.folder, running)), "new")
+
+    def test_there_must_be_a_build(self):
+        with self.assertRaises(SystemExit) as raised:
+            release.install_app(self.root / "missing" / release.APP_NAME, self.folder, [])
+        self.assertIn("npm run app", str(raised.exception))
+
+    def test_a_failed_copy_keeps_the_old_one(self):
+        old = self.folder / release.APP_NAME
+        self.write(old, "old")
+        failing = subprocess.CalledProcessError(1, "ditto")
+        real = subprocess.run
+        subprocess.run = lambda *a, **k: (_ for _ in ()).throw(failing)
+        try:
+            with self.assertRaises(subprocess.CalledProcessError):
+                release.install_app(self.source, self.folder, [])
+        finally:
+            subprocess.run = real
+        self.assertEqual(self.binary(old), "old")
 
 
 if __name__ == "__main__":
