@@ -38,3 +38,15 @@ pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `
 - Show them the list it prints, verbatim, and wait for their answer before passing
   `--contents-approved`.
 - The tag starts the release pipeline, and the pipeline never creates a tag.
+
+## Testing the window
+
+`tests/window/` drives the real app window against small synthetic disk images. Read its
+[README](tests/window/README.md) before running one: it says how to make the images, how the
+harness keeps the test away from your settings and real drives, and what to do when a test
+stalls. Run one window test at a time, never beside a build.
+
+`scripts/rebase-pr.sh <branch>` rebases a pull request onto `main` in `.work/rebase`, keeps both
+sides of conflicts where two branches appended to the same file (`scripts/resolve_appends.py`),
+and pushes only if the TypeScript and clippy checks pass. Read the result of a Rust conflict by
+hand: keeping both sides can join two functions or two tests together.

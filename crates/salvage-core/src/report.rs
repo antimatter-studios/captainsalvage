@@ -200,6 +200,9 @@ fn check_one(row: &ManifestRow) -> &'static str {
 /// background. It reads only the destination. Earlier results are replaced.
 pub fn check_copies(destination: &Path) -> Result<()> {
     let destination = destination.to_path_buf();
+    if let Some(problem) = crate::export::test_copy_problem(&destination) {
+        bail!("{problem}");
+    }
     if !manifest_path(&destination).exists() {
         bail!("Nothing has been copied to {} yet.", destination.display());
     }
