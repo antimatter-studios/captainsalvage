@@ -39,6 +39,9 @@ pub const AUTHOR_USER: &str = "you";
 const MAX_HEX_BYTES: u64 = 64 * 1024;
 const MAX_MAP_REGION_BUCKETS: usize = 200;
 const DEFAULT_PAGE: u64 = 100;
+/// What the workbench shows of a reassembly: a whole picture up to this, or a text's start.
+const MAX_MATERIALIZE_IMAGE_BYTES: u64 = 24 * 1024 * 1024;
+const MAX_MATERIALIZE_TEXT_BYTES: u64 = 512 * 1024;
 const MAX_FOLLOW_CLUSTERS: u64 = 100_000;
 const DEFAULT_FIND_LIMIT: u64 = 200;
 const ACTIVITY_DETAIL_CHARS: usize = 300;
@@ -675,6 +678,7 @@ impl Engine {
             }
 
             "test_stream" => self.test_stream(&session, args),
+            "materialize" => self.materialize(&session, args),
             "add_overlay" => {
                 let kind = need_str(args, "kind")?;
                 let note = need_str(args, "note")?;
@@ -1236,6 +1240,32 @@ impl Engine {
         Ok(serde_json::to_value(
             session.test_stream(&name, &clusters, length)?,
         )?)
+    }
+
+    /// Reads clusters in a chosen order as one file, to show it: a picture, or the start of a
+    /// text. Nothing is written; the plan is only data until saved as a hypothesis.
+    fn materialize(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
+        let clusters = extents_of(args, "extents")?.context("extents are required")?;
+        let name = str_of(args, "name").unwrap_or("");
+        let size = session.volume.boot.cluster_size();
+        let length = u64_of(args, "length").unwrap_or(clusters.len() as u64 * size);
+        let Some((kind, mime)) = crate::archive::preview_kind(name) else {
+            return Ok(json!({"kind": crate::archive::PREVIEW_NONE, "bytes": length}));
+        };
+        let limit = if kind == crate::archive::PREVIEW_IMAGE {
+            MAX_MATERIALIZE_IMAGE_BYTES
+        } else {
+            MAX_MATERIALIZE_TEXT_BYTES
+        };
+        if kind == crate::archive::PREVIEW_IMAGE && length > limit {
+            return Ok(json!({"kind": crate::archive::PREVIEW_TOO_BIG, "bytes": length}));
+        }
+        let data = session.read_clusters(&clusters, length, limit)?;
+        Ok(if kind == crate::archive::PREVIEW_TEXT {
+            json!({"kind": kind, "mime": mime, "text": String::from_utf8_lossy(&data), "bytes": length, "truncated": length > limit})
+        } else {
+            json!({"kind": kind, "mime": mime, "dataBase64": crate::mcp::base64(&data), "bytes": length, "truncated": false})
+        })
     }
 
     /// Whole-disk device path of the open volume, for the window to display.
