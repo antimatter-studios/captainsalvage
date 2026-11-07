@@ -895,6 +895,8 @@ const strings: Record<string, string> = {
   "Other files": "Andere Dateien",
   "{kind}, 1 file": "{kind}, 1 Datei",
   "{kind}, {count} files": "{kind}, {count} Dateien",
+  "Show every category again": "Wieder alle Kategorien zeigen",
+  "Show only this on the map": "Nur dies auf der Karte zeigen",
 };
 
 export default strings;

@@ -62,12 +62,26 @@ function BasketCheck({ checked, label, onChange }: { checked: boolean; label: st
   );
 }
 
+/** The window lights up a file's pieces on the map while the pointer rests on its row. */
+export const HOVER_ENTRY_EVENT = "salvage-hover-entry";
+
+function announceHover(id: number | null) {
+  window.dispatchEvent(new CustomEvent<number | null>(HOVER_ENTRY_EVENT, { detail: id }));
+}
+
 function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"]; depth?: number }) {
   const verdict = verdictLabel(row.verdict);
   const id = row.id as number;
   return (
     <div className="row-wrap">
-    <button className={selected ? "row row-selected" : "row"} onClick={onSelect} title={fromEngine(row.reason)} data-depth={depth}>
+    <button
+      className={selected ? "row row-selected" : "row"}
+      onClick={onSelect}
+      title={fromEngine(row.reason)}
+      data-depth={depth}
+      onMouseEnter={() => announceHover(id)}
+      onMouseLeave={() => announceHover(null)}
+    >
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
         <span className="row-name">{row.name}</span>

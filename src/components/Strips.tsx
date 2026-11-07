@@ -18,6 +18,9 @@ const SCRUB_PICK_MILLIS = 150;
 /** Height of one band unit in a stacked map column, in CSS pixels. */
 const CSS_PIXELS_PER_ROW = 2;
 
+/** How faint the other categories are drawn while one is isolated, out of 255. */
+const ISOLATED_OTHERS_ALPHA = 40;
+
 const LAYERS: { id: Layer; label: () => string; help: () => string }[] = [
   { id: "ownership", label: () => t("What explains it"), help: () => t("Which clusters a found entry or chain accounts for") },
   { id: "allocation", label: () => t("Allocation"), help: () => t("What the bitmap and FAT say about each cluster") },
@@ -49,6 +52,8 @@ interface StripProps {
   marker: number | null;
   /** Where the scan is reading now, drawn as a line while it runs. */
   scanAt?: number | null;
+  /** One legend value to show on its own: the rest are drawn faint. */
+  isolate?: number | null;
   /** Hears which values this strip's picture holds, so the legend can leave out the rest. */
   onValues?: (present: Set<number>) => void;
   clusterSize: number;
@@ -61,7 +66,7 @@ interface StripProps {
 }
 
 function Strip(props: StripProps) {
-  const { layer, start, end, floor, lens, revision, height, highlight, marker, scanAt, onValues, clusterSize, label, windowBox } = props;
+  const { layer, start, end, floor, lens, revision, height, highlight, marker, scanAt, isolate, onValues, clusterSize, label, windowBox } = props;
   const wrapper = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
   const marks = useRef<HTMLCanvasElement>(null);
@@ -103,7 +108,9 @@ function Strip(props: StripProps) {
         const image = context.createImageData(buckets, rows);
         data.forEach((value, index) => {
           const [red, green, blue] = table[value];
-          image.data.set([red, green, blue, 255], index * 4);
+          // With one category isolated, the others stay as a faint outline of the disk.
+          const alpha = isolate === null || isolate === undefined || value === isolate ? 255 : ISOLATED_OTHERS_ALPHA;
+          image.data.set([red, green, blue, alpha], index * 4);
         });
         context.putImageData(image, 0, 0);
         onValues?.(new Set(data));
@@ -114,7 +121,7 @@ function Strip(props: StripProps) {
     return () => {
       current = false;
     };
-  }, [layer, start, end, floor, lens, revision, width, height, themeTick]);
+  }, [layer, start, end, floor, lens, revision, width, height, themeTick, isolate]);
 
   useEffect(() => {
     const canvas = marks.current;
@@ -304,6 +311,10 @@ export function Strips(props: StripsProps) {
   const [present, setPresent] = useState<{ layer: Layer; whole: Set<number>; focus: Set<number> } | null>(null);
   const seen = present && present.layer === layer ? new Set([...present.whole, ...present.focus]) : null;
   const legend = legendFor(layer).filter((item) => !seen || seen.has(item.value) || item.always);
+  // A legend item clicked shows that category on its own, until clicked again or the layer
+  // changes.
+  const [isolated, setIsolated] = useState<{ layer: Layer; value: number } | null>(null);
+  const isolate = isolated && isolated.layer === layer ? isolated.value : null;
   const caption = sequentialCaption(layer);
   const heard = (which: "whole" | "focus") => (values: Set<number>) =>
     setPresent((known) => {
@@ -429,6 +440,7 @@ export function Strips(props: StripsProps) {
         highlight={highlight}
         marker={marker}
         scanAt={props.scanAt}
+        isolate={isolate}
         onValues={heard("whole")}
         clusterSize={clusterSize}
         label={t("Whole volume. Drag to choose a region")}
@@ -462,6 +474,7 @@ export function Strips(props: StripsProps) {
         highlight={highlight}
         marker={shown}
         scanAt={props.scanAt}
+        isolate={isolate}
         onValues={heard("focus")}
         clusterSize={clusterSize}
         label={t("Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub", { count: count(view[1] - view[0]) })}
@@ -479,10 +492,16 @@ export function Strips(props: StripsProps) {
       </div>
       <div className="legend">
         {legend.map((item) => (
-          <span key={item.label} className="legend-item">
+          <button
+            key={item.label}
+            className={isolate === null ? "legend-item legend-button" : isolate === item.value ? "legend-item legend-button legend-on" : "legend-item legend-button legend-off"}
+            aria-pressed={isolate === item.value}
+            title={isolate === item.value ? t("Show every category again") : t("Show only this on the map")}
+            onClick={() => setIsolated(isolate === item.value ? null : { layer, value: item.value })}
+          >
             <span className="legend-swatch" style={{ background: item.color }} />
             {item.label}
-          </span>
+          </button>
         ))}
         {caption && (
           <span className="legend-item">

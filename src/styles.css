@@ -828,3 +828,8 @@ video.inline-preview { max-height: 380px; background: #000; }
 .chat-tools-fold summary { cursor: pointer; }
 /* A label the app suggests for a folder that lost its name. Italic says it is a guess. */
 .row-name-guessed { font-style: italic; }
+/* Legend items isolate their category on the map when clicked. */
+.legend-button { background: none; box-shadow: none; padding: 1px 6px; border-radius: 6px; font: inherit; color: inherit; cursor: pointer; }
+.legend-button:hover:not(:disabled) { background: var(--hover); filter: none; }
+.legend-on { background: var(--hover); font-weight: 600; }
+.legend-off { opacity: 0.5; }
