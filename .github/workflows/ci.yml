@@ -1,7 +1,9 @@
 name: CI
 
-# The app reads macOS-only filesystem details, so everything runs on macOS. On a private
-# repository these minutes count ten times, so documentation-only changes skip this.
+# The engine and the window build run on Linux, where minutes cost a tenth of macOS's on a
+# private repository. Only what needs macOS runs there: the app itself, which links macOS
+# frameworks, the Finder extension and the release tools. The job named CI waits for both,
+# so branch protection keeps one required check. Documentation-only changes skip all of it.
 on:
   pull_request:
     paths-ignore: ["**.md", "media/**", "LICENSE"]
@@ -20,9 +22,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: CI
-    runs-on: macos-15
+  engine:
+    name: engine and window
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,11 +39,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: test the release tools
-        run: |
-          python3 scripts/test_release.py
-          bash scripts/test_changelog_fragment.sh
-          bash scripts/test_create_release.sh
       - name: unreleased changes are fragments
         run: bash scripts/changelog-check.sh
       - name: every window string is translated
@@ -50,9 +47,6 @@ jobs:
         run: bash scripts/test_translations.sh
       - name: type check and build the window
         run: npm run build
-      - name: the Finder extension type checks
-        run: |
-          swiftc -typecheck -parse-as-library -application-extension macos/finder/Extension.swift
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-deny@0.20.2
@@ -63,7 +57,50 @@ jobs:
           python3 scripts/licenses.py current
       - name: formatting
         run: cargo fmt --all --check
-      - name: lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: test
+      - name: lint the engine
+        run: cargo clippy -p salvage-core --all-targets --locked -- -D warnings
+      - name: test the engine
         run: cargo test -p salvage-core --locked
+
+  app:
+    name: app on macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
+        with:
+          toolchain: 1.95.0
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The app embeds the built window, so it is built here too.
+      - name: build the window
+        run: npm run build
+      - name: test the release tools
+        run: |
+          python3 scripts/test_release.py
+          bash scripts/test_changelog_fragment.sh
+          bash scripts/test_create_release.sh
+      - name: the Finder extension type checks
+        run: |
+          swiftc -typecheck -parse-as-library -application-extension macos/finder/Extension.swift
+      - name: lint the app, and the engine on macOS
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  ci:
+    name: CI
+    needs: [engine, app]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: both passed
+        run: |
+          for result in '${{ needs.engine.result }}' '${{ needs.app.result }}'; do
+            case "$result" in success) ;; *) echo "::error::a job ended with $result"; exit 1 ;; esac
+          done

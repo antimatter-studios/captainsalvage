@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
@@ -230,6 +230,7 @@ fn nearest_existing(path: &Path) -> PathBuf {
     current
 }
 
+#[cfg(target_os = "macos")]
 fn filesystem_of(path: &Path) -> Result<Filesystem> {
     let existing = nearest_existing(path);
     let text = CString::new(existing.as_os_str().as_bytes()).context("path holds a NUL byte")?;
@@ -242,13 +243,45 @@ fn filesystem_of(path: &Path) -> Result<Filesystem> {
         info
     };
     // SAFETY: statfs returns a NUL-terminated device name in a fixed buffer.
-    let device = unsafe { CStr::from_ptr(info.f_mntfromname.as_ptr()) }
+    let device = unsafe { std::ffi::CStr::from_ptr(info.f_mntfromname.as_ptr()) }
         .to_string_lossy()
         .into_owned();
     Ok(Filesystem {
         device,
         free_bytes: u64::from(info.f_bavail as u32).max(info.f_bavail) * u64::from(info.f_bsize),
         read_only: info.f_flags & libc::MNT_RDONLY as u32 != 0,
+    })
+}
+
+/// Elsewhere, such as the Linux machines CI runs the engine's tests on, the device comes from
+/// the mount table: the longest mount point the path is under.
+#[cfg(not(target_os = "macos"))]
+fn filesystem_of(path: &Path) -> Result<Filesystem> {
+    let existing = nearest_existing(path);
+    let text = CString::new(existing.as_os_str().as_bytes()).context("path holds a NUL byte")?;
+    // SAFETY: `info` is plain data the call fills in, and `text` outlives the call.
+    let info = unsafe {
+        let mut info: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(text.as_ptr(), &mut info) != 0 {
+            bail!("cannot read filesystem details for {}", existing.display());
+        }
+        info
+    };
+    let mounts = fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    let device = mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?, fields.next()?))
+        })
+        .filter(|(_, point)| existing.starts_with(point))
+        .max_by_key(|(_, point)| point.len())
+        .map(|(device, _)| device.to_string())
+        .unwrap_or_default();
+    Ok(Filesystem {
+        device,
+        free_bytes: info.f_bavail as u64 * info.f_frsize as u64,
+        read_only: info.f_flag & libc::ST_RDONLY != 0,
     })
 }
 
