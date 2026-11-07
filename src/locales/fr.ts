@@ -899,6 +899,12 @@ const strings: Record<string, string> = {
   "Show only this on the map": "N’afficher que ceci sur la carte",
   "macOS wrote to some of its clusters on {dates}, for its own index and logs, so parts of it may have been overwritten.": "macOS a écrit dans certains de ses clusters le {dates}, pour son propre index et ses journaux, donc des parties ont pu être écrasées.",
   "Show on the map": "Afficher sur la carte",
+  "Files": "Fichiers",
+  "No extension": "Sans extension",
+  "Show all {count} types": "Afficher les {count} types",
+  "Show fewer types": "Afficher moins de types",
+  "Type": "Type",
+  "Untested": "Non testés",
 };
 
 export default strings;

@@ -3017,6 +3017,38 @@ fn wait_for_file_tests(session: &Session) -> salvage_core::filetest::FileTestSta
 }
 
 #[test]
+fn file_test_results_are_counted_per_file_type() {
+    let (engine, session, dir) = engine_with_volume("by-type");
+    let untested = call(&engine, "file_tests_by_type", json!({}));
+    let jpg = |report: &serde_json::Value| {
+        report["types"]
+            .as_array()
+            .expect("types")
+            .iter()
+            .find(|row| row["extension"] == "jpg")
+            .cloned()
+            .expect("a jpg row")
+    };
+    let before = jpg(&untested);
+    assert_eq!(before["group"], "photos");
+    assert!(before["files"].as_u64().unwrap() >= 1);
+    assert_eq!(before["notTestedYet"], before["files"]);
+
+    call(&engine, "file_tests_start", json!({"groups": ["photos"]}));
+    let status = wait_for_file_tests(&session);
+    assert_eq!(status.state, "finished", "{:?}", status.error);
+    let after = jpg(&call(&engine, "file_tests_by_type", json!({})));
+    // The test volume's photo holds noise, so it is counted as damaged.
+    assert!(after["damaged"].as_u64().unwrap() >= 1, "{after}");
+    let counted = ["passed", "damaged", "noTest", "notTestedYet"]
+        .iter()
+        .map(|key| after[*key].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(counted, after["files"].as_u64().unwrap());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn background_tests_change_the_score_and_survive_a_rebuild() {
     let (engine, session, dir) = engine_with_volume("filetests");
     let before = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0].clone();
