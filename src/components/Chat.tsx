@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
-import type { Selection } from "../api";
+import { call, type Selection } from "../api";
 import { count } from "../format";
 import { fromEngine, questionFor, t, useLanguage, type Language } from "../i18n";
 import { Command } from "./Command";
@@ -61,6 +61,59 @@ export function describeSelection(selection: Selection): string {
   }
 }
 
+/** Questions worth asking about what is selected, offered before the person types. */
+function suggestionsFor(selection: Selection): string[] {
+  switch (selection.kind) {
+    case "cluster":
+      return [t("What is in this cluster?"), t("Which file does this cluster belong to?")];
+    case "entry":
+      return [t("Is this file whole?"), t("Where are the rest of its clusters?"), t("Can it be put back together?")];
+    case "folder":
+      return [t("What did this folder hold?"), t("Where did this folder belong?")];
+    case "chain":
+      return [t("Which file did this chain belong to?"), t("Where does this chain continue?")];
+    case "region":
+      return [t("What is in this region?"), t("Could this be part of a lost file?")];
+    default:
+      return [t("What can be recovered from this disk?"), t("Where are the biggest lost pieces?")];
+  }
+}
+
+/** "cluster 1,234" or "clusters 52 to 60", in English or with the window's own separators. */
+const CLUSTER_MENTION = /(\bclusters?\s+)(\d{1,3}(?:[,.\u00a0\u202f ]\d{3})+(?!\d)|\d+)/gi;
+
+/** Plain text, with every cluster number it mentions turned into a link to that cluster. */
+function WithClusters({ text }: { text: string }) {
+  const parts: (string | { label: string; cluster: number })[] = [];
+  let last = 0;
+  for (const match of text.matchAll(CLUSTER_MENTION)) {
+    const at = (match.index ?? 0) + match[1].length;
+    parts.push(text.slice(last, at));
+    const cluster = Number(match[2].replace(/\D/g, ""));
+    parts.push(Number.isSafeInteger(cluster) ? { label: match[2], cluster } : match[2]);
+    last = at + match[2].length;
+  }
+  parts.push(text.slice(last));
+  return (
+    <>
+      {parts.map((part, index) =>
+        typeof part === "string" ? (
+          part
+        ) : (
+          <button
+            key={index}
+            className="link chat-cluster"
+            title={t("Show cluster {cluster}", { cluster: count(part.cluster) })}
+            onClick={() => void call("show_in_app", { kind: "cluster", value: part.cluster })}
+          >
+            {part.label}
+          </button>
+        ),
+      )}
+    </>
+  );
+}
+
 /** Renders the small part of Markdown Claude's answers rely on. */
 function Formatted({ text }: { text: string }) {
   const blocks = text.split(/```/);
@@ -73,8 +126,8 @@ function Formatted({ text }: { text: string }) {
           <span key={index}>
             {block.split(/(`[^`]+`|\*\*[^*]+\*\*)/).map((part, inner) => {
               if (part.startsWith("`") && part.endsWith("`") && part.length > 1) return <code key={inner}>{part.slice(1, -1)}</code>;
-              if (part.startsWith("**") && part.endsWith("**") && part.length > 3) return <strong key={inner}>{part.slice(2, -2)}</strong>;
-              return part;
+              if (part.startsWith("**") && part.endsWith("**") && part.length > 3) return <strong key={inner}><WithClusters text={part.slice(2, -2)} /></strong>;
+              return <WithClusters key={inner} text={part} />;
             })}
           </span>
         ),
@@ -230,11 +283,15 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
           <div key={index} className={`chat-message chat-${message.role}`}>
             {message.about && <div className="chat-about">{t("About: {subject}", { subject: message.about })}</div>}
             {message.tools.length > 0 && (
-              <ul className="chat-tools">
-                {message.tools.map((tool, inner) => (
-                  <li key={inner} title={tool.input} className="mono">{tool.name}</li>
-                ))}
-              </ul>
+              // What the agent looked at, folded away so the answer comes first.
+              <details className="chat-tools-fold">
+                <summary>{message.tools.length === 1 ? t("1 tool used") : t("{count} tools used", { count: count(message.tools.length) })}</summary>
+                <ul className="chat-tools">
+                  {message.tools.map((tool, inner) => (
+                    <li key={inner} title={tool.input} className="mono">{tool.name}</li>
+                  ))}
+                </ul>
+              </details>
             )}
             {message.text && <div className="chat-text"><Formatted text={message.role === "error" ? fromEngine(message.text) : message.text} /></div>}
           </div>
@@ -242,6 +299,13 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
         {busy && <div className="chat-busy">{t("Investigating")}</div>}
       </div>
       <div className="chat-input">
+        {!busy && !draft && (
+          <div className="chat-suggestions" aria-label={t("Suggested questions")}>
+            {suggestionsFor(selection).map((question) => (
+              <button key={question} className="chat-suggestion" onClick={() => setDraft(question)}>{question}</button>
+            ))}
+          </div>
+        )}
         <div className="chat-context">About: {describeSelection(selection)}</div>
         <div className="composer">
           <textarea
