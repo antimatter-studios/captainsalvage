@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An illustrated guide to recovering files safely with Captain Salvage for macOS, in Simple and Investigate modes.">
+  <title>Captain Salvage — User manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<a class="skip" href="#manual">Skip to the manual</a>
+<header>
+  <p><a href="../../README.md">Captain Salvage</a> / User manual</p>
+  <h1>Bring your files home.</h1>
+  <p>Captain Salvage maps a damaged exFAT volume, finds files and folder fragments,
+    and copies what can be recovered to a safe destination. This guide covers the
+    interface with Simple and Investigate modes, as documented in November 2026.</p>
+  <p class="note">Every new screenshot in this guide uses made-up data from synthetic
+    disk images. Click any screenshot for the full-resolution image. No private disk
+    contents are illustrated. The app is in early development; wording and layout may change.</p>
+  <nav aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#safety">Before you begin</a></li>
+      <li><a href="#start">Start screen and first scan</a></li>
+      <li><a href="#layout">Window layout and modes</a></li>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#folders">Sidebar folders</a></li>
+      <li><a href="#browse">Browse files: grid and list</a></li>
+      <li><a href="#selected">Selected and file preview</a></li>
+      <li><a href="#archives">Inside archive</a></li>
+      <li><a href="#rebuild">Rebuild: the folder canvas</a></li>
+      <li><a href="#agent">Chat with an agent</a></li>
+      <li><a href="#treasure">Treasure list and copying</a></li>
+      <li><a href="#report">Copy report</a></li>
+      <li><a href="#map">Investigate: map strips</a></li>
+      <li><a href="#bytes">Bytes</a></li>
+      <li><a href="#workbench">Workbench</a></li>
+      <li><a href="#hypotheses">Hypotheses</a></li>
+      <li><a href="#lens">Lens</a></li>
+      <li><a href="#volume">Volume</a></li>
+      <li><a href="#activity">Activity</a></li>
+      <li><a href="#connect">Connect</a></li>
+      <li><a href="#troubleshooting">If something does not work</a></li>
+    </ol>
+  </nav>
+</header>
+<main id="manual">
+  <section id="safety">
+    <h2>1. Before you begin</h2>
+    <p class="warning">Do not repair, format, or save recovered files onto the damaged
+      disk. Captain Salvage reads the source, but macOS and other programs can still
+      write to a mounted volume. A read-only recovery app does not make a mounted disk safe.</p>
+    <ul>
+      <li>Use an exFAT partition or a raw image of one. An image of an entire physical
+        disk with a partition table is not the same thing as an exFAT partition image.</li>
+      <li>If you have a suitable image, work on it rather than repeatedly reading an
+        unreliable original. Keep another healthy disk available for recovered files.</li>
+      <li>Check the source's identity and the destination before opening or copying.
+        Never choose the recovery source as the salvage destination.</li>
+      <li>Read the safety indicator and any mounted-volume warnings. Mount prevention
+        does not retroactively undo writes or unmount an already mounted volume.</li>
+      <li>The app stores its scan map, hypotheses, and rebuild layout separately from
+        the source. These are interpretations, not repairs written back to exFAT.</li>
+    </ul>
+    <p class="note">The red safety indicator in these screenshots is expected: the
+      disposable image files are writable by the test account. For actual recovery,
+      inspect and address the safety checks rather than copying that setup.</p>
+    <h3>A first recovery in six steps</h3>
+    <ol>
+      <li>Open the intended exFAT source or partition image.</li>
+      <li>Review safety checks and run the scan; allow it to finish if practical.</li>
+      <li>Stay in <strong>Simple</strong>. Review Overview, then Browse files.</li>
+      <li>Preview important files and test their formats. Confidence is not proof of completeness.</li>
+      <li>Add files or folders to the Treasure list and choose a healthy destination.</li>
+      <li>Start copying, open the copy report, check the copies again, and inspect the recovered files.</li>
+    </ol>
+  </section>
+  <section id="start">
+    <h2>2. Start screen and first scan</h2>
+    <figure><a href="../../media/manual/01-start.png"><img src="../../media/manual/01-start.png" alt="Start screen with its chart, appearance controls, and synthetic partition-image path."></a><figcaption>Attached-device rows are omitted in this illustration. The image path points to a disposable synthetic fixture.</figcaption></figure>
+    <dl>
+      <dt>Chart and remembered volumes</dt><dd>The left-hand chart summarises what is known
+        about a recognised volume. Before a scan it is uncharted; it is not a live scan-progress map.</dd>
+      <dt>Which disk is damaged?</dt><dd>Attached volumes appear here with their identifying
+        information and open controls when suitable. <strong>Check again</strong> refreshes
+        the list; <strong>Show internal disks</strong> includes internal devices. Choose carefully.</dd>
+      <dt>Mount protection</dt><dd>A volume's mount-blocking control asks the app to keep
+        that volume unmounted while the app is open. It does not make an already mounted
+        volume read-only. Follow the warnings rather than assuming protection succeeded.</dd>
+      <dt>Seen before, not attached</dt><dd>These are remembered scan summaries, not currently
+        accessible disks. Reattach the correct source to read its bytes again.</dd>
+      <dt>Or open a disk image</dt><dd>Use <strong>Choose a file</strong> or enter an absolute
+        partition-image path, then <strong>Open</strong>. A device path is also accepted,
+        but requires the correct device identity and permissions.</dd>
+      <dt>Appearance</dt><dd>Choose system, light, or dark appearance using the top-right controls.</dd>
+    </dl>
+    <p>Once open, use the scan control in the toolbar to read and index the source.
+      Its progress shows how far it has read. Scans can stop and resume; a partial scan
+      means the map and file counts are not yet complete. Reopening the same recognised
+      source can reuse its saved workspace rather than starting from nothing.</p>
+  </section>
+  <section id="layout">
+    <h2>3. Window layout and modes</h2>
+    <p>The toolbar contains the source and safety status, scan controls, language,
+      appearance, and the <strong>Simple / Investigate</strong> switch. The left sidebar
+      navigates folders, the centre presents your files or the map's selected bytes,
+      and the right-hand Details panel explains or acts on the selection. Drag panel
+      dividers to adjust their widths. Hover a Details icon to see its tab name.</p>
+    <table>
+      <thead><tr><th scope="col">Mode</th><th scope="col">What it shows</th><th scope="col">When to use it</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Simple (default)</th><td>Folders, Overview, Browse files,
+          Inside archive; Selected, Rebuild, Chat with an agent, Treasure list.</td><td>Finding,
+          previewing, organising, and copying files without the technical map and bytes views.</td></tr>
+        <tr><th scope="row">Investigate</th><td>Everything in Simple, plus map strips,
+          Bytes, extra sidebar views, Workbench, Hypotheses, Lens, Volume, Activity,
+          and Connect.</td><td>Explaining missing pieces and testing alternate interpretations.</td></tr>
+      </tbody>
+    </table>
+    <p>The app remembers your mode. Switching modes changes the controls shown, not
+      the source bytes or your existing recovery work. Return to Simple whenever
+      you want the smaller recovery-focused interface.</p>
+    <figure><a href="../../media/manual/20-overview-dark.png"><img src="../../media/manual/20-overview-dark.png" alt="The synthetic recovery overview in dark appearance, with Simple mode selected."></a><figcaption>Appearance is independent of mode: the same recovery tools also work in dark appearance.</figcaption></figure>
+  </section>
+  <section id="overview">
+    <h2>4. Overview</h2>
+    <figure><a href="../../media/manual/02-overview.png"><img src="../../media/manual/02-overview.png" alt="Simple-mode Overview with recovered-data totals and a breakdown of the synthetic volume."></a><figcaption>Overview is the starting point for deciding what to inspect next.</figcaption></figure>
+    <dl>
+      <dt>Found by name</dt><dd>The headline counts data that found directory entries
+        account for. It is not a promise that every byte is intact or already copied.</dd>
+      <dt>Disk breakdown</dt><dd>Compare named files and folders, unnamed chains,
+        unexplained space, and current allocation. Unexplained does not mean empty:
+        it means the current map has not accounted for those bytes.</dd>
+      <dt>File tests</dt><dd>Run tests for the offered file groups and inspect passed,
+        damaged, unsupported, and not-yet-tested counts, including the per-type table.
+        A structure test cannot establish whether the contents are the file you wanted.</dd>
+      <dt>When macOS wrote to this volume</dt><dd>When evidence exists, a dated table
+        reports system metadata writes and possible overlap with lost files. The
+        safety baseline only detects changes since it was recorded.</dd>
+    </dl>
+    <p>Use Browse files or the sidebar to inspect individual results. If a scan is
+      incomplete, let it continue before treating these totals as final.</p>
+    <figure><a href="../../media/manual/21-macos-history.png"><img src="../../media/manual/21-macos-history.png" alt="Overview of the synthetic macOS-history fixture showing dated system-metadata writes."></a><figcaption>A separate synthetic fixture illustrates the macOS-write history. These dates and filenames are made-up test evidence, not a record from a real recovery disk.</figcaption></figure>
+  </section>
+  <section id="folders">
+    <h2>5. Sidebar folders</h2>
+    <figure><a href="../../media/manual/03-folders.png"><img src="../../media/manual/03-folders.png" alt="Expanded synthetic folder tree alongside files and Selected details."></a><figcaption>Lost folders are recoverable pieces whose original place in the tree may be unknown.</figcaption></figure>
+    <p>Use the sidebar search to narrow entries. Expand a folder with its disclosure
+      control, then select a file to inspect it. Selecting a folder shows its details;
+      use <strong>Browse files</strong> there to scope the centre to that folder.
+      Clear the scope in Browse files to return to the whole disk.</p>
+    <p>A lost-folder label is a placeholder, not the original folder name. In Simple
+      mode these labels avoid raw cluster numbers. Drag a folder piece to Rebuild to
+      arrange a recoverable tree without changing its on-disk parent links.</p>
+    <p>Investigate adds sidebar views for lower-level evidence, including unnamed
+      chains and unexplained regions. Selecting those takes you to their locations
+      on the map and, where available, their bytes.</p>
+  </section>
+  <section id="browse">
+    <h2>6. Browse files: grid and list</h2>
+    <figure><a href="../../media/manual/04-browse-grid.png"><img src="../../media/manual/04-browse-grid.png" alt="Browse files in Icons layout showing synthetic picture thumbnails."></a><figcaption>Icons layout is useful for recognising pictures visually. The overwritten synthetic example deliberately cannot decode; the intact examples are generated colour gradients.</figcaption></figure>
+    <figure><a href="../../media/manual/05-browse-list.png"><img src="../../media/manual/05-browse-list.png" alt="The same synthetic files in List layout with sizes, dates, and recovery verdicts."></a><figcaption>List layout exposes metadata for comparison.</figcaption></figure>
+    <dl>
+      <dt>File-kind tabs</dt><dd>Limit the view to a kind such as photos, videos,
+        music, documents, or archives. Counts reflect the indexed results.</dd>
+      <dt>Filter by name</dt><dd>Type a filename or part of one. This filters the
+        current view; it is not a new disk scan.</dd>
+      <dt>Identical-file grouping</dt><dd>The duplicate toggle shows one representative
+        for already-tested files with identical bytes. It does not delete duplicates.
+        A multiplier marks grouped copies.</dd>
+      <dt>Icons, List, and Sort</dt><dd>Switch presentation without changing the
+        recovery results. Use the sort menu to order the view by the offered fields.</dd>
+      <dt>File and treasure controls</dt><dd>Select a tile or row to open it. Its
+        treasure-list control adds or removes it from the copy queue. A confidence
+        ring and verdict describe the app's assessment, not a guarantee.</dd>
+    </dl>
+    <p>A missing thumbnail is not automatically lost data. Some types require opening
+      a larger preview, some need a decoder, and a genuinely damaged file may not decode.</p>
+  </section>
+  <section id="selected">
+    <h2>7. Selected and file preview</h2>
+    <figure><a href="../../media/manual/06-preview-selected.png"><img src="../../media/manual/06-preview-selected.png" alt="Large preview of a synthetic image with its Selected details and recovery actions."></a><figcaption>Preview the contents and read the verdict before deciding what to copy. This deliberately tiny 64 × 64 test image is shown at its native size.</figcaption></figure>
+    <p><strong>Selected</strong> explains the chosen file, folder, or (in Investigate)
+      cluster. It shows the name, path, confidence, reason for the verdict, and facts
+      such as size and timestamps. Folder details offer browsing and adding the folder
+      to the Treasure list. Cluster details identify owners and nearby evidence.</p>
+    <ul>
+      <li><strong>Open large</strong> or the inline preview opens the centre preview.
+        Previous/next controls move through the current file results; the back arrow
+        returns to the files.</li>
+      <li><strong>Test format</strong> walks a supported file's structure. Read its
+        valid fraction, units, break locations, and notes. An unsupported format is
+        not the same as a failed test.</li>
+      <li><strong>Add to the treasure list</strong> queues a copy; it does not begin one.</li>
+      <li><strong>Look inside</strong> opens a supported archive's members.</li>
+      <li>Investigate exposes first cluster, pieces, chain layout, current-use and
+        shared-cluster counts, checksum state, and links to the relevant bytes.</li>
+    </ul>
+    <p>Images, supported audio/video, and text can be previewed where the bytes and
+      decoder allow it. Some media types use an optional ffmpeg installation; the app
+      shows instructions if needed. Do not confuse successful playback of a portion
+      with a complete, verified recovery.</p>
+  </section>
+  <section id="archives">
+    <h2>8. Inside archive</h2>
+    <figure><a href="../../media/manual/07-inside-archive.png"><img src="../../media/manual/07-inside-archive.png" alt="Inside archive showing a synthetic archive member tree and a picture member preview."></a><figcaption>The archive is read through the recovery map, not mounted or repaired.</figcaption></figure>
+    <p>Select an archive and choose <strong>Look inside</strong>. The Inside archive
+      tab becomes available for that selection. Expand member folders and select a
+      file to see its preview and metadata. Some document formats are archives too.</p>
+    <p>Use the member-check controls to test contents and inspect each member's mark
+      and explanation: intact, damaged, or unknown. Unsupported compression or a
+      truncated listing can limit what is readable. Folder/member copy controls
+      recover chosen contents to a destination; keep that destination off the source.
+      Return to Browse files to select a different archive.</p>
+  </section>
+  <section id="rebuild">
+    <h2>9. Rebuild: the folder canvas</h2>
+    <figure><a href="../../media/manual/08-rebuild.png"><img src="../../media/manual/08-rebuild.png" alt="Rebuild tab with a named canvas and synthetic folder pieces arranged for recovery."></a><figcaption>A canvas is your proposed output tree, separate from the source filesystem.</figcaption></figure>
+    <p>Open <strong>Rebuild</strong> in Details. Create or select a named canvas, then
+      drag lost folder pieces from the sidebar or files from Browse files into it.
+      The drop choices distinguish placing a piece inside a folder from merging its
+      contents with that folder. Expand the rebuilt tree to check the result.</p>
+    <p>Use a folder's available rename and organisation controls to describe the
+      intended tree. Suggestions can help relate similar pieces; review them rather
+      than assuming a match proves the original relationship. Removing a canvas item
+      removes that arrangement, not source data.</p>
+    <p>Use the canvas copy controls to review and copy the rebuilt tree to a healthy
+      destination. Where available, showing a canvas in Finder exposes a read-only
+      view through the running app. Finder still needs the app and source available;
+      the view is not a substitute for an independent recovered copy.</p>
+  </section>
+  <section id="agent">
+    <h2>10. Chat with an agent</h2>
+    <figure><a href="../../media/manual/09-ask-agent.png"><img src="../../media/manual/09-ask-agent.png" alt="Chat with an agent panel with selection context and an idle message composer."></a><figcaption>No external agent was run for this illustration. The screenshot retains the earlier “Ask agent” tab label.</figcaption></figure>
+    <p>Select a file or region, open <strong>Chat with an agent</strong>, choose an available
+      agent, and enter a question. The context area tells you what the agent is being
+      asked about. For example: “Why is this file marked partial?” or “Explain the
+      evidence before proposing a hypothesis.”</p>
+    <p>The panel shows the conversation and tool activity; use its stop control to
+      interrupt a running request and its reset control when you want a fresh context.
+      Agent availability depends on local configuration and authentication. Review
+      proposed changes in Hypotheses and inspect files yourself. Only you start copying.</p>
+    <p class="warning">An agent may read source bytes and filenames using its tools.
+      Consider your provider's privacy arrangements before using it on sensitive data.
+      Read-only disk access does not mean data stays private from the agent provider.</p>
+  </section>
+  <section id="treasure">
+    <h2>11. Treasure list and copying</h2>
+    <figure><a href="../../media/manual/10-treasure-list.png"><img src="../../media/manual/10-treasure-list.png" alt="Treasure list with synthetic files, copy plan, and a temporary destination folder."></a><figcaption>The destination here is a disposable test folder. For real recovery, choose a healthy disk.</figcaption></figure>
+    <ol>
+      <li>Add important files or whole folders from Selected or Browse files.</li>
+      <li>Open <strong>Treasure list</strong>. Drag to prioritise items, or use the up
+        and down buttons. Remove an item to change the queue, not the source.</li>
+      <li>Set <strong>Where it goes</strong> to a folder on another healthy disk.
+        Choose a destination or enter a path. You can remember it as the salvage drive.</li>
+      <li>Choose the confidence threshold and whether partial files should be included.
+        Review the plan's file count, byte count, free space, and any refusal.</li>
+      <li>Start copying only after checking that plan. Watch progress and use
+        <strong>Stop copying</strong> if necessary. Completed copies remain available.</li>
+      <li>Open the copy report and verify the output before relying on it.</li>
+    </ol>
+    <p>The app refuses an unsafe source destination and reports insufficient space.
+      Changing thresholds changes what qualifies for the copy; it does not improve
+      the bytes. Emptying the Treasure list clears the queue, not the recovered files.</p>
+  </section>
+  <section id="report">
+    <h2>12. Copy report</h2>
+    <figure><a href="../../media/manual/11-copy-report.png"><img src="../../media/manual/11-copy-report.png" alt="Copy report for synthetic files showing complete copies and verification results."></a><figcaption>A real copy and destination recheck were performed for this example.</figcaption></figure>
+    <p>Choose <strong>Open the copy report</strong> after a copy. The report identifies
+      the destination and summarises complete and partial output. Each row shows the
+      relative target path, bytes written, copy status, and verification state.</p>
+    <dl>
+      <dt>All / Partial / Changed since / Missing / Not checked</dt><dd>Filter the
+        manifest without changing files. Use Show more if further rows are available.</dd>
+      <dt>Check the copies again</dt><dd>Reread destination files and compare their hashes
+        with the hashes recorded when copied. This reads the copies, not the damaged disk.</dd>
+      <dt>The same</dt><dd>The destination bytes still match what was copied. This does
+        not prove the original file was undamaged or that the recovery interpretation was right.</dd>
+      <dt>Changed since / Missing</dt><dd>The output no longer matches or cannot be found.
+        Check the destination and preserve any valuable copies before investigating further.</dd>
+    </dl>
+  </section>
+  <section id="map">
+    <h2>13. Investigate: map strips</h2>
+    <figure><a href="../../media/manual/12-investigate-map.png"><img src="../../media/manual/12-investigate-map.png" alt="Investigate mode with the whole-volume and zoomed map strips above the centre view."></a><figcaption>Map colours describe evidence layers, not a simple good/bad result.</figcaption></figure>
+    <p>Switch to <strong>Investigate</strong>. The map shows the whole-volume context
+      and a closer view of the chosen range. Select a point to inspect a cluster;
+      drag a range to zoom. Use the map's zoom/navigation controls and gestures to
+      return to context or move through neighbouring bytes. Hover for the location
+      and the mix represented by that column; a column can contain several categories.</p>
+    <dl>
+      <dt>What explains it</dt><dd>Named entries, directories, unnamed chains, and
+        unaccounted regions in the current interpretation.</dd>
+      <dt>Allocation</dt><dd>What the allocation bitmap and FAT say is in use or free,
+        including free areas with a remaining chain.</dd>
+      <dt>Content and Entropy</dt><dd>What scanned bytes resemble, and how random they
+        appear. High entropy alone cannot distinguish compressed, encrypted, or useful data.</dd>
+      <dt>Confidence and Folders</dt><dd>The strongest claiming-file score, or where
+        directory clusters were found.</dd>
+      <dt>Lens and legend</dt><dd>The active filter's matching clusters. Use legend
+        items to isolate a category and read the labels rather than relying only on colour.</dd>
+    </dl>
+    <p>The confidence floor changes the interpretation shown. Selection markers and
+      highlighted extents connect a file or region with its location on the map.</p>
+  </section>
+  <section id="bytes">
+    <h2>14. Bytes</h2>
+    <figure><a href="../../media/manual/13-bytes.png"><img src="../../media/manual/13-bytes.png" alt="Bytes view with offsets, hexadecimal values, readable text, and synthetic cluster details."></a><figcaption>Raw bytes help distinguish a plausible header from an unsupported assumption.</figcaption></figure>
+    <p>Select a cluster on the map or follow a cluster link in Selected, then choose
+      <strong>Bytes</strong>. This tab is disabled until a cluster is selected. The
+      centre shows byte offsets, hexadecimal values, and a readable-character column.</p>
+    <p>Use previous/next-cluster controls to move through the source. Compare a file's
+      extents and expected signature with the bytes actually present. Non-text bytes
+      are normal in media; readable strings alone do not establish file boundaries.
+      This is an inspection view, not a hex editor.</p>
+  </section>
+  <section id="workbench">
+    <h2>15. Workbench</h2>
+    <figure><a href="../../media/manual/14-workbench.png"><img src="../../media/manual/14-workbench.png" alt="Workbench containing a synthetic JPEG piece, output fields, and a format-test report."></a><figcaption>Workbench assembles the bytes of one file; Rebuild arranges a tree of files and folders.</figcaption></figure>
+    <ol>
+      <li>Select a file, cluster, or supported region and open <strong>Workbench</strong>.</li>
+      <li>Choose <strong>Add the selection</strong>. Repeat for additional pieces.</li>
+      <li>Move pieces up or down to control byte order; remove pieces that do not belong.
+        Review the output name and length fields.</li>
+      <li>Use <strong>Test it</strong> for a structure test and <strong>Show it</strong>
+        for a preview. Neither action writes a reconstructed file over the source.</li>
+      <li>If the interpretation is useful, <strong>Keep as the clusters of</strong>
+        records a file-extents hypothesis. Review it in Hypotheses and copy through
+        the recovery workflow when ready.</li>
+    </ol>
+    <p>Passing a test is evidence, not proof that a reconstructed file has the right
+      content. Keep your original scan and compare alternate interpretations.</p>
+  </section>
+  <section id="hypotheses">
+    <h2>16. Hypotheses</h2>
+    <figure><a href="../../media/manual/15-hypotheses.png"><img src="../../media/manual/15-hypotheses.png" alt="Hypotheses showing a saved synthetic file-reassembly interpretation with its activation checkbox."></a><figcaption>Switch an interpretation off to compare the map without it.</figcaption></figure>
+    <p>This tab lists saved overlays, with their kind, explanatory note, author, time,
+      and target. They can describe file extents, a folder parent, a directory piece,
+      an accepted damaged entry, a region explanation, or a note.</p>
+    <p>Toggle the checkbox to activate or deactivate an interpretation. The app rebuilds
+      its view from the applicable evidence. <strong>Delete</strong> removes the saved
+      hypothesis, not disk contents; deactivate first if you may want to compare later.
+      Saved lenses have their own tab rather than appearing in this list.</p>
+  </section>
+  <section id="lens">
+    <h2>17. Lens</h2>
+    <figure><a href="../../media/manual/16-lens.png"><img src="../../media/manual/16-lens.png" alt="Lens tab with allocation, ownership, and content filters for the synthetic source."></a><figcaption>Use a lens to focus the map without hiding or deleting source data.</figcaption></figure>
+    <p>Choose the allocation, ownership (“What explains it”), and content categories
+      of interest. The Lens map layer highlights matches while other clusters fall
+      away. Use it to ask questions such as where free, unexplained picture-like bytes lie.</p>
+    <p>Enter a descriptive name and choose <strong>Save lens</strong> to reuse the
+      filter. Select a saved lens to apply it; <strong>Clear</strong> removes the active
+      filter. A lens does not repair a file or change the allocation bitmap.</p>
+  </section>
+  <section id="volume">
+    <h2>18. Volume</h2>
+    <figure><a href="../../media/manual/17-volume.png"><img src="../../media/manual/17-volume.png" alt="Volume tab comparing main and backup boot-sector fields and allocation totals."></a><figcaption>Scroll the Details panel to see map totals, checks, and interpretation parameters.</figcaption></figure>
+    <dl>
+      <dt>Space</dt><dd>Summaries of allocation, remaining free chains, and cross-links.</dd>
+      <dt>Boot sectors</dt><dd>Main and backup geometry values, highlighted differences,
+        and checksum validity. Disagreement is evidence to examine, not a request to overwrite either copy.</dd>
+      <dt>What the map holds</dt><dd>Verdict counts, sizes, unnamed chains, unexplained
+        space, and when the interpretation was rebuilt.</dd>
+      <dt>Rebuild the map now</dt><dd>Recalculate the map from known evidence and active
+        hypotheses. This is not a filesystem repair or a replacement for scanning unread bytes.</dd>
+      <dt>Check disk is unchanged</dt><dd>Compare boot regions, FAT, bitmap, and root with
+        the safety baseline. A match does not establish that every data cluster is unchanged.</dd>
+      <dt>How damage is weighed</dt><dd>Controls for chain fallback, damaged-entry handling,
+        and confidence affect interpretation. Record deliberate changes and review the
+        new results; changing assumptions does not restore overwritten bytes.</dd>
+    </dl>
+  </section>
+  <section id="activity">
+    <h2>19. Activity</h2>
+    <figure><a href="../../media/manual/18-activity.png"><img src="../../media/manual/18-activity.png" alt="Activity tab listing timestamped operations on the synthetic recovery workspace."></a><figcaption>Activity records what happened in the workspace.</figcaption></figure>
+    <p>Read the timestamped actions to understand scans, tests, hypotheses, and copy
+      operations. This is a history view, not a queue of commands to run again.
+      Pair it with the copy report when checking what was actually written to a destination.</p>
+  </section>
+  <section id="connect">
+    <h2>20. Connect</h2>
+    <figure><a href="../../media/manual/19-connect.png"><img src="../../media/manual/19-connect.png" alt="Connect tab showing the local MCP address and example client command with its bearer token redacted."></a><figcaption>The screenshot's access token is replaced with REDACTED; use your own live command, never this example.</figcaption></figure>
+    <p><strong>Connect</strong> shows the app's local MCP server address and a command
+      for adding it to Claude Code. Use <strong>Copy command</strong> and follow your
+      client's setup instructions. Other compatible clients, including T3 Code, can
+      use the same local server with its required authorization header.</p>
+    <p>The server accepts connections from this Mac and works with the same open
+      source and selection. A connected client can inspect data and propose overlays;
+      it is not a separate recovery session. Keep the app open while using it.</p>
+    <p class="warning">The command contains a bearer token. Treat it like a password:
+      do not publish it in screenshots, logs, issues, or messages. A local address does
+      not prevent an authorised external agent from sending inspected data to its provider.</p>
+  </section>
+  <section id="troubleshooting">
+    <h2>21. If something does not work</h2>
+    <dl>
+      <dt>The disk is not listed</dt><dd>Check the connection, refresh the start screen,
+        and use Show internal disks only if appropriate. Do not guess a device path.
+        For an image, verify it is a raw exFAT partition image.</dd>
+      <dt>Permission denied</dt><dd>Follow the app's disk-access instructions. Do not
+        bypass a safety refusal by selecting a different path to the same source.</dd>
+      <dt>A disk disconnects</dt><dd>Stop and address the hardware connection. Do not
+        interpret every subsequent preview error as file damage.</dd>
+      <dt>Few files or empty categories</dt><dd>Check scan progress, filename filters,
+        selected kind, folder scope, and confidence settings before assuming nothing remains.</dd>
+      <dt>A preview or archive member fails</dt><dd>Read the error and run an appropriate
+        format test. Unsupported encoding, absent optional decoders, incomplete extents,
+        and overwritten data are different causes.</dd>
+      <dt>Copy is disabled or refused</dt><dd>Review the destination, free space,
+        confidence threshold, partial-file setting, and whether any files qualify.</dd>
+      <dt>You cannot find a technical tab</dt><dd>Switch to Investigate. Bytes also
+        needs a selected cluster; Inside archive needs a chosen archive.</dd>
+    </dl>
+  </section>
+</main>
+<footer>
+  <p>Captain Salvage user manual · November 2026 · Synthetic screenshots and capture
+    notes: <a href="../../media/README.md">media layout and provenance</a>.</p>
+  <p>This page uses one local stylesheet, relative images, and system fonts. It can
+    be opened offline. Publish with <code>docs/manual/</code> and <code>media/manual/</code>
+    under the same root to preserve its image paths.</p>
+</footer>
+</body>
+</html>

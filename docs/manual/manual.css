@@ -1,0 +1,47 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.65;
+  color: #202c39;
+  background: #fbfcfe;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+header, main, footer { max-width: 1120px; margin: auto; padding: 1.5rem 2rem; }
+header { padding-top: 3rem; border-bottom: 1px solid #d4dce5; }
+h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.15; margin-bottom: 1rem; }
+h2 { margin-top: 0; line-height: 1.3; }
+h3 { line-height: 1.4; }
+a { color: #175b9d; text-underline-offset: .2em; }
+a:focus-visible { outline: 3px solid #c07814; outline-offset: 4px; }
+.skip { position: absolute; top: -5rem; left: 1rem; padding: .5rem; background: white; }
+.skip:focus { top: 1rem; }
+nav ol { columns: 2; padding-left: 1.5rem; }
+nav li { break-inside: avoid; margin-bottom: .35rem; }
+section { margin: 2.5rem 0 3.5rem; scroll-margin-top: 1rem; }
+figure { margin: 1.5rem 0; }
+figure a { display: block; }
+img { display: block; width: 100%; height: auto; border: 1px solid #ccd5df; border-radius: .4rem; }
+figcaption { margin-top: .6rem; font-size: .92rem; color: #48586a; }
+.note, .warning { padding: 1rem 1.25rem; border-left: 4px solid #3477ad; background: #edf5fc; }
+.warning { border-color: #a76a0b; background: #fff5df; }
+dt { font-weight: 650; margin-top: .8rem; }
+dd { margin-left: 0; }
+li { margin-bottom: .45rem; }
+code, kbd { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; vertical-align: top; border-bottom: 1px solid #d4dce5; padding: .65rem; }
+footer { border-top: 1px solid #d4dce5; font-size: .9rem; }
+@media (max-width: 640px) {
+  header, main, footer { padding-left: 1rem; padding-right: 1rem; }
+  nav ol { columns: 1; }
+  th, td { padding: .4rem; }
+}
+@media print {
+  :root { color: black; background: white; font-size: 10pt; }
+  header, main, footer { max-width: none; padding: 0; }
+  .skip { display: none; }
+  section { margin: 1.5rem 0; }
+  figure { break-inside: avoid; }
+  h2, h3 { break-after: avoid; }
+}

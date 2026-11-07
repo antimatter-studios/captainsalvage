@@ -10,10 +10,17 @@ finds, and helps you get your files back, without ever writing to the disk.
 > **Early development.** It works on one filesystem, exFAT, and has been tested
 > on one real damaged volume plus synthetic test volumes. It is not released yet.
 
+## User manual
+
+Read the [illustrated user manual](docs/manual/index.html) for a safe first recovery,
+the Simple and Investigate modes, and a guide to every screen. Open it directly in
+a browser; it needs no server or build step. Its screenshots use only synthetic disks.
+
 ## Development so far
 
-Each version gets new screenshots, taken from the real damaged test disk. File names
-on that disk are private, so they are blurred.
+These historical screenshots were taken from the original damaged test disk, with
+private file names blurred. They document earlier versions, not the current interface.
+See the manual for current screenshots made with synthetic data only.
 
 ### Latest
 
@@ -21,39 +28,39 @@ The overview says what has been found, and the map shows what explains every par
 the disk. Blue is claimed by a named file, orange is a FAT chain with no name yet, and
 grey is not explained yet.
 
-![Recovery overview, with a large figure for data found by name above a breakdown of the disk](media/v3/overview.png)
+![Recovery overview, with a large figure for data found by name above a breakdown of the disk](media/changelog/v3/overview.png)
 
 Pick any file to read its bytes, see why it got its score, and copy it out. This film's
 header shows a healthy AVI file, in 3,032 pieces with none missing.
 
-![A lost film selected, with its hex dump and confidence details](media/v3/file-and-bytes.png)
+![A lost film selected, with its hex dump and confidence details](media/changelog/v3/file-and-bytes.png)
 
 Select anything and ask Claude, who checks with the same tools the app uses.
 
-![Claude answering a question about the selected cluster in the chat sidebar](media/v3/ask-claude.png)
+![Claude answering a question about the selected cluster in the chat sidebar](media/changelog/v3/ask-claude.png)
 
 Copy out checks the destination, and refuses the disk being recovered.
 
-![The Copy out tab, with its destination, salvage drive and confidence floor](media/v3/copy-out.png)
+![The Copy out tab, with its destination, salvage drive and confidence floor](media/changelog/v3/copy-out.png)
 
 The Unexplained list zooms the map to free space nothing accounts for yet.
 
-![An unexplained region selected, zoomed on the map, with its bytes showing an MP4 header](media/v3/unexplained-region.png)
+![An unexplained region selected, zoomed on the map, with its bytes showing an MP4 header](media/changelog/v3/unexplained-region.png)
 
 It follows your Mac's dark mode too.
 
-![The recovery overview in dark mode](media/v3/overview-dark.png)
+![The recovery overview in dark mode](media/changelog/v3/overview-dark.png)
 
 ### Earlier versions
 
 The first version looked like this. It worked, but the map hid the 32 GB in use,
 because each column showed only its largest category.
 
-![The first version, with a mostly blue map and plain grey panels](media/v1/first-version.png)
+![The first version, with a mostly blue map and plain grey panels](media/changelog/v1/first-version.png)
 
 Next, each map column became a stack showing its real mix, so small things stay visible.
 
-![The second version, whose map shows a dark band of in-use data among the blue](media/v2/proportional-map.png)
+![The second version, whose map shows a dark band of in-use data among the blue](media/changelog/v2/proportional-map.png)
 
 ## What makes it different
 
@@ -77,7 +84,7 @@ treats damage as something to route around:
   file can be checked: against its own checksum in a zip, 7z or rar, and against the stream's
   checksum for a compressed file.
 - **An AI can investigate with you.** Select anything and ask an agent about it, in the
-  Ask agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
+  Chat with an agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
   through the same tools as the app, over MCP, and has no write path to the disk.
 
 ## Safety
@@ -229,11 +236,13 @@ cargo test -p salvage-core
 ### Screenshots
 
 ```sh
-scripts/take-screenshots.py media/v4
+scripts/take-screenshots.py media/changelog/v4
 ```
 
 This drives a second copy of the app off screen, with file names blurred. Look at every
 image before committing it, because bytes and chat answers can still hold names.
+This legacy script uses the existing recovery session: do not use it with a private
+or damaged disk. For synthetic-only manual captures, see [media/README.md](media/README.md).
 
 ## Showing a canvas in Finder
 
@@ -275,7 +284,7 @@ scripts.
 
 ### Asking an agent from a terminal
 
-`salvage-agent` asks the same agents as the Ask agent tab, about the disk open in the app.
+`salvage-agent` asks the same agents as the Chat with an agent tab, about the disk open in the app.
 The app must be running.
 
 ```sh
@@ -394,7 +403,7 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 **Documentation**
 
-- Name Chris Thomas as the copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
+- Name the project's copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
 - License the project under MIT ([#28](https://github.com/antimatter-studios/captainsalvage/pull/28))
 
 **Other**
