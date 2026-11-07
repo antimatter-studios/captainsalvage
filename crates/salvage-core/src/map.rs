@@ -1366,6 +1366,31 @@ impl MapDb {
         Ok(dates)
     }
 
+    /// The entries in the volume's `.Spotlight-V100` and `.fseventsd` folders, with the date each
+    /// was last changed: what macOS wrote while the volume was mounted.
+    pub fn macos_system_entries(&self, root: u32) -> Result<Vec<(String, Row)>> {
+        let sql = format!(
+            "WITH RECURSIVE under(head) AS ( \
+                 SELECT head FROM nodes WHERE parent = ?1 AND name IN ('.Spotlight-V100', '.fseventsd') \
+                 UNION SELECT nodes.head FROM nodes JOIN under ON nodes.parent = under.head \
+             ) \
+             SELECT {FILE_COLUMNS}, substr(modified, 1, 10) FROM sets \
+             WHERE modified IS NOT NULL AND ( \
+                 node IN (SELECT head FROM under) \
+                 OR (is_dir = 1 AND first_cluster IN (SELECT head FROM under)) \
+             )"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement
+            .query_map([root], |row| {
+                // The date comes after the file's own columns.
+                let date: String = row.get(FILE_NODE_INDEX)?;
+                Ok((date, file_row(row)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     /// Removes stored results, all of them or those with one outcome.
     pub fn forget_file_tests(&self, outcome: Option<&str>) -> Result<u64> {
         let removed = match outcome {

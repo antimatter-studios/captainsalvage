@@ -475,7 +475,11 @@ impl Engine {
                     let row = database.entry(id)?.with_context(|| format!("no entry with id {id}"))?;
                     let clusters = database.entry_clusters(&session.volume, &row)?;
                     let overlay = database.overlay_clusters(id)?.is_some();
-                    Ok(json!({"entry": row, "extents": to_extents(&clusters), "clusters": clusters.len(), "usesOverlay": overlay}))
+                    Ok((row, clusters, overlay))
+                })
+                .and_then(|(row, clusters, overlay)| {
+                    let written = session.macos_wrote_over(&clusters)?;
+                    Ok(json!({"entry": row, "extents": to_extents(&clusters), "clusters": clusters.len(), "usesOverlay": overlay, "macosWroteOn": written}))
                 })
             }
             "search" => {
@@ -516,6 +520,7 @@ impl Engine {
                     |database| database.file_copies(id, limit),
                 )?)?)
             }
+            "macos_writes" => Ok(json!({"dates": session.macos_writes()?})),
             "mount_history" => Ok(serde_json::to_value(session.mount_history()?)?),
             // Only for driving the window in a test: never offered, and refused otherwise.
             "test_disconnect" => {

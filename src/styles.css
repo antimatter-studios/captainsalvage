@@ -833,3 +833,5 @@ video.inline-preview { max-height: 380px; background: #000; }
 .legend-button:hover:not(:disabled) { background: var(--hover); filter: none; }
 .legend-on { background: var(--hover); font-weight: 600; }
 .legend-off { opacity: 0.5; }
+/* A file that macOS's own writes ran through. */
+.detail-macos-writes { margin: 6px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--serious, var(--critical)); font-size: 12px; color: var(--ink-2); }

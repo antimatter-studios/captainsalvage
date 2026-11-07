@@ -897,6 +897,8 @@ const strings: Record<string, string> = {
   "{kind}, {count} files": "{kind}, {count} Dateien",
   "Show every category again": "Wieder alle Kategorien zeigen",
   "Show only this on the map": "Nur dies auf der Karte zeigen",
+  "macOS wrote to some of its clusters on {dates}, for its own index and logs, so parts of it may have been overwritten.": "macOS hat am {dates} in einige seiner Cluster geschrieben, für seinen eigenen Index und seine Protokolle, daher können Teile überschrieben sein.",
+  "Show on the map": "Auf der Karte zeigen",
 };
 
 export default strings;
