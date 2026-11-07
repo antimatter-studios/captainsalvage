@@ -26,7 +26,7 @@ import { BrowseView, type BrowseScope } from "./components/BrowseView";
 import { Chat, type ChatActivity } from "./components/Chat";
 import { ColumnHandle } from "./components/ColumnHandle";
 import { Details, type DetailsTab } from "./components/Details";
-import { Explorer } from "./components/Explorer";
+import { Explorer, HOVER_ENTRY_EVENT } from "./components/Explorer";
 import { HexView } from "./components/HexView";
 import { Icon, type IconName } from "./components/icons";
 import { RebuildView } from "./components/RebuildView";
@@ -42,6 +42,8 @@ import { onThemeChange } from "./palette";
 import appIcon from "../src-tauri/icons/64x64.png";
 
 const STATUS_POLL_MILLIS = 2000;
+/** How long the pointer rests on a file row before its pieces are shown on the map. */
+const HOVER_WAIT_MILLIS = 180;
 /** While a scan runs, the content layers keep filling in at this pace. */
 const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 /** While a scan runs, the tree and totals are rebuilt from what it has found. */
@@ -344,6 +346,32 @@ export default function App() {
   const [chain, setChain] = useState<IslandRow | null>(null);
   const [region, setRegion] = useState<UnexplainedRun | null>(null);
   const [highlight, setHighlight] = useState<Extent[]>([]);
+  // A file's pieces, shown on the map while the pointer rests on its row in the sidebar.
+  const [hovered, setHovered] = useState<Extent[] | null>(null);
+  useEffect(() => {
+    let timer: number | undefined;
+    let asked = 0;
+    const hear = (event: Event) => {
+      const id = (event as CustomEvent<number | null>).detail;
+      window.clearTimeout(timer);
+      asked += 1;
+      const ask = asked;
+      if (id === null) {
+        setHovered(null);
+        return;
+      }
+      timer = window.setTimeout(() => {
+        call<{ extents: Extent[] }>("entry", { id })
+          .then((result) => ask === asked && setHovered(result.extents))
+          .catch(() => undefined);
+      }, HOVER_WAIT_MILLIS);
+    };
+    window.addEventListener(HOVER_ENTRY_EVENT, hear);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(HOVER_ENTRY_EVENT, hear);
+    };
+  }, []);
   const [byteRange, setByteRange] = useState<[number, number] | null>(null);
   const [basket, setBasket] = useState<BasketItem[]>([]);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
@@ -751,7 +779,7 @@ export default function App() {
         clusterSize={overview.geometry.clusterSize}
         view={view}
         onView={setView}
-        highlight={highlight}
+        highlight={hovered ?? highlight}
         marker={cluster}
         scanAt={scanning && status ? status.scan.nextCluster : null}
         onPick={pickCluster}
