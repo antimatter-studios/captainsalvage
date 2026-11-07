@@ -31,11 +31,16 @@ The optional dark example uses the same window. PNGs retain the capture's resolu
 Attached-device rows were omitted from the start-screen illustration; the capture
 session hid destination-volume choices and used an explicitly entered folder
 inside its temporary directory for the real synthetic copy and verification. The
-Connect illustration replaces the session's bearer token with `REDACTED`. The Ask
-agent illustration shows the idle composer: no external agent was invoked. These
+Connect illustration replaces the session's bearer token with `REDACTED`. The Chat
+with an agent illustration shows the idle composer: no external agent was invoked.
+Its screenshot retains the earlier tab label. These
 are documentation-only presentation safeguards, not changes to the app.
 The Activity illustration omits capture-driver calls so recovery operations remain
 readable. The red safety indicator is expected for writable, disposable image files.
+
+Local source and destination paths are strongly blurred in every manual screenshot,
+including the start-screen field, window headers, copy fields, copy report, and
+Activity details. Pixels outside those path-text boxes remain unchanged.
 
 Every committed PNG was opened for visual inspection before inclusion and contains
 only synthetic recovery data. The test instances opened only the synthetic source

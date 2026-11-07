@@ -84,7 +84,7 @@ treats damage as something to route around:
   file can be checked: against its own checksum in a zip, 7z or rar, and against the stream's
   checksum for a compressed file.
 - **An AI can investigate with you.** Select anything and ask an agent about it, in the
-  Ask agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
+  Chat with an agent tab: Claude Code, Codex or opencode, with the model you choose. The agent works
   through the same tools as the app, over MCP, and has no write path to the disk.
 
 ## Safety
@@ -284,7 +284,7 @@ scripts.
 
 ### Asking an agent from a terminal
 
-`salvage-agent` asks the same agents as the Ask agent tab, about the disk open in the app.
+`salvage-agent` asks the same agents as the Chat with an agent tab, about the disk open in the app.
 The app must be running.
 
 ```sh
@@ -403,7 +403,7 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 **Documentation**
 
-- Name Chris Thomas as the copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
+- Name the project's copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
 - License the project under MIT ([#28](https://github.com/antimatter-studios/captainsalvage/pull/28))
 
 **Other**
