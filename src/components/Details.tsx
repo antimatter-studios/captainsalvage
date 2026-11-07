@@ -763,7 +763,7 @@ export function Details(props: DetailsProps) {
   const tabs: [DetailsTab, string, IconName][] = [
     ["selected", t("Selected"), "info"],
     ["rebuild", t("Rebuild"), "truck"],
-    ["agent", t("Ask agent"), "robot"],
+    ["agent", t("Chat with an agent"), "robot"],
     ["copy", t("Treasure list"), "chest"],
     ["workbench", t("Workbench"), "puzzle"],
     ["hypotheses", t("Hypotheses"), "bulb"],
@@ -827,7 +827,7 @@ export function Details(props: DetailsProps) {
             )}
             {/* A cluster's own details are for investigating. */}
             {info && !simple && <ClusterDetails info={info} onCluster={onCluster} onEntry={onEntry} />}
-            {!entry && !folder && !info && <p className="empty">{t("Nothing selected. Click the map or a file to see what is known about it.")}</p>}
+            {!entry && !folder && !info && <p className="empty">{simple ? t("Nothing selected. Click a file to see what is known about it.") : t("Nothing selected. Click the map or a file to see what is known about it.")}</p>}
           </>
         )}
         {tab === "copy" && <BasketTab items={basket} status={status?.copy ?? null} floor={floor} />}

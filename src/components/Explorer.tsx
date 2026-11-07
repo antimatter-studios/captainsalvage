@@ -298,7 +298,7 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   }, [revision]);
   return (
     <>
-      <p className="hint">{t("Free space no entry or chain accounts for yet. This shrinks as the scan finds more folders. Select a region and ask Claude what it is.")}</p>
+      <p className="hint">{t("Free space no entry or chain accounts for yet. This shrinks as the scan finds more folders. Select a region and ask an agent what it is.")}</p>
       {error && <div className="empty">{fromEngine(error)}</div>}
       {runs && runs.length === 0 && <div className="empty">{t("Nothing unexplained so far. Regions appear after the map is rebuilt.")}</div>}
       {runs?.map((run) => (

@@ -455,7 +455,7 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
 
   return (
     <div className="suggestions">
-      <h4><Icon name="sparkle" size={13} /> {t("Claude suggests")}</h4>
+      <h4><Icon name="sparkle" size={13} /> {t("Agent suggests")}</h4>
       {suggestions.map((item) => (
         <div key={item.id} className="suggestion">
           <div className="suggestion-text">
@@ -652,7 +652,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         <Icon name="folder" size={28} />
         <p>{t("Drag a piece from the sidebar here. The first piece becomes the top of the tree.")}</p>
         <p className="muted">{t("The sidebar lists the largest pieces first, so start with those.")}</p>
-        <p className="muted">{t("Or ask Claude, in the chat, where the pieces belong. Its suggestions appear here for you to accept or dismiss.")}</p>
+        <p className="muted">{t("Or ask an agent, in the chat, where the pieces belong. Its suggestions appear here for you to accept or dismiss.")}</p>
         {naming === "root" ? (
           <NameInput initial="" onDone={(name) => void startWithFolder(name)} />
         ) : (

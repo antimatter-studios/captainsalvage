@@ -198,6 +198,8 @@ function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () 
 const FOUND_VERDICTS = ["tested-good", "likely-intact", "plausible", "live"];
 
 export function RecoveryOverview({ overview, status, revision, onChanged, onShowClusters }: { overview: Overview; status: Status | null; revision: number; onChanged: () => void; onShowClusters: (extents: Extent[]) => void }) {
+  // Simple mode hides the map, so its hint is left out.
+  const simple = useSimple();
   const [stats, setStats] = useState<RegionStats | null>(null);
   useEffect(() => {
     let current = true;
@@ -275,8 +277,8 @@ export function RecoveryOverview({ overview, status, revision, onChanged, onShow
 
         <ul className="recovery-steps">
           <li><Icon name="folder" /> {t("Open a lost folder in the sidebar to see what survived.")}</li>
-          <li><Icon name="aperture" /> {t("Click the map to read the bytes at any point on the disk.")}</li>
-          <li><Icon name="sparkle" /> {t("Select anything, then ask Claude what it is and where it leads.")}</li>
+          {!simple && <li><Icon name="aperture" /> {t("Click the map to read the bytes at any point on the disk.")}</li>}
+          <li><Icon name="sparkle" /> {t("Select anything, then chat with an agent about what it is and where it leads.")}</li>
         </ul>
       </div>
     </section>
