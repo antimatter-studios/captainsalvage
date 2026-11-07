@@ -884,6 +884,17 @@ const strings: Record<string, string> = {
   "Which file did this chain belong to?": "¿A qué archivo pertenecía esta cadena?",
   "Which file does this cluster belong to?": "¿A qué archivo pertenece este clúster?",
   "{count} tools used": "{count} herramientas usadas",
+  "A guess from its files, not the folder's real name. {name}.": "Una suposición por sus archivos, no el nombre real de la carpeta. {name}.",
+  "Mixed files": "Archivos variados",
+  "Mostly archives": "Sobre todo archivos comprimidos",
+  "Mostly documents": "Sobre todo documentos",
+  "Mostly music": "Sobre todo música",
+  "Mostly other files": "Sobre todo otros archivos",
+  "Mostly photos": "Sobre todo fotos",
+  "Mostly videos": "Sobre todo vídeos",
+  "Other files": "Otros archivos",
+  "{kind}, 1 file": "{kind}, 1 archivo",
+  "{kind}, {count} files": "{kind}, {count} archivos",
 };
 
 export default strings;

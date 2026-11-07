@@ -266,6 +266,8 @@ export interface Row {
   intactBytes: number;
   nodeKind: string | null;
   hint: string | null;
+  /** For a folder that lost its name: what its own files mostly are. */
+  contents?: { group: string; share: number; files: number };
   confidence: number;
   linkConfidence: number | null;
 }

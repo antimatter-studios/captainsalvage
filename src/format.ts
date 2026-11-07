@@ -33,6 +33,44 @@ export function lostFolderName(cluster: number): string {
   return t("Lost folder {number}", { number: count(cluster) });
 }
 
+const GROUP_NAMES: Record<string, () => string> = {
+  photos: () => t("Photos"),
+  videos: () => t("Videos"),
+  music: () => t("Music"),
+  documents: () => t("Documents"),
+  archives: () => t("Archives"),
+  other: () => t("Other files"),
+};
+
+const MOSTLY_NAMES: Record<string, () => string> = {
+  photos: () => t("Mostly photos"),
+  videos: () => t("Mostly videos"),
+  music: () => t("Mostly music"),
+  documents: () => t("Mostly documents"),
+  archives: () => t("Mostly archives"),
+  other: () => t("Mostly other files"),
+};
+
+/** All of one type, or more than half of one, by the bytes in the folder. */
+const ALL_OF_ONE_SHARE = 0.999;
+const MOSTLY_SHARE = 0.5;
+
+/**
+ * A suggested label for a folder that lost its name, from what its own files are, such as
+ * "Mostly videos, 128 files". It is only a guess, so the window shows it as one. Null when the
+ * folder holds no files of its own.
+ */
+export function guessedFolderLabel(contents: { group: string; share: number; files: number } | undefined): string | null {
+  if (!contents || contents.files === 0) return null;
+  const kind =
+    contents.share >= ALL_OF_ONE_SHARE
+      ? (GROUP_NAMES[contents.group] ?? GROUP_NAMES.other)()
+      : contents.share >= MOSTLY_SHARE
+        ? (MOSTLY_NAMES[contents.group] ?? MOSTLY_NAMES.other)()
+        : t("Mixed files");
+  return contents.files === 1 ? t("{kind}, 1 file", { kind }) : t("{kind}, {count} files", { kind, count: count(contents.files) });
+}
+
 /** Shows a map path in the same words as the sidebar. */
 export function displayPath(path: string | null): string {
   if (!path) return "/";
