@@ -290,6 +290,14 @@ fn chat_reset(chat: State<'_, ChatState>) {
 }
 
 pub fn run() {
+    // From here until the app quits, macOS cannot mount the volumes the person blocked. This
+    // comes before the window, because a disk attached at login is mounted within seconds, and
+    // on a busy Mac the window can take longer than that to appear.
+    if let Ok(folder) = salvage_core::workspace::app_support() {
+        if let Err(error) = salvage_core::mountblock::start(&folder) {
+            eprintln!("mount blocking did not start: {error:#}");
+        }
+    }
     tauri::Builder::default()
         .manage(ChatState::default())
         .register_asynchronous_uri_scheme_protocol("lens", |context, request, responder| {
@@ -311,12 +319,6 @@ pub fn run() {
         })
         .setup(|app| {
             salvage_core::mount::keep_disks_awake();
-            // From here until the app quits, macOS cannot mount the volumes the person blocked.
-            if let Ok(folder) = salvage_core::workspace::app_support() {
-                if let Err(error) = salvage_core::mountblock::start(&folder) {
-                    eprintln!("mount blocking did not start: {error:#}");
-                }
-            }
             let engine = Engine::new();
             let handle = app.handle().clone();
             let allow_test_scripts = std::env::var_os("SALVAGE_TEST_UI").is_some();
