@@ -562,7 +562,8 @@ impl Session {
             filesystem
                 .read_only
                 .then(|| "This destination is read-only.".to_string())
-        });
+        })
+        .or_else(|| test_copy_problem(destination));
         Ok((filesystem, problem))
     }
 
@@ -1109,7 +1110,55 @@ impl Session {
     }
 }
 
-/// Mounted volumes that could receive a copy, with how much room each has.
+/// Set when the app runs under the window tests (`tests/window/harness.py`).
+const TEST_UI: &str = "SALVAGE_TEST_UI";
+/// A folder a test copy of the app may also write recovered files to, besides its HOME and the
+/// temp folder.
+const TEST_COPY_ROOT: &str = "SALVAGE_TEST_COPY_ROOT";
+
+/// Why a test copy of the app may not write to this folder, if it may not. Under the window
+/// tests, copies stay inside HOME (a throwaway one), the temp folder, or `SALVAGE_TEST_COPY_ROOT`,
+/// so a test that starts a copy can never write to a real drive.
+pub(crate) fn test_copy_problem(destination: &Path) -> Option<String> {
+    std::env::var_os(TEST_UI)?;
+    let refused = || {
+        Some(format!(
+            "Window tests may only copy into their own home or a temporary folder, not {}.",
+            destination.display()
+        ))
+    };
+    let mut roots: Vec<PathBuf> = [TEST_COPY_ROOT, "HOME"]
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(PathBuf::from))
+        .collect();
+    roots.push(std::env::temp_dir());
+    roots.push(PathBuf::from("/tmp"));
+    if inside_any(destination, &roots) {
+        None
+    } else {
+        refused()
+    }
+}
+
+/// Whether a path is inside one of these absolute folders, as written or after resolving the
+/// folder's links (`/tmp` is `/private/tmp`). A path that climbs with `..` is never inside.
+fn inside_any(path: &Path, roots: &[PathBuf]) -> bool {
+    if path
+        .components()
+        .any(|part| part == std::path::Component::ParentDir)
+    {
+        return false;
+    }
+    roots.iter().filter(|root| root.is_absolute()).any(|root| {
+        path.starts_with(root)
+            || root
+                .canonicalize()
+                .is_ok_and(|real| path.starts_with(&real))
+    })
+}
+
+/// Mounted volumes that could receive a copy, with how much room each has. Under the window
+/// tests only HOME is listed, so no real drive is ever offered as the default.
 pub fn list_volumes(source: Option<&Path>) -> Result<Vec<Value>> {
     let source_whole = source
         .and_then(whole_disk_path)
@@ -1118,8 +1167,10 @@ pub fn list_volumes(source: Option<&Path>) -> Result<Vec<Value>> {
     let mut candidates = vec![std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")?];
-    for item in fs::read_dir("/Volumes")?.flatten() {
-        candidates.push(item.path());
+    if std::env::var_os(TEST_UI).is_none() {
+        for item in fs::read_dir("/Volumes")?.flatten() {
+            candidates.push(item.path());
+        }
     }
     for path in candidates {
         let Ok(filesystem) = filesystem_of(&path) else {
@@ -1152,6 +1203,21 @@ pub fn list_volumes(source: Option<&Path>) -> Result<Vec<Value>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_copies_stay_inside_their_folders() {
+        let roots = [PathBuf::from("/tmp/fakehome"), PathBuf::from("relative")];
+        assert!(inside_any(Path::new("/tmp/fakehome/recovered"), &roots));
+        assert!(!inside_any(
+            Path::new("/Volumes/Drive/captain-salvage-recovered"),
+            &roots
+        ));
+        assert!(!inside_any(
+            Path::new("/tmp/fakehome/../../Volumes/Drive"),
+            &roots
+        ));
+        assert!(!inside_any(Path::new("relative/folder"), &roots));
+    }
+
     use super::*;
 
     #[test]

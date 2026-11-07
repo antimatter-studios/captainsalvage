@@ -1,0 +1,11 @@
+# Made by the scripts here and by the tests as they run. Synthetic, but large and rebuilt on demand.
+*.img
+*.dmg
+*.cdr
+arc/
+films/
+testapp/
+fakehome.*
+archive-out.*
+warnhome.*
+racehome.*
