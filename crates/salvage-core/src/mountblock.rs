@@ -121,6 +121,86 @@ pub fn start(folder: &Path) -> Result<()> {
         .map_err(|error| anyhow::anyhow!(error))
 }
 
+/// A flagged volume that is mounted anyway, because it was mounted before the app started:
+/// at boot, at login, or while the app was closed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MountedAnyway {
+    pub uuid: String,
+    pub name: String,
+    pub device: String,
+    pub mount_point: String,
+}
+
+/// The flagged volumes that are mounted now. Every mounted volume is looked at, whatever kind of
+/// disk it is on, by the UUID macOS reports for it.
+pub fn mounted_anyway() -> Result<Vec<MountedAnyway>> {
+    if list().is_empty() {
+        return Ok(Vec::new());
+    }
+    let output = std::process::Command::new(MOUNT)
+        .output()
+        .context("running mount")?;
+    let mounts = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok(mounted_devices(&mounts)
+        .into_iter()
+        .filter_map(|(device, mount_point)| {
+            let info = crate::mount::diskutil_info(&device)?;
+            let uuid = crate::mount::parse_volume_uuid(&info)?;
+            let name = crate::mount::info_field(&info, "Volume Name:").unwrap_or("");
+            is_blocked(&uuid).then(|| MountedAnyway {
+                uuid: key(&uuid),
+                name: name.to_string(),
+                device,
+                mount_point,
+            })
+        })
+        .collect())
+}
+
+const MOUNT: &str = "/sbin/mount";
+
+/// Disk devices and where they are mounted, from `mount`'s output.
+fn mounted_devices(mounts: &str) -> Vec<(String, String)> {
+    mounts
+        .lines()
+        .filter_map(|line| {
+            let (device, rest) = line.split_once(" on ")?;
+            let point = rest.rsplit_once(" (").map_or(rest, |(point, _)| point);
+            device
+                .starts_with("/dev/disk")
+                .then(|| (device.to_string(), point.to_string()))
+        })
+        .collect()
+}
+
+/// Unmounts one flagged volume, and only that volume: never the whole disk, never an eject.
+/// Unmounting writes a little to the volume, so only the person may ask for it.
+pub fn unmount_flagged(uuid: &str, by_person: bool) -> Result<String> {
+    if !by_person {
+        bail!("Only the person using the app can unmount a disk. Tell them it is mounted, and why that matters.");
+    }
+    let found = mounted_anyway()?
+        .into_iter()
+        .find(|volume| key(&volume.uuid) == key(uuid))
+        .context("That volume is not mounted, or is not one you asked to keep unmounted.")?;
+    let device = found.device.trim_start_matches("/dev/");
+    // A volume is a slice of a disk, "disk6s2". A whole disk is never unmounted here.
+    if !device.starts_with("disk") || !device[4..].contains('s') {
+        bail!("{device} is not a single volume, so it is left alone.");
+    }
+    let output = std::process::Command::new(crate::mount::DISKUTIL)
+        .args(["unmount", device])
+        .output()
+        .context("running diskutil")?;
+    let said = String::from_utf8_lossy(&output.stdout).trim().to_string()
+        + String::from_utf8_lossy(&output.stderr).trim();
+    if !output.status.success() {
+        bail!("macOS would not unmount {}: {said}", found.name);
+    }
+    Ok(said)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use anyhow::{bail, Result};
@@ -288,6 +368,28 @@ mod tests {
         set(&place.0, "AAAA-1111", "Old disk", false, true).unwrap();
         assert!(!is_blocked("aaaa-1111"));
         assert!(load(&place.0).is_empty());
+    }
+
+    #[test]
+    fn mounted_disks_are_read_from_mount() {
+        let mounts = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n\
+            devfs on /dev (devfs, local, nobrowse)\n\
+            /dev/disk6s2 on /Volumes/Un titled (exfat, local, nodev, nosuid, noowners)\n\
+            map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)";
+        assert_eq!(
+            mounted_devices(mounts),
+            vec![
+                ("/dev/disk3s1s1".to_string(), "/".to_string()),
+                ("/dev/disk6s2".to_string(), "/Volumes/Un titled".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_person_may_unmount_a_flagged_volume() {
+        let error = unmount_flagged("52D6C729-7E3F-310C-9073-7142E9EA7C05", false)
+            .expect_err("an agent must not unmount");
+        assert!(error.to_string().contains("Only the person"), "{error}");
     }
 
     #[test]

@@ -336,6 +336,14 @@ impl Engine {
                 )?)?)
             }
             "mount_blocks" => Ok(json!({"blocks": crate::mountblock::list()})),
+            "mount_blocks_mounted" => Ok(json!({"mounted": crate::mountblock::mounted_anyway()?})),
+            "mount_block_unmount" => {
+                let said = crate::mountblock::unmount_flagged(
+                    need_str(args, "uuid")?,
+                    author == AUTHOR_USER,
+                )?;
+                Ok(json!({"unmounted": true, "diskutil": said}))
+            }
             "mount_block_set" => {
                 let blocked = args
                     .get("blocked")

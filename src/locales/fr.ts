@@ -861,6 +861,10 @@ const strings: Record<string, string> = {
   "This picture is too big to show here. Copy it out to open it.": "Cette image est trop grande pour être affichée ici. Copiez-la pour l’ouvrir.",
   "Unpacking": "Décompression",
   "size unknown": "taille inconnue",
+  "{name} is mounted, though you asked to keep it unmounted.": "{name} est monté, alors que vous avez demandé de le garder démonté.",
+  "It was mounted before Captain Salvage could stop it, at startup or while the app was closed. While it stays mounted, macOS may write to it. Unmounting writes a little too, but much less.": "Il a été monté avant que Captain Salvage puisse l’en empêcher, au démarrage ou pendant que l’app était fermée. Tant qu’il reste monté, macOS peut y écrire. Le démonter écrit un peu aussi, mais beaucoup moins.",
+  "Unmount {name}": "Démonter {name}",
+  "Unmounting": "Démontage",
 };
 
 export default strings;

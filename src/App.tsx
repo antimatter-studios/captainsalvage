@@ -32,6 +32,7 @@ import { Icon, type IconName } from "./components/icons";
 import { RebuildView } from "./components/RebuildView";
 import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
+import { MountedWarning } from "./components/MountedWarning";
 import { StartScreen } from "./components/StartScreen";
 import { isArchiveName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
@@ -709,6 +710,8 @@ export default function App() {
 
   if (!overview || choosing) {
     return (
+      <>
+      <MountedWarning />
       <StartScreen
         imagePath={startPath ?? ""}
         failure={failure}
@@ -716,6 +719,7 @@ export default function App() {
         onBack={overview ? () => setChoosing(false) : undefined}
         themeSwitch={<><LanguageSwitch /><ThemeSwitch /></>}
       />
+      </>
     );
   }
 
@@ -723,6 +727,8 @@ export default function App() {
   const selectedKey = entry ? `entry:${entry.row.id}` : folder ? `folder:${folder.head}` : chain ? `chain:${chain.head}` : region ? `region:${region.startCluster}` : null;
 
   return (
+    <>
+    <MountedWarning />
     <div
       className="app"
       style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}
@@ -855,5 +861,6 @@ export default function App() {
         />
       </div>
     </div>
+    </>
   );
 }
