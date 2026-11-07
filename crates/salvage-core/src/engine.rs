@@ -31,6 +31,7 @@ pub const APP_TOOLS: &[&str] = &[
     "app_settings",
     "set_language",
     "set_theme",
+    "set_mode",
 ];
 
 pub const AUTHOR_CLAUDE: &str = "claude";

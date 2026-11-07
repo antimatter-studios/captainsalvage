@@ -928,6 +928,12 @@ const strings: Record<string, string> = {
   "byte {offset}, in cluster {cluster}": "octet {offset}, dans le cluster {cluster}",
   "{count} clusters, {bytes} in all.": "{count} clusters, {bytes} en tout.",
   "{percent} of its {format} structure is valid.": "{percent} de sa structure {format} est valide.",
+  "Adds the map, the bytes, hypotheses and raw tools": "Ajoute la carte, les octets, les hypothèses et les outils bruts",
+  "Investigate": "Enquêter",
+  "Lost folder": "Dossier perdu",
+  "Mode": "Mode",
+  "Simple": "Simple",
+  "What recovering files needs, with no cluster numbers": "Ce qu’il faut pour récupérer des fichiers, sans numéros de cluster",
 };
 
 export default strings;

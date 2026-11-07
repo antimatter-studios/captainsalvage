@@ -32,6 +32,7 @@ import { Icon, type IconName } from "./components/icons";
 import { RebuildView } from "./components/RebuildView";
 import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
+import { ModeContext, type Mode } from "./mode";
 import { MountedWarning } from "./components/MountedWarning";
 import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
@@ -272,7 +273,17 @@ function SidebarBrand({ onHome }: { onHome: () => void }) {
   );
 }
 
-function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void }) {
+/** Simple shows what recovering files needs; Investigate adds the map, bytes and raw tools. */
+function ModeSwitch({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) => void }) {
+  return (
+    <div className="segmented mode-switch" role="tablist" aria-label={t("Mode")}>
+      <button role="tab" aria-selected={mode === "simple"} title={t("What recovering files needs, with no cluster numbers")} onClick={() => onMode("simple")}>{t("Simple")}</button>
+      <button role="tab" aria-selected={mode === "investigate"} title={t("Adds the map, the bytes, hypotheses and raw tools")} onClick={() => onMode("investigate")}>{t("Investigate")}</button>
+    </div>
+  );
+}
+
+function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void; mode: Mode; onMode: (mode: Mode) => void }) {
   const scan = status?.scan;
   const fraction = scan ? scan.clustersScanned / scan.totalClusters : 0;
   const running = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
@@ -318,6 +329,7 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
           <button onClick={() => call("start_scan").then(onChanged)}>{scan && scan.clustersScanned > 0 ? t("Resume scan") : t("Start scan")}</button>
         )
       )}
+      <ModeSwitch mode={mode} onMode={onMode} />
       <LanguageSwitch />
       <ThemeSwitch />
       {status && <Safety status={status} />}
@@ -326,6 +338,18 @@ function Toolbar({ status, overview, onChanged, onChangeDisk }: { onChangeDisk: 
 }
 
 export default function App() {
+  // Simple until the person chooses otherwise. Agents can change it too, through set_mode.
+  const [mode, setMode] = useState<Mode>("simple");
+  const simple = mode === "simple";
+  useEffect(() => {
+    invoke<Mode>("get_mode").then(setMode).catch(() => undefined);
+    const stop = listen<{ mode: Mode }>("salvage-mode", ({ payload }) => setMode(payload.mode));
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
+  const changeMode = useCallback((next: Mode) => {
+    setMode(next);
+    void invoke("set_mode", { mode: next });
+  }, []);
   // The window's root takes the language from here, so changing it draws everything again.
   useLanguage();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -737,6 +761,11 @@ export default function App() {
     void call("set_selection", { selection, layer, mapView: { startCluster: view[0], endCluster: view[1] }, focusFloor: floor, lens, hexCluster: cluster });
   }, [overview, selection, layer, view, floor, lens, cluster]);
 
+  // The bytes view is for investigating; Simple mode goes back to the overview.
+  useEffect(() => {
+    if (simple && center === "bytes") setCenter("overview");
+  }, [simple, center]);
+
   if (!overview || choosing) {
     return (
       <>
@@ -756,17 +785,17 @@ export default function App() {
   const selectedKey = entry ? `entry:${entry.row.id}` : folder ? `folder:${folder.head}` : chain ? `chain:${chain.head}` : region ? `region:${region.startCluster}` : null;
 
   return (
-    <>
+    <ModeContext.Provider value={mode}>
     <MountedWarning />
     <div
-      className="app"
+      className={simple ? "app app-simple" : "app"}
       style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}
     >
       <div className="sidebar-drag" data-tauri-drag-region>
         <SidebarBrand onHome={() => setCenter("overview")} />
       </div>
-      <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} />
-      <Strips
+      <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} mode={mode} onMode={changeMode} />
+      {!simple && <Strips
         layer={layer}
         onLayer={(next) => {
           setLayer(next);
@@ -784,7 +813,7 @@ export default function App() {
         marker={cluster}
         scanAt={scanning && status ? status.scan.nextCluster : null}
         onPick={pickCluster}
-      />
+      />}
       <Explorer
         floor={floor}
         revision={revision}
@@ -807,7 +836,7 @@ export default function App() {
           <div className="segmented" role="tablist">
             <button role="tab" aria-selected={center === "overview"} onClick={() => setCenter("overview")}>{t("Overview")}</button>
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
-            <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>
+            {!simple && <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>}
             <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside archive")}</button>
           </div>
         </div>
@@ -907,6 +936,6 @@ export default function App() {
         />
       </div>
     </div>
-    </>
+    </ModeContext.Provider>
   );
 }

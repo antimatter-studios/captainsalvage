@@ -2,7 +2,8 @@
 //! these to the app, and each one tells the window, so it shows the change too.
 
 use crate::{
-    finder, get_language, get_theme, set_language, set_theme, window_theme, AppState, THEME_SYSTEM,
+    finder, get_language, get_mode, get_theme, set_language, set_mode, set_theme, window_theme,
+    AppState, THEME_SYSTEM,
 };
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
@@ -17,7 +18,15 @@ fn text(args: &Value, name: &str) -> Result<String> {
 
 pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Value> {
     match tool {
-        "app_settings" => Ok(json!({"language": get_language(), "theme": get_theme()})),
+        "app_settings" => {
+            Ok(json!({"language": get_language(), "theme": get_theme(), "mode": get_mode()}))
+        }
+        "set_mode" => {
+            let mode = text(args, "mode")?;
+            set_mode(mode.clone()).map_err(anyhow::Error::msg)?;
+            let _ = app.emit("salvage-mode", json!({"mode": mode}));
+            Ok(json!({"mode": mode}))
+        }
         "set_language" => {
             let language = text(args, "language")?;
             set_language(language.clone()).map_err(anyhow::Error::msg)?;

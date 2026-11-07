@@ -23,6 +23,10 @@ use tauri::{Emitter, Manager, State};
 const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
 const LAST_DEVICE_FILE: &str = "last-device";
 const THEME_FILE: &str = "theme";
+const MODE_FILE: &str = "mode";
+/// Simple shows what recovering files needs; Investigate adds the map, bytes and raw tools.
+const MODE_SIMPLE: &str = "simple";
+const MODE_INVESTIGATE: &str = "investigate";
 const THEME_SYSTEM: &str = "system";
 const UI_SETTINGS_FILE: &str = "ui-settings.json";
 const LANGUAGE_FILE: &str = "language";
@@ -231,6 +235,27 @@ fn set_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Simple until the person chooses otherwise, so a first look never needs a cluster number.
+#[tauri::command]
+fn get_mode() -> String {
+    config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join(MODE_FILE)).ok())
+        .map(|text| text.trim().to_string())
+        .filter(|name| name == MODE_SIMPLE || name == MODE_INVESTIGATE)
+        .unwrap_or_else(|| MODE_SIMPLE.to_string())
+}
+
+#[tauri::command]
+fn set_mode(mode: String) -> Result<(), String> {
+    if mode != MODE_SIMPLE && mode != MODE_INVESTIGATE {
+        return Err(format!("mode must be {MODE_SIMPLE} or {MODE_INVESTIGATE}"));
+    }
+    if let Some(dir) = config_dir() {
+        std::fs::write(dir.join(MODE_FILE), &mode).map_err(text_error)?;
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn chat_models(agent: String) -> Result<Vec<salvage_core::agent::Model>, String> {
     ChatState::models(&agent).map_err(|error| format!("{error:#}"))
@@ -396,6 +421,8 @@ pub fn run() {
             last_device,
             get_theme,
             set_theme,
+            get_mode,
+            set_mode,
             get_language,
             set_language,
             chat_agents,
