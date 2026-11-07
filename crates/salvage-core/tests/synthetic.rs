@@ -4184,6 +4184,49 @@ fn a_lost_folder_says_what_its_files_mostly_are() {
 }
 
 #[test]
+fn clusters_put_in_order_can_be_shown_as_a_file() {
+    let (engine, _session, dir) = engine_with_image("materialize", build_jigsaw_volume());
+    let id = call(&engine, "search", json!({"query": "a1.jpg"}))["rows"][0]["id"]
+        .as_i64()
+        .unwrap();
+    let entry = call(&engine, "entry", json!({"id": id}));
+    let extents = entry["extents"].clone();
+    let length = entry["entry"]["length"].as_u64().unwrap();
+    let picture = call(
+        &engine,
+        "materialize",
+        json!({"extents": extents, "length": length, "name": "a1.jpg"}),
+    );
+    assert_eq!(picture["kind"], "image");
+    assert_eq!(picture["mime"], "image/jpeg");
+    let encoded = picture["dataBase64"].as_str().unwrap();
+    assert_eq!(
+        encoded.len() as u64,
+        length.div_ceil(3) * 4,
+        "the whole file, base64"
+    );
+    // The same clusters read as text when the name says so, and not at all when it says
+    // nothing the window can show.
+    let text = call(
+        &engine,
+        "materialize",
+        json!({"extents": extents, "length": 4, "name": "a.txt"}),
+    );
+    assert_eq!(text["kind"], "text");
+    assert_eq!(text["text"].as_str().unwrap().chars().count(), 4);
+    let other = call(
+        &engine,
+        "materialize",
+        json!({"extents": extents, "name": "a.bin"}),
+    );
+    assert_eq!(other["kind"], "none");
+    assert!(engine
+        .call("materialize", &json!({}), AUTHOR_CLAUDE)
+        .is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn similar_pieces_are_found_by_shared_files_and_can_be_swapped_in() {
     let (engine, _session, dir) = engine_with_image("similar", build_jigsaw_volume());
 

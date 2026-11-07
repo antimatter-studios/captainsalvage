@@ -932,7 +932,7 @@ pub struct MemberCopy {
 }
 
 /// How a file inside an archive can be shown, by its name.
-fn preview_kind(path: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn preview_kind(path: &str) -> Option<(&'static str, &'static str)> {
     let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
     Some(match extension.as_str() {
         "jpg" | "jpeg" => (PREVIEW_IMAGE, "image/jpeg"),

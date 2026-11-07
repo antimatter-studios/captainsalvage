@@ -705,7 +705,7 @@ function ConnectTab() {
   );
 }
 
-export type DetailsTab = "selected" | "rebuild" | "agent" | "copy" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
+export type DetailsTab = "selected" | "rebuild" | "agent" | "copy" | "workbench" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
 
 export interface DetailsProps {
   overview: Overview;
@@ -727,6 +727,8 @@ export interface DetailsProps {
   rebuild: ReactNode;
   /** The conversation with Claude. It stays mounted on other tabs, so a reply keeps arriving. */
   agent: ReactNode;
+  /** Kept mounted, like the agent, so pieces gathered there survive a look at another tab. */
+  workbench: ReactNode;
   /** Claude is answering, or has answered since the tab was last open. */
   agentActive: boolean;
   floor: number;
@@ -739,7 +741,7 @@ export interface DetailsProps {
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild, agent, agentActive } = props;
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild, agent, workbench, agentActive } = props;
   const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
   const [tab, setTab] = useState<DetailsTab>("selected");
   useEffect(() => {
@@ -751,6 +753,7 @@ export function Details(props: DetailsProps) {
     ["rebuild", t("Rebuild"), "truck"],
     ["agent", t("Ask agent"), "robot"],
     ["copy", t("Treasure list"), "chest"],
+    ["workbench", t("Workbench"), "puzzle"],
     ["hypotheses", t("Hypotheses"), "bulb"],
     ["lens", t("Lens"), "aperture"],
     ["volume", t("Volume"), "disk"],
@@ -772,7 +775,8 @@ export function Details(props: DetailsProps) {
       <div className="inspector-title">{tabTitle}</div>
       {tab === "rebuild" && rebuild}
       <div className="details-agent" hidden={tab !== "agent"}>{agent}</div>
-      <div className="panel-body" hidden={tab === "rebuild" || tab === "agent"}>
+      <div className="panel-body" hidden={tab !== "workbench"}>{workbench}</div>
+      <div className="panel-body" hidden={tab === "rebuild" || tab === "agent" || tab === "workbench"}>
         {tab === "selected" && (
           <>
             {entry && (

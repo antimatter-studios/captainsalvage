@@ -33,6 +33,7 @@ import { RebuildView } from "./components/RebuildView";
 import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
 import { MountedWarning } from "./components/MountedWarning";
+import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
 import { isArchiveName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
@@ -887,6 +888,7 @@ export default function App() {
           previewInCenter={previewInCenter}
           onTab={setDetailsTab}
           agent={<Chat selection={selection} onActivity={setChatActivity} />}
+          workbench={<Workbench selection={selection} clusterSize={overview.geometry.clusterSize} onShowClusters={setHighlight} onChanged={bump} />}
           agentActive={chatActivity.busy || chatActivity.replies > repliesSeen}
           rebuild={
             <RebuildView
