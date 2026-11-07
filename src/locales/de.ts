@@ -867,6 +867,23 @@ const strings: Record<string, string> = {
   "Unmounting": "Wird deaktiviert",
   "This file is over {limit}, too big to show here. Copy it out to open it. Its first bytes are below.": "Diese Datei ist größer als {limit} und zu groß, um sie hier zu zeigen. Kopieren Sie sie heraus, um sie zu öffnen. Ihre ersten Bytes stehen unten.",
   "This file is over {limit}, too big to show here. Copy it out to open it.": "Diese Datei ist größer als {limit} und zu groß, um sie hier zu zeigen. Kopieren Sie sie heraus, um sie zu öffnen.",
+  "1 tool used": "1 Werkzeug verwendet",
+  "Can it be put back together?": "Lässt sie sich wieder zusammensetzen?",
+  "Could this be part of a lost file?": "Könnte das Teil einer verlorenen Datei sein?",
+  "Is this file whole?": "Ist diese Datei vollständig?",
+  "Show cluster {cluster}": "Cluster {cluster} zeigen",
+  "Suggested questions": "Vorgeschlagene Fragen",
+  "What can be recovered from this disk?": "Was lässt sich von diesem Datenträger retten?",
+  "What did this folder hold?": "Was enthielt dieser Ordner?",
+  "What is in this cluster?": "Was steht in diesem Cluster?",
+  "What is in this region?": "Was steht in diesem Bereich?",
+  "Where are the biggest lost pieces?": "Wo sind die größten verlorenen Teile?",
+  "Where are the rest of its clusters?": "Wo sind ihre übrigen Cluster?",
+  "Where did this folder belong?": "Wohin gehörte dieser Ordner?",
+  "Where does this chain continue?": "Wo geht diese Kette weiter?",
+  "Which file did this chain belong to?": "Zu welcher Datei gehörte diese Kette?",
+  "Which file does this cluster belong to?": "Zu welcher Datei gehört dieser Cluster?",
+  "{count} tools used": "{count} Werkzeuge verwendet",
 };
 
 export default strings;
