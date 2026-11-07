@@ -29,6 +29,8 @@ const OVERSCAN_ROWS = 2;
 const LIST_ROW_HEIGHT = 30;
 /** Where the window remembers the kind of file and the layout, across restarts. */
 const BROWSE_SETTING = "browse";
+/** The app sends a picture or PDF whole only up to this size (preview.rs MAX_WHOLE_FILE_BYTES). */
+const MAX_WHOLE_PREVIEW_BYTES = 256 * 1024 * 1024;
 type BrowseLayout = "icons" | "list";
 
 /** One file as a line of the list layout. */
@@ -265,6 +267,11 @@ function PreviewBody({ row }: { row: BrowseRow }) {
   if (NATIVE_AUDIO.has(extension) || CONVERTED_AUDIO.has(extension)) {
     return <Player row={row} audio native={NATIVE_AUDIO.has(extension)} media={media} />;
   }
+  // A picture or PDF is sent whole, so one too big for that is not tried: it would only fail
+  // and look damaged.
+  if ((IMAGE_EXTENSIONS.has(extension) || extension === "pdf") && row.length > MAX_WHOLE_PREVIEW_BYTES) {
+    return <RawPreview row={row} note={t("This file is over {limit}, too big to show here. Copy it out to open it. Its first bytes are below.", { limit: bytes(MAX_WHOLE_PREVIEW_BYTES) })} />;
+  }
   if (failed) {
     return <RawPreview row={row} note={t("This file would not open here, so its clusters may be wrong or damaged. Its first bytes are below.")} />;
   }
@@ -360,6 +367,9 @@ export function InlinePreview({ id, name, length, complete, onOpen }: {
     ) : (
       <audio key={source} className={`inline-preview ${shown}`} controls preload="metadata" src={source} onLoadedMetadata={() => setReady(true)} onError={onPlayerError} />
     );
+  }
+  if (isPdf && length > MAX_WHOLE_PREVIEW_BYTES) {
+    return <p className="inline-note muted">{t("This file is over {limit}, too big to show here. Copy it out to open it.", { limit: bytes(MAX_WHOLE_PREVIEW_BYTES) })}</p>;
   }
   if (isPdf) return <iframe className="inline-preview inline-frame" src={entryUrl(id)} title={name} />;
   if (text !== null) return <pre className="inline-preview inline-text">{text}</pre>;

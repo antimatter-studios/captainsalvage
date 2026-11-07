@@ -865,6 +865,8 @@ const strings: Record<string, string> = {
   "It was mounted before Captain Salvage could stop it, at startup or while the app was closed. While it stays mounted, macOS may write to it. Unmounting writes a little too, but much less.": "Se montó antes de que Captain Salvage pudiera impedirlo, al arrancar o con la app cerrada. Mientras siga montado, macOS puede escribir en él. Desmontarlo también escribe un poco, pero mucho menos.",
   "Unmount {name}": "Desmontar {name}",
   "Unmounting": "Desmontando",
+  "This file is over {limit}, too big to show here. Copy it out to open it. Its first bytes are below.": "Este archivo supera {limit}, es demasiado grande para mostrarlo aquí. Cópielo para abrirlo. Sus primeros bytes están abajo.",
+  "This file is over {limit}, too big to show here. Copy it out to open it.": "Este archivo supera {limit}, es demasiado grande para mostrarlo aquí. Cópielo para abrirlo.",
 };
 
 export default strings;
