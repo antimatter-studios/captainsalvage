@@ -1,3 +1,3 @@
 ### Fixed
 
-- **Blocked disks are handled before the app window opens.** A disk attached at login is less likely to mount before the block takes effect.
+- **Captain Salvage starts keeping your flagged disks unmounted before its window opens.** A disk attached at login was sometimes mounted before the block started, because the window took a few seconds to open.
