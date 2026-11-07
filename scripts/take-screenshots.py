@@ -3,7 +3,7 @@
 
 Run this for each new version:
 
-    scripts/take-screenshots.py media/changelog/v3
+    scripts/take-screenshots.py media/changelog/<version>
 
 It starts a second copy of the built app off screen, so a window you are working
 in is left alone. It drives that copy through its test hook and saves PNGs.

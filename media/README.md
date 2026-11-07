@@ -1,19 +1,21 @@
 # Media layout
 
-- `changelog/v1/`, `changelog/v2/`, `changelog/v3/`: unchanged historical screenshots,
-  grouped by the interface revision they illustrate. The root README uses these to
-  show development over time; they are not illustrations of the current release.
+- `changelog/<version>/`: screenshots of a released version, with `screenshots.md`, a
+  two-column table of them. `scripts/release.py sync` adds that table under the version in
+  the README's changelog, so its image paths are relative to the repository root.
+  `v0.1.0/` holds the historical shots from the original damaged test disk, with private
+  file names blurred, including two from before that release.
 - `manual/`: current user-manual screenshots. All disk contents and filenames are
   synthetic. The manual at `docs/manual/index.html` links here with relative paths.
 
-Keep future historical screenshots under `changelog/<revision>/` and current manual
-images under `manual/`. When publishing the manual, preserve `docs/manual/` and
+Put a release's screenshots and their `screenshots.md` table under `changelog/<version>/`,
+and current manual images under `manual/`. When publishing the manual, preserve `docs/manual/` and
 `media/manual/` relative to the same site root. No bundling or remote assets are needed.
 
 ## How the manual screenshots were made
 
 The source was built with `CARGO_TARGET_DIR="$PWD/.work/target" python3 scripts/release.py build`,
-without signing credentials. The local, git-excluded `.work/window-tests/harness.py`
+without signing credentials. The window-test harness, now `tests/window/harness.py`,
 launched an independently renamed, ad-hoc-signed copy of the resulting app with a
 throwaway HOME and an off-screen window. The owner's installed app was not controlled.
 

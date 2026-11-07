@@ -42,6 +42,9 @@ README = ROOT / "README.md"
 README_START = "<!-- changelog:start -->"
 README_END = "<!-- changelog:end -->"
 README_VERSIONS = 10
+# Each version's screenshots, in media/changelog/v<version>/, with the table that shows them.
+SCREENSHOTS = ROOT / "media/changelog"
+SCREENSHOT_TABLE = "screenshots.md"
 UNRELEASED = "[Unreleased]"
 NO_CHANGES = "No pull requests merged yet."
 SECTION_ORDER = ["Added", "Fixed", "Documentation", "Other"]
@@ -112,8 +115,18 @@ def join_changelog(sections):
     return "\n".join(parts)
 
 
-def readme_block(sections, limit=README_VERSIONS):
-    """The newest versions for the README, with its headings one level down."""
+def version_screenshots(folder, heading):
+    """The screenshot table kept beside a version's images, or None if it has none."""
+    match = re.match(r"^\[(\d[^\]]*)\]", heading)
+    if not match:
+        return None
+    table = folder / f"v{match[1]}" / SCREENSHOT_TABLE
+    return table.read_text().strip() if table.exists() else None
+
+
+def readme_block(sections, limit=README_VERSIONS, screenshots=None):
+    """The newest versions for the README, with its headings one level down. With a
+    screenshots folder, a version's table from there follows its notes."""
     lines = [
         README_START,
         "",
@@ -128,6 +141,9 @@ def readme_block(sections, limit=README_VERSIONS):
         lines.append("")
         lines.append(re.sub(r"^### (.+)$", r"**\1**", body, flags=re.MULTILINE))
         lines.append("")
+        table = screenshots and version_screenshots(screenshots, heading)
+        if table:
+            lines += ["**Screenshots**", "", table, ""]
     lines.append(README_END)
     return "\n".join(lines)
 
@@ -263,7 +279,7 @@ def read_sections():
 def write_readme():
     """The README's list is a copy of the newest versions in CHANGELOG.md."""
     versions = [item for item in read_sections() if item[0] != UNRELEASED]
-    README.write_text(replace_readme_block(README.read_text(), readme_block(versions)))
+    README.write_text(replace_readme_block(README.read_text(), readme_block(versions, screenshots=SCREENSHOTS)))
 
 
 def command_notes(args):
