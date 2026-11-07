@@ -71,10 +71,10 @@ export function guessedFolderLabel(contents: { group: string; share: number; fil
   return contents.files === 1 ? t("{kind}, 1 file", { kind }) : t("{kind}, {count} files", { kind, count: count(contents.files) });
 }
 
-/** Shows a map path in the same words as the sidebar. */
-export function displayPath(path: string | null): string {
+/** Shows a map path in the same words as the sidebar. Simple mode leaves out cluster numbers. */
+export function displayPath(path: string | null, simple = false): string {
   if (!path) return "/";
-  return path.replace(/\[orphan @(\d+)\]/g, (_, cluster: string) => lostFolderName(Number(cluster)));
+  return path.replace(/\[orphan @(\d+)\]/g, (_, cluster: string) => (simple ? t("Lost folder") : lostFolderName(Number(cluster))));
 }
 
 export function hexOffset(value: number): string {

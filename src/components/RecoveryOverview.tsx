@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { call, type Extent, type FileTestStatus, type MountHistory, type Overview, type Status } from "../api";
 import { bytes, count, percent } from "../format";
+import { useSimple } from "../mode";
 import { fromEngine, locale, t } from "../i18n";
 import { legendFor } from "../palette";
 import { Icon } from "./icons";
@@ -22,6 +23,8 @@ interface RegionStats {
 function MacosWrites({ revision, onShowClusters }: { revision: number; onShowClusters: (extents: Extent[]) => void }) {
   const [history, setHistory] = useState<MountHistory | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // The map is hidden in Simple mode, so there is nothing to show the writes on.
+  const simple = useSimple();
   const show = (date: string) => {
     setProblem(null);
     call<{ dates: { date: string; extents: Extent[] }[] }>("macos_writes")
@@ -51,9 +54,11 @@ function MacosWrites({ revision, onShowClusters }: { revision: number; onShowClu
               <td className="recovery-number">{day.entries === 1 ? t("1 entry") : t("{count} entries", { count: count(day.entries) })}</td>
               <td className="recovery-number">{bytes(day.bytes)}</td>
               <td className="recovery-number">{day.clusters === 1 ? t("1 cluster") : t("{count} clusters", { count: count(day.clusters) })}</td>
-              <td className="recovery-number">
-                <button className="link" onClick={() => show(day.date)}>{t("Show on the map")}</button>
-              </td>
+              {!simple && (
+                <td className="recovery-number">
+                  <button className="link" onClick={() => show(day.date)}>{t("Show on the map")}</button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

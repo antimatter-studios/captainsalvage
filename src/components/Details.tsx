@@ -18,6 +18,7 @@ import {
   type VolumeChoice,
 } from "../api";
 import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, stamp, verdictLabel } from "../format";
+import { useSimple } from "../mode";
 import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
 import { CopyReport } from "./CopyReport";
@@ -48,6 +49,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 }
 
 function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy, onPreview, onInsideZip, previewElsewhere, onEntry }: { onInsideZip: () => void; row: Row; extents: Extent[]; macosWroteOn: string[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
+  const simple = useSimple();
   const [copies, setCopies] = useState<Row[]>([]);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -82,7 +84,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
   return (
     <div className="detail">
       <h3 className="detail-name">{row.name}</h3>
-      {row.path !== null && <div className="muted detail-path">{displayPath(row.path)}</div>}
+      {row.path !== null && <div className="muted detail-path">{displayPath(row.path, simple)}</div>}
       {row.kind === "file" && !previewElsewhere && (
         <InlinePreview
           key={id}
@@ -113,18 +115,23 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
       )}
       <dl className="facts">
         {row.kind === "file" && <Fact label={t("Size")}>{t("{size} ({count} bytes)", { size: bytes(row.length), count: count(row.length) })}</Fact>}
-        <Fact label={t("First cluster")}>
-          <button className="link" onClick={() => onCluster(row.firstCluster)}>{count(row.firstCluster)}</button>
-        </Fact>
-        {row.kind === "file" && <Fact label={t("Clusters")}>{t("{found} found of {needed} needed", { found: count(row.clustersFound), needed: count(row.clustersNeeded) })}</Fact>}
-        {row.clustersAllocated > 0 && <Fact label={t("In current use")}>{t("{count} clusters", { count: count(row.clustersAllocated) })}</Fact>}
-        {row.clustersConflict > 0 && <Fact label={t("Shared")}>{t("{count} clusters", { count: count(row.clustersConflict) })}</Fact>}
-        <Fact label={t("Pieces")}>{count(extents.length)}</Fact>
-        <Fact label={t("Layout")}>{row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
-        <Fact label={t("Entry state")}>{row.inUse ? t("In use") : t("Marked deleted")}{row.checksumOk ? "" : t(", checksum failed")}</Fact>
+        {/* Where it lies on the disk is for investigating, and Simple mode leaves it out. */}
+        {!simple && (
+          <>
+            <Fact label={t("First cluster")}>
+              <button className="link" onClick={() => onCluster(row.firstCluster)}>{count(row.firstCluster)}</button>
+            </Fact>
+            {row.kind === "file" && <Fact label={t("Clusters")}>{t("{found} found of {needed} needed", { found: count(row.clustersFound), needed: count(row.clustersNeeded) })}</Fact>}
+            {row.clustersAllocated > 0 && <Fact label={t("In current use")}>{t("{count} clusters", { count: count(row.clustersAllocated) })}</Fact>}
+            {row.clustersConflict > 0 && <Fact label={t("Shared")}>{t("{count} clusters", { count: count(row.clustersConflict) })}</Fact>}
+            <Fact label={t("Pieces")}>{count(extents.length)}</Fact>
+            <Fact label={t("Layout")}>{row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
+            <Fact label={t("Entry state")}>{row.inUse ? t("In use") : t("Marked deleted")}{row.checksumOk ? "" : t(", checksum failed")}</Fact>
+          </>
+        )}
         <Fact label={t("Created")}>{stamp(row.created)}</Fact>
         <Fact label={t("Modified")}>{stamp(row.modified)}</Fact>
-        {row.sourceCluster !== null && (
+        {!simple && row.sourceCluster !== null && (
           <Fact label={t("Entry is in")}>
             <button className="link" onClick={() => onCluster(row.sourceCluster as number)}>{t("cluster {number}", { number: count(row.sourceCluster) })}</button>
           </Fact>
@@ -136,7 +143,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
           {copies.map((copy) => (
             <button key={copy.id} className="row" onClick={() => onEntry(copy)} title={fromEngine(copy.reason)}>
               <span className="row-icon"><Icon name={fileIcon(copy.name)} /></span>
-              <span className="row-main"><span className="row-name">{copy.name}</span><span className="row-path">{displayPath(copy.path)}</span></span>
+              <span className="row-main"><span className="row-name">{copy.name}</span><span className="row-path">{displayPath(copy.path, simple)}</span></span>
             </button>
           ))}
         </>
@@ -149,7 +156,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
           {report.breakLocations.map((item: any, index: number) => (
             <div key={index}>
               {t("Breaks at stream byte {offset}", { offset: count(item.streamOffset) })}
-              {item.cluster && (
+              {item.cluster && !simple && (
                 <> {t("in")} <button className="link" onClick={() => onCluster(item.cluster)}>{t("cluster {number}", { number: count(item.cluster) })}</button></>
               )}
             </div>
@@ -162,6 +169,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
 }
 
 function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onCluster: (cluster: number) => void; onEntry: (row: Row) => void }) {
+  const simple = useSimple();
   return (
     <div className="detail">
       <h3 className="detail-name">{t("Cluster {cluster}", { cluster: count(info.cluster) })}</h3>
@@ -186,7 +194,7 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
           {info.owners.slice(0, 12).map((owner) => (
             <button key={owner.id} className="row" onClick={() => onEntry(owner)} title={fromEngine(owner.reason)}>
               <span className="row-icon"><Icon name={fileIcon(owner.name)} /></span>
-              <span className="row-main"><span className="row-name">{owner.name}</span><span className="row-path">{displayPath(owner.path)}</span></span>
+              <span className="row-main"><span className="row-name">{owner.name}</span><span className="row-path">{displayPath(owner.path, simple)}</span></span>
               <ConfidenceRing value={owner.confidence} tone={verdictTone(owner.verdict)} label={t("{verdict}, confidence {percent}", { verdict: verdictLabel(owner.verdict), percent: percent(owner.confidence) })} />
             </button>
           ))}
@@ -198,12 +206,13 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
 }
 
 function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket: boolean; onCopy: () => void; onBrowse: (row: Row) => void }) {
+  const simple = useSimple();
   const [similar, setSimilar] = useState(false);
   useEffect(() => setSimilar(false), [row.head]);
   return (
     <div className="detail">
       <h3 className="detail-name">{row.name || t("Folder with no name, at cluster {cluster}", { cluster: count(row.firstCluster) })}</h3>
-      {row.path !== null && <div className="muted detail-path">{displayPath(row.path)}</div>}
+      {row.path !== null && <div className="muted detail-path">{displayPath(row.path, simple)}</div>}
       <dl className="facts">
         <Fact label={t("Holds")}>{t("{count} files, {bytes}", { count: count(row.files), bytes: bytes(row.bytes) })}</Fact>
         <Fact label={t("Likely intact")}>{t("{count} files, {bytes}", { count: count(row.intactFiles), bytes: bytes(row.intactBytes) })}</Fact>
@@ -705,6 +714,9 @@ function ConnectTab() {
   );
 }
 
+/** The tabs Simple mode keeps. */
+const SIMPLE_TABS: DetailsTab[] = ["selected", "rebuild", "agent", "copy"];
+
 export type DetailsTab = "selected" | "rebuild" | "agent" | "copy" | "workbench" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
 
 export interface DetailsProps {
@@ -760,11 +772,17 @@ export function Details(props: DetailsProps) {
     ["activity", t("Activity"), "clock"],
     ["connect", t("Connect"), "plug"],
   ];
+  // Simple mode keeps what recovering files needs.
+  const simple = useSimple();
+  const shownTabs = simple ? tabs.filter(([id]) => SIMPLE_TABS.includes(id)) : tabs;
+  useEffect(() => {
+    if (simple && !SIMPLE_TABS.includes(tab)) setTab("selected");
+  }, [simple, tab]);
   const tabTitle = tabs.find(([id]) => id === tab)?.[1];
   return (
     <section className="details" aria-label={t("Details")}>
       <div className="inspector-tabs" role="tablist">
-        {tabs.map(([id, label, icon]) => (
+        {shownTabs.map(([id, label, icon]) => (
           <button key={id} role="tab" aria-selected={tab === id} aria-label={label} title={label} onClick={() => setTab(id)}>
             <Icon name={icon} size={16} />
             {id === "copy" && basket.length > 0 && <span className="tab-badge">{basket.length}</span>}
@@ -807,7 +825,8 @@ export function Details(props: DetailsProps) {
                 }}
               />
             )}
-            {info && <ClusterDetails info={info} onCluster={onCluster} onEntry={onEntry} />}
+            {/* A cluster's own details are for investigating. */}
+            {info && !simple && <ClusterDetails info={info} onCluster={onCluster} onEntry={onEntry} />}
             {!entry && !folder && !info && <p className="empty">{t("Nothing selected. Click the map or a file to see what is known about it.")}</p>}
           </>
         )}

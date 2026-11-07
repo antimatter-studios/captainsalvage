@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
 import { bytes, count, displayPath, guessedFolderLabel, lostFolderName, percent, verdictLabel } from "../format";
+import { useSimple } from "../mode";
 import { fromEngine, t } from "../i18n";
 import { startPieceDrag } from "./RebuildView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
@@ -70,6 +71,7 @@ function announceHover(id: number | null) {
 }
 
 function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"]; depth?: number }) {
+  const simple = useSimple();
   const verdict = verdictLabel(row.verdict);
   const id = row.id as number;
   return (
@@ -85,7 +87,7 @@ function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }:
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
         <span className="row-name">{row.name}</span>
-        {showPath && row.path !== null && <span className="row-path">{displayPath(row.path)}</span>}
+        {showPath && row.path !== null && <span className="row-path">{displayPath(row.path, simple)}</span>}
       </span>
       <span className="row-size">{row.kind === "file" ? bytes(row.length) : ""}</span>
       <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
@@ -125,7 +127,8 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
     };
   }, [open, head, loaded, props.floor, props.revision]);
 
-  const name = row.name || (row.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
+  const simple = useSimple();
+  const name = row.name || (row.nodeKind === "root" ? t("Volume root") : simple ? t("Lost folder") : lostFolderName(head));
   // A folder that lost its name gets a label from its files, shown as a guess, beside the
   // cluster it starts at, which stays its real handle.
   const guessed = row.name || row.nodeKind === "root" ? null : guessedFolderLabel(row.contents);
@@ -164,7 +167,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
           ) : (
             <span className="row-name">{name}</span>
           )}
-          {guessed ? <span className="row-path">{name}</span> : !row.name && row.hint && <span className="row-path">{row.hint}</span>}
+          {guessed ? !simple && <span className="row-path">{name}</span> : !row.name && row.hint && <span className="row-path">{row.hint}</span>}
         </span>
         <span className="row-size">{row.bytes > 0 ? bytes(row.bytes) : ""}</span>
         {row.linkConfidence !== null && row.linkConfidence < 1 ? (
@@ -313,6 +316,7 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
 }
 
 function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, onBasket }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; openKey: string | null; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
+  const simple = useSimple();
   if (page.rows.length === 0) return <div className="empty">{t("No names match. The scan may not have reached them yet.")}</div>;
   return (
     <>
@@ -327,7 +331,7 @@ function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, 
             <span className="row-icon row-icon-folder"><Icon name="folder" /></span>
             <span className="row-main">
               <span className="row-name">{row.name}</span>
-              <span className="row-path">{displayPath(row.path)}</span>
+              <span className="row-path">{displayPath(row.path, simple)}</span>
             </span>
           </button>
         ) : (
@@ -352,7 +356,15 @@ export function Explorer(props: ExplorerProps) {
   const [tab, setTab] = useState<ExplorerTab>("folders");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Page | null>(null);
-  const tabs: [ExplorerTab, string][] = [["folders", t("Folders")], ["nameless", t("Nameless")], ["broken", t("Broken")], ["unexplained", t("Unexplained")]];
+  // Nameless chains, broken files and unexplained space are named by cluster, so Simple mode
+  // keeps only the folders.
+  const simple = useSimple();
+  const tabs: [ExplorerTab, string][] = simple
+    ? [["folders", t("Folders")]]
+    : [["folders", t("Folders")], ["nameless", t("Nameless")], ["broken", t("Broken")], ["unexplained", t("Unexplained")]];
+  useEffect(() => {
+    if (simple) setTab("folders");
+  }, [simple]);
   const panel = useRef<HTMLDivElement>(null);
   const selectTimer = useRef<number | undefined>(undefined);
   const lastKey = useRef(0);
