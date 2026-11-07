@@ -1,3 +1,3 @@
 ### Added
 
-- **Captain Salvage warns when a disk you asked to keep unmounted is mounted anyway, and lets you unmount it.** You can reduce the risk of macOS writing to the disk.
+- **A warning on every screen when a disk you asked to keep unmounted is mounted anyway.** That can happen at startup, before Captain Salvage is running. While the disk stays mounted, macOS may write to it, and the warning has a button to unmount just that volume.
