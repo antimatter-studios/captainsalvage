@@ -341,7 +341,7 @@ export default function App() {
   const [cluster, setCluster] = useState<number | null>(null);
   const [info, setInfo] = useState<ClusterInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
-  const [entry, setEntry] = useState<{ row: Row; extents: Extent[] } | null>(null);
+  const [entry, setEntry] = useState<{ row: Row; extents: Extent[]; macosWroteOn: string[] } | null>(null);
   const [folder, setFolder] = useState<Row | null>(null);
   const [chain, setChain] = useState<IslandRow | null>(null);
   const [region, setRegion] = useState<UnexplainedRun | null>(null);
@@ -565,8 +565,8 @@ export default function App() {
 
   /** Selects a file for the details and for Claude, without changing what the middle shows. */
   const noteEntry = useCallback(async (id: number) => {
-    const result = await call<{ entry: Row; extents: Extent[] }>("entry", { id });
-    setEntry({ row: result.entry, extents: result.extents });
+    const result = await call<{ entry: Row; extents: Extent[]; macosWroteOn?: string[] }>("entry", { id });
+    setEntry({ row: result.entry, extents: result.extents, macosWroteOn: result.macosWroteOn ?? [] });
     setFolder(null);
     setChain(null);
     setRegion(null);
@@ -812,7 +812,22 @@ export default function App() {
         </div>
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
         {center === "zip" && !zipEntry && <section className="center-panel"><p className="muted zip-message">{t("Choose a zip file to see inside it.")}</p></section>}
-        {center === "overview" && <RecoveryOverview overview={overview} status={status} revision={revision} onChanged={bump} />}
+        {center === "overview" && (
+          <RecoveryOverview
+            overview={overview}
+            status={status}
+            revision={revision}
+            onChanged={bump}
+            onShowClusters={(extents) => {
+              setHighlight(extents);
+              if (extents.length === 0) return;
+              const first = extents[0].first;
+              const last = extents[extents.length - 1].first + extents[extents.length - 1].count;
+              const margin = Math.max(Math.round((last - first) * 0.1), 16);
+              setView([Math.max(first - margin, 2), Math.min(last + margin, overview.geometry.clusterCount + 2)]);
+            }}
+          />
+        )}
         {center === "browse" && (
           <BrowseView
             floor={floor}

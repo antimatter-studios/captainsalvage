@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { call, type FileTestStatus, type MountHistory, type Overview, type Status } from "../api";
+import { call, type Extent, type FileTestStatus, type MountHistory, type Overview, type Status } from "../api";
 import { bytes, count, percent } from "../format";
 import { fromEngine, locale, t } from "../i18n";
 import { legendFor } from "../palette";
@@ -19,8 +19,15 @@ interface RegionStats {
 
 /** Starts, pauses and reports the background file tests. */
 /** The dates the volume's own system folders changed, which only a finished scan can show. */
-function MacosWrites({ revision }: { revision: number }) {
+function MacosWrites({ revision, onShowClusters }: { revision: number; onShowClusters: (extents: Extent[]) => void }) {
   const [history, setHistory] = useState<MountHistory | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const show = (date: string) => {
+    setProblem(null);
+    call<{ dates: { date: string; extents: Extent[] }[] }>("macos_writes")
+      .then((value) => onShowClusters(value.dates.find((day) => day.date === date)?.extents ?? []))
+      .catch((reason) => setProblem(String(reason)));
+  };
   useEffect(() => {
     let current = true;
     call<MountHistory>("mount_history").then((value) => current && setHistory(value)).catch(() => undefined);
@@ -44,10 +51,14 @@ function MacosWrites({ revision }: { revision: number }) {
               <td className="recovery-number">{day.entries === 1 ? t("1 entry") : t("{count} entries", { count: count(day.entries) })}</td>
               <td className="recovery-number">{bytes(day.bytes)}</td>
               <td className="recovery-number">{day.clusters === 1 ? t("1 cluster") : t("{count} clusters", { count: count(day.clusters) })}</td>
+              <td className="recovery-number">
+                <button className="link" onClick={() => show(day.date)}>{t("Show on the map")}</button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {problem && <p className="recovery-note bad">{problem}</p>}
       <p className="recovery-note recovery-note-after">
         {t("The safety baseline cannot see any of these from before {date}, when it was recorded.", { date: baseline })}{" "}
         {history.dirtyFlag
@@ -118,7 +129,7 @@ function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () 
 /** The first thing on screen: what has been found so far, before any selection. */
 const FOUND_VERDICTS = ["tested-good", "likely-intact", "plausible", "live"];
 
-export function RecoveryOverview({ overview, status, revision, onChanged }: { overview: Overview; status: Status | null; revision: number; onChanged: () => void }) {
+export function RecoveryOverview({ overview, status, revision, onChanged, onShowClusters }: { overview: Overview; status: Status | null; revision: number; onChanged: () => void; onShowClusters: (extents: Extent[]) => void }) {
   const [stats, setStats] = useState<RegionStats | null>(null);
   useEffect(() => {
     let current = true;
@@ -190,7 +201,7 @@ export function RecoveryOverview({ overview, status, revision, onChanged }: { ov
 
         {status && <FileTests tests={status.fileTests} onChanged={onChanged} />}
 
-        <MacosWrites revision={revision} />
+        <MacosWrites revision={revision} onShowClusters={onShowClusters} />
 
         <KeepSafe device={status?.diskBack?.device ?? overview.device} />
 

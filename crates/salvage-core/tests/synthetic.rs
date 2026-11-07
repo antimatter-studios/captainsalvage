@@ -2755,6 +2755,16 @@ fn volume_macos_has_visited() -> Vec<u8> {
     b.image
 }
 
+/// Writes the volume macOS has visited to `SALVAGE_MACOS_IMAGE`, for testing the window.
+/// Run with: SALVAGE_MACOS_IMAGE=/path/macos.img cargo test -p salvage-core --test synthetic -- --ignored write_the_macos_visited
+#[test]
+#[ignore]
+fn write_the_macos_visited_volume_for_window_tests() {
+    let path =
+        std::env::var("SALVAGE_MACOS_IMAGE").expect("SALVAGE_MACOS_IMAGE names where to write it");
+    std::fs::write(path, volume_macos_has_visited()).expect("written");
+}
+
 #[test]
 fn the_folders_macos_keeps_on_a_volume_date_its_visits() {
     let (engine, _session, dir) = engine_with_image("mounts", volume_macos_has_visited());
@@ -2782,6 +2792,43 @@ fn the_folders_macos_keeps_on_a_volume_date_its_visits() {
     );
     assert_eq!(history["dirtyFlag"], false);
     assert!(history["baselineRecordedAtMillis"].as_u64().unwrap() > 0);
+
+    // Where those writes landed, as cluster runs per date.
+    let writes = call(&engine, "macos_writes", json!({}));
+    let runs: Vec<_> = writes["dates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|day| {
+            (
+                day["date"].as_str().unwrap().to_string(),
+                day["extents"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            (
+                "2022-09-08".to_string(),
+                json!([{"first": 6, "count": 1}, {"first": 8, "count": 1}])
+            ),
+            ("2025-05-02".to_string(), json!([{"first": 21, "count": 3}])),
+            (
+                "2026-11-04".to_string(),
+                json!([{"first": 5, "count": 1}, {"first": 20, "count": 1}])
+            ),
+        ]
+    );
+    // A file in those clusters says so; the person's own file beside them does not.
+    let wrote_on = |name: &str| {
+        let id = call(&engine, "search", json!({"query": name}))["rows"][0]["id"]
+            .as_i64()
+            .unwrap();
+        call(&engine, "entry", json!({"id": id}))["macosWroteOn"].clone()
+    };
+    assert_eq!(wrote_on("0001"), json!(["2026-11-04"]));
+    assert_eq!(wrote_on("photo.jpg"), json!([]));
     let _ = std::fs::remove_dir_all(dir);
 
     // VolumeFlags is left out of the boot checksum, so setting it needs nothing else.

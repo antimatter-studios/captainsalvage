@@ -47,7 +47,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, onInsideZip, previewElsewhere, onEntry }: { onInsideZip: () => void; row: Row; extents: Extent[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
+function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy, onPreview, onInsideZip, previewElsewhere, onEntry }: { onInsideZip: () => void; row: Row; extents: Extent[]; macosWroteOn: string[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
   const [copies, setCopies] = useState<Row[]>([]);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -98,6 +98,11 @@ function EntryDetails({ row, extents, onCluster, inBasket, onCopy, onPreview, on
         <span className="confidence-text">{t("Confidence {percent}", { percent: percent(row.confidence) })}</span>
       </div>
       <p>{fromEngine(row.reason)}</p>
+      {macosWroteOn.length > 0 && (
+        <p className="detail-macos-writes">
+          {t("macOS wrote to some of its clusters on {dates}, for its own index and logs, so parts of it may have been overwritten.", { dates: macosWroteOn.join(", ") })}
+        </p>
+      )}
       {row.kind === "file" && row.length > 0 && (
         <div className="detail-actions">
           <button className="primary" onClick={onCopy}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
@@ -705,7 +710,7 @@ export type DetailsTab = "selected" | "rebuild" | "agent" | "copy" | "volume" | 
 export interface DetailsProps {
   overview: Overview;
   status: Status | null;
-  entry: { row: Row; extents: Extent[] } | null;
+  entry: { row: Row; extents: Extent[]; macosWroteOn: string[] } | null;
   folder: Row | null;
   info: ClusterInfo | null;
   revision: number;
@@ -774,6 +779,7 @@ export function Details(props: DetailsProps) {
               <EntryDetails
                 row={entry.row}
                 extents={entry.extents}
+                macosWroteOn={entry.macosWroteOn}
                 onCluster={onCluster}
                 inBasket={inBasket("entry", entry.row.id)}
                 onPreview={onPreview}

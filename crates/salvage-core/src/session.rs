@@ -194,6 +194,8 @@ pub struct Session {
     writes: Mutex<WriteWatch>,
     returns: Mutex<ReturnWatch>,
     pub(crate) zip: Mutex<Option<(i64, Arc<crate::archive::ZipListing>)>>,
+    /// Where macOS wrote, kept a while: every file selected is checked against it.
+    macos: Mutex<Option<(std::time::Instant, Arc<Vec<MacosWrites>>)>>,
 }
 
 #[derive(Default)]
@@ -350,6 +352,7 @@ impl Session {
             writes: Mutex::new(WriteWatch::open(path)),
             returns: Mutex::new(ReturnWatch::open(path)),
             zip: Mutex::new(None),
+            macos: Mutex::new(None),
         }))
     }
 
@@ -485,6 +488,64 @@ impl Session {
                 .map_err(|_| anyhow!("baseline lock poisoned"))?
                 .recorded_at_millis,
         })
+    }
+
+    /// Where macOS wrote on this volume, by date: the clusters of the files in its
+    /// `.Spotlight-V100` and `.fseventsd` folders, as runs. A lost file that runs through one
+    /// may have been overwritten there.
+    pub fn macos_writes(&self) -> Result<Vec<MacosWrites>> {
+        let root = self.volume.boot.root_cluster;
+        let entries = self.with_database(|database| database.macos_system_entries(root))?;
+        let mut by_date: std::collections::BTreeMap<String, (u64, Vec<u32>)> = Default::default();
+        for (date, row) in entries {
+            let clusters =
+                self.with_database(|database| database.entry_clusters(&self.volume, &row))?;
+            let day = by_date.entry(date).or_default();
+            day.0 += 1;
+            day.1.extend(clusters);
+        }
+        Ok(by_date
+            .into_iter()
+            .map(|(date, (entries, mut clusters))| {
+                clusters.sort_unstable();
+                clusters.dedup();
+                MacosWrites {
+                    date,
+                    entries,
+                    clusters: clusters.len() as u64,
+                    extents: crate::map::to_extents(&clusters),
+                }
+            })
+            .collect())
+    }
+
+    /// The dates macOS wrote to any of these clusters, oldest first.
+    pub fn macos_wrote_over(&self, clusters: &[u32]) -> Result<Vec<String>> {
+        let wanted: std::collections::HashSet<u32> = clusters.iter().copied().collect();
+        let writes = {
+            let mut cache = self
+                .macos
+                .lock()
+                .map_err(|_| anyhow!("macos lock poisoned"))?;
+            match cache.as_ref() {
+                Some((at, writes)) if at.elapsed() < MACOS_WRITES_LIFETIME => writes.clone(),
+                _ => {
+                    let writes = Arc::new(self.macos_writes()?);
+                    *cache = Some((std::time::Instant::now(), writes.clone()));
+                    writes
+                }
+            }
+        };
+        Ok(writes
+            .iter()
+            .filter(|day| {
+                day.extents.iter().any(|extent| {
+                    (extent.first..extent.first + extent.count)
+                        .any(|cluster| wanted.contains(&cluster))
+                })
+            })
+            .map(|day| day.date.clone())
+            .collect())
     }
 
     fn scan_lock_held(&self) -> bool {
@@ -1371,4 +1432,17 @@ fn filetime_to_iso(value: u64) -> Option<String> {
         remainder / 60 % 60,
         remainder % 60
     ))
+}
+
+/// How long the list of macOS's writes is kept before it is worked out again.
+const MACOS_WRITES_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The clusters macOS wrote on one date, as runs.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacosWrites {
+    pub date: String,
+    pub entries: u64,
+    pub clusters: u64,
+    pub extents: Vec<crate::map::Extent>,
 }
