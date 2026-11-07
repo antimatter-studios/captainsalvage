@@ -325,23 +325,26 @@ pub fn run() {
     }
     tauri::Builder::default()
         .manage(ChatState::default())
-        .register_asynchronous_uri_scheme_protocol("lens", |context, request, responder| {
-            let app = context.app_handle();
-            match app.try_state::<AppState>() {
-                Some(state) => preview::handle(
-                    state.engine.clone(),
-                    state.thumbs.clone(),
-                    request,
-                    responder,
-                ),
-                None => responder.respond(
-                    tauri::http::Response::builder()
-                        .status(tauri::http::StatusCode::SERVICE_UNAVAILABLE)
-                        .body(Vec::new())
-                        .unwrap_or_default(),
-                ),
-            }
-        })
+        .register_asynchronous_uri_scheme_protocol(
+            "captainsalvage",
+            |context, request, responder| {
+                let app = context.app_handle();
+                match app.try_state::<AppState>() {
+                    Some(state) => preview::handle(
+                        state.engine.clone(),
+                        state.thumbs.clone(),
+                        request,
+                        responder,
+                    ),
+                    None => responder.respond(
+                        tauri::http::Response::builder()
+                            .status(tauri::http::StatusCode::SERVICE_UNAVAILABLE)
+                            .body(Vec::new())
+                            .unwrap_or_default(),
+                    ),
+                }
+            },
+        )
         .setup(|app| {
             salvage_core::mount::keep_disks_awake();
             let engine = Engine::new();
