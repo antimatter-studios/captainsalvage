@@ -47,6 +47,8 @@ function theme(): Theme {
 
 export interface LegendItem {
   value: number;
+  /** Listed even when the strips show none of it. */
+  always?: boolean;
   label: string;
   color: string;
 }
@@ -73,7 +75,7 @@ export function legendFor(layer: Layer): LegendItem[] {
         { value: 9, label: t("exFAT directory"), color: colors.series[7] },
         { value: 1, label: t("Empty"), color: colors.neutral },
         { value: 0, label: t("Not scanned yet"), color: colors.faint },
-        { value: 10, label: t("Read error"), color: isDark() ? "#ffffff" : "#000000" },
+        { value: 10, label: t("Read error"), color: isDark() ? "#ffffff" : "#000000", always: true },
       ];
     case "ownership":
       return [

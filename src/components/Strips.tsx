@@ -47,6 +47,10 @@ interface StripProps {
   height: number;
   highlight: Extent[];
   marker: number | null;
+  /** Where the scan is reading now, drawn as a line while it runs. */
+  scanAt?: number | null;
+  /** Hears which values this strip's picture holds, so the legend can leave out the rest. */
+  onValues?: (present: Set<number>) => void;
   clusterSize: number;
   label: string;
   windowBox?: [number, number] | null;
@@ -57,7 +61,7 @@ interface StripProps {
 }
 
 function Strip(props: StripProps) {
-  const { layer, start, end, floor, lens, revision, height, highlight, marker, clusterSize, label, windowBox } = props;
+  const { layer, start, end, floor, lens, revision, height, highlight, marker, scanAt, onValues, clusterSize, label, windowBox } = props;
   const wrapper = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
   const marks = useRef<HTMLCanvasElement>(null);
@@ -102,6 +106,7 @@ function Strip(props: StripProps) {
           image.data.set([red, green, blue, 255], index * 4);
         });
         context.putImageData(image, 0, 0);
+        onValues?.(new Set(data));
       })
       .catch((reason) => {
         if (current) setError(String(reason));
@@ -135,7 +140,18 @@ function Strip(props: StripProps) {
     if (marker !== null && marker >= start && marker < end) {
       context.fillRect(toX(marker) - ratio / 2, 0, Math.max(ratio, 1.5 * ratio), canvas.height);
     }
-  }, [highlight, marker, start, end, width, height, themeTick]);
+    if (scanAt !== null && scanAt !== undefined && scanAt >= start && scanAt < end) {
+      // A dashed line, so it is not taken for the selected cluster's solid one.
+      context.strokeStyle = getComputedStyle(canvas).getPropertyValue("--accent").trim() || accent;
+      context.lineWidth = Math.max(ratio, 1.5 * ratio);
+      context.setLineDash([3 * ratio, 2 * ratio]);
+      context.beginPath();
+      context.moveTo(toX(scanAt), 0);
+      context.lineTo(toX(scanAt), canvas.height);
+      context.stroke();
+      context.setLineDash([]);
+    }
+  }, [highlight, marker, scanAt, start, end, width, height, themeTick]);
 
   const clusterAt = useCallback(
     (clientX: number) => {
@@ -273,6 +289,8 @@ export interface StripsProps {
   onView: (view: [number, number]) => void;
   highlight: Extent[];
   marker: number | null;
+  /** Where a running scan is reading, or null when none runs. */
+  scanAt: number | null;
   onPick: (cluster: number) => void;
 }
 
@@ -281,8 +299,17 @@ export function Strips(props: StripsProps) {
   const { layer, floor, lens, revision, totalClusters, clusterSize, view, onView, highlight, marker, onPick } = props;
   const first = 2;
   const last = totalClusters + 2;
-  const legend = legendFor(layer);
+  // Only categories either strip actually shows are listed. Read errors always are, because
+  // a few bad clusters can be too small to win a pixel and must not look absent.
+  const [present, setPresent] = useState<{ layer: Layer; whole: Set<number>; focus: Set<number> } | null>(null);
+  const seen = present && present.layer === layer ? new Set([...present.whole, ...present.focus]) : null;
+  const legend = legendFor(layer).filter((item) => !seen || seen.has(item.value) || item.always);
   const caption = sequentialCaption(layer);
+  const heard = (which: "whole" | "focus") => (values: Set<number>) =>
+    setPresent((known) => {
+      const base = known && known.layer === layer ? known : { layer, whole: new Set<number>(), focus: new Set<number>() };
+      return { ...base, [which]: values };
+    });
 
   function clampView(start: number, end: number): [number, number] {
     let width = Math.max(end - start, MIN_WINDOW_CLUSTERS);
@@ -401,6 +428,8 @@ export function Strips(props: StripsProps) {
         height={30}
         highlight={highlight}
         marker={marker}
+        scanAt={props.scanAt}
+        onValues={heard("whole")}
         clusterSize={clusterSize}
         label={t("Whole volume. Drag to choose a region")}
         windowBox={view[0] <= first && view[1] >= last ? null : view}
@@ -432,6 +461,8 @@ export function Strips(props: StripsProps) {
         height={74}
         highlight={highlight}
         marker={shown}
+        scanAt={props.scanAt}
+        onValues={heard("focus")}
         clusterSize={clusterSize}
         label={t("Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub", { count: count(view[1] - view[0]) })}
         onPick={onPick}
