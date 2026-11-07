@@ -317,8 +317,24 @@ pub struct Row {
     pub intact_bytes: u64,
     pub node_kind: Option<String>,
     pub hint: Option<String>,
+    /// For a folder that lost its name: what its own files mostly are, to suggest a label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<FolderContents>,
     pub confidence: f64,
     pub link_confidence: Option<f64>,
+}
+
+/// What a lost folder's own files mostly are, by type, so the window can suggest a label such
+/// as "Mostly videos". It is a guess from file names, never the folder's real name.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderContents {
+    /// photos, videos, music, documents, archives or other.
+    pub group: String,
+    /// The share of the folder's bytes that group holds, 0 to 1.
+    pub share: f64,
+    /// Files directly in the folder.
+    pub files: u64,
 }
 
 /// A FAT chain, with what is known about who owns it and what it holds.
@@ -750,12 +766,54 @@ impl MapDb {
         for row in &mut rows {
             if let Some(head) = row.head {
                 row.hint = self.hint(head)?;
+                row.contents = self.lost_contents(row, head)?;
             }
         }
         Ok(Page {
             rows,
             total: total as u64,
         })
+    }
+
+    /// What a nameless folder's own files mostly are. Nothing for a named folder or the root.
+    fn lost_contents(&self, row: &Row, head: u32) -> Result<Option<FolderContents>> {
+        if !row.name.is_empty() || row.node_kind.as_deref() == Some("root") {
+            return Ok(None);
+        }
+        self.folder_contents(head)
+    }
+
+    /// The type that holds most of a folder's own bytes, by file name.
+    pub fn folder_contents(&self, node: u32) -> Result<Option<FolderContents>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT COALESCE(o_name, name), COALESCE(o_length, length) FROM sets \
+             WHERE node = ?1 AND is_dir = 0 AND verdict != 'rename-residue'",
+        )?;
+        let mut totals: Vec<(&'static str, u64)> = Vec::new();
+        let mut files = 0u64;
+        let rows = statement.query_map([node], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (name, length) = row?;
+            files += 1;
+            // An empty file still counts, so a folder of empty files is not left unnamed.
+            let weight = (length.max(0) as u64).max(1);
+            let group = crate::browse::group_id_of(&name);
+            match totals.iter_mut().find(|total| total.0 == group) {
+                Some(total) => total.1 += weight,
+                None => totals.push((group, weight)),
+            }
+        }
+        let all: u64 = totals.iter().map(|total| total.1).sum();
+        Ok(totals
+            .into_iter()
+            .max_by_key(|total| total.1)
+            .map(|(group, bytes)| FolderContents {
+                group: group.to_string(),
+                share: bytes as f64 / all.max(1) as f64,
+                files,
+            }))
     }
 
     fn hint(&self, node: u32) -> Result<Option<String>> {
@@ -791,11 +849,16 @@ impl MapDb {
                 "SELECT {NODE_COLUMNS} FROM nodes WHERE parent = ?1 ORDER BY bytes DESC, name"
             );
             let mut statement = self.connection.prepare_cached(&sql)?;
-            rows.extend(
-                statement
-                    .query_map([node], node_row)?
-                    .collect::<rusqlite::Result<Vec<_>>>()?,
-            );
+            let mut folders = statement
+                .query_map([node], node_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            drop(statement);
+            for folder in &mut folders {
+                if let Some(head) = folder.head {
+                    folder.contents = self.lost_contents(folder, head)?;
+                }
+            }
+            rows.extend(folders);
             let sql = format!(
                 "SELECT {FILE_COLUMNS} FROM sets WHERE node = ?1 AND is_dir = 1 \
                  AND verdict IN ('folder-missing', 'folder-empty') ORDER BY name"

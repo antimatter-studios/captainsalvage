@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
-import { bytes, count, displayPath, lostFolderName, percent, verdictLabel } from "../format";
+import { bytes, count, displayPath, guessedFolderLabel, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { startPieceDrag } from "./RebuildView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
@@ -112,6 +112,9 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
   }, [open, head, loaded, props.floor, props.revision]);
 
   const name = row.name || (row.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
+  // A folder that lost its name gets a label from its files, shown as a guess, beside the
+  // cluster it starts at, which stays its real handle.
+  const guessed = row.name || row.nodeKind === "root" ? null : guessedFolderLabel(row.contents);
   // Top-level folders are the pieces. A folder inside one can be placed too, as a layer of its
   // own, and is only marked used when it was placed itself.
   const piece = props.canvasPieces !== null;
@@ -140,8 +143,14 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         <span className={open ? "disclosure disclosure-open" : "disclosure"}><Icon name="chevronRight" size={11} /></span>
         <span className="row-icon row-icon-folder"><Icon name="folder" /></span>
         <span className="row-main">
-          <span className="row-name">{name}</span>
-          {!row.name && row.hint && <span className="row-path">{row.hint}</span>}
+          {guessed ? (
+            <span className="row-name row-name-guessed" title={t("A guess from its files, not the folder's real name. {name}.", { name })}>
+              {guessed}
+            </span>
+          ) : (
+            <span className="row-name">{name}</span>
+          )}
+          {guessed ? <span className="row-path">{name}</span> : !row.name && row.hint && <span className="row-path">{row.hint}</span>}
         </span>
         <span className="row-size">{row.bytes > 0 ? bytes(row.bytes) : ""}</span>
         {row.linkConfidence !== null && row.linkConfidence < 1 ? (

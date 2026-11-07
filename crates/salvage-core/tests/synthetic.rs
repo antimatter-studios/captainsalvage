@@ -4080,6 +4080,29 @@ fn write_the_jigsaw_volume_for_window_tests() {
 }
 
 #[test]
+fn a_lost_folder_says_what_its_files_mostly_are() {
+    let (engine, _session, dir) = engine_with_image("contents", build_jigsaw_volume());
+    let roots = call(&engine, "roots", json!({}));
+    let rows = roots["rows"].as_array().expect("rows");
+    let lost = rows
+        .iter()
+        .find(|row| row["head"] == 40)
+        .expect("the lost folder at cluster 40");
+    assert_eq!(lost["name"], "", "it has lost its name");
+    assert_eq!(lost["contents"]["group"], "music", "{lost}");
+    assert_eq!(lost["contents"]["files"], 1);
+    assert!(lost["contents"]["share"].as_f64().unwrap() > 0.99);
+    // A folder with its own name, and the volume root, get no guess.
+    for named in rows
+        .iter()
+        .filter(|row| row["name"] != "" || row["nodeKind"] == "root")
+    {
+        assert!(named.get("contents").is_none(), "{named}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn similar_pieces_are_found_by_shared_files_and_can_be_swapped_in() {
     let (engine, _session, dir) = engine_with_image("similar", build_jigsaw_volume());
 

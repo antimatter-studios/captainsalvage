@@ -826,3 +826,5 @@ video.inline-preview { max-height: 380px; background: #000; }
 .chat-cluster { font: inherit; padding: 0; }
 .chat-tools-fold { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
 .chat-tools-fold summary { cursor: pointer; }
+/* A label the app suggests for a folder that lost its name. Italic says it is a guess. */
+.row-name-guessed { font-style: italic; }
