@@ -1,3 +1,3 @@
 ### Added
 
-- **Recovery results now include a breakdown by file type, showing how many passed, were damaged, or remain untested.** You can quickly see which kinds of files are most at risk.
+- **Videos and FLAC files can be tested, and results are shown per file type.** The file tests now check MP4, MOV, AVI and FLAC files up to 64 MB by their own structure, and the Overview lists how many files of each type passed, came out damaged or are untested.
