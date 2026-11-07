@@ -810,3 +810,11 @@ video.inline-preview { max-height: 380px; background: #000; }
 .report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-size { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .report-status, .report-check { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A flagged disk that is mounted anyway. It sits over everything, because it may be written to now. */
+.mounted-warning { position: fixed; top: 44px; left: 50%; transform: translateX(-50%); z-index: 50; width: min(720px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 10px; background: var(--window); border: 1.5px solid var(--critical); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); }
+.mounted-warning-row { display: flex; align-items: center; gap: 12px; }
+.mounted-warning-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.mounted-warning-text strong { color: var(--critical); font-size: 13px; }
+.mounted-warning-text span { color: var(--ink-2); }
+.mounted-warning-problem { margin: 0; font-size: 12px; color: var(--critical); }
