@@ -243,7 +243,7 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
   }
 
   return (
-    <section className="chat" aria-label={t("Ask agent")}>
+    <section className="chat" aria-label={t("Chat with an agent")}>
       <div className="chat-head">
         <select
           value={agent}
