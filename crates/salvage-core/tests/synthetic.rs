@@ -4180,6 +4180,10 @@ fn a_lost_folder_says_what_its_files_mostly_are() {
     {
         assert!(named.get("contents").is_none(), "{named}");
     }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn clusters_put_in_order_can_be_shown_as_a_file() {
     let (engine, _session, dir) = engine_with_image("materialize", build_jigsaw_volume());
     let id = call(&engine, "search", json!({"query": "a1.jpg"}))["rows"][0]["id"]
