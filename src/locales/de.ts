@@ -849,6 +849,18 @@ const strings: Record<string, string> = {
   "The same": "Gleich",
   "{count} complete": "{count} vollständig",
   "{count} partial": "{count} unvollständig",
+  "A folder on another drive": "Ein Ordner auf einem anderen Laufwerk",
+  "Copied to {path}.": "Nach {path} kopiert.",
+  "Copy it out": "Herauskopieren",
+  "Copy {name} ({size}) to this folder": "{name} ({size}) in diesen Ordner kopieren",
+  "Copy {size}": "{size} kopieren",
+  "Copying": "Wird kopiert",
+  "Only the start is shown, {shown} of {total}.": "Nur der Anfang wird gezeigt, {shown} von {total}.",
+  "Show it": "Anzeigen",
+  "This kind of file cannot be shown here. Copy it out to open it.": "Diese Art Datei kann hier nicht angezeigt werden. Kopieren Sie sie heraus, um sie zu öffnen.",
+  "This picture is too big to show here. Copy it out to open it.": "Dieses Bild ist zu groß, um es hier zu zeigen. Kopieren Sie es heraus, um es zu öffnen.",
+  "Unpacking": "Wird entpackt",
+  "size unknown": "Größe unbekannt",
 };
 
 export default strings;

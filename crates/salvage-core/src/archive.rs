@@ -2,6 +2,7 @@
 //! zip often keeps most of its files, so a lost directory is rebuilt from the headers of
 //! the files inside, and each file can be checked against its own checksum.
 
+use crate::keep::{Keep, Tee};
 use crate::session::Session;
 use anyhow::{anyhow, Result};
 use flate2::read::DeflateDecoder;
@@ -413,7 +414,12 @@ fn list_with_library(total: u64, read: ReadRange) -> Option<Vec<ZipMember>> {
 
 /// Checks one file with the zip library, when the zip opens with it and lists this file at the
 /// same place. Nothing otherwise, so the app's own check takes over.
-fn check_with_library(member: &ZipMember, total: u64, read: ReadRange) -> Option<ZipMemberCheck> {
+fn check_with_library(
+    member: &ZipMember,
+    total: u64,
+    read: ReadRange,
+    keep: &Keep,
+) -> Option<ZipMemberCheck> {
     let mut archive = zip::ZipArchive::new(crate::archives::Source::new(total, read)).ok()?;
     let index = member.index as usize;
     let same = archive.by_index_raw(index).is_ok_and(|file| {
@@ -422,7 +428,7 @@ fn check_with_library(member: &ZipMember, total: u64, read: ReadRange) -> Option
     if !same {
         return None;
     }
-    let mut file = match archive.by_index(index) {
+    let file = match archive.by_index(index) {
         Ok(file) => file,
         Err(zip::result::ZipError::UnsupportedArchive(why))
             if why == zip::result::ZipError::PASSWORD_REQUIRED =>
@@ -448,6 +454,7 @@ fn check_with_library(member: &ZipMember, total: u64, read: ReadRange) -> Option
             ));
         }
     };
+    let mut file = Tee::new(file, keep);
     let mut buffer = vec![0u8; 64 * 1024];
     let mut seen = 0u64;
     loop {
@@ -603,6 +610,16 @@ fn checksum_of(source: &mut dyn Read, limit: u64) -> io::Result<(u32, u64)> {
 
 /// Unpacks one file in memory to compare it with its checksum. Nothing is saved.
 pub fn check_member(member: &ZipMember, total: u64, read: ReadRange) -> Result<ZipMemberCheck> {
+    unpack_member(member, total, read, &Keep::nothing())
+}
+
+/// Unpacks one file, compares it with its checksum, and hands its bytes to `keep`.
+pub fn unpack_member(
+    member: &ZipMember,
+    total: u64,
+    read: ReadRange,
+    keep: &Keep,
+) -> Result<ZipMemberCheck> {
     if member.is_dir {
         return Ok(verdict(CHECK_UNCHECKED, "A folder has nothing to check."));
     }
@@ -617,7 +634,7 @@ pub fn check_member(member: &ZipMember, total: u64, read: ReadRange) -> Result<Z
         Some(Directory { complete: true, .. })
     );
     if whole && LIBRARY_METHODS.contains(&member.method) {
-        if let Some(found) = check_with_library(member, total, read) {
+        if let Some(found) = check_with_library(member, total, read, keep) {
             return Ok(found);
         }
     }
@@ -670,12 +687,12 @@ pub fn check_member(member: &ZipMember, total: u64, read: ReadRange) -> Result<Z
                 "Its header leaves out how long it is, and it is not compressed, so its end cannot be found.",
             ));
         }
-        let (crc, seen) = checksum_of(&mut source, limit)?;
+        let (crc, seen) = checksum_of(&mut Tee::new(&mut source, keep), limit)?;
         return Ok(compare(member, crc, seen, member.crc));
     }
 
     let mut decoder = DeflateDecoder::new(source);
-    let (crc, seen) = match checksum_of(&mut decoder, limit) {
+    let (crc, seen) = match checksum_of(&mut Tee::new(&mut decoder, keep), limit) {
         Ok(result) => result,
         Err(error) => {
             return Ok(verdict(
@@ -764,4 +781,193 @@ impl Session {
             .unwrap_or(crate::archives::Format::Zip);
         crate::archives::check(format, &listing, index, listing.total_bytes, &shared)
     }
+
+    /// One file from inside an archive, unpacked to show: a picture, or the start of a text.
+    pub fn zip_member_preview(self: &Arc<Self>, id: i64, index: u32) -> Result<MemberPreview> {
+        let listing = self.zip_listing(id)?;
+        let member = listing
+            .members
+            .get(index as usize)
+            .ok_or_else(|| anyhow!("this archive has no file number {index}"))?;
+        let Some((kind, mime)) = preview_kind(&member.path) else {
+            return Ok(MemberPreview {
+                kind: PREVIEW_NONE.into(),
+                ..MemberPreview::default()
+            });
+        };
+        let limit = if kind == PREVIEW_IMAGE {
+            MAX_PREVIEW_IMAGE_BYTES
+        } else {
+            MAX_PREVIEW_TEXT_BYTES
+        };
+        if kind == PREVIEW_IMAGE && member.size.is_some_and(|size| size > limit as u64) {
+            return Ok(MemberPreview {
+                kind: PREVIEW_TOO_BIG.into(),
+                bytes: member.size.unwrap_or(0),
+                ..MemberPreview::default()
+            });
+        }
+        let keep = Keep::in_memory(limit);
+        let check = self.unpack_member_into(id, &listing, index, &keep)?;
+        let kept = keep.finish();
+        let (text, data) = if kind == PREVIEW_TEXT {
+            (Some(String::from_utf8_lossy(&kept.data).into_owned()), None)
+        } else {
+            (None, Some(crate::mcp::base64(&kept.data)))
+        };
+        Ok(MemberPreview {
+            kind: kind.into(),
+            mime: Some(mime.into()),
+            text,
+            data_base64: data,
+            bytes: kept.bytes,
+            truncated: kept.truncated,
+            check: Some(check),
+        })
+    }
+
+    /// Copies one file from inside an archive to a folder, under its own name, never over
+    /// another file. It is unpacked from the disk as it is written, and checked as it goes.
+    pub fn zip_member_copy(
+        self: &Arc<Self>,
+        id: i64,
+        index: u32,
+        destination: &std::path::Path,
+    ) -> Result<MemberCopy> {
+        let listing = self.zip_listing(id)?;
+        let member = listing
+            .members
+            .get(index as usize)
+            .ok_or_else(|| anyhow!("this archive has no file number {index}"))?;
+        if member.is_dir {
+            anyhow::bail!("{} is a folder. Choose a file inside it.", member.path);
+        }
+        let free = self.usable_destination(destination)?;
+        if let Some(size) = member.size.filter(|size| *size > free) {
+            anyhow::bail!("It needs {size} bytes, and the destination has {free} free.");
+        }
+        let name = member
+            .path
+            .rsplit('/')
+            .find(|part| !part.is_empty())
+            .unwrap_or("unpacked file");
+        let partial = destination.join(format!(".{name}.captain-salvage-partial"));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)?;
+        let keep = Keep::to_file(file);
+        let unpacked = self.unpack_member_into(id, &listing, index, &keep);
+        let kept = keep.finish();
+        let check = match (unpacked, &kept.error) {
+            (Ok(check), None) => check,
+            (unpacked, written) => {
+                let _ = std::fs::remove_file(&partial);
+                let why = match (unpacked, written) {
+                    (Err(error), _) => format!("{error:#}"),
+                    (_, Some(error)) => format!("writing to the destination failed: {error}"),
+                    _ => unreachable!(),
+                };
+                anyhow::bail!("The copy was not kept: {why}");
+            }
+        };
+        let target = free_name(destination, name);
+        std::fs::rename(&partial, &target)?;
+        Ok(MemberCopy {
+            path: target.display().to_string(),
+            bytes: kept.bytes,
+            sha256: kept.sha256,
+            check,
+        })
+    }
+
+    fn unpack_member_into(
+        self: &Arc<Self>,
+        id: i64,
+        listing: &ZipListing,
+        index: u32,
+        keep: &Keep,
+    ) -> Result<ZipMemberCheck> {
+        let (total, name) = self.entry_total(id)?;
+        let shared = self.shared_reader(id);
+        let format = crate::archives::format_of(&name, total, &*shared)
+            .unwrap_or(crate::archives::Format::Zip);
+        crate::archives::unpack(format, listing, index, listing.total_bytes, &shared, keep)
+    }
+}
+
+pub const PREVIEW_IMAGE: &str = "image";
+pub const PREVIEW_TEXT: &str = "text";
+pub const PREVIEW_NONE: &str = "none";
+pub const PREVIEW_TOO_BIG: &str = "too-big";
+/// A picture larger than this is not shown, and a text shows only its start.
+const MAX_PREVIEW_IMAGE_BYTES: usize = 24 * 1024 * 1024;
+const MAX_PREVIEW_TEXT_BYTES: usize = 512 * 1024;
+
+/// A file from inside an archive, ready to show.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberPreview {
+    /// image, text, none (cannot be shown here) or too-big.
+    pub kind: String,
+    pub mime: Option<String>,
+    pub text: Option<String>,
+    pub data_base64: Option<String>,
+    /// Bytes unpacked.
+    pub bytes: u64,
+    /// Only the start of a text is shown.
+    pub truncated: bool,
+    /// What unpacking it found.
+    pub check: Option<ZipMemberCheck>,
+}
+
+/// One file copied out of an archive.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberCopy {
+    pub path: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub check: ZipMemberCheck,
+}
+
+/// How a file inside an archive can be shown, by its name.
+fn preview_kind(path: &str) -> Option<(&'static str, &'static str)> {
+    let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "jpg" | "jpeg" => (PREVIEW_IMAGE, "image/jpeg"),
+        "png" => (PREVIEW_IMAGE, "image/png"),
+        "gif" => (PREVIEW_IMAGE, "image/gif"),
+        "webp" => (PREVIEW_IMAGE, "image/webp"),
+        "heic" | "heif" => (PREVIEW_IMAGE, "image/heic"),
+        "bmp" => (PREVIEW_IMAGE, "image/bmp"),
+        "tif" | "tiff" => (PREVIEW_IMAGE, "image/tiff"),
+        "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "log" | "ini" | "cfg" | "conf" | "yaml"
+        | "yml" | "toml" | "html" | "htm" | "css" | "js" | "ts" | "py" | "rs" | "c" | "h"
+        | "cpp" | "java" | "sh" | "srt" | "vtt" | "rtf" | "tex" | "sql" => {
+            (PREVIEW_TEXT, "text/plain")
+        }
+        _ => return None,
+    })
+}
+
+/// `folder/name`, or a numbered name beside it when that is taken.
+fn free_name(folder: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let wanted = folder.join(name);
+    if !wanted.exists() {
+        return wanted;
+    }
+    let (stem, extension) = match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
+        _ => (name, None),
+    };
+    (2..)
+        .map(|number| {
+            folder.join(match extension {
+                Some(extension) => format!("{stem} ({number}).{extension}"),
+                None => format!("{stem} ({number})"),
+            })
+        })
+        .find(|path| !path.exists())
+        .unwrap_or(wanted)
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from "react";
-import { call, type ZipListing, type ZipMember, type ZipMemberCheck } from "../api";
+import { call, type MemberCopy, type MemberPreview, type ZipListing, type ZipMember, type ZipMemberCheck } from "../api";
 import { bytes, count, stamp } from "../format";
 import { fromEngine, t } from "../i18n";
 import { fileIcon, Icon } from "./icons";
@@ -314,6 +314,110 @@ export function ZipView({ id, name, onBack }: { id: number; name: string; onBack
           <button disabled={checking !== null} onClick={() => { const index = selected.member?.index; if (index !== undefined) checkOne(index).catch((reason) => setError(String(reason))); }}>{t("Check this file")}</button>
         </div>
       )}
+      {selected?.member && !isFolder(selected) && (
+        <MemberActions
+          key={`${id}:${selected.member.index}`}
+          id={id}
+          member={selected.member}
+          name={selected.name}
+          onChecked={(check) => {
+            const index = selected.member?.index;
+            if (index !== undefined) setChecks((known) => new Map(known).set(index, check));
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/** Shows one file from inside the archive, or copies it out, from the same unpacking that checks it. */
+function MemberActions({ id, member, name, onChecked }: { id: number; member: ZipMember; name: string; onChecked: (check: ZipMemberCheck) => void }) {
+  const [preview, setPreview] = useState<MemberPreview | null>(null);
+  const [copying, setCopying] = useState(false);
+  const [destination, setDestination] = useState("");
+  const [copied, setCopied] = useState<MemberCopy | null>(null);
+  const [busy, setBusy] = useState<"show" | "copy" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const size = member.size === null ? t("size unknown") : bytes(member.size);
+
+  const show = async () => {
+    setBusy("show");
+    setProblem(null);
+    try {
+      const value = await call<MemberPreview>("zip_member_preview", { id, index: member.index });
+      setPreview(value);
+      if (value.check) onChecked(value.check);
+    } catch (reason) {
+      setProblem(String(reason));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openCopy = async () => {
+    setCopying(true);
+    setCopied(null);
+    setProblem(null);
+    if (!destination) {
+      const drive = await call<{ destination: string | null }>("get_salvage_drive").catch(() => ({ destination: null }));
+      setDestination(drive.destination ?? "");
+    }
+  };
+
+  const copy = async () => {
+    setBusy("copy");
+    setProblem(null);
+    try {
+      const value = await call<MemberCopy>("zip_member_copy", { id, index: member.index, destination: destination.trim() });
+      setCopied(value);
+      onChecked(value.check);
+    } catch (reason) {
+      setProblem(fromEngine(String(reason)));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="member-actions">
+      <div className="member-buttons">
+        <button disabled={busy !== null} onClick={() => void show()}>{busy === "show" ? t("Unpacking") : t("Show it")}</button>
+        <button disabled={busy !== null} onClick={() => void openCopy()}>{t("Copy it out")}</button>
+      </div>
+      {copying && (
+        <form
+          className="member-copy"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void copy();
+          }}
+        >
+          <label>
+            <span>{t("Copy {name} ({size}) to this folder", { name, size })}</span>
+            <input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder={t("A folder on another drive")} spellCheck={false} />
+          </label>
+          <button className="primary" type="submit" disabled={busy !== null || !destination.trim()}>{busy === "copy" ? t("Copying") : t("Copy {size}", { size })}</button>
+        </form>
+      )}
+      {copied && (
+        <p className={copied.check.status === "damaged" ? "member-note bad" : "member-note"}>
+          {t("Copied to {path}.", { path: copied.path })} {fromEngine(copied.check.note)}
+        </p>
+      )}
+      {problem && <p className="member-note bad">{problem}</p>}
+      {preview && preview.kind === "none" && <p className="member-note">{t("This kind of file cannot be shown here. Copy it out to open it.")}</p>}
+      {preview && preview.kind === "too-big" && <p className="member-note">{t("This picture is too big to show here. Copy it out to open it.")}</p>}
+      {preview && preview.kind === "image" && preview.dataBase64 && (
+        <div className="member-preview">
+          <img src={`data:${preview.mime ?? "image/jpeg"};base64,${preview.dataBase64}`} alt={name} />
+        </div>
+      )}
+      {preview && preview.kind === "text" && (
+        <div className="member-preview">
+          <pre>{preview.text}</pre>
+          {preview.truncated && <p className="member-note">{t("Only the start is shown, {shown} of {total}.", { shown: bytes((preview.text ?? "").length), total: bytes(preview.bytes) })}</p>}
+        </div>
+      )}
+    </div>
   );
 }
