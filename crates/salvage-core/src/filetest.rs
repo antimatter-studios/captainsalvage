@@ -27,8 +27,11 @@ const ALIAS_SIGNATURE: &[u8] = b"book\0\0\0\0mark";
 pub const OUTCOME_PASSED: &str = "passed";
 pub const OUTCOME_DAMAGED: &str = "damaged";
 pub const OUTCOME_UNTESTED: &str = "untested";
-/// Larger files wait for a video check, which does not need the whole file in memory.
+/// Larger files are tested only if their type can be walked as it is read, which needs no
+/// more than one piece of the file in memory at a time.
 pub const MAX_TESTED_BYTES: u64 = 64 * 1024 * 1024;
+/// How much of a large file is read at a time.
+const STREAM_PIECE_BYTES: u64 = 4 * 1024 * 1024;
 /// A walker can fall short of every byte on a good file, such as a tag at the end.
 const PASS_VALID_FRACTION: f64 = 0.99;
 const SAVE_EVERY_FILES: usize = 64;
@@ -168,6 +171,36 @@ pub fn judge(name: &str, data: &[u8]) -> Judgement {
     }
 }
 
+/// Judges a large file from a walk made as it was read. There is no decoding for these types.
+pub fn judge_walk(report: &crate::verify::VerifyReport) -> Judgement {
+    let first_break = report.breaks.first().copied();
+    let failed =
+        report.valid_fraction < PASS_VALID_FRACTION || !report.reached_end || first_break.is_some();
+    let label = report.format.to_uppercase();
+    let note = if failed {
+        let percent = (report.valid_fraction * 100.0).floor();
+        let place = match first_break {
+            Some(offset) => format!(", and it breaks at byte {offset}"),
+            None => ", and the file stops before its end".to_string(),
+        };
+        format!("Tested: {percent}% of its {label} structure is valid{place}.")
+    } else {
+        format!("Tested: its {label} structure is whole.")
+    };
+    Judgement {
+        outcome: if failed {
+            OUTCOME_DAMAGED
+        } else {
+            OUTCOME_PASSED
+        },
+        format: report.format.clone(),
+        valid_fraction: Some(report.valid_fraction),
+        first_break,
+        decoded: None,
+        note,
+    }
+}
+
 /// One stored result.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -275,10 +308,12 @@ impl Session {
             bail!("Files are already being tested.");
         }
         self.file_tests.stop.store(false, Ordering::Relaxed);
-        let chosen =
-            self.with_database(|database| database.file_test_candidates(MAX_TESTED_BYTES))?;
+        let chosen = self.with_database(|database| database.file_test_candidates(u64::MAX >> 1))?;
         let chosen: Vec<_> = chosen
             .into_iter()
+            .filter(|candidate| {
+                candidate.length <= MAX_TESTED_BYTES || crate::stream_walk::streams(&candidate.name)
+            })
             .filter(|candidate| {
                 groups
                     .iter()
@@ -320,6 +355,41 @@ impl Session {
         Ok(status)
     }
 
+    /// Tests a large file by walking it as it is read, a piece at a time, hashing as it goes.
+    /// None when the tests were stopped part way through.
+    fn test_in_pieces(
+        &self,
+        candidate: &crate::map::FileTestCandidate,
+    ) -> Result<Option<(Judgement, Vec<u8>, u64)>> {
+        let mut walk = crate::stream_walk::StreamWalk::new(&candidate.name, candidate.length)
+            .ok_or_else(|| anyhow!("{} cannot be walked in pieces", candidate.name))?;
+        let mut hasher = Sha256::new();
+        let mut at = 0u64;
+        while at < candidate.length {
+            if self.file_tests.stop.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            while self.viewed_recently(QUIET_AFTER_VIEWING)
+                && !self.file_tests.stop.load(Ordering::Relaxed)
+            {
+                std::thread::sleep(QUIET_CHECK);
+            }
+            let part = self.read_entry_range(candidate.id, at, STREAM_PIECE_BYTES)?;
+            if part.data.is_empty() {
+                break;
+            }
+            walk.feed(&part.data);
+            hasher.update(&part.data);
+            at += part.data.len() as u64;
+            self.update_file_tests(|status| status.bytes_done += part.data.len() as u64);
+        }
+        Ok(Some((
+            judge_walk(&walk.finish()),
+            hasher.finalize().to_vec(),
+            at,
+        )))
+    }
+
     fn run_file_tests(&self, chosen: Vec<crate::map::FileTestCandidate>) -> Result<bool> {
         let mut waiting: Vec<FileTest> = Vec::new();
         let mut last_save = Instant::now();
@@ -334,21 +404,37 @@ impl Session {
             {
                 std::thread::sleep(QUIET_CHECK);
             }
-            let part = match self.read_entry_range(candidate.id, 0, candidate.length) {
-                Ok(part) => part,
+            let tested = if candidate.length > MAX_TESTED_BYTES {
+                self.test_in_pieces(&candidate)
+            } else {
+                self.read_entry_range(candidate.id, 0, candidate.length)
+                    .map(|part| {
+                        let hash = Sha256::digest(&part.data);
+                        Some((
+                            judge(&candidate.name, &part.data),
+                            hash.to_vec(),
+                            part.data.len() as u64,
+                        ))
+                    })
+            };
+            let (judgement, hash, bytes_read) = match tested {
+                Ok(Some(found)) => found,
+                // Stopped part way through a large file: nothing is kept for it.
+                Ok(None) => {
+                    self.with_database(|database| database.save_file_tests(&waiting))?;
+                    return Ok(false);
+                }
                 Err(error) => {
                     self.with_database(|database| database.save_file_tests(&waiting))?;
                     return Err(error);
                 }
             };
-            let judgement = judge(&candidate.name, &part.data);
-            let sha256: String = Sha256::digest(&part.data)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
+            let sha256: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
             self.update_file_tests(|status| {
                 status.done += 1;
-                status.bytes_done += part.data.len() as u64;
+                if candidate.length <= MAX_TESTED_BYTES {
+                    status.bytes_done += bytes_read;
+                }
                 match judgement.outcome {
                     OUTCOME_PASSED => status.passed += 1,
                     OUTCOME_DAMAGED => status.damaged += 1,
