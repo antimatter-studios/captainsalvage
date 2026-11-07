@@ -1,3 +1,3 @@
 ### Added
 
-- **The legend shows only categories visible in the strips, and a dashed line marks scan progress.** You can focus on relevant categories and see where scanning is up to.
+- **A tidier map legend, and a line where the scan is.** The legend lists only what the map shows, keeping read errors always, and a dashed line marks where a running scan is reading.
