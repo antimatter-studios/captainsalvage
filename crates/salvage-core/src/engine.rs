@@ -513,6 +513,9 @@ impl Engine {
                 Ok(json!({"forgotten": session.file_tests_forget(outcome)?}))
             }
             "file_tests_status" => Ok(serde_json::to_value(session.file_test_status()?)?),
+            "file_tests_by_type" => Ok(
+                json!({"types": session.with_database(|database| database.file_tests_by_type())?}),
+            ),
             "file_copies" => {
                 let id = need_i64(args, "id")?;
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);

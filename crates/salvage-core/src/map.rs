@@ -337,6 +337,26 @@ pub struct FolderContents {
     pub files: u64,
 }
 
+/// Longer than this after the last dot, a name has no extension worth grouping by.
+const MAX_EXTENSION_CHARS: usize = 8;
+
+/// The file tests' results for one file type.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeTestTotals {
+    /// The extension, lower case, or empty for files without one.
+    pub extension: String,
+    /// photos, videos, music, documents, archives or other.
+    pub group: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub passed: u64,
+    pub damaged: u64,
+    /// Tested, but no test exists for the type, or the file is too big to test whole.
+    pub no_test: u64,
+    pub not_tested_yet: u64,
+}
+
 /// A FAT chain, with what is known about who owns it and what it holds.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1420,6 +1440,54 @@ impl MapDb {
             }
         }
         Ok(counts)
+    }
+
+    /// For each file type, by extension, how many found files passed their test, came out
+    /// damaged, or have not been tested or have no test. Only files, not folders.
+    pub fn file_tests_by_type(&self) -> Result<Vec<TypeTestTotals>> {
+        let mut statement = self.connection.prepare(
+            "SELECT COALESCE(s.o_name, s.name), COALESCE(s.o_length, s.length), f.outcome \
+             FROM sets s LEFT JOIN file_tests f ON f.id = s.id \
+             WHERE COALESCE(s.o_is_dir, s.is_dir) = 0 AND COALESCE(s.verdict, '') != 'rename-residue'",
+        )?;
+        let mut totals: Vec<TypeTestTotals> = Vec::new();
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (name, length, outcome) = row?;
+            let extension = name
+                .rsplit_once('.')
+                .map(|(_, extension)| extension.to_ascii_lowercase())
+                .filter(|extension| !extension.is_empty() && extension.len() <= MAX_EXTENSION_CHARS)
+                .unwrap_or_default();
+            let index = match totals.iter().position(|total| total.extension == extension) {
+                Some(index) => index,
+                None => {
+                    totals.push(TypeTestTotals {
+                        group: crate::browse::group_id_of(&name).to_string(),
+                        extension: extension.clone(),
+                        ..TypeTestTotals::default()
+                    });
+                    totals.len() - 1
+                }
+            };
+            let total = &mut totals[index];
+            total.files += 1;
+            total.bytes += length.max(0) as u64;
+            match outcome.as_deref() {
+                Some(crate::filetest::OUTCOME_PASSED) => total.passed += 1,
+                Some(crate::filetest::OUTCOME_DAMAGED) => total.damaged += 1,
+                Some(_) => total.no_test += 1,
+                None => total.not_tested_yet += 1,
+            }
+        }
+        totals.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.extension.cmp(&b.extension)));
+        Ok(totals)
     }
 
     pub fn file_test(&self, id: i64) -> Result<Option<crate::filetest::FileTest>> {

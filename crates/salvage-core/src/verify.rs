@@ -34,6 +34,24 @@ const TEXT_WINDOW_BYTES: usize = 4096;
 const MIN_PRINTABLE_SHARE: f64 = 0.85;
 /// Bytes to search forward for the next MP3 frame after a break.
 const RESYNC_WINDOW: usize = 64 * 1024;
+/// MP4, QuickTime and their relatives: a file of boxes, ISO/IEC 14496-12.
+const BMFF_EXTENSIONS: &[&str] = &["mp4", "m4v", "m4a", "mov", "3gp", "3g2"];
+const BMFF_HEADER_BYTES: usize = 8;
+const BMFF_LARGE_HEADER_BYTES: usize = 16;
+/// Clusters macOS never wrote read back as zeros. Compressed video or audio does not hold this
+/// many zero bytes in a row, so a run this long inside the media data is a hole.
+const MEDIA_MAX_ZERO_RUN: usize = 32 * 1024;
+const RIFF_HEADER_BYTES: usize = 12;
+const RIFF_CHUNK_HEADER_BYTES: usize = 8;
+const FLAC_SIGNATURE: &[u8] = b"fLaC";
+const FLAC_BLOCK_HEADER_BYTES: usize = 4;
+const FLAC_STREAMINFO_BYTES: usize = 34;
+const FLAC_LAST_BLOCK: u8 = 0x80;
+const FLAC_INVALID_BLOCK_TYPE: u8 = 127;
+/// The smallest a FLAC frame can be: a header, one subframe byte and the CRC-16.
+const FLAC_MIN_FRAME_BYTES: usize = 10;
+/// Frames are rarely over a megabyte, so a frame not closed by then is broken.
+const FLAC_MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +106,15 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
     if data.starts_with(OLE_SIGNATURE) {
         return verify_ole(data);
     }
+    if data.get(4..8) == Some(b"ftyp".as_slice()) {
+        return verify_bmff(data);
+    }
+    if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"AVI ".as_slice()) {
+        return verify_avi(data);
+    }
+    if data.starts_with(FLAC_SIGNATURE) {
+        return verify_flac(data);
+    }
     // Without a signature, the name says what it should have been. A .doc has no entry
     // here, because several older formats use that name and have no signature to check.
     match extension.as_str() {
@@ -95,6 +122,9 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
         "jpg" | "jpeg" => return verify_jpeg(data),
         "mp3" => return verify_mp3(data),
         "pdf" => return verify_pdf(data),
+        name if BMFF_EXTENSIONS.contains(&name) => return verify_bmff(data),
+        "avi" => return verify_avi(data),
+        "flac" => return verify_flac(data),
         name if ZIP_EXTENSIONS.contains(&name) => return verify_zip(data),
         name if TEXT_EXTENSIONS.contains(&name) => return verify_text(data),
         _ => {}
@@ -716,4 +746,460 @@ pub fn verify_zip(data: &[u8]) -> VerifyReport {
         valid as f64 / compressed_total as f64
     };
     finished
+}
+
+/// Whether four bytes could name a box or chunk: printable ASCII, as the formats require.
+fn is_four_cc(bytes: &[u8]) -> bool {
+    bytes.len() == 4 && bytes.iter().all(|byte| (0x20..=0x7e).contains(byte))
+}
+
+/// The first run of at least `MEDIA_MAX_ZERO_RUN` zero bytes, as an offset into `data`.
+fn long_zero_run(data: &[u8]) -> Option<usize> {
+    let mut run = 0usize;
+    for (index, &byte) in data.iter().enumerate() {
+        if byte == 0 {
+            run += 1;
+            if run == MEDIA_MAX_ZERO_RUN {
+                return Some(index + 1 - run);
+            }
+        } else {
+            run = 0;
+        }
+    }
+    None
+}
+
+/// Walks the top-level boxes of an MP4 or QuickTime file (ISO/IEC 14496-12, 4.2): each is a
+/// 32-bit size and a four-character type, with size 1 meaning a 64-bit size follows and 0
+/// meaning the box runs to the end. A file without a `moov` box will not play. Long runs of
+/// zeros inside `mdat` are unwritten clusters.
+pub fn verify_bmff(data: &[u8]) -> VerifyReport {
+    let mut report = VerifyReport {
+        format: "mp4".into(),
+        ..VerifyReport::default()
+    };
+    let mut position = 0usize;
+    let mut has_movie = false;
+    while position + BMFF_HEADER_BYTES <= data.len() {
+        let size =
+            u32::from_be_bytes(data[position..position + 4].try_into().expect("four bytes")) as u64;
+        let kind = &data[position + 4..position + 8];
+        if !is_four_cc(kind) {
+            report.breaks.push(position as u64);
+            report.notes.push(format!(
+                "No box starts at {position}: its type is not four letters."
+            ));
+            return report.finish(data.len());
+        }
+        let (header, length) = match size {
+            0 => (BMFF_HEADER_BYTES, (data.len() - position) as u64),
+            1 => {
+                let Some(large) = data.get(position + 8..position + BMFF_LARGE_HEADER_BYTES) else {
+                    report.breaks.push(position as u64);
+                    report
+                        .notes
+                        .push(format!("The box at {position} is cut off in its header."));
+                    return report.finish(data.len());
+                };
+                (
+                    BMFF_LARGE_HEADER_BYTES,
+                    u64::from_be_bytes(large.try_into().expect("eight bytes")),
+                )
+            }
+            size => (BMFF_HEADER_BYTES, size),
+        };
+        if length < header as u64 {
+            report.breaks.push(position as u64);
+            report.notes.push(format!(
+                "The box at {position} is smaller than its own header."
+            ));
+            return report.finish(data.len());
+        }
+        let end = position as u64 + length;
+        if end > data.len() as u64 {
+            report.breaks.push(position as u64);
+            report.notes.push(format!(
+                "The {} box at {position} claims {length} bytes, past the end of the data.",
+                String::from_utf8_lossy(kind)
+            ));
+            return report.finish(data.len());
+        }
+        let end = end as usize;
+        if kind == b"moov" {
+            has_movie = true;
+        }
+        if kind == b"mdat" {
+            if let Some(hole) = long_zero_run(&data[position + header..end]) {
+                let at = position + header + hole;
+                report.valid_bytes += (at - position) as u64;
+                report.breaks.push(at as u64);
+                report.notes.push(format!(
+                    "The media data turns to zeros at {at}, as unwritten clusters do."
+                ));
+                return report.finish(data.len());
+            }
+        }
+        report.units += 1;
+        report.valid_bytes += length;
+        position = end;
+    }
+    if position == data.len() {
+        report.reached_end = true;
+    } else {
+        report.breaks.push(position as u64);
+        report.notes.push(format!(
+            "{} stray bytes follow the last box.",
+            data.len() - position
+        ));
+    }
+    if !has_movie {
+        report.notes.push(
+            "There is no moov box, which says how to play the media, so it will not play as it is."
+                .into(),
+        );
+    }
+    report.finish(data.len())
+}
+
+/// Walks an AVI file (a RIFF form of type "AVI "): chunks of a four-character id, a 32-bit
+/// little-endian size and data padded to an even length. Files over a gigabyte add more RIFF
+/// forms of type "AVIX" after the first. Long runs of zeros inside a chunk are unwritten
+/// clusters.
+pub fn verify_avi(data: &[u8]) -> VerifyReport {
+    let mut report = VerifyReport {
+        format: "avi".into(),
+        ..VerifyReport::default()
+    };
+    let mut position = 0usize;
+    while position + RIFF_HEADER_BYTES <= data.len() {
+        let form = &data[position + 8..position + 12];
+        let expected: &[u8] = if position == 0 { b"AVI " } else { b"AVIX" };
+        if &data[position..position + 4] != b"RIFF" || form != expected {
+            report.breaks.push(position as u64);
+            report.notes.push(format!(
+                "No RIFF {} form starts at {position}.",
+                String::from_utf8_lossy(expected)
+            ));
+            return report.finish(data.len());
+        }
+        let size = u32::from_le_bytes(
+            data[position + 4..position + 8]
+                .try_into()
+                .expect("four bytes"),
+        ) as usize;
+        let form_end = position + RIFF_CHUNK_HEADER_BYTES + size;
+        if form_end > data.len() {
+            report.notes.push(format!(
+                "The RIFF form at {position} claims {size} bytes, past the end of the data."
+            ));
+        }
+        let limit = form_end.min(data.len());
+        report.valid_bytes += RIFF_HEADER_BYTES as u64;
+        let mut chunk = position + RIFF_HEADER_BYTES;
+        while chunk + RIFF_CHUNK_HEADER_BYTES <= limit {
+            let id = &data[chunk..chunk + 4];
+            if !is_four_cc(id) {
+                report.breaks.push(chunk as u64);
+                report.notes.push(format!(
+                    "No chunk starts at {chunk}: its id is not four letters."
+                ));
+                return report.finish(data.len());
+            }
+            let length =
+                u32::from_le_bytes(data[chunk + 4..chunk + 8].try_into().expect("four bytes"))
+                    as usize;
+            let end = chunk + RIFF_CHUNK_HEADER_BYTES + length + (length & 1);
+            if end > limit {
+                report.breaks.push(chunk as u64);
+                report.notes.push(format!(
+                    "The {} chunk at {chunk} claims {length} bytes, past the end of the data.",
+                    String::from_utf8_lossy(id)
+                ));
+                return report.finish(data.len());
+            }
+            if let Some(hole) = long_zero_run(&data[chunk + RIFF_CHUNK_HEADER_BYTES..end]) {
+                let at = chunk + RIFF_CHUNK_HEADER_BYTES + hole;
+                report.valid_bytes += (at - chunk) as u64;
+                report.breaks.push(at as u64);
+                report.notes.push(format!(
+                    "The data turns to zeros at {at}, as unwritten clusters do."
+                ));
+                return report.finish(data.len());
+            }
+            report.units += 1;
+            report.valid_bytes += (end - chunk) as u64;
+            chunk = end;
+        }
+        if form_end > data.len() {
+            report.breaks.push(data.len() as u64);
+            return report.finish(data.len());
+        }
+        position = form_end;
+    }
+    report.reached_end = position == data.len();
+    report.finish(data.len())
+}
+
+fn flac_crc8(data: &[u8]) -> u8 {
+    let mut crc = 0u8;
+    for &byte in data {
+        crc ^= byte;
+        for _ in 0..8 {
+            crc = if crc & 0x80 != 0 {
+                (crc << 1) ^ 0x07
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+fn flac_crc16(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &byte in data {
+        crc ^= u16::from(byte) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x8005
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+/// Whether a FLAC frame header starts at `at`: the 14-bit sync code 0b11111111111110, then
+/// fields whose last byte is a CRC-8 of the header before it. The header's length depends on
+/// its fields, so each possible length is tried against the CRC.
+fn flac_frame_header_at(data: &[u8], at: usize) -> bool {
+    let Some(head) = data.get(at..at + 4) else {
+        return false;
+    };
+    if head[0] != 0xFF || head[1] & 0xFE != 0xF8 {
+        return false;
+    }
+    // A header is 6 to 16 bytes; only a correct CRC-8 makes one real.
+    (6..=16).any(|length| {
+        data.get(at..at + length)
+            .is_some_and(|header| flac_crc8(&header[..length - 1]) == header[length - 1])
+    })
+}
+
+/// Walks a FLAC file: the "fLaC" marker, metadata blocks starting with STREAMINFO, then audio
+/// frames. A frame runs from one frame header to the next and ends with a CRC-16 of itself, so
+/// each frame is proved whole or not.
+pub fn verify_flac(data: &[u8]) -> VerifyReport {
+    let mut report = VerifyReport {
+        format: "flac".into(),
+        ..VerifyReport::default()
+    };
+    if !data.starts_with(FLAC_SIGNATURE) {
+        report.breaks.push(0);
+        report.notes.push("The fLaC marker is missing.".into());
+        return report.finish(data.len());
+    }
+    let mut position = FLAC_SIGNATURE.len();
+    let mut first = true;
+    loop {
+        let Some(header) = data.get(position..position + FLAC_BLOCK_HEADER_BYTES) else {
+            report.breaks.push(position as u64);
+            report
+                .notes
+                .push("The metadata ends before its last block.".into());
+            return report.finish(data.len());
+        };
+        let kind = header[0] & !FLAC_LAST_BLOCK;
+        let length =
+            (usize::from(header[1]) << 16) | (usize::from(header[2]) << 8) | usize::from(header[3]);
+        if kind == FLAC_INVALID_BLOCK_TYPE
+            || (first && (kind != 0 || length != FLAC_STREAMINFO_BYTES))
+        {
+            report.breaks.push(position as u64);
+            report
+                .notes
+                .push(format!("The metadata block at {position} is not valid."));
+            return report.finish(data.len());
+        }
+        let end = position + FLAC_BLOCK_HEADER_BYTES + length;
+        if end > data.len() {
+            report.breaks.push(position as u64);
+            report.notes.push(format!(
+                "The metadata block at {position} runs past the end of the data."
+            ));
+            return report.finish(data.len());
+        }
+        report.units += 1;
+        position = end;
+        first = false;
+        if header[0] & FLAC_LAST_BLOCK != 0 {
+            break;
+        }
+    }
+    report.valid_bytes = position as u64;
+    if !flac_frame_header_at(data, position) {
+        report.breaks.push(position as u64);
+        report.notes.push(format!(
+            "No audio frame starts at {position}, after the metadata."
+        ));
+        return report.finish(data.len());
+    }
+    while position < data.len() {
+        // The frame ends where the next real header starts, or at the end of the data, and its
+        // last two bytes are a CRC-16 of the rest.
+        let mut next = position + FLAC_MIN_FRAME_BYTES;
+        let limit = (position + FLAC_MAX_FRAME_BYTES).min(data.len());
+        let mut closed = None;
+        while next <= limit {
+            if next == data.len() || flac_frame_header_at(data, next) {
+                let stored = u16::from_be_bytes([data[next - 2], data[next - 1]]);
+                if flac_crc16(&data[position..next - 2]) == stored {
+                    closed = Some(next);
+                    break;
+                }
+            }
+            next += 1;
+        }
+        match closed {
+            Some(end) => {
+                report.units += 1;
+                report.valid_bytes += (end - position) as u64;
+                position = end;
+            }
+            None => {
+                report.breaks.push(position as u64);
+                report
+                    .notes
+                    .push(format!("The audio frame at {position} fails its checksum."));
+                return report.finish(data.len());
+            }
+        }
+    }
+    report.reached_end = true;
+    report.finish(data.len())
+}
+
+#[cfg(test)]
+mod walker_tests {
+    use super::*;
+
+    fn bmff_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(body);
+        out
+    }
+
+    #[test]
+    fn an_mp4_is_walked_box_by_box() {
+        let mut file = bmff_box(b"ftyp", b"isom\0\0\x02\0isomiso2");
+        file.extend(bmff_box(b"moov", &[1u8; 40]));
+        file.extend(bmff_box(b"mdat", &[7u8; 5000]));
+        let report = verify_stream("film.mp4", &file);
+        assert_eq!(
+            (report.format.as_str(), report.units, report.reached_end),
+            ("mp4", 3, true)
+        );
+        assert!(report.breaks.is_empty() && report.valid_fraction == 1.0);
+
+        let mut cut = file.clone();
+        cut.truncate(file.len() - 100);
+        let report = verify_bmff(&cut);
+        assert_eq!(
+            report.breaks,
+            vec![(file.len() - 5008) as u64],
+            "the mdat box is cut short"
+        );
+
+        let mut holed = bmff_box(b"ftyp", b"isom\0\0\x02\0");
+        holed.extend(bmff_box(b"moov", &[1u8; 40]));
+        let mut media = vec![9u8; 1000];
+        media.extend(vec![0u8; MEDIA_MAX_ZERO_RUN + 10]);
+        holed.extend(bmff_box(b"mdat", &media));
+        let report = verify_bmff(&holed);
+        assert_eq!(report.breaks.len(), 1);
+        assert!(report.notes[0].contains("zeros"), "{:?}", report.notes);
+
+        let no_movie = [bmff_box(b"ftyp", b"isom"), bmff_box(b"mdat", &[3u8; 64])].concat();
+        assert!(verify_bmff(&no_movie)
+            .notes
+            .iter()
+            .any(|note| note.contains("moov")));
+    }
+
+    fn riff_chunk(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = id.to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(body);
+        if body.len() % 2 == 1 {
+            out.push(0);
+        }
+        out
+    }
+
+    #[test]
+    fn an_avi_is_walked_chunk_by_chunk() {
+        let mut body = b"AVI ".to_vec();
+        body.extend(riff_chunk(b"LIST", b"hdrlavih0123"));
+        body.extend(riff_chunk(
+            b"LIST",
+            &[b"movi".as_slice(), &[5u8; 3001]].concat(),
+        ));
+        body.extend(riff_chunk(b"idx1", &[1u8; 32]));
+        let file = [
+            b"RIFF".as_slice(),
+            &(body.len() as u32).to_le_bytes(),
+            &body,
+        ]
+        .concat();
+        let report = verify_stream("clip.avi", &file);
+        assert_eq!(
+            (report.format.as_str(), report.units, report.reached_end),
+            ("avi", 3, true)
+        );
+        assert!(report.breaks.is_empty());
+
+        let mut cut = file.clone();
+        cut.truncate(file.len() - 10);
+        assert!(!verify_avi(&cut).breaks.is_empty());
+    }
+
+    /// A FLAC frame: a fixed-blocksize header with its CRC-8, a payload and its CRC-16.
+    fn flac_frame(number: u8, payload: &[u8]) -> Vec<u8> {
+        let mut frame = vec![0xFF, 0xF8, 0x69, 0x08, number];
+        frame.push(flac_crc8(&frame));
+        frame.extend_from_slice(payload);
+        let crc = flac_crc16(&frame);
+        frame.extend_from_slice(&crc.to_be_bytes());
+        frame
+    }
+
+    #[test]
+    fn a_flac_is_walked_frame_by_frame() {
+        let mut file = FLAC_SIGNATURE.to_vec();
+        file.extend_from_slice(&[0x80, 0, 0, 34]);
+        file.extend_from_slice(&[0x12; 34]);
+        for number in 0..3 {
+            file.extend(flac_frame(number, &[0x5A ^ number; 400]));
+        }
+        let report = verify_stream("song.flac", &file);
+        assert_eq!(
+            (report.format.as_str(), report.units, report.reached_end),
+            ("flac", 4, true)
+        );
+        assert!(report.breaks.is_empty(), "{:?}", report.notes);
+
+        let mut damaged = file.clone();
+        // Each frame is a 6-byte header, 400 bytes of audio and a 2-byte CRC-16.
+        let middle = 4 + 4 + 34 + 408 + 200;
+        damaged[middle] ^= 0xFF;
+        let report = verify_flac(&damaged);
+        assert_eq!(
+            report.breaks,
+            vec![(4 + 4 + 34 + 408) as u64],
+            "{:?}",
+            report.notes
+        );
+    }
 }

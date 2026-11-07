@@ -69,6 +69,68 @@ function MacosWrites({ revision, onShowClusters }: { revision: number; onShowClu
   );
 }
 
+interface TypeTestTotals {
+  extension: string;
+  group: string;
+  files: number;
+  bytes: number;
+  passed: number;
+  damaged: number;
+  noTest: number;
+  notTestedYet: number;
+}
+
+/** The most types listed at first, largest by bytes. */
+const TYPES_SHOWN = 8;
+
+/** How the tests went for each file type, largest first. */
+function TestsByType({ done }: { done: number }) {
+  const [types, setTypes] = useState<TypeTestTotals[]>([]);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    let current = true;
+    call<{ types: TypeTestTotals[] }>("file_tests_by_type")
+      .then((value) => current && setTypes(value.types))
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [done]);
+  if (types.length === 0) return null;
+  const shown = all ? types : types.slice(0, TYPES_SHOWN);
+  return (
+    <>
+      <table className="recovery-table recovery-types">
+        <thead>
+          <tr>
+            <th>{t("Type")}</th>
+            <th className="numeric">{t("Files")}</th>
+            <th className="numeric tone-good">{t("Passed")}</th>
+            <th className="numeric tone-critical">{t("Damaged")}</th>
+            <th className="numeric muted">{t("Untested")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((type) => (
+            <tr key={type.extension}>
+              <td>{type.extension ? `.${type.extension}` : t("No extension")}</td>
+              <td className="numeric">{count(type.files)}</td>
+              <td className="numeric">{count(type.passed)}</td>
+              <td className="numeric">{count(type.damaged)}</td>
+              <td className="numeric muted">{count(type.noTest + type.notTestedYet)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {types.length > TYPES_SHOWN && (
+        <button className="link" onClick={() => setAll(!all)}>
+          {all ? t("Show fewer types") : t("Show all {count} types", { count: count(types.length) })}
+        </button>
+      )}
+    </>
+  );
+}
+
 function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const running = tests.state === "running";
@@ -102,6 +164,7 @@ function FileTests({ tests, onChanged }: { tests: FileTestStatus; onChanged: () 
       ) : (
         <p className="muted">{t("Scores are estimates until a file's real bytes are tested. This reads each file once, at low priority, and writes nothing to the disk. You can pause at any time.")}</p>
       )}
+      {tested > 0 && <TestsByType done={tests.done} />}
       {running && (
         <div className="copy-progress">
           <div className="scan-bar" role="progressbar" aria-valuenow={tests.total ? Math.round((tests.done / tests.total) * 100) : 0} aria-valuemin={0} aria-valuemax={100}>
