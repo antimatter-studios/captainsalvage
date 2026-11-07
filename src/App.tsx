@@ -753,6 +753,7 @@ export default function App() {
         onView={setView}
         highlight={highlight}
         marker={cluster}
+        scanAt={scanning && status ? status.scan.nextCluster : null}
         onPick={pickCluster}
       />
       <Explorer
