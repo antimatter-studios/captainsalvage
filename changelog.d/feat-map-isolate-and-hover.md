@@ -1,3 +1,3 @@
 ### Added
 
-- **Hovering over a file highlights its pieces on the map, and clicking a legend category dims the others.** You can quickly locate a file and focus on the disk data you want to inspect.
+- **A map you can read at a glance.** Click a legend item to show only that category on the map, and rest the pointer on a file in the sidebar to light up its pieces.
