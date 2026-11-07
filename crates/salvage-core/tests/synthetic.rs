@@ -2224,6 +2224,8 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// caffeinate is macOS's own, so this runs only there.
+#[cfg(target_os = "macos")]
 #[test]
 fn disks_are_kept_awake_once_and_only_when_asked() {
     use salvage_core::mount::{disks_kept_awake, keep_disks_awake};
