@@ -526,6 +526,32 @@ impl Engine {
                 let index = u64_of(args, "index").context("index is required")? as u32;
                 Ok(serde_json::to_value(session.zip_member_check(id, index)?)?)
             }
+            "zip_member_preview" => {
+                let id = need_i64(args, "id")?;
+                let index = u64_of(args, "index").context("index is required")? as u32;
+                Ok(serde_json::to_value(
+                    session.zip_member_preview(id, index)?,
+                )?)
+            }
+            "zip_member_copy" => {
+                if author != AUTHOR_USER {
+                    bail!("Only the person using the app copies files out. Tell them which file, and its size.");
+                }
+                let id = need_i64(args, "id")?;
+                let index = u64_of(args, "index").context("index is required")? as u32;
+                let destination = match args.get("destination").and_then(Value::as_str) {
+                    Some(destination) if !destination.trim().is_empty() => destination.to_string(),
+                    _ => session
+                        .salvage_drive()?
+                        .filter(|drive| !drive.is_empty())
+                        .context("Choose a destination, or set a salvage drive, first.")?,
+                };
+                Ok(serde_json::to_value(session.zip_member_copy(
+                    id,
+                    index,
+                    std::path::Path::new(&destination),
+                )?)?)
+            }
             "file_test" => {
                 let id = need_i64(args, "id")?;
                 Ok(serde_json::to_value(

@@ -1,7 +1,7 @@
 //! End-to-end tests against a hand-built exFAT volume with known damage.
 
 use salvage_core::content::{CLASS_DIRECTORY, CLASS_JPEG, CLASS_MP3, CLASS_ZEROS};
-use salvage_core::engine::{Engine, AUTHOR_CLAUDE};
+use salvage_core::engine::{Engine, AUTHOR_CLAUDE, AUTHOR_USER};
 use salvage_core::exfat::{boot_checksum, FAT_END};
 use salvage_core::map::MapDb;
 use salvage_core::mcp::{handle_message, tool_definitions};
@@ -2598,6 +2598,69 @@ fn a_zip_on_the_disk_can_be_listed_and_checked_through_the_tools() {
             AUTHOR_CLAUDE
         )
         .is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_file_inside_a_zip_can_be_shown_and_copied_out() {
+    let zip = sample_zip();
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4, 20] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[
+            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
+            special(0x82, 4, 100),
+            entry_set("bundle.zip", false, 20, zip.len() as u64, true, true),
+        ],
+    );
+    b.put(20, 0, &zip);
+    let (engine, _session, dir) = engine_with_image("zip-out", b.image);
+    let id = call(&engine, "search", json!({"query": "bundle.zip"}))["rows"][0]["id"]
+        .as_i64()
+        .unwrap();
+
+    let text = call(&engine, "zip_member_preview", json!({"id": id, "index": 1}));
+    assert_eq!(text["kind"], "text");
+    assert_eq!(text["text"], "plain words kept as they are");
+    assert_eq!(text["check"]["status"], "intact");
+    let other = call(&engine, "zip_member_preview", json!({"id": id, "index": 3}));
+    assert_eq!(other["kind"], "none");
+
+    let out = std::env::temp_dir().join(format!("salvage-zip-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    let args = json!({"id": id, "index": 2, "destination": out});
+    let refused = engine
+        .call("zip_member_copy", &args, AUTHOR_CLAUDE)
+        .expect_err("an agent must not copy");
+    assert!(refused.to_string().contains("Only the person"), "{refused}");
+    let first = engine.call("zip_member_copy", &args, AUTHOR_USER).unwrap();
+    assert_eq!(first["check"]["status"], "intact");
+    assert_eq!(first["bytes"], 5000);
+    let path = first["path"].as_str().unwrap().to_string();
+    assert!(path.ends_with("/report.txt"), "{path}");
+    assert_eq!(std::fs::read(&path).unwrap(), vec![b'r'; 5000]);
+    // A second copy never overwrites the first.
+    let second = engine.call("zip_member_copy", &args, AUTHOR_USER).unwrap();
+    assert!(second["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("/report (2).txt"));
+    assert_eq!(second["sha256"], first["sha256"]);
+    let left: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|item| item.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left.len(), 2, "no partial file is left behind: {left:?}");
+    let missing = json!({"id": id, "index": 2, "destination": out.join("not-there")});
+    assert!(engine
+        .call("zip_member_copy", &missing, AUTHOR_USER)
+        .is_err());
+    let _ = std::fs::remove_dir_all(&out);
     let _ = std::fs::remove_dir_all(dir);
 }
 

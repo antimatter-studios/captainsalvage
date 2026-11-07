@@ -115,6 +115,8 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("file_tests_status", "How the background file tests are going: how many passed, are damaged or have no test.", json!({}), &[]),
         tool("zip_contents", "Lists what an archive holds, read from the disk: zip, tar, tar.gz, tar.xz, tar.bz2, tar.zst, gz, xz, bz2, zst, 7z or rar, by its name or else its first bytes; format says which. A damaged zip's list is rebuilt from the headers of the files inside, and source says so. A damaged tar lists as far as it can be read, with complete false and a note.", json!({"id": integer("Entry id of the archive.")}), &["id"]),
         tool("zip_member_check", "Unpacks one file from an archive in memory and checks it against its checksum where the format keeps one (zip, 7z, rar, and the whole stream for gz, xz, bz2 and zst; a tar keeps none). Nothing is saved.", json!({"id": integer("Entry id of the archive."), "index": integer("The file's index from zip_contents.")}), &["id", "index"]),
+        tool("zip_member_preview", "Unpacks one file from an archive to show it: kind image gives dataBase64 and mime, kind text gives the start of the text, kind none means it cannot be shown here, too-big means a picture over 24 MB. Includes what unpacking found, as zip_member_check does. Nothing is saved.", json!({"id": integer("Entry id of the archive."), "index": integer("The file's index from zip_contents.")}), &["id", "index"]),
+        tool("zip_member_copy", "Copies one file from inside an archive to a folder, under its own name, never over another file. Only the person using the app can do this: tell them which file and its size. The destination defaults to the salvage drive, and the disk being recovered is refused.", json!({"id": integer("Entry id of the archive."), "index": integer("The file's index from zip_contents."), "destination": string("A folder. Default: the salvage drive.")}), &["id", "index"]),
         tool("startup_disks", "The disks attached now, and which volumes this app has seen before, recognised by UUID. Reads nothing from the disks.", json!({"includeInternal": {"type": "boolean", "description": "Also list internal disks."}}), &[]),
         tool("mount_blocks", "The volumes the person asked Captain Salvage to keep unmounted, by volume UUID. While the app is open, macOS cannot mount them, from Finder, Disk Utility, diskutil or plugging the disk in.", json!({}), &[]),
         tool("mount_block_set", "Asks Captain Salvage to keep a volume unmounted while the app is open, or to stop. Blocking only protects a disk, so you may block; only the person can unblock. A blocked volume that is mounted now stays mounted until it is unmounted. Use startup_disks for UUIDs.", json!({"uuid": string("Volume UUID, from startup_disks."), "name": string("The volume's name, to show while it is not attached."), "blocked": boolean("true to keep it unmounted, false to let it mount again.")}), &["uuid", "blocked"]),
@@ -211,7 +213,7 @@ pub fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-fn base64(data: &[u8]) -> String {
+pub(crate) fn base64(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for group in data.chunks(3) {

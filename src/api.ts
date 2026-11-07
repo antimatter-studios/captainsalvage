@@ -138,6 +138,23 @@ export interface ZipMemberCheck {
   note: string;
 }
 
+export interface MemberPreview {
+  kind: "image" | "text" | "none" | "too-big";
+  mime: string | null;
+  text: string | null;
+  dataBase64: string | null;
+  bytes: number;
+  truncated: boolean;
+  check: ZipMemberCheck | null;
+}
+
+export interface MemberCopy {
+  path: string;
+  bytes: number;
+  sha256: string;
+  check: ZipMemberCheck;
+}
+
 export interface MountHistory {
   dates: { date: string; entries: number; bytes: number; clusters: number }[];
   dirtyFlag: boolean;

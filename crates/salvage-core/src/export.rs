@@ -457,7 +457,7 @@ fn hash_file(path: &Path) -> Result<String> {
 }
 
 /// Picks a path that does not exist yet, so nothing is ever overwritten.
-fn unused_path(path: &Path, id: i64) -> PathBuf {
+pub(crate) fn unused_path(path: &Path, id: i64) -> PathBuf {
     if !path.exists() {
         return path.to_path_buf();
     }
@@ -508,6 +508,46 @@ impl Session {
     }
 
     /// The folder copies go to when a request names none.
+    /// The filesystem a destination is on, and why it must not be used, if it must not: on the
+    /// disk being recovered, or read-only.
+    fn destination_check(&self, destination: &Path) -> Result<(Filesystem, Option<String>)> {
+        let filesystem = filesystem_of(destination)?;
+        let bare = filesystem
+            .device
+            .strip_prefix("/dev/")
+            .unwrap_or(&filesystem.device)
+            .to_string();
+        let info = list_disks(Some(&bare))
+            .ok()
+            .filter(|text| !text.trim().is_empty());
+        let problem = destination_problem(
+            self.source_whole_disk().as_deref(),
+            &filesystem.device,
+            info.as_deref(),
+        )
+        .or_else(|| {
+            filesystem
+                .read_only
+                .then(|| "This destination is read-only.".to_string())
+        });
+        Ok((filesystem, problem))
+    }
+
+    /// Free bytes at a destination that may be used, or why it may not.
+    pub(crate) fn usable_destination(&self, destination: &Path) -> Result<u64> {
+        if !destination.is_absolute() {
+            bail!("The destination must be a full path.");
+        }
+        if !destination.is_dir() {
+            bail!("{} is not a folder.", destination.display());
+        }
+        let (filesystem, problem) = self.destination_check(destination)?;
+        if let Some(problem) = problem {
+            bail!("{problem}");
+        }
+        Ok(filesystem.free_bytes)
+    }
+
     pub fn salvage_drive(&self) -> Result<Option<String>> {
         self.with_database(|database| database.state(STATE_SALVAGE_DRIVE))
             .map(|value| value.filter(|path| !path.is_empty()))
@@ -586,25 +626,7 @@ impl Session {
                 Some("The destination must be a full path.".to_string()),
             )
         } else {
-            let filesystem = filesystem_of(&destination)?;
-            let bare = filesystem
-                .device
-                .strip_prefix("/dev/")
-                .unwrap_or(&filesystem.device)
-                .to_string();
-            let info = list_disks(Some(&bare))
-                .ok()
-                .filter(|text| !text.trim().is_empty());
-            let problem = destination_problem(
-                self.source_whole_disk().as_deref(),
-                &filesystem.device,
-                info.as_deref(),
-            )
-            .or_else(|| {
-                filesystem
-                    .read_only
-                    .then(|| "This destination is read-only.".to_string())
-            });
+            let (filesystem, problem) = self.destination_check(&destination)?;
             (Some(filesystem.device), filesystem.free_bytes, problem)
         };
         // A resumed copy skips these, and they already count against the free space.

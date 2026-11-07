@@ -12,6 +12,7 @@ pub mod engine;
 pub mod exfat;
 pub mod export;
 pub mod filetest;
+pub mod keep;
 pub mod map;
 pub mod mcp;
 pub mod media;

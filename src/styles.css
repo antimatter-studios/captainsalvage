@@ -592,6 +592,16 @@ video.inline-preview { max-height: 380px; background: #000; }
 .zip-row.row-cursor .zip-mark { color: var(--on-selection); }
 .zip-selected { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 0.5px solid var(--line-strong); }
 .zip-selected-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.member-actions { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 12px; min-height: 0; }
+.member-buttons { display: flex; gap: 8px; }
+.member-copy { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.member-copy label { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.member-copy input { width: 100%; box-sizing: border-box; }
+.member-note { margin: 0; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.member-note.bad { color: var(--critical); }
+.member-preview { max-height: 360px; overflow: auto; border: 0.5px solid var(--line-strong); border-radius: 8px; background: var(--hover); }
+.member-preview img { display: block; max-width: 100%; max-height: 340px; margin: 0 auto; object-fit: contain; }
+.member-preview pre { margin: 0; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .brand-change { pointer-events: auto; font-size: 11px; margin-left: 4px; }
 
 /* The start screen: a real nautical chart. Chart magenta is what charts use for cautions. */

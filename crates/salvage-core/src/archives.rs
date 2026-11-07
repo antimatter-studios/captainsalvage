@@ -11,6 +11,7 @@ use crate::archive::{
     ZipListing, ZipMember, ZipMemberCheck, CHECK_DAMAGED, CHECK_INTACT, CHECK_UNCHECKED,
     SOURCE_DIRECTORY,
 };
+use crate::keep::{Keep, Tee, TeeWriter};
 use anyhow::{bail, Result};
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -526,7 +527,12 @@ fn list_rar(total: u64, shared: &SharedRead) -> Result<ZipListing> {
     Ok(listing(Format::Rar, members, total, None))
 }
 
-fn check_rar(wanted: &ZipMember, total: u64, shared: &SharedRead) -> Result<ZipMemberCheck> {
+fn check_rar(
+    wanted: &ZipMember,
+    total: u64,
+    shared: &SharedRead,
+    keep: &Keep,
+) -> Result<ZipMemberCheck> {
     if wanted.encrypted {
         return Ok(verdict(
             CHECK_UNCHECKED,
@@ -554,7 +560,7 @@ fn check_rar(wanted: &ZipMember, total: u64, shared: &SharedRead) -> Result<ZipM
         if index == target {
             seen = Some(0);
             let counted = counted.clone();
-            Ok(Box::new(SharedCounter(counted)) as Box<dyn std::io::Write>)
+            Ok(Box::new(TeeWriter::new(SharedCounter(counted), keep)) as Box<dyn std::io::Write>)
         } else {
             Ok(Box::new(std::io::sink()) as Box<dyn std::io::Write>)
         }
@@ -655,6 +661,18 @@ pub fn check(
     total: u64,
     shared: &SharedRead,
 ) -> Result<ZipMemberCheck> {
+    unpack(format, listing, index, total, shared, &Keep::nothing())
+}
+
+/// Unpacks one file, says whether it came out whole, and hands its bytes to `keep`.
+pub fn unpack(
+    format: Format,
+    listing: &ZipListing,
+    index: u32,
+    total: u64,
+    shared: &SharedRead,
+    keep: &Keep,
+) -> Result<ZipMemberCheck> {
     let read: ReadRange = &**shared;
     let wanted = listing
         .members
@@ -667,17 +685,17 @@ pub fn check(
         ));
     }
     match format {
-        Format::Zip => crate::archive::check_member(wanted, total, read),
+        Format::Zip => crate::archive::unpack_member(wanted, total, read, keep),
         Format::Packed(packing) => {
             let mut unpacked = unpacker(packing, Source::new(total, read))?;
-            Ok(match drain(&mut *unpacked) {
+            Ok(match drain(&mut Tee::new(&mut *unpacked, keep)) {
                 (seen, None) => verdict(CHECK_INTACT, format!("It unpacks whole, {seen} bytes, and the compressed stream's own checksum agrees.")),
                 (seen, Some(error)) => verdict(CHECK_DAMAGED, format!("It stops unpacking after {seen} bytes: {error}.")),
             })
         }
-        Format::Tar(packing) => check_tar(packing, wanted, total, read),
-        Format::SevenZ => check_seven_z(wanted, total, read),
-        Format::Rar => check_rar(wanted, total, shared),
+        Format::Tar(packing) => check_tar(packing, wanted, total, read, keep),
+        Format::SevenZ => check_seven_z(wanted, total, read, keep),
+        Format::Rar => check_rar(wanted, total, shared, keep),
     }
 }
 
@@ -686,6 +704,7 @@ fn check_tar(
     wanted: &ZipMember,
     total: u64,
     read: ReadRange,
+    keep: &Keep,
 ) -> Result<ZipMemberCheck> {
     let mut archive = tar::Archive::new(unpacker(packing, Source::new(total, read))?);
     for (index, entry) in archive.entries()?.enumerate() {
@@ -702,7 +721,7 @@ fn check_tar(
             continue;
         }
         let expected = entry.header().size().unwrap_or(0);
-        let (seen, error) = drain(&mut entry);
+        let (seen, error) = drain(&mut Tee::new(&mut entry, keep));
         return Ok(match error {
             None if seen == expected && packing == Packing::Plain => verdict(CHECK_INTACT, "All of its bytes are there. A tar keeps no checksum for a file's data, so this cannot prove them right."),
             None if seen == expected => verdict(CHECK_INTACT, "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own."),
@@ -713,7 +732,12 @@ fn check_tar(
     Ok(verdict(CHECK_DAMAGED, "The archive ends before this file."))
 }
 
-fn check_seven_z(wanted: &ZipMember, total: u64, read: ReadRange) -> Result<ZipMemberCheck> {
+fn check_seven_z(
+    wanted: &ZipMember,
+    total: u64,
+    read: ReadRange,
+    keep: &Keep,
+) -> Result<ZipMemberCheck> {
     let mut reader =
         sevenz_rust2::ArchiveReader::new(Source::new(total, read), sevenz_rust2::Password::empty())
             .map_err(|error| anyhow::anyhow!("this 7z cannot be opened: {error}"))?;
@@ -723,7 +747,7 @@ fn check_seven_z(wanted: &ZipMember, total: u64, read: ReadRange) -> Result<ZipM
         if entry.name != wanted.path {
             return Ok(true);
         }
-        let (seen, error) = drain(data);
+        let (seen, error) = drain(&mut Tee::new(data, keep));
         outcome = Some(match error {
             None if entry.has_crc => verdict(
                 CHECK_INTACT,
