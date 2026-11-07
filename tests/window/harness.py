@@ -77,7 +77,7 @@ def renamed_copy(binary):
     os.makedirs(os.path.dirname(target))
     subprocess.run(['cp', '-R', bundle, target], check=True)
     plist = os.path.join(target, 'Contents', 'Info.plist')
-    subprocess.run(['/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleIdentifier dev.exfatlens.windowtest.r%d' % int(time.time()), '-c', 'Set :CFBundleName Salvage Test', plist], check=True)
+    subprocess.run(['/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleIdentifier dev.antimatterstudios.captainsalvage.windowtest.r%d' % int(time.time()), '-c', 'Set :CFBundleName Salvage Test', plist], check=True)
     subprocess.run(['codesign', '--force', '-s', '-', '--deep', target], check=True, capture_output=True)
     return os.path.join(target, 'Contents', 'MacOS', os.path.basename(binary))
 

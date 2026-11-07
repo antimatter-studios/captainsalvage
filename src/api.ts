@@ -561,11 +561,11 @@ export interface BrowsePage {
 
 /** Read live from the disk as the window needs it. Nothing is copied. */
 export function entryUrl(id: number): string {
-  return `lens://localhost/entry/${id}`;
+  return `captainsalvage://localhost/entry/${id}`;
 }
 
 export function thumbUrl(id: number, attempt = 0): string {
-  return `lens://localhost/thumb/${id}${attempt > 0 ? `?try=${attempt}` : ""}`;
+  return `captainsalvage://localhost/thumb/${id}${attempt > 0 ? `?try=${attempt}` : ""}`;
 }
 
 export interface MediaInfo {

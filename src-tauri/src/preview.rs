@@ -1,8 +1,8 @@
-//! Serves files to the window live from the disk, through the `lens://` scheme.
+//! Serves files to the window live from the disk, through the `captainsalvage://` scheme.
 //!
-//! `lens://localhost/entry/<id>` honours byte ranges, so images, audio, video and PDFs
+//! `captainsalvage://localhost/entry/<id>` honours byte ranges, so images, audio, video and PDFs
 //! load straight from a file's clusters without a copy anywhere.
-//! `lens://localhost/thumb/<id>` returns a small JPEG decoded from the file's real bytes.
+//! `captainsalvage://localhost/thumb/<id>` returns a small JPEG decoded from the file's real bytes.
 
 use salvage_core::browse::{content_type, parse_range, Thumb};
 use salvage_core::engine::Engine;
