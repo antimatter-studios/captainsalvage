@@ -10,57 +10,13 @@ finds, and helps you get your files back, without ever writing to the disk.
 > **Early development.** It works on one filesystem, exFAT, and has been tested
 > on one real damaged volume plus synthetic test volumes. It is not released yet.
 
-## User manual
+![Captain Salvage showing the recovery overview of a test disk: files found by name, file tests, and the details panel](media/manual/02-overview.png)
 
-Read the [illustrated user manual](docs/manual/index.html) for a safe first recovery,
-the Simple and Investigate modes, and a guide to every screen. Open it directly in
-a browser; it needs no server or build step. Its screenshots use only synthetic disks.
+The [illustrated user manual](docs/manual/index.html) shows every part of the app: a safe
+first recovery, the Simple and Investigate modes, and a guide to each screen. Open it directly
+in a browser; it needs no server or build step. Its screenshots use only synthetic disks.
 
-## Development so far
-
-These historical screenshots were taken from the original damaged test disk, with
-private file names blurred. They document earlier versions, not the current interface.
-See the manual for current screenshots made with synthetic data only.
-
-### Latest
-
-The overview says what has been found, and the map shows what explains every part of
-the disk. Blue is claimed by a named file, orange is a FAT chain with no name yet, and
-grey is not explained yet.
-
-![Recovery overview, with a large figure for data found by name above a breakdown of the disk](media/changelog/v3/overview.png)
-
-Pick any file to read its bytes, see why it got its score, and copy it out. This film's
-header shows a healthy AVI file, in 3,032 pieces with none missing.
-
-![A lost film selected, with its hex dump and confidence details](media/changelog/v3/file-and-bytes.png)
-
-Select anything and ask Claude, who checks with the same tools the app uses.
-
-![Claude answering a question about the selected cluster in the chat sidebar](media/changelog/v3/ask-claude.png)
-
-Copy out checks the destination, and refuses the disk being recovered.
-
-![The Copy out tab, with its destination, salvage drive and confidence floor](media/changelog/v3/copy-out.png)
-
-The Unexplained list zooms the map to free space nothing accounts for yet.
-
-![An unexplained region selected, zoomed on the map, with its bytes showing an MP4 header](media/changelog/v3/unexplained-region.png)
-
-It follows your Mac's dark mode too.
-
-![The recovery overview in dark mode](media/changelog/v3/overview-dark.png)
-
-### Earlier versions
-
-The first version looked like this. It worked, but the map hid the 32 GB in use,
-because each column showed only its largest category.
-
-![The first version, with a mostly blue map and plain grey panels](media/changelog/v1/first-version.png)
-
-Next, each map column became a stack showing its real mix, so small things stay visible.
-
-![The second version, whose map shows a dark band of in-use data among the blue](media/changelog/v2/proportional-map.png)
+Screenshots of earlier versions are with their releases in the [changelog](#changelog).
 
 ## What makes it different
 
@@ -236,7 +192,7 @@ cargo test -p salvage-core
 ### Screenshots
 
 ```sh
-scripts/take-screenshots.py media/changelog/v4
+scripts/take-screenshots.py media/changelog/<version>
 ```
 
 This drives a second copy of the app off screen, with file names blurred. Look at every
@@ -403,12 +359,29 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 **Documentation**
 
-- Name the project's copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
+- Name Chris Thomas as the copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
 - License the project under MIT ([#28](https://github.com/antimatter-studios/captainsalvage/pull/28))
 
 **Other**
 
 - Add a changelog, CI and a release pipeline ([#36](https://github.com/antimatter-studios/captainsalvage/pull/36))
+
+**Screenshots**
+
+<!-- scripts/release.py sync copies this table into the README under v0.1.0, so image paths are relative to the repository root. -->
+Taken from the original damaged test disk, with private file names blurred.
+
+| | |
+|---|---|
+| ![Recovery overview, with a large figure for data found by name above a breakdown of the disk](media/changelog/v0.1.0/overview.png)<br>The overview says what has been found, and the map shows what explains every part of the disk. | ![A lost film selected, with its hex dump and confidence details](media/changelog/v0.1.0/file-and-bytes.png)<br>Pick any file to read its bytes, see why it got its score, and copy it out. |
+| ![Claude answering a question about the selected cluster in the chat sidebar](media/changelog/v0.1.0/ask-claude.png)<br>Select anything and ask Claude, who checks with the same tools the app uses. | ![The Copy out tab, with its destination, salvage drive and confidence floor](media/changelog/v0.1.0/copy-out.png)<br>Copy out checks the destination, and refuses the disk being recovered. |
+| ![An unexplained region selected, zoomed on the map, with its bytes showing an MP4 header](media/changelog/v0.1.0/unexplained-region.png)<br>The Unexplained list zooms the map to free space nothing accounts for yet. | ![The recovery overview in dark mode](media/changelog/v0.1.0/overview-dark.png)<br>It follows your Mac's dark mode too. |
+
+On the way to this release, the map changed twice.
+
+| | |
+|---|---|
+| ![The first version, with a mostly blue map and plain grey panels](media/changelog/v0.1.0/1-first-version.png)<br>The first version worked, but the map hid the 32 GB in use, because each column showed only its largest category. | ![The second version, whose map shows a dark band of in-use data among the blue](media/changelog/v0.1.0/2-proportional-map.png)<br>Next, each map column became a stack showing its real mix, so small things stay visible. |
 
 <!-- changelog:end -->
 

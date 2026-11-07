@@ -103,6 +103,16 @@ class Files(unittest.TestCase):
         sections = [(release.UNRELEASED, "Nothing yet."), *self.SECTIONS]
         self.assertEqual(release.split_sections(release.join_changelog(sections)), sections)
 
+    def test_a_versions_screenshots_follow_its_notes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            shots = Path(folder) / "v0.12.0"
+            shots.mkdir()
+            (shots / release.SCREENSHOT_TABLE).write_text("| a | b |\n")
+            block = release.readme_block(self.SECTIONS, screenshots=Path(folder))
+        self.assertEqual(block.count("**Screenshots**"), 1)
+        self.assertLess(block.index("### v0.12.0"), block.index("| a | b |"))
+        self.assertLess(block.index("| a | b |"), block.index("### v0.11.0"))
+
     def test_unreleased_has_no_version_mark(self):
         block = release.readme_block([("[Unreleased]", "Nothing yet.")])
         self.assertIn("### Unreleased", block)
