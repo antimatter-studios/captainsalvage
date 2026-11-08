@@ -958,6 +958,12 @@ const strings: Record<string, string> = {
   "The map reads the FAT, bitmap and root as they were on {date}, from the copy kept on this Mac, not from the disk.": "Die Karte liest FAT, Bitmap und Stammverzeichnis so, wie sie am {date} waren, aus der Kopie auf diesem Mac, nicht vom Datenträger.",
   "Keep file names and previews from agents": "Dateinamen und Vorschauen vor Agenten verbergen",
   "Agents still see counts, sizes, types and verdicts. A script can still read raw bytes, so this prevents accidents, not a determined agent.": "Agenten sehen weiterhin Anzahlen, Größen, Typen und Urteile. Ein Skript kann weiterhin Rohdaten lesen, das verhindert also Versehen, keinen entschlossenen Agenten.",
+  "Apply": "Anwenden",
+  "Cancel": "Abbrechen",
+  "No file would change verdict.": "Keine Datei würde ihr Urteil ändern.",
+  "Working out what would change": "Wird berechnet, was sich ändern würde",
+  "{files} files ({size}) would change verdict:": "{files} Dateien ({size}) würden ihr Urteil ändern:",
+  "{from} to {to}: {files} files, {size}": "{from} zu {to}: {files} Dateien, {size}",
 };
 
 export default strings;

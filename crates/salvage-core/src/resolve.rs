@@ -22,6 +22,7 @@ use crate::volume::{StreamClusters, Volume};
 use crate::workspace::Workspace;
 use anyhow::Result;
 use rusqlite::params;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::time::Instant;
@@ -88,6 +89,44 @@ pub const OWNERSHIP_DIRECTORY: u8 = 3;
 pub const OWNERSHIP_NAMELESS_CHAIN: u8 = 4;
 /// Nothing on disk claims it, but a hypothesis says what it is.
 pub const OWNERSHIP_LABELLED: u8 = 5;
+
+/// What a rebuild did: stored its results, or, for a preview, only compared them.
+enum Resolved {
+    Stored(MapSummary),
+    Preview(ResolvePreview),
+}
+
+/// Files that would move from one verdict to another, with a few of their ids to look at.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerdictChange {
+    pub from: String,
+    pub to: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub sample_ids: Vec<i64>,
+}
+
+/// What a rebuild would change, largest first. Folders are left out.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvePreview {
+    pub changes: Vec<VerdictChange>,
+    pub files_changed: u64,
+    pub bytes_changed: u64,
+    pub files_unchanged: u64,
+}
+
+const PREVIEW_SAMPLES: usize = 5;
+
+/// One entry's result: its id, its folder, the assessment, and its type group and extension.
+type ResolvedEntry = (
+    i64,
+    Option<u32>,
+    Assessment,
+    Option<&'static str>,
+    Option<String>,
+);
 
 struct LoadedSet {
     id: i64,
@@ -668,13 +707,47 @@ impl MapDb {
     /// Rebuilds the folder tree and scores every entry. Safe to run repeatedly,
     /// including while a scan is in progress.
     pub fn resolve(&mut self, volume: &Volume, workspace: &Workspace) -> Result<MapSummary> {
+        match self.resolve_with(volume, workspace, None)? {
+            Resolved::Stored(summary) => Ok(summary),
+            Resolved::Preview(_) => unreachable!("only a preview asks for one"),
+        }
+    }
+
+    /// Works out what a rebuild would change with these parameters and these hypotheses added
+    /// to the active ones, and saves nothing.
+    pub fn resolve_preview(
+        &mut self,
+        volume: &Volume,
+        workspace: &Workspace,
+        params: ResolveParams,
+        proposed: Vec<Overlay>,
+    ) -> Result<ResolvePreview> {
+        match self.resolve_with(volume, workspace, Some((params, proposed)))? {
+            Resolved::Preview(preview) => Ok(preview),
+            Resolved::Stored(_) => unreachable!("a preview stores nothing"),
+        }
+    }
+
+    fn resolve_with(
+        &mut self,
+        volume: &Volume,
+        workspace: &Workspace,
+        preview: Option<(ResolveParams, Vec<Overlay>)>,
+    ) -> Result<Resolved> {
         let started = Instant::now();
         let count = volume.boot.cluster_count;
         let classes = workspace.read_cluster_map(&workspace.classes(), count);
         let text_heads = workspace.read_cluster_map(&workspace.text_heads(), count);
         let entropy = workspace.read_cluster_map(&workspace.entropy(), count);
-        let params = self.params()?;
-        let overlays = self.overlays(true)?;
+        let mut overlays = self.overlays(true)?;
+        let (params, preview) = match preview {
+            Some((params, proposed)) => {
+                // Overlays come newest first, and a proposal is newer than anything saved.
+                overlays.splice(0..0, proposed);
+                (params, true)
+            }
+            None => (self.params()?, false),
+        };
         let file_tests: HashMap<i64, crate::filetest::FileTest> = self
             .all_file_tests()?
             .into_iter()
@@ -989,6 +1062,10 @@ impl MapDb {
             results.push((set.id, node, assessment, group, extension));
         }
 
+        if preview {
+            return Ok(Resolved::Preview(self.compare_verdicts(&sets, &results)?));
+        }
+
         // Add each node's own totals to every ancestor.
         let mut cumulative: HashMap<u32, Totals> = HashMap::new();
         for (&node, total) in &totals {
@@ -1176,7 +1253,58 @@ impl MapDb {
             }
         }
         self.set_state("summary", &serde_json::to_string(&summary)?)?;
-        Ok(summary)
+        Ok(Resolved::Stored(summary))
+    }
+
+    /// Compares freshly worked-out verdicts with the stored ones, file by file.
+    fn compare_verdicts(
+        &self,
+        sets: &[LoadedSet],
+        results: &[ResolvedEntry],
+    ) -> Result<ResolvePreview> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, COALESCE(verdict, 'not assessed') FROM sets WHERE is_dir = 0")?;
+        let stored: HashMap<i64, String> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let lengths: HashMap<i64, u64> = sets
+            .iter()
+            .filter(|set| !set.is_dir)
+            .map(|set| (set.id, set.length))
+            .collect();
+        let mut by_change: HashMap<(String, &'static str), VerdictChange> = HashMap::new();
+        let mut preview = ResolvePreview::default();
+        for (id, _, assessment, _, _) in results {
+            let (Some(before), Some(&length)) = (stored.get(id), lengths.get(id)) else {
+                continue;
+            };
+            if before == assessment.verdict {
+                preview.files_unchanged += 1;
+                continue;
+            }
+            preview.files_changed += 1;
+            preview.bytes_changed += length;
+            let change = by_change
+                .entry((before.clone(), assessment.verdict))
+                .or_insert_with(|| VerdictChange {
+                    from: before.clone(),
+                    to: assessment.verdict.to_string(),
+                    files: 0,
+                    bytes: 0,
+                    sample_ids: Vec::new(),
+                });
+            change.files += 1;
+            change.bytes += length;
+            if change.sample_ids.len() < PREVIEW_SAMPLES {
+                change.sample_ids.push(*id);
+            }
+        }
+        preview.changes = by_change.into_values().collect();
+        preview
+            .changes
+            .sort_by_key(|change| std::cmp::Reverse(change.bytes));
+        Ok(preview)
     }
 
     fn load_sets(&self) -> Result<Vec<LoadedSet>> {
