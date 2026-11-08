@@ -239,6 +239,40 @@ fn now_millis() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
+/// Narrows a test run beyond file types: these entries, verdicts, reasons, extensions or sizes.
+/// Every part given must match; a part left empty matches everything.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TestFilter {
+    pub ids: Vec<i64>,
+    pub verdicts: Vec<String>,
+    pub reasons: Vec<String>,
+    pub extensions: Vec<String>,
+    pub min_bytes: Option<u64>,
+}
+
+impl TestFilter {
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+            && self.verdicts.is_empty()
+            && self.reasons.is_empty()
+            && self.extensions.is_empty()
+            && self.min_bytes.is_none()
+    }
+
+    fn admits(&self, candidate: &crate::map::FileTestCandidate) -> bool {
+        let listed = |list: &[String], value: Option<&str>| {
+            list.is_empty() || value.is_some_and(|value| list.iter().any(|item| item == value))
+        };
+        let extension = crate::browse::extension_of(&candidate.name);
+        (self.ids.is_empty() || self.ids.contains(&candidate.id))
+            && listed(&self.verdicts, candidate.verdict.as_deref())
+            && listed(&self.reasons, candidate.reason_code.as_deref())
+            && listed(&self.extensions, Some(extension.as_str()))
+            && self.min_bytes.is_none_or(|min| candidate.length >= min)
+    }
+}
+
 impl Session {
     pub fn file_test_status(&self) -> Result<FileTestStatus> {
         let mut status = self
@@ -295,8 +329,12 @@ impl Session {
     }
 
     /// Starts testing these types of file, skipping any already tested.
-    pub fn file_test_start(self: &Arc<Self>, groups: Vec<String>) -> Result<FileTestStatus> {
-        if groups.is_empty() {
+    pub fn file_test_start(
+        self: &Arc<Self>,
+        groups: Vec<String>,
+        filter: TestFilter,
+    ) -> Result<FileTestStatus> {
+        if groups.is_empty() && filter.is_empty() {
             bail!("Choose at least one type of file to test.");
         }
         let mut slot = self
@@ -315,10 +353,12 @@ impl Session {
                 candidate.length <= MAX_TESTED_BYTES || crate::stream_walk::streams(&candidate.name)
             })
             .filter(|candidate| {
-                groups
-                    .iter()
-                    .any(|group| group == group_id_of(&candidate.name))
+                groups.is_empty()
+                    || groups
+                        .iter()
+                        .any(|group| group == group_id_of(&candidate.name))
             })
+            .filter(|candidate| filter.admits(candidate))
             .collect();
         let counts = self.with_database(|database| database.file_test_counts())?;
         let status = FileTestStatus {
