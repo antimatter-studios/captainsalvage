@@ -35,6 +35,8 @@ pub struct FileTestCandidate {
     pub name: String,
     pub first_cluster: u32,
     pub length: u64,
+    pub verdict: Option<String>,
+    pub reason_code: Option<String>,
 }
 pub const VERDICT_OVERWRITTEN: &str = "overwritten";
 pub const VERDICT_EMPTY: &str = "empty";
@@ -1323,8 +1325,8 @@ impl MapDb {
     /// Files with all their clusters, not yet tested, in disk order so reading stays fast.
     pub fn file_test_candidates(&self, max_bytes: u64) -> Result<Vec<FileTestCandidate>> {
         let mut statement = self.connection.prepare(
-            "SELECT s.id, COALESCE(s.o_name, s.name), COALESCE(s.o_first, s.first_cluster), COALESCE(s.o_length, s.length) \
-             FROM sets s LEFT JOIN file_tests t ON t.id = s.id \
+            "SELECT s.id, COALESCE(s.o_name, s.name), COALESCE(s.o_first, s.first_cluster), COALESCE(s.o_length, s.length), \
+             s.verdict, s.reason_code FROM sets s LEFT JOIN file_tests t ON t.id = s.id \
              AND t.first_cluster = COALESCE(s.o_first, s.first_cluster) AND t.length = COALESCE(s.o_length, s.length) \
              WHERE t.id IS NULL AND COALESCE(s.o_is_dir, s.is_dir) = 0 \
              AND COALESCE(s.o_length, s.length) BETWEEN 1 AND ?1 \
@@ -1340,6 +1342,8 @@ impl MapDb {
                     name: row.get(1)?,
                     first_cluster: row.get(2)?,
                     length: row.get::<_, i64>(3)? as u64,
+                    verdict: row.get(4)?,
+                    reason_code: row.get(5)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

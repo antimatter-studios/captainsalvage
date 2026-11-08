@@ -548,7 +548,11 @@ impl Engine {
                             .collect()
                     })
                     .unwrap_or_default();
-                Ok(serde_json::to_value(session.file_test_start(groups)?)?)
+                let filter: crate::filetest::TestFilter =
+                    serde_json::from_value(args.clone()).context("invalid test filter")?;
+                Ok(serde_json::to_value(
+                    session.file_test_start(groups, filter)?,
+                )?)
             }
             "file_tests_stop" => {
                 session.file_test_stop();
@@ -720,7 +724,16 @@ impl Engine {
                 )?)?)
             }
 
-            "test_stream" => self.test_stream(&session, args),
+            "test_stream" => self.test_stream(&session, args).map(|mut answer| {
+                // The cluster runs and the per-run profile can run to megabytes for a film.
+                if bool_of(args, "summary", false) {
+                    if let Some(map) = answer.as_object_mut() {
+                        map.remove("extents");
+                        map.remove("profile");
+                    }
+                }
+                answer
+            }),
             "materialize" => self.materialize(&session, args),
             "add_overlay" => {
                 let kind = need_str(args, "kind")?;

@@ -2447,6 +2447,45 @@ fn opening_a_disconnected_disk_again_does_not_return_the_dead_session() {
 }
 
 #[test]
+fn file_tests_can_be_narrowed_and_a_stream_test_summarised() {
+    let (engine, session, dir) = engine_with_volume("narrow-tests");
+    let photo = id_named(&engine, "photo.jpg");
+    assert!(
+        engine
+            .call("file_tests_start", &json!({"groups": []}), AUTHOR_CLAUDE)
+            .is_err(),
+        "something must be chosen"
+    );
+
+    let started = call(&engine, "file_tests_start", json!({"ids": [photo]}));
+    assert_eq!(started["total"], 1, "only the one entry asked for");
+    let status = wait_for_file_tests(&session);
+    assert_eq!(status.state, "finished");
+    assert!(!call(&engine, "file_test", json!({"id": photo})).is_null());
+
+    let music = call(
+        &engine,
+        "file_tests_start",
+        json!({"extensions": ["mp3"], "verdicts": ["likely-intact"], "minBytes": 1}),
+    );
+    assert!(music["total"].as_u64().expect("total") >= 1);
+    wait_for_file_tests(&session);
+
+    let track = id_named(&engine, "track.mp3");
+    let full = call(&engine, "test_stream", json!({"entryId": track}));
+    assert!(full.get("extents").is_some());
+    let short = call(
+        &engine,
+        "test_stream",
+        json!({"entryId": track, "summary": true}),
+    );
+    assert!(short.get("extents").is_none() && short.get("profile").is_none());
+    assert_eq!(short["report"], full["report"]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_disk_that_goes_during_file_tests_marks_nothing_as_damaged() {
     let (engine, session, source, dir) = engine_with_unpluggable_disk("gone-tests");
     let id = id_named(&engine, "photo.jpg");
