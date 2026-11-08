@@ -540,6 +540,129 @@ fn a_rebuild_can_be_previewed_without_saving_it() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+fn reuse_image() -> Vec<u8> {
+    let mut b = Builder {
+        image: build_volume(),
+    };
+    b.directory(
+        26,
+        &[
+            created_on(
+                entry_set("film.mp3", false, 130, 4 * CLUSTER as u64, true, true),
+                2023,
+                5,
+                1,
+            ),
+            created_on(
+                entry_set("old.txt", false, 131, 100, true, false),
+                2020,
+                1,
+                1,
+            ),
+            created_on(
+                entry_set("mixed.mp3", false, 140, 3 * CLUSTER as u64, true, true),
+                2021,
+                1,
+                1,
+            ),
+            created_on(
+                entry_set("stale.txt", false, 141, 100, true, false),
+                2024,
+                1,
+                1,
+            ),
+        ],
+    );
+    for first in [130, 140] {
+        b.put(first, 0, b"ID3\x04");
+        b.put(first, 16, &noise(first, CLUSTER - 16));
+    }
+    for cluster in (131..134).chain(141..143) {
+        b.put(cluster, 0, &noise(cluster, CLUSTER));
+    }
+    b.image
+}
+
+#[test]
+fn conflicts_name_the_other_claimants_and_who_holds_the_clusters() {
+    let (engine, _session, dir) = engine_with_image("conflicts", reuse_image());
+    let film = id_named(&engine, "film.mp3");
+    let answer = call(&engine, "conflicts", json!({"id": film}));
+    assert_eq!(answer["sharedClusters"], 1);
+    let claimants = answer["claimants"].as_array().expect("claimants");
+    assert_eq!(claimants.len(), 1, "{claimants:?}");
+    assert_eq!(claimants[0]["name"], "old.txt");
+    assert_eq!(claimants[0]["holds"], "this-file");
+    assert_eq!(claimants[0]["shared"][0]["first"], 131);
+    assert!(answer["sharedContent"][0]["content"].is_string());
+
+    let mixed = id_named(&engine, "mixed.mp3");
+    let answer = call(&engine, "conflicts", json!({"id": mixed}));
+    assert_eq!(answer["claimants"][0]["name"], "stale.txt");
+    assert_eq!(answer["claimants"][0]["holds"], "unsettled");
+
+    let photo = id_named(&engine, "photo.jpg");
+    assert_eq!(
+        call(&engine, "conflicts", json!({"id": photo}))["sharedClusters"],
+        0
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The ownership map and owners() are worked out separately; they must agree. A cluster the
+/// map says several entries claim must show at least two streams through owners().
+#[test]
+fn the_ownership_map_and_owners_agree() {
+    let (engine, session, dir) = engine_with_image("agree", reuse_image());
+    call(&engine, "resolve", json!({}));
+    let ownership = session.ownership_map();
+    let database = MapDb::open(&session.workspace.database()).expect("database");
+    let mut checked = 0;
+    for (index, &kind) in ownership.iter().enumerate() {
+        let cluster = index as u32 + 2;
+        if kind == 2 || kind == 1 {
+            let rows = database.owners(&session.volume, cluster).expect("owners");
+            let mut starts: Vec<u32> = rows.iter().map(|row| row.first_cluster).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            let needed = if kind == 2 { 2 } else { 1 };
+            assert!(
+                starts.len() >= needed,
+                "cluster {cluster} is marked {kind} but owners() finds {starts:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 10);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Every field a script function hands back is named in run_script's description.
+#[test]
+fn the_script_reference_names_every_field_it_returns() {
+    let (engine, _session, dir) = engine_with_volume("script-docs");
+    let keys = |source: &str| -> Vec<String> {
+        let answer = call(&engine, "run_script", json!({"source": source}));
+        answer["result"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let reference = salvage_core::script::API_REFERENCE;
+    let set_keys = keys(&format!("parse_sets(read_cluster({ROOT_CLUSTER}))[0]"));
+    let report_keys = keys("verify(read_cluster(30), \"track.mp3\")");
+    for key in set_keys.iter().chain(&report_keys) {
+        assert!(
+            reference.contains(key.as_str()),
+            "{key} is not in the script reference"
+        );
+    }
+    assert!(set_keys.len() >= 10 && report_keys.len() >= 6);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn rename_residue_is_hidden_by_default_and_damage_is_flagged() {
     let volume = open_volume();

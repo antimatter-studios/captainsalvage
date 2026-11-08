@@ -30,8 +30,12 @@ class_of(cluster) -> class name; entropy_of(cluster) -> bits per byte; ownership
 chain(first, max) -> array of clusters; \
 u16le(blob, i); u32le(blob, i); u64le(blob, i); u16be(blob, i); u32be(blob, i); ascii(blob, i, n); \
 utf16le(blob, i, chars); hex(blob); entropy(blob) -> bits per byte; find(blob, pattern_blob) -> array of positions; \
-parse_sets(blob) -> array of maps, including damaged sets; verify(blob, name) -> format walk report; \
-sql(query) -> array of maps, read-only. print() output and the final expression are both returned.";
+parse_sets(blob) -> array of maps, including damaged sets, each with name, inUse, checksumOk, attributes, isDir, \
+firstCluster, length, validLength, noFatChain, created, modified, accessed, slots and offset; \
+verify(blob, name) -> format walk report, a map with format, bytesExamined, validBytes, validFraction, units, \
+breaks, reachedEnd and notes; sql(query) -> array of maps keyed by the selected column names, read-only. \
+Rhai reserves some words, such as shared, so pick other names for variables. \
+print() output and the final expression are both returned.";
 
 fn fail(error: impl std::fmt::Display) -> Box<EvalAltResult> {
     error.to_string().into()

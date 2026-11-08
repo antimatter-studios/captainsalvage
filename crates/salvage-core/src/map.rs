@@ -450,7 +450,7 @@ pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_le
     COALESCE(confidence, 0)";
 
 /// Position of `node` when a query appends it to `FILE_COLUMNS`.
-const FILE_NODE_INDEX: usize = 20;
+pub(crate) const FILE_NODE_INDEX: usize = 20;
 
 pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let is_dir: bool = row.get(18)?;

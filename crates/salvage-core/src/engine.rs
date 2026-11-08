@@ -724,6 +724,9 @@ impl Engine {
                 )?)?)
             }
 
+            "conflicts" => Ok(serde_json::to_value(
+                session.conflicts(need_i64(args, "id")?)?,
+            )?),
             "resolve_preview" => {
                 let proposed = args
                     .get("overlays")
