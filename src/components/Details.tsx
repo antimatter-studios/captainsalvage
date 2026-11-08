@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   call,
   type ActivityItem,
@@ -16,6 +16,7 @@ import {
   type Row,
   type Status,
   type VolumeChoice,
+  type ResolvePreview,
 } from "../api";
 import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, stamp, verdictLabel } from "../format";
 import { useSimple } from "../mode";
@@ -459,13 +460,34 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
     call<Parameters>("get_parameters").then(setParameters).catch(() => undefined);
   }, [revision]);
 
+  // A change is previewed first, and applied only when the person agrees.
+  const [pending, setPending] = useState<{ values: Partial<Parameters>; preview: ResolvePreview | null } | null>(null);
+  const asked = useRef(0);
+
   async function change(values: Partial<Parameters>) {
+    const merged = { ...(pending?.values ?? {}), ...values };
+    const ask = ++asked.current;
+    setPending({ values: merged, preview: null });
+    const preview = await call<ResolvePreview>("resolve_preview", { parameters: merged }).catch(() => null);
+    if (asked.current === ask) setPending({ values: merged, preview });
+  }
+
+  async function apply() {
+    if (!pending) return;
     setBusy(true);
-    await call("set_parameters", values).catch(() => undefined);
+    await call("set_parameters", pending.values).catch(() => undefined);
     setParameters(await call<Parameters>("get_parameters"));
+    asked.current++;
+    setPending(null);
     setBusy(false);
     onChanged();
   }
+
+  function cancel() {
+    asked.current++;
+    setPending(null);
+  }
+  const shown = parameters ? { ...parameters, ...(pending?.values ?? {}) } : null;
 
   async function rebuild() {
     setBusy(true);
@@ -541,25 +563,49 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
         <button onClick={runVerify}>{t("Check disk is unchanged")}</button>
       </div>
       {verify && <p>{verify}</p>}
-      {parameters && (
+      {shown && (
         <>
           <h4>{t("How damage is weighed")}</h4>
           <label className="check">
-            <input type="checkbox" checked={parameters.chainFallbackContiguous} disabled={busy} onChange={(event) => change({ chainFallbackContiguous: event.target.checked })} />
+            <input type="checkbox" checked={shown.chainFallbackContiguous} disabled={busy} onChange={(event) => change({ chainFallbackContiguous: event.target.checked })} />
             {t("When a chain ends early, assume the rest follows on disk")}
           </label>
           <label className="check">
-            <input type="checkbox" checked={parameters.ignoreEntryConflicts} disabled={busy} onChange={(event) => change({ ignoreEntryConflicts: event.target.checked })} />
+            <input type="checkbox" checked={shown.ignoreEntryConflicts} disabled={busy} onChange={(event) => change({ ignoreEntryConflicts: event.target.checked })} />
             {t("Ignore overlaps between found entries")}
           </label>
           <label className="check">
-            <input type="checkbox" checked={parameters.ignoreReuseOrder} disabled={busy} onChange={(event) => change({ ignoreReuseOrder: event.target.checked })} />
+            <input type="checkbox" checked={shown.ignoreReuseOrder} disabled={busy} onChange={(event) => change({ ignoreReuseOrder: event.target.checked })} />
             {t("Count clusters reused by newer files as conflicts")}
           </label>
           <label className="field">
             <span>{t("Clusters a file may share with others")}</span>
-            <input type="number" min={0} value={parameters.conflictToleranceClusters} disabled={busy} onChange={(event) => change({ conflictToleranceClusters: Number(event.target.value) })} />
+            <input type="number" min={0} value={shown.conflictToleranceClusters} disabled={busy} onChange={(event) => change({ conflictToleranceClusters: Number(event.target.value) })} />
           </label>
+          {pending && (
+            <div className="weigh-preview" role="status">
+              {pending.preview === null ? (
+                <p>{t("Working out what would change")}</p>
+              ) : pending.preview.filesChanged === 0 ? (
+                <p>{t("No file would change verdict.")}</p>
+              ) : (
+                <>
+                  <p>{t("{files} files ({size}) would change verdict:", { files: count(pending.preview.filesChanged), size: bytes(pending.preview.bytesChanged) })}</p>
+                  <ul>
+                    {pending.preview.changes.slice(0, 6).map((item) => (
+                      <li key={`${item.from}>${item.to}`}>
+                        {t("{from} to {to}: {files} files, {size}", { from: verdictLabel(item.from), to: verdictLabel(item.to), files: count(item.files), size: bytes(item.bytes) })}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <div className="detail-actions">
+                <button className="primary" disabled={busy || pending.preview === null} onClick={() => void apply()}>{t("Apply")}</button>
+                <button onClick={cancel}>{t("Cancel")}</button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

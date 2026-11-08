@@ -1329,6 +1329,25 @@ impl Session {
         Ok(json!({"columns": columns, "rows": out, "truncated": truncated}))
     }
 
+    /// What a rebuild would change with these parameter changes and these hypotheses, without
+    /// saving either. Works on a separate connection, like a rebuild.
+    pub fn resolve_preview(
+        &self,
+        changes: &Value,
+        proposed: Vec<crate::map::Overlay>,
+    ) -> Result<crate::resolve::ResolvePreview> {
+        let mut database = MapDb::open(&self.workspace.database())?;
+        let mut merged = serde_json::to_value(database.params()?)?;
+        if let (Some(target), Some(changes)) = (merged.as_object_mut(), changes.as_object()) {
+            for (key, value) in changes {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        let params: crate::map::ResolveParams =
+            serde_json::from_value(merged).context("invalid parameter value")?;
+        database.resolve_preview(&self.volume, &self.workspace, params, proposed)
+    }
+
     /// Recalculates the tree and scores on a separate connection, so other
     /// queries keep working while it runs.
     pub fn resolve(&self) -> Result<MapSummary> {

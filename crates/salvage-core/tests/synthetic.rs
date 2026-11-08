@@ -490,6 +490,57 @@ fn a_file_made_after_a_deletion_holds_the_clusters_it_reused() {
 }
 
 #[test]
+fn a_rebuild_can_be_previewed_without_saving_it() {
+    let (engine, _session, dir) = engine_with_volume("preview");
+    let short = id_named(&engine, "short.bin");
+    let verdict = |id: i64| call(&engine, "entry", json!({"id": id}))["entry"]["verdict"].clone();
+    assert_eq!(verdict(short), "partial");
+
+    // short.bin's missing half is the nameless chain at cluster 75.
+    let preview = call(
+        &engine,
+        "resolve_preview",
+        json!({"overlays": [{"kind": "file_extents", "target": short, "payload": {"extents": [{"first": 70, "count": 1}, {"first": 75, "count": 1}]}, "note": "try the bridge"}]}),
+    );
+    let changes = preview["changes"].as_array().expect("changes");
+    let moved = changes
+        .iter()
+        .find(|change| {
+            change["sampleIds"]
+                .as_array()
+                .expect("ids")
+                .contains(&json!(short))
+        })
+        .expect("short.bin moves");
+    assert_eq!(moved["from"], "partial");
+    assert_ne!(moved["to"], "partial");
+    assert!(preview["filesUnchanged"].as_u64().expect("unchanged") > 0);
+
+    // Nothing was saved: the stored verdict and the overlays are as they were.
+    assert_eq!(verdict(short), "partial");
+    assert!(call(&engine, "list_overlays", json!({}))
+        .as_array()
+        .expect("overlays")
+        .is_empty());
+
+    // A parameter change previews too, and an unchanged map previews as no change.
+    let none = call(&engine, "resolve_preview", json!({}));
+    assert_eq!(none["filesChanged"], 0);
+    let guessing = call(
+        &engine,
+        "resolve_preview",
+        json!({"parameters": {"chainFallbackContiguous": true}}),
+    );
+    assert!(guessing["filesChanged"].as_u64().expect("changed") >= 1);
+    assert_eq!(
+        call(&engine, "get_parameters", json!({}))["chainFallbackContiguous"],
+        false
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn rename_residue_is_hidden_by_default_and_damage_is_flagged() {
     let volume = open_volume();
     let (workspace, dir) = temp_workspace("hidden");

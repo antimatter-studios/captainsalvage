@@ -819,6 +819,9 @@ video.inline-preview { max-height: 380px; background: #000; }
 .mounted-warning-text strong { color: var(--critical); font-size: 13px; }
 .mounted-warning-text span { color: var(--ink-2); }
 .mounted-warning-problem { margin: 0; font-size: 12px; color: var(--critical); }
+.weigh-preview { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 8px; font-size: 12.5px; }
+.weigh-preview p { margin: 0 0 6px; }
+.weigh-preview ul { margin: 0 0 8px; padding-inline-start: 18px; }
 .written-warning { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 50; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 120px); overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 10px; background: var(--window); border: 2px solid var(--critical); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); font-size: 12.5px; }
 .written-warning strong { color: var(--critical); font-size: 14px; }
 .written-warning p { margin: 0; }

@@ -513,6 +513,13 @@ export interface Overview {
   ownershipNames: string[];
 }
 
+export interface ResolvePreview {
+  changes: { from: string; to: string; files: number; bytes: number; sampleIds: number[] }[];
+  filesChanged: number;
+  bytesChanged: number;
+  filesUnchanged: number;
+}
+
 export interface Parameters {
   chainFallbackContiguous: boolean;
   conflictToleranceClusters: number;

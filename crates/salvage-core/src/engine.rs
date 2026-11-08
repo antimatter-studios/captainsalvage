@@ -724,6 +724,32 @@ impl Engine {
                 )?)?)
             }
 
+            "resolve_preview" => {
+                let proposed = args
+                    .get("overlays")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .enumerate()
+                            .map(|(index, item)| crate::map::Overlay {
+                                id: -1 - index as i64,
+                                kind: str_of(item, "kind").unwrap_or_default().to_string(),
+                                target: item.get("target").and_then(Value::as_i64),
+                                payload: item.get("payload").cloned().unwrap_or_else(|| json!({})),
+                                note: str_of(item, "note").unwrap_or_default().to_string(),
+                                author: author.to_string(),
+                                active: true,
+                                created_at_millis: 0,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let changes = args.get("parameters").cloned().unwrap_or_else(|| json!({}));
+                Ok(serde_json::to_value(
+                    session.resolve_preview(&changes, proposed)?,
+                )?)
+            }
             "test_stream" => self.test_stream(&session, args).map(|mut answer| {
                 // The cluster runs and the per-run profile can run to megabytes for a film.
                 if bool_of(args, "summary", false) {
