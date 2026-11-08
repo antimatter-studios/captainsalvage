@@ -1169,6 +1169,66 @@ fn scripts_can_analyse_but_have_no_way_to_write() {
 }
 
 #[test]
+fn breakdown_and_chain_summary_count_without_names() {
+    let (engine, _session, dir) = engine_with_volume("breakdown");
+
+    let by_reason = call(&engine, "breakdown", json!({"by": ["verdict", "reason"]}));
+    let rows = by_reason["rows"].as_array().expect("rows");
+    let has = |verdict: &str, reason: &str| {
+        rows.iter()
+            .any(|row| row["verdict"] == verdict && row["reason"] == reason)
+    };
+    assert!(
+        has("partial", "chain_broken"),
+        "short.bin stops early: {rows:?}"
+    );
+    assert!(has("likely-intact", "content_matches"));
+    assert!(has("rename-residue", "rename_residue"));
+    assert!(rows
+        .iter()
+        .all(|row| row.get("name").is_none() && row.get("path").is_none()));
+    let total: i64 = rows
+        .iter()
+        .map(|row| row["files"].as_i64().expect("files"))
+        .sum();
+    assert_eq!(by_reason["totalFiles"].as_i64(), Some(total));
+
+    let music = call(
+        &engine,
+        "breakdown",
+        json!({"by": ["extension"], "type": ["music"], "deleted": false}),
+    );
+    assert!(music["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .all(|row| row["extension"] == "mp3"));
+    assert!(
+        engine
+            .call("breakdown", &json!({"by": ["name"]}), AUTHOR_CLAUDE)
+            .is_err(),
+        "names are not a dimension"
+    );
+
+    let chains = call(&engine, "chain_summary", json!({}));
+    assert!(chains["groups"]
+        .as_array()
+        .expect("groups")
+        .iter()
+        .any(|group| group["headContent"] == "JPEG start" && group["chains"] == 1));
+
+    let tools = tool_definitions();
+    let query = tools
+        .iter()
+        .find(|tool| tool["name"] == "query_map")
+        .expect("query_map");
+    let description = query["description"].as_str().expect("description");
+    assert!(description.contains("reason_code") && description.contains("islands(head"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn the_map_query_tool_cannot_write() {
     let (engine, session, dir) = engine_with_volume("sql");
     let rows = call(

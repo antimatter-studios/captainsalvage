@@ -187,7 +187,47 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sets", "o_ok", "INTEGER"),
     ("sets", "confidence", "REAL"),
     ("nodes", "link_confidence", "REAL"),
+    ("sets", "reason_code", "TEXT"),
+    ("sets", "type_group", "TEXT"),
+    ("sets", "extension", "TEXT"),
 ];
+
+/// The map's tables and their columns, read from the schema itself so the description given
+/// to agents can never fall behind it.
+pub fn schema_description() -> String {
+    let mut tables: Vec<(String, Vec<String>)> = Vec::new();
+    for statement in SCHEMA.split(';') {
+        let Some(rest) = statement.trim().strip_prefix("CREATE TABLE IF NOT EXISTS ") else {
+            continue;
+        };
+        let Some((name, body)) = rest.split_once('(') else {
+            continue;
+        };
+        let columns = body
+            .split(',')
+            .filter_map(|part| part.split_whitespace().next())
+            .filter(|word| !matches!(*word, "UNIQUE" | "PRIMARY" | ")"))
+            .map(|word| word.trim_end_matches(')').to_string())
+            .filter(|word| !word.is_empty() && !word.chars().next().is_some_and(char::is_numeric))
+            .fold(Vec::<String>::new(), |mut unique, word| {
+                if !unique.contains(&word) {
+                    unique.push(word);
+                }
+                unique
+            });
+        tables.push((name.trim().to_string(), columns));
+    }
+    for (table, column, _) in ADDED_COLUMNS {
+        if let Some((_, columns)) = tables.iter_mut().find(|(name, _)| name == table) {
+            columns.push((*column).to_string());
+        }
+    }
+    tables
+        .iter()
+        .map(|(name, columns)| format!("{name}({})", columns.join(", ")))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
 
 pub const OVERLAY_ACCEPT_ENTRY: &str = "accept_entry";
 pub const OVERLAY_FILE_EXTENTS: &str = "file_extents";

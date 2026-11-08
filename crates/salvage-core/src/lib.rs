@@ -29,6 +29,7 @@ pub mod similar;
 pub mod source;
 pub mod startup;
 pub mod stream_walk;
+pub mod summaries;
 pub mod verify;
 pub mod volume;
 pub mod workspace;

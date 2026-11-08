@@ -80,7 +80,7 @@ pub const TYPE_GROUPS: &[TypeGroup] = &[
     },
 ];
 
-fn extension_of(name: &str) -> String {
+pub(crate) fn extension_of(name: &str) -> String {
     name.rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
         .unwrap_or_default()
