@@ -84,6 +84,7 @@ export interface Status {
   mounted: string | null;
   baseline: { unchanged: boolean; firstRecording: boolean; recordedAtMillis: number; baselineHash: string; currentHash: string };
   changes: ChangeSummary | null;
+  structuresFromBaseline: boolean;
   reads: { bytes: number; operations: number; errors: number };
   scan: ScanProgress;
   scanInThisApp: boolean;

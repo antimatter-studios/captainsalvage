@@ -658,6 +658,17 @@ fn baseline_detects_a_changed_structure_hash() {
     );
     let same = workspace.check_baseline(&before).expect("same");
     assert!(same.unchanged && !same.first_recording);
+    // A baseline kept before copies were: the copy is made while the disk still matches.
+    std::fs::remove_dir_all(dir.join("baseline")).expect("remove copy");
+    assert_eq!(workspace.baseline_copy(), None);
+    workspace.check_baseline(&before).expect("again");
+    assert_eq!(workspace.baseline_copy(), Some(before.clone()));
+    assert!(!workspace.check_baseline(&after).expect("changed").unchanged);
+    assert_eq!(
+        workspace.baseline_copy(),
+        Some(before.clone()),
+        "a changed disk never replaces the copy"
+    );
     let changed = workspace.check_baseline(&after).expect("changed");
     assert!(!changed.unchanged);
     let _ = std::fs::remove_dir_all(dir);
@@ -692,7 +703,8 @@ fn a_write_after_the_baseline_is_explained_and_its_victims_named() {
     )
     .expect("first session");
     scan(&first.volume, &first.workspace);
-    assert!(first.status().expect("status").changes.is_none());
+    let status = first.status().expect("status");
+    assert!(status.changes.is_none() && !status.structures_from_baseline);
     drop(first);
 
     // Then something mounts it: a new folder in the root takes cluster 150 and writes there.
@@ -703,6 +715,8 @@ fn a_write_after_the_baseline_is_explained_and_its_victims_named() {
     );
     b.allocate(150);
     b.put(150, 0, &noise(9150, CLUSTER));
+    // and breaks track.mp3's chain in the FAT on disk.
+    b.fat(31, 0);
     let second = Session::with_source(
         Path::new("/test/image"),
         Arc::new(MemorySource::new(b.image)),
@@ -711,6 +725,17 @@ fn a_write_after_the_baseline_is_explained_and_its_victims_named() {
     .expect("second session");
     let status = second.status().expect("status");
     assert!(!status.baseline.unchanged);
+    assert!(status.structures_from_baseline);
+    // The map reads the structures from the baseline's copy, so the chain is still whole
+    // and the photo's cluster still counts as free.
+    assert_eq!(
+        second
+            .volume
+            .clusters_for(30, 3 * CLUSTER as u64 - 100, false)
+            .clusters,
+        vec![30, 31, 33]
+    );
+    assert!(!second.volume.is_allocated(150));
     let summary = status.changes.expect("the change is explained");
     assert_eq!(summary.written_clusters, 1);
     assert_eq!(summary.root_entries, vec![".fseventsd".to_string()]);

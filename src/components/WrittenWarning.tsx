@@ -81,6 +81,9 @@ export function WrittenWarning({ status, clusterSize, onChanged }: { status: Sta
       ) : (
         <p>{t("No copy of the disk's structures from {date} is kept, so what changed cannot be shown.", { date })}</p>
       )}
+      {status.structuresFromBaseline && (
+        <p>{t("The map reads the FAT, bitmap and root as they were on {date}, from the copy kept on this Mac, not from the disk.", { date })}</p>
+      )}
       <p className="written-warning-advice">
         {t("macOS writes like this when it mounts the disk. Plug the disk in only while Captain Salvage is open, so it can keep the disk unmounted.")}
       </p>
