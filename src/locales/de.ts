@@ -956,6 +956,8 @@ const strings: Record<string, string> = {
   "Show the files": "Dateien zeigen",
   "Fold away": "Einklappen",
   "The map reads the FAT, bitmap and root as they were on {date}, from the copy kept on this Mac, not from the disk.": "Die Karte liest FAT, Bitmap und Stammverzeichnis so, wie sie am {date} waren, aus der Kopie auf diesem Mac, nicht vom Datenträger.",
+  "Keep file names and previews from agents": "Dateinamen und Vorschauen vor Agenten verbergen",
+  "Agents still see counts, sizes, types and verdicts. A script can still read raw bytes, so this prevents accidents, not a determined agent.": "Agenten sehen weiterhin Anzahlen, Größen, Typen und Urteile. Ein Skript kann weiterhin Rohdaten lesen, das verhindert also Versehen, keinen entschlossenen Agenten.",
 };
 
 export default strings;

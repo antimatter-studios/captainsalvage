@@ -538,6 +538,7 @@ video.inline-preview { max-height: 380px; background: #000; }
 
 /* Chat */
 .chat { display: flex; flex-direction: column; min-height: 0; }
+.chat-privacy { padding: 0 14px 6px; font-size: 12px; color: var(--ink-2); }
 .chat-head { display: flex; gap: 6px; justify-content: flex-end; align-items: center; padding: 9px 14px 6px; }
 .chat-head strong { display: inline-flex; align-items: center; gap: 6px; font-weight: 650; }
 .chat-head svg { color: var(--accent); }

@@ -1229,6 +1229,74 @@ fn breakdown_and_chain_summary_count_without_names() {
 }
 
 #[test]
+fn hidden_names_are_masked_for_agents_but_not_for_the_window() {
+    let (engine, _session, dir) = engine_with_volume("privacy");
+    engine.set_names_hidden(true);
+    assert_eq!(
+        call(&engine, "agent_privacy", json!({}))["namesHidden"],
+        true
+    );
+
+    let found = call(&engine, "search", json!({"query": "track"}));
+    let rows = found["rows"].as_array().expect("rows");
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter().all(|row| row["name"] == "[hidden].mp3"),
+        "{rows:?}"
+    );
+    let seen = engine
+        .call("search", &json!({"query": "track"}), AUTHOR_USER)
+        .expect("the window searches");
+    assert!(seen["rows"][0]["name"]
+        .as_str()
+        .expect("name")
+        .contains("track"));
+
+    let sql = call(
+        &engine,
+        "query_map",
+        json!({"sql": "SELECT name AS n, length FROM sets WHERE is_dir = 0 LIMIT 3"}),
+    );
+    assert!(sql["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .all(|row| row["n"].is_null() && row["length"].is_number()));
+    let script = call(
+        &engine,
+        "run_script",
+        json!({"source": "sql(\"SELECT name FROM sets WHERE is_dir = 0 LIMIT 1\")[0].name"}),
+    );
+    assert!(script["result"].is_null(), "{script}");
+
+    let refused = engine.call(
+        "materialize",
+        &json!({"extents": [{"first": 40, "count": 2}], "name": "photo.jpg"}),
+        AUTHOR_CLAUDE,
+    );
+    assert!(format!("{:#}", refused.expect_err("previews are refused")).contains("kept file names"));
+    assert!(
+        engine
+            .call(
+                "set_agent_privacy",
+                &json!({"namesHidden": false}),
+                AUTHOR_CLAUDE
+            )
+            .is_err(),
+        "only the person decides"
+    );
+
+    engine.set_names_hidden(false);
+    let open = call(&engine, "search", json!({"query": "track"}));
+    assert!(open["rows"][0]["name"]
+        .as_str()
+        .expect("name")
+        .contains("track"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn the_map_query_tool_cannot_write() {
     let (engine, session, dir) = engine_with_volume("sql");
     let rows = call(

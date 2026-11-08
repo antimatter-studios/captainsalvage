@@ -179,7 +179,7 @@ fn register_structures(engine: &mut Engine, session: &Arc<Session>) {
     );
 }
 
-fn register_decoding(engine: &mut Engine, session: &Arc<Session>) {
+fn register_decoding(engine: &mut Engine, session: &Arc<Session>, names_hidden: bool) {
     engine.register_fn(
         "u16le",
         |blob: &mut Blob, i: INT| -> Result<INT, Box<EvalAltResult>> {
@@ -265,14 +265,20 @@ fn register_decoding(engine: &mut Engine, session: &Arc<Session>) {
     engine.register_fn(
         "sql",
         move |query: &str| -> Result<Dynamic, Box<EvalAltResult>> {
-            let result = s.query_map(query).map_err(fail)?;
+            let result = s.query_map_private(query, names_hidden).map_err(fail)?;
             to_dynamic(result.get("rows").cloned().unwrap_or(Value::Null))
         },
     );
 }
 
 /// Runs a script and returns its printed output and final value.
-pub fn run_script(session: &Arc<Session>, source: &str, timeout_seconds: u64) -> Result<Value> {
+/// With `names_hidden`, its SQL reads name columns as NULL; the caller masks names in the answer.
+pub fn run_script(
+    session: &Arc<Session>,
+    source: &str,
+    timeout_seconds: u64,
+    names_hidden: bool,
+) -> Result<Value> {
     let limit = Duration::from_secs(timeout_seconds.clamp(1, MAX_TIMEOUT_SECONDS));
     let started = Instant::now();
     let mut engine = Engine::new();
@@ -296,7 +302,7 @@ pub fn run_script(session: &Arc<Session>, source: &str, timeout_seconds: u64) ->
     });
     register_reading(&mut engine, session);
     register_structures(&mut engine, session);
-    register_decoding(&mut engine, session);
+    register_decoding(&mut engine, session, names_hidden);
 
     let mut scope = RhaiScope::new();
     let outcome = engine.eval_with_scope::<Dynamic>(&mut scope, source);

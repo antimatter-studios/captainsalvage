@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { call, type Selection } from "../api";
 import { count } from "../format";
 import { fromEngine, questionFor, t, useLanguage, type Language } from "../i18n";
+import { AgentPrivacy } from "./AgentPrivacy";
 import { Command } from "./Command";
 import { Icon } from "./icons";
 
@@ -269,6 +270,7 @@ export function Chat({ selection, onActivity }: { selection: Selection; onActivi
         <span className="toolbar-spacer" />
         <button className="link" onClick={startOver} disabled={messages.length === 0}>{t("New conversation")}</button>
       </div>
+      <div className="chat-privacy"><AgentPrivacy /></div>
       {chosen && !chosen.installed && (
         <div className="chat-install">
           <p>{t("{name} is not installed on this Mac. Install it in Terminal, then choose it again:", { name: chosen.name })}</p>
