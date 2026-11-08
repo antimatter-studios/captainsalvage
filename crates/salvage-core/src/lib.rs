@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod media;
 pub mod mount;
 pub mod mountblock;
+pub mod privacy;
 pub mod regions;
 pub mod report;
 pub mod resolve;

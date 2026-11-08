@@ -1289,11 +1289,17 @@ impl Session {
 
     /// Runs a read-only SQL query against the map. The connection cannot write.
     pub fn query_map(&self, sql: &str) -> Result<Value> {
-        let connection = Connection::open_with_flags(
+        self.query_map_private(sql, false)
+    }
+
+    /// Runs read-only SQL on the map. With `names_hidden`, name columns read as NULL.
+    pub fn query_map_private(&self, sql: &str, names_hidden: bool) -> Result<Value> {
+        let mut connection = Connection::open_with_flags(
             self.workspace.database(),
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         connection.execute_batch("PRAGMA query_only = ON;")?;
+        crate::privacy::guard_connection(&mut connection, names_hidden)?;
         connection.busy_timeout(Duration::from_secs(30))?;
         let mut statement = connection.prepare(sql)?;
         let columns: Vec<String> = statement.column_names().map(ToString::to_string).collect();

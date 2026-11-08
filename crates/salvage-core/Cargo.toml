@@ -24,7 +24,7 @@ libc = "0.2.191"
 rars = { version = "0.12.4", default-features = false }
 rhai = { version = "1.27.0", features = ["serde", "sync"] }
 ruzstd = "0.9.1"
-rusqlite = { version = "0.41.1", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "hooks"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip2", "deflate", "ppmd"] }

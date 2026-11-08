@@ -76,6 +76,8 @@ pub struct Engine {
     screenshot: RwLock<Option<ScreenshotHook>>,
     app_hook: RwLock<Option<AppHook>>,
     media: RwLock<Option<Arc<MediaServer>>>,
+    /// Whether file names and contents are kept from agents. Only the person changes it.
+    names_hidden: std::sync::atomic::AtomicBool,
 }
 
 fn u64_of(args: &Value, key: &str) -> Option<u64> {
@@ -206,7 +208,19 @@ pub fn hexdump(data: &[u8], base: u64) -> String {
 
 impl Engine {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        let engine = Self::default();
+        engine.set_names_hidden(crate::privacy::saved_names_hidden());
+        Arc::new(engine)
+    }
+
+    /// Keeps file names and contents from agents, or lets them see again, for this engine.
+    pub fn set_names_hidden(&self, hidden: bool) {
+        self.names_hidden
+            .store(hidden, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn names_hidden(&self) -> bool {
+        self.names_hidden.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn set_ui_sink(&self, sink: UiSink) {
@@ -295,7 +309,20 @@ impl Engine {
 
     /// Runs a tool, and records it in the activity log the window shows.
     pub fn call(&self, tool: &str, args: &Value, author: &str) -> Result<Value> {
-        let result = self.dispatch(tool, args, author);
+        // The person can keep file names and contents from agents. The window always sees them.
+        let private = author != AUTHOR_USER && self.names_hidden();
+        let result = if private && crate::privacy::CONTENT_TOOLS.contains(&tool) {
+            Err(anyhow!(
+                "The person using the app has kept file names and contents from agents, so {tool} is not available. Counts, sizes, types and verdicts still are."
+            ))
+        } else {
+            self.dispatch(tool, args, author).map(|mut answer| {
+                if private {
+                    crate::privacy::redact(&mut answer);
+                }
+                answer
+            })
+        };
         if !QUIET_TOOLS.contains(&tool) {
             if let Ok(session) = self.session() {
                 let mut detail = args.to_string();
@@ -338,6 +365,20 @@ impl Engine {
                 Ok(serde_json::to_value(crate::startup::startup_report(
                     internal,
                 )?)?)
+            }
+            "agent_privacy" => Ok(json!({"namesHidden": self.names_hidden()})),
+            "set_agent_privacy" => {
+                if author != AUTHOR_USER {
+                    bail!("Only the person using the app can decide what agents see.");
+                }
+                let hidden = args
+                    .get("namesHidden")
+                    .and_then(Value::as_bool)
+                    .context("namesHidden must be true or false")?;
+                crate::privacy::save_names_hidden(hidden)?;
+                self.set_names_hidden(hidden);
+                self.emit("agent-privacy", json!({"namesHidden": hidden}));
+                Ok(json!({"namesHidden": hidden}))
             }
             "mount_blocks" => Ok(json!({"blocks": crate::mountblock::list()})),
             "mount_blocks_mounted" => Ok(json!({"mounted": crate::mountblock::mounted_anyway()?})),
@@ -757,7 +798,10 @@ impl Engine {
                 Ok(serde_json::to_value(summary)?)
             }
 
-            "query_map" => session.query_map(need_str(args, "sql")?),
+            "query_map" => session.query_map_private(
+                need_str(args, "sql")?,
+                author != AUTHOR_USER && self.names_hidden(),
+            ),
             "breakdown" => {
                 let request: crate::summaries::BreakdownRequest =
                     serde_json::from_value(args.clone()).context("invalid breakdown request")?;
@@ -771,7 +815,8 @@ impl Engine {
             }
             "run_script" => {
                 let timeout = u64_of(args, "timeoutSeconds").unwrap_or(DEFAULT_TIMEOUT_SECONDS);
-                run_script(&session, need_str(args, "source")?, timeout)
+                let private = author != AUTHOR_USER && self.names_hidden();
+                run_script(&session, need_str(args, "source")?, timeout, private)
             }
 
             "copy_plan" => {
