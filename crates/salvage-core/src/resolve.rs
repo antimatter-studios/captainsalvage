@@ -60,7 +60,42 @@ struct LoadedSet {
     first_cluster: u32,
     length: u64,
     no_fat_chain: bool,
+    created: Option<String>,
     modified: Option<String>,
+}
+
+/// When the streams starting at one cluster were made, and whether every entry for
+/// them is deleted.
+struct StreamAge {
+    created: Option<String>,
+    deleted: bool,
+}
+
+/// Whether `newer` was made after `older` was deleted, so that any cluster both
+/// claim was handed to `newer` and now holds its data. Only the wall-clock part of
+/// each timestamp is compared, and a missing time proves nothing.
+fn replaced(older: &StreamAge, newer: &StreamAge) -> bool {
+    match (&older.created, &newer.created) {
+        (Some(old), Some(new)) => older.deleted && wall_clock(old) < wall_clock(new),
+        _ => false,
+    }
+}
+
+fn wall_clock(time: &str) -> &str {
+    time.get(..19).unwrap_or(time)
+}
+
+/// The stream holding a cluster that several streams claim: the one made after
+/// every other claimant was deleted. None when no claimant beats all the others.
+fn holder_of(streams: &[u32], ages: &HashMap<u32, StreamAge>) -> Option<u32> {
+    streams.iter().copied().find(|&candidate| {
+        let Some(newer) = ages.get(&candidate) else {
+            return false;
+        };
+        streams.iter().all(|other| {
+            *other == candidate || ages.get(other).is_some_and(|older| replaced(older, newer))
+        })
+    })
 }
 
 #[derive(Clone, Copy, Default)]
@@ -281,6 +316,9 @@ struct Context<'a> {
     classes: &'a [u8],
     text_heads: &'a [u8],
     claims: &'a [u16],
+    /// For clusters several streams claim: the first cluster of the stream that
+    /// holds it, or None when nothing settles which one does.
+    holders: &'a HashMap<u32, Option<u32>>,
     node_heads: &'a HashSet<u32>,
     params: ResolveParams,
 }
@@ -381,15 +419,23 @@ impl Context<'_> {
             .iter()
             .filter(|&&c| self.volume.is_allocated(c))
             .count() as u64;
-        let overlapping = stream
-            .clusters
-            .iter()
-            .filter(|&&c| self.claims[c as usize] > 1)
-            .count() as u64;
+        // A shared cluster is held by this file, was reused by a later file, or
+        // is contested: claimed with nothing to settle who wrote it last.
+        let (mut kept, mut displaced, mut contested) = (0u64, 0u64, 0u64);
+        for &cluster in &stream.clusters {
+            if self.claims[cluster as usize] <= 1 {
+                continue;
+            }
+            match self.holders.get(&cluster) {
+                Some(Some(holder)) if *holder == set.first_cluster => kept += 1,
+                Some(Some(_)) => displaced += 1,
+                _ => contested += 1,
+            }
+        }
         let conflict = if self.params.ignore_entry_conflicts {
             0
         } else {
-            overlapping.saturating_sub(self.params.conflict_tolerance_clusters)
+            (displaced + contested).saturating_sub(self.params.conflict_tolerance_clusters)
         };
         let build = |verdict, reason: String, confidence: f64| Assessment {
             verdict,
@@ -457,6 +503,11 @@ impl Context<'_> {
                 "Last {assumed} clusters are assumed contiguous, because the FAT chain ends early."
             ));
         }
+        if kept > 0 {
+            sentences.push(format!(
+                "{kept} of {found} clusters are also claimed by deleted entries made before this file, so they hold this file's data."
+            ));
+        }
         let verdict = if found == 0 {
             sentences.push("First cluster is outside the volume.".to_string());
             VERDICT_PARTIAL
@@ -471,10 +522,22 @@ impl Context<'_> {
                 "{allocated} of {found} clusters are in use by current files."
             ));
             VERDICT_PARTIAL
-        } else if conflict > 0 {
+        } else if conflict > 0 && displaced == found {
             sentences.push(format!(
-                "{conflict} of {found} clusters are also claimed by other entries."
+                "All {found} clusters were reused by files made after this one was deleted."
             ));
+            VERDICT_OVERWRITTEN
+        } else if conflict > 0 {
+            if displaced > 0 {
+                sentences.push(format!(
+                    "{displaced} of {found} clusters were reused by files made after this one was deleted."
+                ));
+            }
+            if contested > 0 {
+                sentences.push(format!(
+                    "{contested} of {found} clusters are also claimed by other entries."
+                ));
+            }
             VERDICT_PARTIAL
         } else {
             match content {
@@ -676,6 +739,24 @@ impl MapDb {
             .filter(|set| !set.is_dir && set.checksum_ok && set.in_use)
             .map(|set| set.first_cluster)
             .collect();
+        let mut ages: HashMap<u32, StreamAge> = HashMap::new();
+        for set in sets
+            .iter()
+            .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0)
+        {
+            let age = ages.entry(set.first_cluster).or_insert(StreamAge {
+                created: None,
+                deleted: true,
+            });
+            if set.created > age.created {
+                age.created = set.created.clone();
+            }
+            age.deleted &= !set.in_use;
+        }
+        // The first stream to claim each cluster, and every stream claiming a
+        // cluster that more than one does.
+        let mut first_claimant = vec![0u32; last];
+        let mut sharing: HashMap<u32, Vec<u32>> = HashMap::new();
         let mut claimed_first: HashSet<u32> = HashSet::new();
         for set in sets
             .iter()
@@ -686,6 +767,16 @@ impl MapDb {
                 for cluster in stream.clusters {
                     let index = (cluster - FIRST_CLUSTER) as usize;
                     claims[cluster as usize] = claims[cluster as usize].saturating_add(1);
+                    if found.contains(&cluster) {
+                        // A directory cluster holds directory entries, whatever else claims it.
+                    } else if claims[cluster as usize] == 1 {
+                        first_claimant[cluster as usize] = set.first_cluster;
+                    } else {
+                        sharing
+                            .entry(cluster)
+                            .or_insert_with(|| vec![first_claimant[cluster as usize]])
+                            .push(set.first_cluster);
+                    }
                     if ownership[index] != OWNERSHIP_DIRECTORY {
                         ownership[index] = if claims[cluster as usize] > 1 {
                             OWNERSHIP_SEVERAL_ENTRIES
@@ -697,11 +788,27 @@ impl MapDb {
             }
         }
 
+        let holders: HashMap<u32, Option<u32>> = if params.ignore_reuse_order {
+            HashMap::new()
+        } else {
+            sharing
+                .iter()
+                .map(|(&cluster, streams)| (cluster, holder_of(streams, &ages)))
+                .collect()
+        };
+        drop(first_claimant);
+        for (&cluster, holder) in &holders {
+            if holder.is_some() {
+                ownership[(cluster - FIRST_CLUSTER) as usize] = OWNERSHIP_ONE_ENTRY;
+            }
+        }
+
         let context = Context {
             volume,
             classes: &classes,
             text_heads: &text_heads,
             claims: &claims,
+            holders: &holders,
             node_heads: &node_heads,
             params,
         };
@@ -959,7 +1066,7 @@ impl MapDb {
 
     fn load_sets(&self) -> Result<Vec<LoadedSet>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, source_cluster, name, in_use, checksum_ok, is_dir, first_cluster, length, no_fat_chain, modified \
+            "SELECT id, source_cluster, name, in_use, checksum_ok, is_dir, first_cluster, length, no_fat_chain, created, modified \
              FROM sets",
         )?;
         let rows = statement.query_map([], |row| {
@@ -974,7 +1081,8 @@ impl MapDb {
                 first_cluster: row.get(6)?,
                 length: row.get::<_, i64>(7)? as u64,
                 no_fat_chain: row.get(8)?,
-                modified: row.get(9)?,
+                created: row.get(9)?,
+                modified: row.get(10)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
