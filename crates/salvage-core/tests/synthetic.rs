@@ -86,6 +86,14 @@ fn modified_on(mut set: Vec<u8>, year: u32, month: u32, day: u32) -> Vec<u8> {
     set
 }
 
+/// Changes when an entry says it was created.
+fn created_on(mut set: Vec<u8>, year: u32, month: u32, day: u32) -> Vec<u8> {
+    let timestamp = ((year - 1980) << 25) | (month << 21) | (day << 16);
+    set[8..12].copy_from_slice(&timestamp.to_le_bytes());
+    seal_entry_set(&mut set);
+    set
+}
+
 fn seal_entry_set(set: &mut [u8]) {
     let mut checksum = 0u16;
     for (index, &byte) in set.iter().enumerate() {
@@ -412,6 +420,71 @@ fn scan_classifies_content_and_rebuilds_orphan_tree() {
     assert_eq!(album.node_kind.as_deref(), Some("attached"));
     assert_eq!(album.intact_files, 1);
     assert!(orphan.intact_files >= 3);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_file_made_after_a_deletion_holds_the_clusters_it_reused() {
+    let mut b = Builder {
+        image: build_volume(),
+    };
+    // film.mp3 was written over clusters 130-133 after old.txt, already deleted,
+    // had used cluster 131. mixed.mp3 shares cluster 141 with stale.txt, which was
+    // made after mixed.mp3, so nothing settles which of them wrote it last.
+    b.directory(
+        26,
+        &[
+            created_on(
+                entry_set("film.mp3", false, 130, 4 * CLUSTER as u64, true, true),
+                2023,
+                5,
+                1,
+            ),
+            created_on(
+                entry_set("old.txt", false, 131, 100, true, false),
+                2020,
+                1,
+                1,
+            ),
+            created_on(
+                entry_set("mixed.mp3", false, 140, 3 * CLUSTER as u64, true, true),
+                2021,
+                1,
+                1,
+            ),
+            created_on(
+                entry_set("stale.txt", false, 141, 100, true, false),
+                2024,
+                1,
+                1,
+            ),
+        ],
+    );
+    for first in [130, 140] {
+        b.put(first, 0, b"ID3\x04");
+        b.put(first, 16, &noise(first, CLUSTER - 16));
+    }
+    for cluster in (131..134).chain(141..143) {
+        b.put(cluster, 0, &noise(cluster, CLUSTER));
+    }
+    let volume = Volume::open(Arc::new(MemorySource::new(b.image))).expect("volume opens");
+    let (workspace, dir) = temp_workspace("reuse");
+    scan(&volume, &workspace);
+    let mut database = MapDb::open(&workspace.database()).expect("database");
+
+    assert_eq!(verdict_of(&database, 26, "film.mp3"), "likely-intact");
+    assert_eq!(verdict_of(&database, 26, "old.txt"), "overwritten");
+    assert_eq!(verdict_of(&database, 26, "mixed.mp3"), "partial");
+    assert_eq!(verdict_of(&database, 26, "stale.txt"), "partial");
+
+    // Ignoring the order makes every shared cluster a conflict again.
+    let mut params = database.params().expect("params");
+    params.ignore_reuse_order = true;
+    database.set_params(&params).expect("set params");
+    database.resolve(&volume, &workspace).expect("resolve");
+    assert_eq!(verdict_of(&database, 26, "film.mp3"), "partial");
+    assert_eq!(verdict_of(&database, 26, "old.txt"), "partial");
 
     let _ = std::fs::remove_dir_all(dir);
 }

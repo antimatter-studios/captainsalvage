@@ -552,6 +552,10 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
             <input type="checkbox" checked={parameters.ignoreEntryConflicts} disabled={busy} onChange={(event) => change({ ignoreEntryConflicts: event.target.checked })} />
             {t("Ignore overlaps between found entries")}
           </label>
+          <label className="check">
+            <input type="checkbox" checked={parameters.ignoreReuseOrder} disabled={busy} onChange={(event) => change({ ignoreReuseOrder: event.target.checked })} />
+            {t("Count clusters reused by newer files as conflicts")}
+          </label>
           <label className="field">
             <span>{t("Clusters a file may share with others")}</span>
             <input type="number" min={0} value={parameters.conflictToleranceClusters} disabled={busy} onChange={(event) => change({ conflictToleranceClusters: Number(event.target.value) })} />

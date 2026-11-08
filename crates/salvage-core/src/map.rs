@@ -222,6 +222,9 @@ pub struct ResolveParams {
     pub conflict_tolerance_clusters: u64,
     /// Ignore overlaps between found entries. Clusters in current use still count.
     pub ignore_entry_conflicts: bool,
+    /// Count every shared cluster as a conflict. By default a cluster claimed by a
+    /// deleted entry and by a file made after it was deleted belongs to the later file.
+    pub ignore_reuse_order: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

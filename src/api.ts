@@ -482,6 +482,7 @@ export interface Parameters {
   chainFallbackContiguous: boolean;
   conflictToleranceClusters: number;
   ignoreEntryConflicts: boolean;
+  ignoreReuseOrder: boolean;
 }
 
 export interface McpDetails {
