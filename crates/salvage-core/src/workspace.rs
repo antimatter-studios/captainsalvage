@@ -1,5 +1,6 @@
 //! Where analysis results live. Always on the Mac, never on the examined volume.
 
+use crate::changes::{StructureChanges, StructureCopy};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -114,9 +115,40 @@ impl Workspace {
         self.dir.join("baseline.json")
     }
 
+    /// The copy of the structures the baseline hash was taken from.
+    fn baseline_copy_dir(&self) -> PathBuf {
+        self.dir.join("baseline")
+    }
+
+    fn changes(&self) -> PathBuf {
+        self.dir.join("changes.json")
+    }
+
+    /// The baseline's copy of the structures, when it is there and still hashes to the
+    /// baseline. A baseline recorded before copies were kept has none, unless one is put in
+    /// `baseline/` by hand; the hash check is what makes that safe.
+    pub fn baseline_copy(&self) -> Option<StructureCopy> {
+        let text = fs::read_to_string(self.baseline()).ok()?;
+        let baseline: Baseline = serde_json::from_str(&text).ok()?;
+        StructureCopy::load(&self.baseline_copy_dir())
+            .filter(|copy| copy.hash() == baseline.structure_hash)
+    }
+
+    pub fn read_changes(&self) -> Option<StructureChanges> {
+        serde_json::from_str(&fs::read_to_string(self.changes()).ok()?).ok()
+    }
+
+    pub fn write_changes(&self, changes: &StructureChanges) -> Result<()> {
+        fs::write(self.changes(), serde_json::to_string_pretty(changes)?)?;
+        Ok(())
+    }
+
     /// Compares the volume's structures with the hash first recorded here. A
     /// change means something wrote to the boot regions, FAT, bitmap or root.
-    pub fn check_baseline(&self, current_hash: &str) -> Result<BaselineCheck> {
+    /// The first time, a copy of the structures is kept beside the hash.
+    pub fn check_baseline(&self, current: &StructureCopy) -> Result<BaselineCheck> {
+        let current_hash = current.hash();
+        let current_hash = current_hash.as_str();
         if let Ok(text) = fs::read_to_string(self.baseline()) {
             let baseline: Baseline =
                 serde_json::from_str(&text).context("parsing baseline.json")?;
@@ -132,6 +164,7 @@ impl Workspace {
             structure_hash: current_hash.to_string(),
             recorded_at_millis: now_millis(),
         };
+        current.save(&self.baseline_copy_dir())?;
         fs::write(self.baseline(), serde_json::to_string_pretty(&baseline)?)?;
         Ok(BaselineCheck {
             unchanged: true,

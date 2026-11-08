@@ -44,12 +44,46 @@ export interface ScanProgress {
   bytesPerSecond: number;
 }
 
+/** What was written to the disk since its baseline, in short. */
+export interface ChangeSummary {
+  detectedAtMillis: number;
+  writtenClusters: number;
+  fatEntries: number;
+  rootEntries: string[];
+  bootChanged: boolean;
+  affectedFiles: number;
+  affectedBytes: number;
+}
+
+export interface EntryState {
+  inUse: boolean;
+  isDir: boolean;
+  firstCluster: number;
+  length: number;
+  created: string | null;
+  modified: string | null;
+}
+
+export interface StructureChanges {
+  baselineRecordedAtMillis: number;
+  detectedAtMillis: number;
+  currentHash: string;
+  bootMainBytes: number;
+  bootBackupBytes: number;
+  fatEntries: number;
+  writtenClusters: number[];
+  freedClusters: number;
+  rootEntries: { name: string; before: EntryState | null; after: EntryState | null }[];
+  affected: { id: number; name: string; path: string | null; length: number; isDir: boolean; clustersWritten: number }[];
+}
+
 export interface Status {
   device: string;
   wholeDisk: string | null;
   osDeniesWrites: boolean;
   mounted: string | null;
   baseline: { unchanged: boolean; firstRecording: boolean; recordedAtMillis: number; baselineHash: string; currentHash: string };
+  changes: ChangeSummary | null;
   reads: { bytes: number; operations: number; errors: number };
   scan: ScanProgress;
   scanInThisApp: boolean;

@@ -939,6 +939,22 @@ const strings: Record<string, string> = {
   "Mode": "Modo",
   "Simple": "Simple",
   "What recovering files needs, with no cluster numbers": "Lo que hace falta para recuperar archivos, sin números de clúster",
+  "All {found} clusters were written after the baseline, so this file's data there is gone.": "Los {found} clústeres se escribieron después de la referencia, así que los datos de este archivo allí se han perdido.",
+  "{written} of {found} clusters were written after the baseline, so their data is gone.": "{written} de {found} clústeres se escribieron después de la referencia, así que sus datos se han perdido.",
+  "Something wrote to this disk after {date}. Show what changed": "Algo escribió en este disco después del {date}. Mostrar qué cambió",
+  "Something wrote to this disk after {date}.": "Algo escribió en este disco después del {date}.",
+  "{clusters} clusters ({size}) that were free on {date} now hold other data.": "{clusters} clústeres ({size}) que estaban libres el {date} contienen ahora otros datos.",
+  "{files} found files ({size}) used those clusters, so that part of them is gone. Rebuild the map to mark them.": "{files} archivos encontrados ({size}) usaban esos clústeres, así que esa parte de ellos se ha perdido. Reconstruye el mapa para marcarlos.",
+  "No file found on the disk used those clusters.": "Ningún archivo encontrado en el disco usaba esos clústeres.",
+  "Changed at the top of the disk: {names}.": "Cambiado en el nivel superior del disco: {names}.",
+  "The boot region changed too.": "La región de arranque también cambió.",
+  "No copy of the disk's structures from {date} is kept, so what changed cannot be shown.": "No se guarda ninguna copia de las estructuras del disco del {date}, así que no se puede mostrar qué cambió.",
+  "macOS writes like this when it mounts the disk. Plug the disk in only while Captain Salvage is open, so it can keep the disk unmounted.": "macOS escribe así cuando monta el disco. Conecta el disco solo mientras Captain Salvage esté abierto, para que pueda mantenerlo sin montar.",
+  "File": "Archivo",
+  "Clusters written": "Clústeres escritos",
+  "Hide the files": "Ocultar los archivos",
+  "Show the files": "Mostrar los archivos",
+  "Fold away": "Plegar",
 };
 
 export default strings;

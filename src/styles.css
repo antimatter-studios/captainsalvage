@@ -818,6 +818,15 @@ video.inline-preview { max-height: 380px; background: #000; }
 .mounted-warning-text strong { color: var(--critical); font-size: 13px; }
 .mounted-warning-text span { color: var(--ink-2); }
 .mounted-warning-problem { margin: 0; font-size: 12px; color: var(--critical); }
+.written-warning { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 50; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 120px); overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 10px; background: var(--window); border: 2px solid var(--critical); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); font-size: 12.5px; }
+.written-warning strong { color: var(--critical); font-size: 14px; }
+.written-warning p { margin: 0; }
+.written-warning-advice { color: var(--ink-2); }
+.written-warning-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.written-files { width: 100%; border-collapse: collapse; font-size: 12px; }
+.written-files th, .written-files td { text-align: start; padding: 3px 6px; border-bottom: 1px solid var(--line); }
+.written-files td:first-child { max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.written-strip { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 50; padding: 8px 14px; border-radius: 999px; border: none; background: var(--critical); color: var(--window); font-weight: 600; font-size: 12.5px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); cursor: pointer; }
 
 /* Chat: questions to start with, cluster links and folded tool calls. */
 .chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }

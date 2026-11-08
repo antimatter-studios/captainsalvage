@@ -3,6 +3,7 @@
 //! The app and the MCP tools both go through this type, so the person and the AI
 //! always see the same data and act on the same map.
 
+use crate::changes::{AffectedEntry, StructureChanges};
 use crate::content::{
     content_group, entropy_bits, CLASS_DIRECTORY, CLASS_NAMES, GROUP_COUNT, GROUP_NAMES,
 };
@@ -10,7 +11,7 @@ use crate::exfat::{decode_timestamp, find_sets, EntrySet, FAT_BAD, FAT_END, FIRS
 use crate::export::{CopyControl, CopyStatus};
 use crate::map::{
     to_extents, Extent, IslandRow, MapDb, MapSummary, Overlay, Row, OVERLAY_NOTE,
-    OVERLAY_REGION_LABEL, OVERLAY_STRUCT,
+    OVERLAY_REGION_LABEL, OVERLAY_STRUCT, VERDICT_LIVE,
 };
 use crate::mount::{DiskReturn, DiskWrites, MountHistory, ReturnWatch, WriteWatch};
 use crate::resolve::{
@@ -37,6 +38,8 @@ use std::time::{Duration, Instant};
 
 pub const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_QUERY_ROWS: usize = 5000;
+/// Written clusters looked up one by one for their owners. Past this, the list is cut short.
+const MAX_WRITTEN_CLUSTERS_EXPLAINED: usize = 20_000;
 const FIND_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 const FIND_TIME_LIMIT: Duration = Duration::from_secs(90);
 const MIN_RATE_SAMPLE: Duration = Duration::from_secs(3);
@@ -102,6 +105,8 @@ pub struct Status {
     pub os_denies_writes: bool,
     pub mounted: Option<String>,
     pub baseline: BaselineCheck,
+    /// What changed since the baseline, when it has changed and a copy of it is kept.
+    pub changes: Option<crate::changes::ChangeSummary>,
     pub reads: ReadStats,
     pub scan: ScanProgress,
     pub scan_in_this_app: bool,
@@ -182,6 +187,7 @@ pub struct Session {
     pub volume: Volume,
     pub workspace: Workspace,
     pub baseline: Mutex<BaselineCheck>,
+    changes: Mutex<Option<StructureChanges>>,
     pub database: Mutex<MapDb>,
     whole_disk: Mutex<Option<Arc<FileSource>>>,
     scan_stop: Arc<AtomicBool>,
@@ -326,16 +332,18 @@ impl Session {
     }
 
     fn assemble(path: &Path, volume: Volume, workspace: Workspace) -> Result<Arc<Self>> {
-        let baseline = workspace.check_baseline(&volume.structure_hash)?;
+        let baseline = workspace.check_baseline(&volume.structures)?;
+        let check = baseline.clone();
         let database = MapDb::open(&workspace.database())?;
         let next_cluster = database
             .state_u64("next_cluster")?
             .max(u64::from(FIRST_CLUSTER)) as u32;
-        Ok(Arc::new(Self {
+        let session = Arc::new(Self {
             path: path.to_path_buf(),
             volume,
             workspace,
             baseline: Mutex::new(baseline),
+            changes: Mutex::new(None),
             database: Mutex::new(database),
             whole_disk: Mutex::new(None),
             scan_stop: Arc::new(AtomicBool::new(false)),
@@ -353,7 +361,12 @@ impl Session {
             returns: Mutex::new(ReturnWatch::open(path)),
             zip: Mutex::new(None),
             macos: Mutex::new(None),
-        }))
+        });
+        // The baseline check still says the volume changed if this fails; only the detail is lost.
+        if let Err(error) = session.explain_changes(&session.volume, &check) {
+            eprintln!("could not work out what changed since the baseline: {error:#}");
+        }
+        Ok(session)
     }
 
     fn lock_database(&self) -> Result<std::sync::MutexGuard<'_, MapDb>> {
@@ -444,6 +457,12 @@ impl Session {
                 .lock()
                 .map_err(|_| anyhow!("baseline lock poisoned"))?
                 .clone(),
+            changes: self
+                .changes
+                .lock()
+                .map_err(|_| anyhow!("changes lock poisoned"))?
+                .as_ref()
+                .map(StructureChanges::summary),
             reads: self.volume.source().read_stats(),
             scan,
             scan_in_this_app,
@@ -570,12 +589,86 @@ impl Session {
     /// baseline. Any difference means something has written to the volume.
     pub fn verify_unchanged(&self) -> Result<BaselineCheck> {
         let fresh = Volume::open(self.volume.source().clone())?;
-        let check = self.workspace.check_baseline(&fresh.structure_hash)?;
+        let check = self.workspace.check_baseline(&fresh.structures)?;
         *self
             .baseline
             .lock()
             .map_err(|_| anyhow!("baseline lock poisoned"))? = check.clone();
+        self.explain_changes(&fresh, &check)?;
         Ok(check)
+    }
+
+    /// When the structures differ from the baseline, works out what was written and which
+    /// found entries claimed those clusters, and keeps that in the workspace. A change already
+    /// explained keeps the time it was first seen.
+    pub(crate) fn explain_changes(&self, current: &Volume, check: &BaselineCheck) -> Result<()> {
+        let explained = if check.unchanged {
+            None
+        } else if let Some(known) = self
+            .workspace
+            .read_changes()
+            .filter(|known| known.current_hash == check.current_hash)
+        {
+            Some(known)
+        } else if let Some(baseline) = self.workspace.baseline_copy() {
+            let mut changes = crate::changes::compare(
+                &baseline,
+                &current.structures,
+                current.limits(),
+                current.boot.last_cluster_exclusive(),
+            );
+            changes.baseline_recorded_at_millis = check.recorded_at_millis;
+            changes.detected_at_millis = crate::workspace::now_millis();
+            changes.affected = self.affected_by(current, &changes.written_clusters)?;
+            self.workspace.write_changes(&changes)?;
+            Some(changes)
+        } else {
+            None
+        };
+        *self
+            .changes
+            .lock()
+            .map_err(|_| anyhow!("changes lock poisoned"))? = explained;
+        Ok(())
+    }
+
+    /// The found files and folders that claimed any of `clusters`, with how many of them each.
+    fn affected_by(&self, volume: &Volume, clusters: &[u32]) -> Result<Vec<AffectedEntry>> {
+        let mut affected: std::collections::BTreeMap<i64, AffectedEntry> = Default::default();
+        self.with_database(|database| {
+            for &cluster in clusters.iter().take(MAX_WRITTEN_CLUSTERS_EXPLAINED) {
+                for row in database.owners(volume, cluster)? {
+                    // A file still visible in the filesystem is what wrote there, not a loss.
+                    let Some(id) = row.id.filter(|_| row.verdict != VERDICT_LIVE) else {
+                        continue;
+                    };
+                    affected
+                        .entry(id)
+                        .or_insert_with(|| AffectedEntry {
+                            id,
+                            name: row.name.clone(),
+                            path: row.path.clone(),
+                            length: row.length,
+                            is_dir: row.kind != "file",
+                            clusters_written: 0,
+                        })
+                        .clusters_written += 1;
+                }
+            }
+            Ok(())
+        })?;
+        let mut list: Vec<AffectedEntry> = affected.into_values().collect();
+        list.sort_by_key(|entry| std::cmp::Reverse(entry.length));
+        Ok(list)
+    }
+
+    /// Everything known about what changed since the baseline.
+    pub fn structure_changes(&self) -> Result<Option<StructureChanges>> {
+        Ok(self
+            .changes
+            .lock()
+            .map_err(|_| anyhow!("changes lock poisoned"))?
+            .clone())
     }
 
     pub fn overview(&self) -> Value {

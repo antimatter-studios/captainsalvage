@@ -73,6 +73,8 @@ export const ENGINE_TEXT: string[] = [
   "{kept} of {found} clusters are also claimed by deleted entries made before this file, so they hold this file's data.",
   "All {found} clusters were reused by files made after this one was deleted.",
   "{displaced} of {found} clusters were reused by files made after this one was deleted.",
+  "All {found} clusters were written after the baseline, so this file's data there is gone.",
+  "{written} of {found} clusters were written after the baseline, so their data is gone.",
   "Clusters free and unclaimed.",
   "First cluster is {held}, matching the name.",
   "First cluster holds {held}, which contradicts the name.",
