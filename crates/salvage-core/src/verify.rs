@@ -41,8 +41,6 @@ const BMFF_LARGE_HEADER_BYTES: usize = 16;
 /// Clusters macOS never wrote read back as zeros. Compressed video or audio does not hold this
 /// many zero bytes in a row, so a run this long inside the media data is a hole.
 const MEDIA_MAX_ZERO_RUN: usize = 32 * 1024;
-const RIFF_HEADER_BYTES: usize = 12;
-const RIFF_CHUNK_HEADER_BYTES: usize = 8;
 const FLAC_SIGNATURE: &[u8] = b"fLaC";
 const FLAC_BLOCK_HEADER_BYTES: usize = 4;
 const FLAC_STREAMINFO_BYTES: usize = 34;
@@ -112,6 +110,9 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
     if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"AVI ".as_slice()) {
         return verify_avi(data);
     }
+    if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        return verify_matroska(data);
+    }
     if data.starts_with(FLAC_SIGNATURE) {
         return verify_flac(data);
     }
@@ -124,6 +125,7 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
         "pdf" => return verify_pdf(data),
         name if BMFF_EXTENSIONS.contains(&name) => return verify_bmff(data),
         "avi" => return verify_avi(data),
+        "mkv" | "webm" | "mka" | "mk3d" => return verify_matroska(data),
         "flac" => return verify_flac(data),
         name if ZIP_EXTENSIONS.contains(&name) => return verify_zip(data),
         name if TEXT_EXTENSIONS.contains(&name) => return verify_text(data),
@@ -861,83 +863,22 @@ pub fn verify_bmff(data: &[u8]) -> VerifyReport {
     report.finish(data.len())
 }
 
-/// Walks an AVI file (a RIFF form of type "AVI "): chunks of a four-character id, a 32-bit
-/// little-endian size and data padded to an even length. Files over a gigabyte add more RIFF
-/// forms of type "AVIX" after the first. Long runs of zeros inside a chunk are unwritten
-/// clusters.
+/// Walks an AVI file (a RIFF form of type "AVI ", then "AVIX" forms past a gigabyte) chunk by
+/// chunk, down to each frame inside its lists, through the same walker large files stream through.
 pub fn verify_avi(data: &[u8]) -> VerifyReport {
-    let mut report = VerifyReport {
-        format: "avi".into(),
-        ..VerifyReport::default()
-    };
-    let mut position = 0usize;
-    while position + RIFF_HEADER_BYTES <= data.len() {
-        let form = &data[position + 8..position + 12];
-        let expected: &[u8] = if position == 0 { b"AVI " } else { b"AVIX" };
-        if &data[position..position + 4] != b"RIFF" || form != expected {
-            report.breaks.push(position as u64);
-            report.notes.push(format!(
-                "No RIFF {} form starts at {position}.",
-                String::from_utf8_lossy(expected)
-            ));
-            return report.finish(data.len());
-        }
-        let size = u32::from_le_bytes(
-            data[position + 4..position + 8]
-                .try_into()
-                .expect("four bytes"),
-        ) as usize;
-        let form_end = position + RIFF_CHUNK_HEADER_BYTES + size;
-        if form_end > data.len() {
-            report.notes.push(format!(
-                "The RIFF form at {position} claims {size} bytes, past the end of the data."
-            ));
-        }
-        let limit = form_end.min(data.len());
-        report.valid_bytes += RIFF_HEADER_BYTES as u64;
-        let mut chunk = position + RIFF_HEADER_BYTES;
-        while chunk + RIFF_CHUNK_HEADER_BYTES <= limit {
-            let id = &data[chunk..chunk + 4];
-            if !is_four_cc(id) {
-                report.breaks.push(chunk as u64);
-                report.notes.push(format!(
-                    "No chunk starts at {chunk}: its id is not four letters."
-                ));
-                return report.finish(data.len());
-            }
-            let length =
-                u32::from_le_bytes(data[chunk + 4..chunk + 8].try_into().expect("four bytes"))
-                    as usize;
-            let end = chunk + RIFF_CHUNK_HEADER_BYTES + length + (length & 1);
-            if end > limit {
-                report.breaks.push(chunk as u64);
-                report.notes.push(format!(
-                    "The {} chunk at {chunk} claims {length} bytes, past the end of the data.",
-                    String::from_utf8_lossy(id)
-                ));
-                return report.finish(data.len());
-            }
-            if let Some(hole) = long_zero_run(&data[chunk + RIFF_CHUNK_HEADER_BYTES..end]) {
-                let at = chunk + RIFF_CHUNK_HEADER_BYTES + hole;
-                report.valid_bytes += (at - chunk) as u64;
-                report.breaks.push(at as u64);
-                report.notes.push(format!(
-                    "The data turns to zeros at {at}, as unwritten clusters do."
-                ));
-                return report.finish(data.len());
-            }
-            report.units += 1;
-            report.valid_bytes += (end - chunk) as u64;
-            chunk = end;
-        }
-        if form_end > data.len() {
-            report.breaks.push(data.len() as u64);
-            return report.finish(data.len());
-        }
-        position = form_end;
-    }
-    report.reached_end = position == data.len();
-    report.finish(data.len())
+    walk_whole("film.avi", data)
+}
+
+/// Walks a Matroska file (MKV, WebM) element by element, down to each block in its clusters.
+pub fn verify_matroska(data: &[u8]) -> VerifyReport {
+    walk_whole("film.mkv", data)
+}
+
+fn walk_whole(name: &str, data: &[u8]) -> VerifyReport {
+    let mut walk = crate::stream_walk::StreamWalk::new(name, data.len() as u64)
+        .expect("a type the stream walker knows");
+    walk.feed(data);
+    walk.finish()
 }
 
 fn flac_crc8(data: &[u8]) -> u8 {
@@ -1141,11 +1082,16 @@ mod walker_tests {
     #[test]
     fn an_avi_is_walked_chunk_by_chunk() {
         let mut body = b"AVI ".to_vec();
-        body.extend(riff_chunk(b"LIST", b"hdrlavih0123"));
         body.extend(riff_chunk(
             b"LIST",
-            &[b"movi".as_slice(), &[5u8; 3001]].concat(),
+            &[b"hdrl".as_slice(), &riff_chunk(b"avih", &[7u8; 56])].concat(),
         ));
+        let frames = [
+            riff_chunk(b"00dc", &[5u8; 3001]),
+            riff_chunk(b"01wb", &[6u8; 400]),
+        ]
+        .concat();
+        body.extend(riff_chunk(b"LIST", &[b"movi".as_slice(), &frames].concat()));
         body.extend(riff_chunk(b"idx1", &[1u8; 32]));
         let file = [
             b"RIFF".as_slice(),
@@ -1156,9 +1102,17 @@ mod walker_tests {
         let report = verify_stream("clip.avi", &file);
         assert_eq!(
             (report.format.as_str(), report.units, report.reached_end),
-            ("avi", 3, true)
+            ("avi", 4, true),
+            "{:?}",
+            report.notes
         );
         assert!(report.breaks.is_empty());
+
+        // A frame header overwritten inside the movi list is found where it is.
+        let second = file.len() - (8 + 32) - (8 + 400);
+        let mut overwritten = file.clone();
+        overwritten[second..second + 4].copy_from_slice(&[0x91, 0x02, 0xfe, 0x33]);
+        assert_eq!(verify_avi(&overwritten).breaks, vec![second as u64]);
 
         let mut cut = file.clone();
         cut.truncate(file.len() - 10);
