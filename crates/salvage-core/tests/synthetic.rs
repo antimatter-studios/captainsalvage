@@ -539,7 +539,23 @@ fn read_stream_follows_a_non_contiguous_chain_and_stops_at_valid_length() {
 
 #[test]
 fn owners_finds_a_file_from_any_of_its_clusters() {
-    let volume = open_volume();
+    // A deleted entry whose chain starts in the middle of track.mp3's chain, at cluster 31.
+    let mut b = Builder {
+        image: build_volume(),
+    };
+    b.directory(
+        27,
+        &[entry_set(
+            "tail.mp3",
+            false,
+            31,
+            2 * CLUSTER as u64,
+            false,
+            false,
+        )],
+    );
+    let volume =
+        Volume::open(Arc::new(MemorySource::new(b.image))).expect("synthetic volume opens");
     let (workspace, dir) = temp_workspace("owners");
     scan(&volume, &workspace);
     let database = MapDb::open(&workspace.database()).expect("database");
@@ -548,6 +564,10 @@ fn owners_finds_a_file_from_any_of_its_clusters() {
         .owners(&volume, 33)
         .expect("owners of a chain's tail");
     assert!(chained.iter().any(|row| row.name == "track.mp3"));
+    assert!(
+        chained.iter().any(|row| row.name == "tail.mp3"),
+        "a chain claimed from its middle is found too"
+    );
     let contiguous = database
         .owners(&volume, 41)
         .expect("owners of a contiguous file's second cluster");
@@ -626,12 +646,84 @@ fn a_second_scan_is_refused_while_the_lock_is_held() {
 #[test]
 fn baseline_detects_a_changed_structure_hash() {
     let (workspace, dir) = temp_workspace("baseline");
-    let first = workspace.check_baseline("aaaa").expect("first");
+    let before = open_volume().structures;
+    let mut after = before.clone();
+    after.bitmap[20] ^= 1;
+    let first = workspace.check_baseline(&before).expect("first");
     assert!(first.unchanged && first.first_recording);
-    let same = workspace.check_baseline("aaaa").expect("same");
+    assert_eq!(
+        workspace.baseline_copy(),
+        Some(before.clone()),
+        "a copy is kept"
+    );
+    let same = workspace.check_baseline(&before).expect("same");
     assert!(same.unchanged && !same.first_recording);
-    let changed = workspace.check_baseline("bbbb").expect("changed");
+    let changed = workspace.check_baseline(&after).expect("changed");
     assert!(!changed.unchanged);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_write_after_the_baseline_is_explained_and_its_victims_named() {
+    // A deleted photo at cluster 150, free in the bitmap, in an orphan folder.
+    let mut b = Builder {
+        image: build_volume(),
+    };
+    b.directory(
+        27,
+        &[entry_set(
+            "lost.jpg",
+            false,
+            150,
+            CLUSTER as u64,
+            true,
+            false,
+        )],
+    );
+    b.put(150, 0, &[0xFF, 0xD8, 0xFF, 0xE0]);
+    b.put(150, 16, &noise(150, CLUSTER - 16));
+    let before = b.image.clone();
+
+    let (workspace, dir) = temp_workspace("written");
+    let first = Session::with_source(
+        Path::new("/test/image"),
+        Arc::new(MemorySource::new(before)),
+        workspace,
+    )
+    .expect("first session");
+    scan(&first.volume, &first.workspace);
+    assert!(first.status().expect("status").changes.is_none());
+    drop(first);
+
+    // Then something mounts it: a new folder in the root takes cluster 150 and writes there.
+    b.put(
+        ROOT_CLUSTER,
+        256,
+        &entry_set(".fseventsd", true, 150, CLUSTER as u64, true, true),
+    );
+    b.allocate(150);
+    b.put(150, 0, &noise(9150, CLUSTER));
+    let second = Session::with_source(
+        Path::new("/test/image"),
+        Arc::new(MemorySource::new(b.image)),
+        Workspace::at(&dir).expect("workspace"),
+    )
+    .expect("second session");
+    let status = second.status().expect("status");
+    assert!(!status.baseline.unchanged);
+    let summary = status.changes.expect("the change is explained");
+    assert_eq!(summary.written_clusters, 1);
+    assert_eq!(summary.root_entries, vec![".fseventsd".to_string()]);
+    assert_eq!(summary.affected_files, 1);
+    let changes = second.structure_changes().expect("changes").expect("some");
+    assert_eq!(changes.written_clusters, vec![150]);
+    assert_eq!(changes.affected[0].name, "lost.jpg");
+    assert!(changes.root_entries[0].before.is_none());
+
+    second.resolve().expect("resolve");
+    let database = MapDb::open(&second.workspace.database()).expect("database");
+    assert_eq!(verdict_of(&database, 27, "lost.jpg"), "overwritten");
+
     let _ = std::fs::remove_dir_all(dir);
 }
 

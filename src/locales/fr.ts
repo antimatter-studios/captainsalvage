@@ -939,6 +939,22 @@ const strings: Record<string, string> = {
   "Mode": "Mode",
   "Simple": "Simple",
   "What recovering files needs, with no cluster numbers": "Ce qu’il faut pour récupérer des fichiers, sans numéros de cluster",
+  "All {found} clusters were written after the baseline, so this file's data there is gone.": "Les {found} clusters ont été écrits après la référence, les données de ce fichier y sont donc perdues.",
+  "{written} of {found} clusters were written after the baseline, so their data is gone.": "{written} clusters sur {found} ont été écrits après la référence, leurs données sont donc perdues.",
+  "Something wrote to this disk after {date}. Show what changed": "Quelque chose a écrit sur ce disque après le {date}. Montrer ce qui a changé",
+  "Something wrote to this disk after {date}.": "Quelque chose a écrit sur ce disque après le {date}.",
+  "{clusters} clusters ({size}) that were free on {date} now hold other data.": "{clusters} clusters ({size}) qui étaient libres le {date} contiennent maintenant d'autres données.",
+  "{files} found files ({size}) used those clusters, so that part of them is gone. Rebuild the map to mark them.": "{files} fichiers trouvés ({size}) utilisaient ces clusters, cette partie d'eux est donc perdue. Reconstruisez la carte pour les marquer.",
+  "No file found on the disk used those clusters.": "Aucun fichier trouvé sur le disque n'utilisait ces clusters.",
+  "Changed at the top of the disk: {names}.": "Modifié au premier niveau du disque : {names}.",
+  "The boot region changed too.": "La zone de démarrage a aussi changé.",
+  "No copy of the disk's structures from {date} is kept, so what changed cannot be shown.": "Aucune copie des structures du disque du {date} n'est conservée, on ne peut donc pas montrer ce qui a changé.",
+  "macOS writes like this when it mounts the disk. Plug the disk in only while Captain Salvage is open, so it can keep the disk unmounted.": "macOS écrit ainsi quand il monte le disque. Branchez le disque seulement pendant que Captain Salvage est ouvert, pour qu'il puisse le garder démonté.",
+  "File": "Fichier",
+  "Clusters written": "Clusters écrits",
+  "Hide the files": "Masquer les fichiers",
+  "Show the files": "Afficher les fichiers",
+  "Fold away": "Replier",
 };
 
 export default strings;

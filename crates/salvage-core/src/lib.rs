@@ -7,6 +7,7 @@ pub mod basket;
 pub mod browse;
 pub mod canvas;
 pub mod carve;
+pub mod changes;
 pub mod content;
 pub mod engine;
 pub mod exfat;

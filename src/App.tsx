@@ -34,6 +34,7 @@ import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
 import { ModeContext, type Mode } from "./mode";
 import { MountedWarning } from "./components/MountedWarning";
+import { WrittenWarning } from "./components/WrittenWarning";
 import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
 import { isArchiveName, ZipView } from "./components/ZipView";
@@ -787,6 +788,7 @@ export default function App() {
   return (
     <ModeContext.Provider value={mode}>
     <MountedWarning />
+    <WrittenWarning status={status} clusterSize={overview.geometry.clusterSize} onChanged={bump} />
     <div
       className={simple ? "app app-simple" : "app"}
       style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}

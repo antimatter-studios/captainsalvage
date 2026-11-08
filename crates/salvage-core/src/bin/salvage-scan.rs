@@ -51,7 +51,7 @@ fn main() -> Result<()> {
     let source = Arc::new(FileSource::open(path).with_context(|| format!("opening {device}"))?);
     let volume = Volume::open(source.clone())?;
     let workspace = Workspace::for_serial(volume.boot.volume_serial)?;
-    let baseline = workspace.check_baseline(&volume.structure_hash)?;
+    let baseline = workspace.check_baseline(&volume.structures)?;
 
     println!("device: {device}");
     println!("os denies writes: {}", os_denies_writes(path));

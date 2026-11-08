@@ -268,6 +268,8 @@ pub fn from_extents(extents: &[Extent]) -> Vec<u32> {
 
 /// Largest contiguous file assumed when looking for owners of a cluster: 16 GiB.
 const OWNER_LOOKBACK_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+/// Possible first clusters asked about per query when looking for a cluster's owners.
+const OWNER_START_BATCH: usize = 500;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1049,22 +1051,52 @@ impl MapDb {
             .is_some())
     }
 
-    /// Entries whose claimed clusters include `cluster`.
+    /// Entries whose claimed clusters include `cluster`. A chain can be claimed from any of its
+    /// clusters, not only its head: a deleted entry whose clusters were reused can start in
+    /// the middle of another file's chain. So every cluster on the way back to the head is a
+    /// possible first cluster.
     pub fn owners(&self, volume: &Volume, cluster: u32) -> Result<Vec<Row>> {
-        let chain_head = volume.chain_head(cluster);
         let lookback = (OWNER_LOOKBACK_BYTES / volume.boot.cluster_size()) as u32;
-        let sql = format!(
+        let mut starts = vec![cluster];
+        let mut seen: HashSet<u32> = HashSet::from([cluster]);
+        let mut current = cluster;
+        while let Some(previous) = volume.predecessor(current) {
+            if !seen.insert(previous) {
+                break;
+            }
+            starts.push(previous);
+            current = previous;
+        }
+        let read = |row: &rusqlite::Row<'_>| {
+            Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?))
+        };
+        let contiguous = format!(
             "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 AND \
-             (first_cluster = ?1 OR o_first = ?1 OR (no_fat_chain = 1 AND first_cluster BETWEEN ?2 AND ?3)) \
-             ORDER BY first_cluster = ?1 DESC, first_cluster DESC LIMIT 2000"
+             no_fat_chain = 1 AND first_cluster BETWEEN ?1 AND ?2"
         );
-        let mut statement = self.connection.prepare_cached(&sql)?;
-        let found = statement
-            .query_map(
-                params![chain_head, cluster.saturating_sub(lookback), cluster],
-                |row| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?)),
-            )?
+        let mut found = self
+            .connection
+            .prepare_cached(&contiguous)?
+            .query_map(params![cluster.saturating_sub(lookback), cluster], read)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        // The starts are cluster numbers this code produced, so listing them inline is safe.
+        for batch in starts.chunks(OWNER_START_BATCH) {
+            let list = batch
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let chained = format!(
+                "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 AND \
+                 no_fat_chain = 0 AND (first_cluster IN ({list}) OR o_first IN ({list}))"
+            );
+            let mut statement = self.connection.prepare(&chained)?;
+            found.extend(
+                statement
+                    .query_map([], read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?,
+            );
+        }
         let cluster_size = volume.boot.cluster_size();
         let mut rows = Vec::new();
         for (mut row, node) in found {
@@ -1082,6 +1114,8 @@ impl MapDb {
                 rows.push(row);
             }
         }
+        rows.sort_by_key(|row| std::cmp::Reverse(row.first_cluster));
+        rows.truncate(2000);
         Ok(rows)
     }
 

@@ -402,6 +402,7 @@ impl Engine {
             "status" => Ok(serde_json::to_value(session.status()?)?),
             "volume_overview" => Ok(session.overview()),
             "verify_unchanged" => Ok(serde_json::to_value(session.verify_unchanged()?)?),
+            "structure_changes" => Ok(serde_json::to_value(session.structure_changes()?)?),
 
             "region_stats" => {
                 let last = session.volume.boot.last_cluster_exclusive();

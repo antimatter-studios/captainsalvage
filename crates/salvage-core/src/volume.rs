@@ -1,5 +1,6 @@
 //! A volume's boot regions, FAT and bitmap, loaded into memory for inspection.
 
+use crate::changes::StructureCopy;
 use crate::exfat::{
     boot_checksum, find_bitmap_entry, stored_boot_checksum, BootSector, Limits,
     BOOT_REGION_SECTORS, FAT_BAD, FAT_END, FIRST_CLUSTER,
@@ -7,7 +8,6 @@ use crate::exfat::{
 use crate::source::BlockSource;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -78,12 +78,10 @@ pub struct Volume {
     pub bitmap: Vec<u8>,
     pub root_clusters: Vec<u32>,
     pub structure_hash: String,
+    /// The bytes the structure hash covers, kept so a later change can be explained.
+    pub structures: StructureCopy,
     pub stats: AllocationStats,
     predecessors: Vec<u32>,
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 impl Volume {
@@ -159,13 +157,14 @@ impl Volume {
             )
             .context("reading allocation bitmap")?;
 
-        let mut hasher = Sha256::new();
-        hasher.update(&main_region);
-        hasher.update(&backup_region);
-        hasher.update(&raw_fat);
-        hasher.update(&bitmap);
-        hasher.update(&root);
-        let structure_hash = hex(hasher.finalize().as_slice());
+        let structures = StructureCopy {
+            main: main_region,
+            backup: backup_region,
+            fat: raw_fat,
+            bitmap: bitmap.clone(),
+            root,
+        };
+        let structure_hash = structures.hash();
 
         let mut volume = Self {
             source,
@@ -176,6 +175,7 @@ impl Volume {
             bitmap,
             root_clusters,
             structure_hash,
+            structures,
             stats: AllocationStats::default(),
             predecessors: Vec::new(),
         };

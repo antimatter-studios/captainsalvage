@@ -37,6 +37,8 @@ const CONTENT_MATCHES: f64 = 1.0;
 const CONTENT_INCONCLUSIVE: f64 = 0.7;
 const CONTENT_CONTRADICTS: f64 = 0.15;
 const CHAIN_GUESSED_PENALTY: f64 = 0.75;
+/// A file part of which was written over after the baseline: what is left is still uncertain.
+const WRITTEN_PENALTY: f64 = 0.5;
 const FOLDER_NOT_FOUND_PENALTY: f64 = 0.2;
 const LINK_OVERLAY: f64 = 0.9;
 const CONFIDENCE_SCALE: f64 = 255.0;
@@ -114,6 +116,8 @@ struct Assessment {
     found: u64,
     allocated: u64,
     conflict: u64,
+    /// Clusters written since the baseline, whose data from before is gone.
+    written: u64,
 }
 
 impl Assessment {
@@ -126,6 +130,7 @@ impl Assessment {
             found: 0,
             allocated: 0,
             conflict: 0,
+            written: 0,
         }
     }
 }
@@ -319,6 +324,8 @@ struct Context<'a> {
     /// For clusters several streams claim: the first cluster of the stream that
     /// holds it, or None when nothing settles which one does.
     holders: &'a HashMap<u32, Option<u32>>,
+    /// Clusters written since the baseline, from the workspace's record of changes.
+    written: &'a HashSet<u32>,
     node_heads: &'a HashSet<u32>,
     params: ResolveParams,
 }
@@ -437,6 +444,15 @@ impl Context<'_> {
         } else {
             (displaced + contested).saturating_sub(self.params.conflict_tolerance_clusters)
         };
+        let written = if self.written.is_empty() {
+            0
+        } else {
+            stream
+                .clusters
+                .iter()
+                .filter(|cluster| self.written.contains(cluster))
+                .count() as u64
+        };
         let build = |verdict, reason: String, confidence: f64| Assessment {
             verdict,
             reason,
@@ -445,6 +461,7 @@ impl Context<'_> {
             found,
             allocated,
             conflict,
+            written,
         };
 
         if set.in_use
@@ -458,6 +475,22 @@ impl Context<'_> {
                 "Visible in the current filesystem.".into(),
                 1.0,
             );
+        }
+
+        // A file still visible is what did the writing. Any other file there lost that data.
+        if written > 0 {
+            let reason = if written == found {
+                format!("All {found} clusters were written after the baseline, so this file's data there is gone.")
+            } else {
+                format!("{written} of {found} clusters were written after the baseline, so their data is gone.")
+            };
+            let verdict = if written == found {
+                VERDICT_OVERWRITTEN
+            } else {
+                VERDICT_PARTIAL
+            };
+            let left = 1.0 - written as f64 / found.max(1) as f64;
+            return build(verdict, reason, left * WRITTEN_PENALTY);
         }
 
         let (content, held) = self.content_of(set);
@@ -788,6 +821,10 @@ impl MapDb {
             }
         }
 
+        let written: HashSet<u32> = workspace
+            .read_changes()
+            .map(|changes| changes.written_clusters.into_iter().collect())
+            .unwrap_or_default();
         let holders: HashMap<u32, Option<u32>> = if params.ignore_reuse_order {
             HashMap::new()
         } else {
@@ -809,6 +846,7 @@ impl MapDb {
             text_heads: &text_heads,
             claims: &claims,
             holders: &holders,
+            written: &written,
             node_heads: &node_heads,
             params,
         };
@@ -847,8 +885,11 @@ impl MapDb {
             } else {
                 let (stream, assumed) = streams.claim(set);
                 let mut assessment = context.assess_file(set, &stream, assumed, node_kind);
+                // A test read the file before anything was written over it, so it no longer counts.
                 if let Some(test) = file_tests.get(&set.id).filter(|test| {
-                    test.first_cluster == set.first_cluster && test.length == set.length
+                    assessment.written == 0
+                        && test.first_cluster == set.first_cluster
+                        && test.length == set.length
                 }) {
                     assessment = apply_file_test(assessment, test);
                 }

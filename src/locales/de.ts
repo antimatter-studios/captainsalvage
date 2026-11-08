@@ -939,6 +939,22 @@ const strings: Record<string, string> = {
   "Mode": "Modus",
   "Simple": "Einfach",
   "What recovering files needs, with no cluster numbers": "Was die Wiederherstellung braucht, ohne Clusternummern",
+  "All {found} clusters were written after the baseline, so this file's data there is gone.": "Alle {found} Cluster wurden nach der Ausgangsmessung überschrieben, die Daten dieser Datei dort sind also verloren.",
+  "{written} of {found} clusters were written after the baseline, so their data is gone.": "{written} von {found} Clustern wurden nach der Ausgangsmessung überschrieben, ihre Daten sind also verloren.",
+  "Something wrote to this disk after {date}. Show what changed": "Nach dem {date} wurde auf diesen Datenträger geschrieben. Zeigen, was sich geändert hat",
+  "Something wrote to this disk after {date}.": "Nach dem {date} wurde auf diesen Datenträger geschrieben.",
+  "{clusters} clusters ({size}) that were free on {date} now hold other data.": "{clusters} Cluster ({size}), die am {date} frei waren, enthalten jetzt andere Daten.",
+  "{files} found files ({size}) used those clusters, so that part of them is gone. Rebuild the map to mark them.": "{files} gefundene Dateien ({size}) nutzten diese Cluster, dieser Teil von ihnen ist also verloren. Baue die Karte neu auf, um sie zu markieren.",
+  "No file found on the disk used those clusters.": "Keine auf dem Datenträger gefundene Datei nutzte diese Cluster.",
+  "Changed at the top of the disk: {names}.": "Auf der obersten Ebene des Datenträgers geändert: {names}.",
+  "The boot region changed too.": "Auch der Boot-Bereich hat sich geändert.",
+  "No copy of the disk's structures from {date} is kept, so what changed cannot be shown.": "Es gibt keine Kopie der Strukturen des Datenträgers vom {date}, daher lässt sich nicht zeigen, was sich geändert hat.",
+  "macOS writes like this when it mounts the disk. Plug the disk in only while Captain Salvage is open, so it can keep the disk unmounted.": "So schreibt macOS, wenn es den Datenträger aktiviert. Schließe den Datenträger nur an, während Captain Salvage geöffnet ist, damit es ihn deaktiviert halten kann.",
+  "File": "Datei",
+  "Clusters written": "Überschriebene Cluster",
+  "Hide the files": "Dateien ausblenden",
+  "Show the files": "Dateien zeigen",
+  "Fold away": "Einklappen",
 };
 
 export default strings;
