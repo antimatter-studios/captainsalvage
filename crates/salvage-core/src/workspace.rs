@@ -152,8 +152,13 @@ impl Workspace {
         if let Ok(text) = fs::read_to_string(self.baseline()) {
             let baseline: Baseline =
                 serde_json::from_str(&text).context("parsing baseline.json")?;
+            let unchanged = baseline.structure_hash == current_hash;
+            // A baseline from before copies were kept gets one now, while the disk still matches.
+            if unchanged && self.baseline_copy().is_none() {
+                current.save(&self.baseline_copy_dir())?;
+            }
             return Ok(BaselineCheck {
-                unchanged: baseline.structure_hash == current_hash,
+                unchanged,
                 first_recording: false,
                 recorded_at_millis: baseline.recorded_at_millis,
                 baseline_hash: baseline.structure_hash,

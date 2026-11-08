@@ -3,7 +3,7 @@
 //! The app and the MCP tools both go through this type, so the person and the AI
 //! always see the same data and act on the same map.
 
-use crate::changes::{AffectedEntry, StructureChanges};
+use crate::changes::{AffectedEntry, StructureChanges, StructureCopy};
 use crate::content::{
     content_group, entropy_bits, CLASS_DIRECTORY, CLASS_NAMES, GROUP_COUNT, GROUP_NAMES,
 };
@@ -107,6 +107,8 @@ pub struct Status {
     pub baseline: BaselineCheck,
     /// What changed since the baseline, when it has changed and a copy of it is kept.
     pub changes: Option<crate::changes::ChangeSummary>,
+    /// The map reads the FAT, bitmap and root from the baseline's copy, not from the disk.
+    pub structures_from_baseline: bool,
     pub reads: ReadStats,
     pub scan: ScanProgress,
     pub scan_in_this_app: bool,
@@ -188,6 +190,9 @@ pub struct Session {
     pub workspace: Workspace,
     pub baseline: Mutex<BaselineCheck>,
     changes: Mutex<Option<StructureChanges>>,
+    /// The FAT, bitmap and root are read from the baseline's copy, because the disk's own
+    /// have changed since.
+    structures_from_baseline: bool,
     pub database: Mutex<MapDb>,
     whole_disk: Mutex<Option<Arc<FileSource>>>,
     scan_stop: Arc<AtomicBool>,
@@ -334,6 +339,17 @@ impl Session {
     fn assemble(path: &Path, volume: Volume, workspace: Workspace) -> Result<Arc<Self>> {
         let baseline = workspace.check_baseline(&volume.structures)?;
         let check = baseline.clone();
+        // When the disk's structures have changed, the copy from the baseline is what the map
+        // was built from and what still describes the files, so it is read instead.
+        let copy = (!baseline.unchanged)
+            .then(|| workspace.baseline_copy())
+            .flatten();
+        let on_disk = copy.as_ref().map(|_| volume.structures.clone());
+        let structures_from_baseline = copy.is_some();
+        let volume = match copy {
+            Some(copy) => Volume::from_structures(volume.source().clone(), copy)?,
+            None => volume,
+        };
         let database = MapDb::open(&workspace.database())?;
         let next_cluster = database
             .state_u64("next_cluster")?
@@ -344,6 +360,7 @@ impl Session {
             workspace,
             baseline: Mutex::new(baseline),
             changes: Mutex::new(None),
+            structures_from_baseline,
             database: Mutex::new(database),
             whole_disk: Mutex::new(None),
             scan_stop: Arc::new(AtomicBool::new(false)),
@@ -363,7 +380,8 @@ impl Session {
             macos: Mutex::new(None),
         });
         // The baseline check still says the volume changed if this fails; only the detail is lost.
-        if let Err(error) = session.explain_changes(&session.volume, &check) {
+        let current = on_disk.as_ref().unwrap_or(&session.volume.structures);
+        if let Err(error) = session.explain_changes(current, &check) {
             eprintln!("could not work out what changed since the baseline: {error:#}");
         }
         Ok(session)
@@ -463,6 +481,7 @@ impl Session {
                 .map_err(|_| anyhow!("changes lock poisoned"))?
                 .as_ref()
                 .map(StructureChanges::summary),
+            structures_from_baseline: self.structures_from_baseline,
             reads: self.volume.source().read_stats(),
             scan,
             scan_in_this_app,
@@ -588,8 +607,8 @@ impl Session {
     /// Re-reads the volume's structures from disk and compares them with the
     /// baseline. Any difference means something has written to the volume.
     pub fn verify_unchanged(&self) -> Result<BaselineCheck> {
-        let fresh = Volume::open(self.volume.source().clone())?;
-        let check = self.workspace.check_baseline(&fresh.structures)?;
+        let fresh = Volume::read_structures(self.volume.source().as_ref())?;
+        let check = self.workspace.check_baseline(&fresh)?;
         *self
             .baseline
             .lock()
@@ -601,7 +620,11 @@ impl Session {
     /// When the structures differ from the baseline, works out what was written and which
     /// found entries claimed those clusters, and keeps that in the workspace. A change already
     /// explained keeps the time it was first seen.
-    pub(crate) fn explain_changes(&self, current: &Volume, check: &BaselineCheck) -> Result<()> {
+    pub(crate) fn explain_changes(
+        &self,
+        current: &StructureCopy,
+        check: &BaselineCheck,
+    ) -> Result<()> {
         let explained = if check.unchanged {
             None
         } else if let Some(known) = self
@@ -613,13 +636,13 @@ impl Session {
         } else if let Some(baseline) = self.workspace.baseline_copy() {
             let mut changes = crate::changes::compare(
                 &baseline,
-                &current.structures,
-                current.limits(),
-                current.boot.last_cluster_exclusive(),
+                current,
+                self.volume.limits(),
+                self.volume.boot.last_cluster_exclusive(),
             );
             changes.baseline_recorded_at_millis = check.recorded_at_millis;
             changes.detected_at_millis = crate::workspace::now_millis();
-            changes.affected = self.affected_by(current, &changes.written_clusters)?;
+            changes.affected = self.affected_by(&changes.written_clusters)?;
             self.workspace.write_changes(&changes)?;
             Some(changes)
         } else {
@@ -633,7 +656,10 @@ impl Session {
     }
 
     /// The found files and folders that claimed any of `clusters`, with how many of them each.
-    fn affected_by(&self, volume: &Volume, clusters: &[u32]) -> Result<Vec<AffectedEntry>> {
+    /// Chains are followed through the structures the map was built from, so a file is found
+    /// the way the scan found it.
+    fn affected_by(&self, clusters: &[u32]) -> Result<Vec<AffectedEntry>> {
+        let volume = &self.volume;
         let mut affected: std::collections::BTreeMap<i64, AffectedEntry> = Default::default();
         self.with_database(|database| {
             for &cluster in clusters.iter().take(MAX_WRITTEN_CLUSTERS_EXPLAINED) {

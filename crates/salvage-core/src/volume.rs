@@ -84,55 +84,64 @@ pub struct Volume {
     predecessors: Vec<u32>,
 }
 
+/// The FAT's entries, padded to cover every cluster of the volume.
+fn decode_fat(raw: &[u8], boot: &BootSector) -> Vec<u32> {
+    let mut fat: Vec<u32> = raw
+        .chunks_exact(4)
+        .map(|entry| u32::from_le_bytes(entry.try_into().expect("four bytes")))
+        .collect();
+    let last = boot.last_cluster_exclusive();
+    if fat.len() < last as usize {
+        fat.resize(last as usize, 0);
+    }
+    fat
+}
+
+/// The root directory's clusters, following the FAT from the boot sector's root cluster.
+fn root_chain(boot: &BootSector, fat: &[u32]) -> Vec<u32> {
+    let last = boot.last_cluster_exclusive();
+    let mut clusters = Vec::new();
+    let mut current = boot.root_cluster;
+    let mut seen = HashSet::new();
+    while (FIRST_CLUSTER..last).contains(&current) && seen.insert(current) {
+        clusters.push(current);
+        current = fat[current as usize];
+    }
+    clusters
+}
+
 impl Volume {
     pub fn open(source: Arc<dyn BlockSource>) -> Result<Self> {
+        let structures = Self::read_structures(source.as_ref())?;
+        Self::from_structures(source, structures)
+    }
+
+    /// Reads the boot regions, FAT, root directory and allocation bitmap from the disk.
+    pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
         let region_bytes = (BOOT_REGION_SECTORS * BOOT_SECTOR_ASSUMED) as usize;
-        let mut main_region = vec![0u8; region_bytes];
-        let mut backup_region = vec![0u8; region_bytes];
+        let mut main = vec![0u8; region_bytes];
+        let mut backup = vec![0u8; region_bytes];
         source
-            .read_exact_at(0, &mut main_region)
+            .read_exact_at(0, &mut main)
             .context("reading main boot region")?;
         source
-            .read_exact_at(region_bytes as u64, &mut backup_region)
+            .read_exact_at(region_bytes as u64, &mut backup)
             .context("reading backup boot region")?;
-        let boot = BootSector::parse(&main_region).context("main boot sector")?;
-        let backup_boot = BootSector::parse(&backup_region).context("backup boot sector")?;
+        let boot = BootSector::parse(&main).context("main boot sector")?;
         if boot.bytes_per_sector() != BOOT_SECTOR_ASSUMED {
             bail!("unsupported sector size {}", boot.bytes_per_sector());
         }
-        let sector = boot.bytes_per_sector() as usize;
-        let boot_check = BootCheck {
-            main_stored: stored_boot_checksum(&main_region, sector),
-            main_computed: boot_checksum(&main_region, sector),
-            backup_stored: stored_boot_checksum(&backup_region, sector),
-            backup_computed: boot_checksum(&backup_region, sector),
-            regions_identical: main_region == backup_region,
-        };
 
         let fat_bytes = u64::from(boot.fat_length) * boot.bytes_per_sector();
-        let mut raw_fat = vec![0u8; fat_bytes as usize];
+        let mut fat = vec![0u8; fat_bytes as usize];
         source
             .read_exact_at(
                 u64::from(boot.fat_offset) * boot.bytes_per_sector(),
-                &mut raw_fat,
+                &mut fat,
             )
             .context("reading FAT")?;
-        let mut fat: Vec<u32> = raw_fat
-            .chunks_exact(4)
-            .map(|entry| u32::from_le_bytes(entry.try_into().expect("four bytes")))
-            .collect();
-        let last = boot.last_cluster_exclusive();
-        if fat.len() < last as usize {
-            fat.resize(last as usize, 0);
-        }
 
-        let mut root_clusters = Vec::new();
-        let mut current = boot.root_cluster;
-        let mut seen = HashSet::new();
-        while (FIRST_CLUSTER..last).contains(&current) && seen.insert(current) {
-            root_clusters.push(current);
-            current = fat[current as usize];
-        }
+        let root_clusters = root_chain(&boot, &decode_fat(&fat, &boot));
         let cluster_size = boot.cluster_size();
         let mut root = vec![0u8; root_clusters.len() * cluster_size as usize];
         for (index, &cluster) in root_clusters.iter().enumerate() {
@@ -156,23 +165,48 @@ impl Volume {
                 &mut bitmap,
             )
             .context("reading allocation bitmap")?;
-
-        let structures = StructureCopy {
-            main: main_region,
-            backup: backup_region,
-            fat: raw_fat,
-            bitmap: bitmap.clone(),
+        Ok(StructureCopy {
+            main,
+            backup,
+            fat,
+            bitmap,
             root,
-        };
-        let structure_hash = structures.hash();
+        })
+    }
 
+    /// A volume whose structures come from `structures` rather than from the disk, as a saved
+    /// copy does when the disk's own have been written over. File data is still read from
+    /// `source`.
+    pub fn from_structures(
+        source: Arc<dyn BlockSource>,
+        structures: StructureCopy,
+    ) -> Result<Self> {
+        let boot = BootSector::parse(&structures.main).context("main boot sector")?;
+        let backup_boot = BootSector::parse(&structures.backup).context("backup boot sector")?;
+        if boot.bytes_per_sector() != BOOT_SECTOR_ASSUMED {
+            bail!("unsupported sector size {}", boot.bytes_per_sector());
+        }
+        let sector = boot.bytes_per_sector() as usize;
+        let boot_check = BootCheck {
+            main_stored: stored_boot_checksum(&structures.main, sector),
+            main_computed: boot_checksum(&structures.main, sector),
+            backup_stored: stored_boot_checksum(&structures.backup, sector),
+            backup_computed: boot_checksum(&structures.backup, sector),
+            regions_identical: structures.main == structures.backup,
+        };
+        let fat = decode_fat(&structures.fat, &boot);
+        let root_clusters = root_chain(&boot, &fat);
+        if structures.root.len() as u64 != root_clusters.len() as u64 * boot.cluster_size() {
+            bail!("the root directory copy does not match the FAT's root chain");
+        }
+        let structure_hash = structures.hash();
         let mut volume = Self {
             source,
             boot,
             backup_boot,
             boot_check,
             fat,
-            bitmap,
+            bitmap: structures.bitmap.clone(),
             root_clusters,
             structure_hash,
             structures,

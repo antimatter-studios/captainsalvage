@@ -955,6 +955,7 @@ const strings: Record<string, string> = {
   "Hide the files": "Ocultar los archivos",
   "Show the files": "Mostrar los archivos",
   "Fold away": "Plegar",
+  "The map reads the FAT, bitmap and root as they were on {date}, from the copy kept on this Mac, not from the disk.": "El mapa lee la FAT, el mapa de bits y la raíz tal como estaban el {date}, de la copia guardada en este Mac, no del disco.",
 };
 
 export default strings;
