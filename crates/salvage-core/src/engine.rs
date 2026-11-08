@@ -758,6 +758,17 @@ impl Engine {
             }
 
             "query_map" => session.query_map(need_str(args, "sql")?),
+            "breakdown" => {
+                let request: crate::summaries::BreakdownRequest =
+                    serde_json::from_value(args.clone()).context("invalid breakdown request")?;
+                session.with_database(|database| crate::summaries::breakdown(database, &request))
+            }
+            "chain_summary" => {
+                let size = session.volume.boot.cluster_size();
+                let groups = session
+                    .with_database(|database| crate::summaries::chain_summary(database, size))?;
+                Ok(json!({"groups": groups}))
+            }
             "run_script" => {
                 let timeout = u64_of(args, "timeoutSeconds").unwrap_or(DEFAULT_TIMEOUT_SECONDS);
                 run_script(&session, need_str(args, "source")?, timeout)

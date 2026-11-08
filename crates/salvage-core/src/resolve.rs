@@ -43,6 +43,44 @@ const FOLDER_NOT_FOUND_PENALTY: f64 = 0.2;
 const LINK_OVERLAY: f64 = 0.9;
 const CONFIDENCE_SCALE: f64 = 255.0;
 
+/// Stable codes for why an entry got its verdict, stored beside the reason so tools can group
+/// by them. The reason sentence says the same in words, with the numbers.
+pub const CODE_LIVE: &str = "live";
+pub const CODE_WRITTEN_AFTER_BASELINE: &str = "written_after_baseline";
+pub const CODE_OUTSIDE_VOLUME: &str = "outside_volume";
+pub const CODE_CHAIN_BROKEN: &str = "chain_broken";
+pub const CODE_IN_USE_NOW: &str = "in_use_now";
+pub const CODE_REUSED_AFTER_DELETION: &str = "reused_after_deletion";
+pub const CODE_CONTESTED: &str = "contested";
+pub const CODE_CONTENT_MATCHES: &str = "content_matches";
+pub const CODE_CONTENT_CONTRADICTS: &str = "content_contradicts";
+pub const CODE_CONTENT_UNCONFIRMED: &str = "content_unconfirmed";
+pub const CODE_ENTRY_DAMAGED: &str = "entry_damaged";
+pub const CODE_EMPTY: &str = "empty";
+pub const CODE_RENAME_RESIDUE: &str = "rename_residue";
+pub const CODE_FOLDER_FOUND: &str = "folder_found";
+pub const CODE_FOLDER_EMPTY: &str = "folder_empty";
+pub const CODE_FOLDER_MISSING: &str = "folder_missing";
+/// Every code, for tools that list or check them.
+pub const REASON_CODES: &[&str] = &[
+    CODE_LIVE,
+    CODE_WRITTEN_AFTER_BASELINE,
+    CODE_OUTSIDE_VOLUME,
+    CODE_CHAIN_BROKEN,
+    CODE_IN_USE_NOW,
+    CODE_REUSED_AFTER_DELETION,
+    CODE_CONTESTED,
+    CODE_CONTENT_MATCHES,
+    CODE_CONTENT_CONTRADICTS,
+    CODE_CONTENT_UNCONFIRMED,
+    CODE_ENTRY_DAMAGED,
+    CODE_EMPTY,
+    CODE_RENAME_RESIDUE,
+    CODE_FOLDER_FOUND,
+    CODE_FOLDER_EMPTY,
+    CODE_FOLDER_MISSING,
+];
+
 pub const OWNERSHIP_UNEXPLAINED: u8 = 0;
 pub const OWNERSHIP_ONE_ENTRY: u8 = 1;
 pub const OWNERSHIP_SEVERAL_ENTRIES: u8 = 2;
@@ -110,6 +148,8 @@ struct Totals {
 
 struct Assessment {
     verdict: &'static str,
+    /// Why, as a stable code that tools can group by. The reason says it in words.
+    code: &'static str,
     reason: String,
     confidence: f64,
     needed: u64,
@@ -121,9 +161,15 @@ struct Assessment {
 }
 
 impl Assessment {
-    fn plain(verdict: &'static str, reason: impl Into<String>, confidence: f64) -> Self {
+    fn plain(
+        verdict: &'static str,
+        code: &'static str,
+        reason: impl Into<String>,
+        confidence: f64,
+    ) -> Self {
         Self {
             verdict,
+            code,
             reason: reason.into(),
             confidence,
             needed: 0,
@@ -391,6 +437,7 @@ impl Context<'_> {
             };
             return Assessment::plain(
                 VERDICT_FOLDER,
+                CODE_FOLDER_FOUND,
                 format!("{prefix}Folder contents found."),
                 confidence,
             );
@@ -399,12 +446,14 @@ impl Context<'_> {
         if class == CLASS_ZEROS {
             return Assessment::plain(
                 VERDICT_FOLDER_EMPTY,
+                CODE_FOLDER_EMPTY,
                 "Folder cluster is all zeros: the folder was empty, or was cleared.",
                 trust * FOLDER_NOT_FOUND_PENALTY,
             );
         }
         Assessment::plain(
             VERDICT_FOLDER_MISSING,
+            CODE_FOLDER_MISSING,
             format!(
                 "Folder cluster holds no directory entries. It now holds: {}.",
                 CLASS_NAMES[usize::from(class)]
@@ -453,8 +502,9 @@ impl Context<'_> {
                 .filter(|cluster| self.written.contains(cluster))
                 .count() as u64
         };
-        let build = |verdict, reason: String, confidence: f64| Assessment {
+        let build = |verdict, code, reason: String, confidence: f64| Assessment {
             verdict,
+            code,
             reason,
             confidence,
             needed: stream.needed,
@@ -472,6 +522,7 @@ impl Context<'_> {
         {
             return build(
                 VERDICT_LIVE,
+                CODE_LIVE,
                 "Visible in the current filesystem.".into(),
                 1.0,
             );
@@ -490,7 +541,12 @@ impl Context<'_> {
                 VERDICT_PARTIAL
             };
             let left = 1.0 - written as f64 / found.max(1) as f64;
-            return build(verdict, reason, left * WRITTEN_PENALTY);
+            return build(
+                verdict,
+                CODE_WRITTEN_AFTER_BASELINE,
+                reason,
+                left * WRITTEN_PENALTY,
+            );
         }
 
         let (content, held) = self.content_of(set);
@@ -541,25 +597,25 @@ impl Context<'_> {
                 "{kept} of {found} clusters are also claimed by deleted entries made before this file, so they hold this file's data."
             ));
         }
-        let verdict = if found == 0 {
+        let (verdict, code) = if found == 0 {
             sentences.push("First cluster is outside the volume.".to_string());
-            VERDICT_PARTIAL
+            (VERDICT_PARTIAL, CODE_OUTSIDE_VOLUME)
         } else if found < stream.needed {
             sentences.push(format!(
                 "FAT chain ends early: {found} of {} clusters reachable.",
                 stream.needed
             ));
-            VERDICT_PARTIAL
+            (VERDICT_PARTIAL, CODE_CHAIN_BROKEN)
         } else if allocated > 0 {
             sentences.push(format!(
                 "{allocated} of {found} clusters are in use by current files."
             ));
-            VERDICT_PARTIAL
+            (VERDICT_PARTIAL, CODE_IN_USE_NOW)
         } else if conflict > 0 && displaced == found {
             sentences.push(format!(
                 "All {found} clusters were reused by files made after this one was deleted."
             ));
-            VERDICT_OVERWRITTEN
+            (VERDICT_OVERWRITTEN, CODE_REUSED_AFTER_DELETION)
         } else if conflict > 0 {
             if displaced > 0 {
                 sentences.push(format!(
@@ -571,35 +627,40 @@ impl Context<'_> {
                     "{contested} of {found} clusters are also claimed by other entries."
                 ));
             }
-            VERDICT_PARTIAL
+            let code = if contested > 0 {
+                CODE_CONTESTED
+            } else {
+                CODE_REUSED_AFTER_DELETION
+            };
+            (VERDICT_PARTIAL, code)
         } else {
             match content {
                 ContentMatch::Yes => {
                     sentences.push(format!(
                         "Clusters free and unclaimed. First cluster is {held}, matching the name."
                     ));
-                    VERDICT_INTACT
+                    (VERDICT_INTACT, CODE_CONTENT_MATCHES)
                 }
                 ContentMatch::No => {
                     sentences.push(format!(
                         "First cluster holds {held}, which contradicts the name."
                     ));
-                    VERDICT_OVERWRITTEN
+                    (VERDICT_OVERWRITTEN, CODE_CONTENT_CONTRADICTS)
                 }
                 ContentMatch::Unknown => {
                     sentences.push(format!(
                         "Clusters free and unclaimed. First cluster is {held}, which neither confirms nor contradicts the name."
                     ));
-                    VERDICT_PLAUSIBLE
+                    (VERDICT_PLAUSIBLE, CODE_CONTENT_UNCONFIRMED)
                 }
             }
         };
-        let verdict = if set.checksum_ok {
-            verdict
+        let (verdict, code) = if set.checksum_ok {
+            (verdict, code)
         } else {
-            VERDICT_DAMAGED
+            (VERDICT_DAMAGED, CODE_ENTRY_DAMAGED)
         };
-        build(verdict, sentences.join(" "), confidence)
+        build(verdict, code, sentences.join(" "), confidence)
     }
 }
 
@@ -875,10 +936,11 @@ impl MapDb {
             let assessment = if set.is_dir {
                 context.assess_folder(set, trust)
             } else if set.length == 0 {
-                Assessment::plain(VERDICT_EMPTY, "Zero-length file.", trust)
+                Assessment::plain(VERDICT_EMPTY, CODE_EMPTY, "Zero-length file.", trust)
             } else if !set.in_use && set.checksum_ok && in_use_first.contains(&set.first_cluster) {
                 Assessment::plain(
                     VERDICT_RESIDUE,
+                    CODE_RENAME_RESIDUE,
                     "Deleted entry for clusters a live entry also uses: a leftover from a rename, such as an rsync temp file.",
                     0.0,
                 )
@@ -916,7 +978,15 @@ impl MapDb {
                     }
                 }
             }
-            results.push((set.id, node, assessment));
+            let (group, extension) = if set.is_dir {
+                (None, None)
+            } else {
+                (
+                    Some(crate::browse::group_id_of(&set.name)),
+                    Some(crate::browse::extension_of(&set.name)),
+                )
+            };
+            results.push((set.id, node, assessment, group, extension));
         }
 
         // Add each node's own totals to every ancestor.
@@ -1005,9 +1075,10 @@ impl MapDb {
 
             let mut update = transaction.prepare_cached(
                 "UPDATE sets SET node = ?2, verdict = ?3, reason = ?4, clusters_needed = ?5, clusters_found = ?6, \
-                 clusters_allocated = ?7, clusters_conflict = ?8, confidence = ?9 WHERE id = ?1",
+                 clusters_allocated = ?7, clusters_conflict = ?8, confidence = ?9, reason_code = ?10, \
+                 type_group = ?11, extension = ?12 WHERE id = ?1",
             )?;
-            for (id, node, assessment) in &results {
+            for (id, node, assessment, group, extension) in &results {
                 update.execute(params![
                     id,
                     node,
@@ -1018,6 +1089,9 @@ impl MapDb {
                     assessment.allocated as i64,
                     assessment.conflict as i64,
                     assessment.confidence,
+                    assessment.code,
+                    group,
+                    extension,
                 ])?;
             }
 
