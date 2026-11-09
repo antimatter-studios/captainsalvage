@@ -60,6 +60,8 @@ Each release lists the pull requests merged into it, and nothing else. The same 
 appear on the [releases page](https://github.com/{REPO}/releases). `scripts/release.py`
 writes this file.
 """
+# The one file that says the version. Everything else is copied from it by `prepare`.
+VERSION_FILE = "VERSION"
 CARGO_MANIFESTS = ["crates/salvage-core/Cargo.toml", "src-tauri/Cargo.toml"]
 JSON_MANIFESTS = ["src-tauri/tauri.conf.json", "package.json"]
 LOCKED_CRATES = ["captain-salvage", "salvage-core"]
@@ -213,8 +215,12 @@ def next_version(manifest, latest_tag, subjects):
     return f"{major}.{minor}.{patch}", False
 
 
-def manifest_version():
-    return json.loads((ROOT / "src-tauri/tauri.conf.json").read_text())["version"]
+def source_version():
+    """The one version the project carries, from VERSION. Every manifest copies it."""
+    text = (ROOT / VERSION_FILE).read_text().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", text):
+        raise SystemExit(f"{VERSION_FILE} must hold one version such as 0.2.0, not {text!r}")
+    return text
 
 
 def latest_tag():
@@ -234,7 +240,7 @@ def subjects_since(tag, ref="HEAD"):
 
 def current_version():
     tag = latest_tag()
-    return next_version(manifest_version(), tag, subjects_since(tag))
+    return next_version(source_version(), tag, subjects_since(tag))
 
 
 def version_at(ref):
@@ -288,7 +294,19 @@ def command_notes(args):
     sys.stdout.write(render_notes(pulls_between(start, end)))
 
 
+def write_versions(version):
+    """Copies one version into every manifest and lock file, and VERSION itself."""
+    names = [*CARGO_MANIFESTS, *JSON_MANIFESTS, "Cargo.lock", "package-lock.json"]
+    names = [name for name in names if (ROOT / name).exists()]
+    new = set_versions({name: (ROOT / name).read_text() for name in names}, version)
+    for name, text in new.items():
+        (ROOT / name).write_text(text)
+    (ROOT / VERSION_FILE).write_text(version + "\n")
+
+
 def command_sync(_):
+    """Makes every file carry VERSION, and the README match the changelog."""
+    write_versions(source_version())
     write_readme()
 
 
@@ -317,7 +335,9 @@ def command_version(_):
 
 
 def command_build(_):
-    version = current_version()[0]
+    # The build carries the version the files carry, never a number worked out from pull
+    # requests that have not been prepared into a release yet.
+    version = source_version()
     print(f"Building version {version}")
     config = json.dumps({"version": version})
     subprocess.run(["npx", "tauri", "build", "--bundles", "app", "--config", config], cwd=ROOT, check=True)
@@ -335,30 +355,47 @@ def command_prepare(args):
             raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
     subprocess.run(["bash", str(ROOT / "scripts/changelog-gather.sh"), version], cwd=ROOT, check=True)
     write_readme()
-    names = [*CARGO_MANIFESTS, *JSON_MANIFESTS, "Cargo.lock", "package-lock.json"]
-    new = set_versions({name: (ROOT / name).read_text() for name in names}, version)
-    for name, text in new.items():
-        (ROOT / name).write_text(text)
+    write_versions(version)
 
 
 def command_check(args):
-    version = args.tag.removeprefix("v")
+    """Every manifest and lock file must carry VERSION. Given a tag, the tag must be it too,
+    and the changelog and README must describe it. Runs on every pull request, so drift
+    fails before it merges."""
+    version = source_version()
     problems = []
-    for name in CARGO_MANIFESTS:
-        found = re.search(r'(?m)^version = "([^"]+)"', (ROOT / name).read_text())
-        if not found or found[1] != version:
-            problems.append(f"{name} says {found[1] if found else 'nothing'}")
-    for name in JSON_MANIFESTS:
-        found = json.loads((ROOT / name).read_text()).get("version")
+    for name, found in manifest_versions():
         if found != version:
             problems.append(f"{name} says {found}")
-    if not any(heading.startswith(f"[{version}]") for heading, _ in read_sections()):
-        problems.append(f"CHANGELOG.md has no section for {version}")
-    if f"### v{version}" not in README.read_text():
-        problems.append(f"README.md has no section for {version}")
+    if args.tag:
+        tag = args.tag.removeprefix("v")
+        if tag != version:
+            problems.append(f"the tag is {tag}, but {VERSION_FILE} says {version}")
+        if not any(heading.startswith(f"[{version}]") for heading, _ in read_sections()):
+            problems.append(f"CHANGELOG.md has no section for {version}")
+        if f"### v{version}" not in README.read_text():
+            problems.append(f"README.md has no section for {version}")
     if problems:
-        raise SystemExit(f"{args.tag} does not match the repository: " + "; ".join(problems))
-    print(f"{args.tag} matches the versions and the changelog.")
+        raise SystemExit("the version is not one number everywhere: " + "; ".join(problems))
+    print(f"Every file carries {version}.")
+
+
+def manifest_versions():
+    """The version each manifest and lock file states, as (name, version) pairs."""
+    found = []
+    for name in CARGO_MANIFESTS:
+        match = re.search(r'(?m)^version = "([^"]+)"', (ROOT / name).read_text())
+        found.append((name, match[1] if match else None))
+    for name in JSON_MANIFESTS:
+        found.append((name, json.loads((ROOT / name).read_text()).get("version")))
+    for crate in LOCKED_CRATES:
+        match = re.search(rf'name = "{crate}"\nversion = "([^"]+)"', (ROOT / "Cargo.lock").read_text())
+        found.append((f"Cargo.lock ({crate})", match[1] if match else None))
+    if (ROOT / "package-lock.json").exists():
+        lock = json.loads((ROOT / "package-lock.json").read_text())
+        found.append(("package-lock.json", lock.get("version")))
+        found.append(("package-lock.json (root package)", lock.get("packages", {}).get("", {}).get("version")))
+    return found
 
 
 def running_programs():
@@ -435,7 +472,7 @@ def main():
     prepare.add_argument("version", nargs="?")
     prepare.set_defaults(run=command_prepare)
     check = commands.add_parser("check")
-    check.add_argument("tag")
+    check.add_argument("tag", nargs="?", help="A release tag, when checking a release.")
     check.set_defaults(run=command_check)
     contents = commands.add_parser("contents")
     contents.add_argument("version", nargs="?")
