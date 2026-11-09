@@ -23,9 +23,14 @@ pub const VERDICT_PLAUSIBLE: &str = "plausible";
 pub const VERDICT_PARTIAL: &str = "partial";
 pub const VERDICT_TESTED_GOOD: &str = "tested-good";
 pub const VERDICT_TESTED_BAD: &str = "tested-bad";
+/// Failed its test, but plays: a player skips the damaged stretches.
+pub const VERDICT_TESTED_GAPS: &str = "tested-gaps";
 /// A file that passed its test is trusted, and one that failed is not, whatever else says.
 pub const TESTED_GOOD_CONFIDENCE: f64 = 0.99;
 pub const TESTED_BAD_CONFIDENCE: f64 = 0.1;
+pub const TESTED_GAPS_CONFIDENCE: f64 = 0.6;
+/// Said after the test's own note when a failed file still plays.
+pub const PLAYS_WITH_GAPS: &str = "It plays, with a gap where each break is.";
 /// Deeper than this, a walk up the folders is taken to be a loop.
 const MAX_TREE_DEPTH: usize = 256;
 
@@ -1388,6 +1393,17 @@ impl MapDb {
                         VERDICT_TESTED_GOOD,
                         TESTED_GOOD_CONFIDENCE,
                         test.note
+                    ])?;
+                } else if crate::filetest::plays_with_gaps(
+                    &test.outcome,
+                    &test.format,
+                    test.valid_fraction,
+                ) {
+                    bad.execute(params![
+                        test.id,
+                        VERDICT_TESTED_GAPS,
+                        TESTED_GAPS_CONFIDENCE,
+                        format!("{} {PLAYS_WITH_GAPS}", test.note)
                     ])?;
                 } else if test.outcome == crate::filetest::OUTCOME_DAMAGED {
                     bad.execute(params![

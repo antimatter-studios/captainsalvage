@@ -85,6 +85,7 @@ const VERDICT_TONES: Record<string, string> = {
   live: "tone-neutral",
   "tested-good": "tone-good",
   "tested-bad": "tone-critical",
+  "tested-gaps": "tone-warning",
   "likely-intact": "tone-good",
   plausible: "tone-info",
   partial: "tone-warning",

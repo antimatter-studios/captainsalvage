@@ -964,6 +964,8 @@ const strings: Record<string, string> = {
   "Working out what would change": "Calcul de ce qui changerait",
   "{files} files ({size}) would change verdict:": "{files} fichiers ({size}) changeraient de verdict :",
   "{from} to {to}: {files} files, {size}": "De {from} à {to} : {files} fichiers, {size}",
+  "Plays with gaps": "Se lit avec des trous",
+  "It plays, with a gap where each break is.": "Elle se lit, avec un trou à chaque cassure.",
 };
 
 export default strings;

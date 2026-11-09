@@ -102,6 +102,7 @@ const VERDICT_LABELS: Record<string, () => string> = {
   live: () => t("Visible now"),
   "tested-good": () => t("Tested good"),
   "tested-bad": () => t("Failed test"),
+  "tested-gaps": () => t("Plays with gaps"),
   "likely-intact": () => t("Likely intact"),
   plausible: () => t("Plausible"),
   partial: () => t("Partial"),

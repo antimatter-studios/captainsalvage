@@ -143,12 +143,13 @@ fn verdict_rank(verdict: &str) -> u8 {
         "live" => 1,
         "likely-intact" => 2,
         "plausible" => 3,
-        "partial" => 4,
-        "tested-bad" => 5,
-        "overwritten" => 6,
-        "damaged-entry" => 7,
-        "empty" => 8,
-        _ => 9,
+        "tested-gaps" => 4,
+        "partial" => 5,
+        "tested-bad" => 6,
+        "overwritten" => 7,
+        "damaged-entry" => 8,
+        "empty" => 9,
+        _ => 10,
     }
 }
 
