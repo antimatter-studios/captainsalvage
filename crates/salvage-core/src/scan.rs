@@ -7,12 +7,12 @@
 use crate::content::{
     classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES,
 };
-use crate::exfat::{find_sets, EntrySet, FIRST_CLUSTER};
 use crate::map::MapDb;
 use crate::session::DISK_GONE;
 use crate::volume::Volume;
 use crate::workspace::{now_millis, Workspace};
 use anyhow::{bail, Context, Result};
+use fs_exfat::primitives::{find_sets, EntrySet, FIRST_CLUSTER};
 use serde::Serialize;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::FileExt;

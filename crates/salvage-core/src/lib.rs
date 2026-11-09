@@ -11,7 +11,6 @@ pub mod changes;
 pub mod conflicts;
 pub mod content;
 pub mod engine;
-pub mod exfat;
 pub mod export;
 pub mod filetest;
 pub mod keep;

@@ -8,10 +8,10 @@
 
 use crate::content::content_group;
 use crate::content::{entropy_bits, signature_class, CLASS_NAMES, GROUP_COUNT, GROUP_NAMES};
-use crate::exfat::{find_sets, FIRST_CLUSTER};
 use crate::resolve::OWNERSHIP_UNEXPLAINED;
 use crate::session::Session;
 use anyhow::Result;
+use fs_exfat::primitives::{find_sets, FIRST_CLUSTER};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;

@@ -168,17 +168,6 @@ export const ENGINE_TEXT: string[] = [
   "another scan is already running on this workspace",
   "cluster {cluster} is outside the volume",
   "no entry with id {id}",
-  "reading main boot region",
-  "reading backup boot region",
-  "main boot sector",
-  "backup boot sector",
-  "boot sector is shorter than 512 bytes",
-  "no exFAT signature at offset 3",
-  "this is not an exFAT volume",
-  "unsupported sector size {size}",
-  "reading root directory",
-  "root directory has no allocation bitmap entry",
-  "reading allocation bitmap",
   "reading {length} bytes at {offset}",
   "opening {path}",
   // Copying to safety.
@@ -288,8 +277,19 @@ export const ENGINE_TEXT: string[] = [
   "This copy of the app is not signed into its app group.",
 ];
 
-/** Errors macOS itself gives, which the engine passes on. They are not in the Rust source. */
+/** Errors from macOS and filesystem drivers, passed on without app-owned Rust definitions. */
 export const SYSTEM_TEXT: string[] = [
+  "reading main boot region",
+  "reading backup boot region",
+  "main boot sector",
+  "backup boot sector",
+  "unsupported sector size {size}",
+  "reading root directory",
+  "root directory has no allocation bitmap entry",
+  "reading allocation bitmap",
+  "boot sector is shorter than 512 bytes",
+  "no exFAT signature at offset 3",
+  "this is not an exFAT volume",
   "Permission denied (os error 13)",
   "No such file or directory (os error 2)",
   "Device not configured (os error 6)",

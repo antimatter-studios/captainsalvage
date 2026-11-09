@@ -7,7 +7,6 @@ use crate::changes::{AffectedEntry, StructureChanges, StructureCopy};
 use crate::content::{
     content_group, entropy_bits, CLASS_DIRECTORY, CLASS_NAMES, GROUP_COUNT, GROUP_NAMES,
 };
-use crate::exfat::{decode_timestamp, find_sets, EntrySet, FAT_BAD, FAT_END, FIRST_CLUSTER};
 use crate::export::{CopyControl, CopyStatus};
 use crate::map::{
     to_extents, Extent, IslandRow, MapDb, MapSummary, Overlay, Row, OVERLAY_NOTE,
@@ -24,6 +23,9 @@ use crate::verify::{verify_stream, VerifyReport};
 use crate::volume::{Volume, ALLOC_ALLOCATED, ALLOC_FREE_FAT, ALLOC_FREE_ZERO};
 use crate::workspace::{BaselineCheck, Workspace};
 use anyhow::{anyhow, bail, Context, Result};
+use fs_exfat::primitives::{
+    decode_timestamp, find_sets, EntrySet, FAT_BAD, FAT_END, FIRST_CLUSTER,
+};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};

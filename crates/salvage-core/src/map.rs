@@ -6,11 +6,11 @@
 //! `resolve.rs` holds the logic that infers that structure.
 
 use crate::content::{is_signature_class, CLASS_DIRECTORY, CLASS_FILL, CLASS_NAMES, CLASS_ZEROS};
-use crate::exfat::EntrySet;
 use crate::resolve::parse_extents_payload;
 use crate::volume::Volume;
 use crate::workspace::now_millis;
 use anyhow::Result;
+use fs_exfat::primitives::EntrySet;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -1289,7 +1289,7 @@ impl MapDb {
             let sum: u64 = clusters
                 .iter()
                 .filter_map(|&cluster| {
-                    entropy.get((cluster - crate::exfat::FIRST_CLUSTER) as usize)
+                    entropy.get((cluster - fs_exfat::primitives::FIRST_CLUSTER) as usize)
                 })
                 .map(|&value| u64::from(value))
                 .sum();

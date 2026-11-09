@@ -1,8 +1,12 @@
 //! End-to-end tests against a hand-built exFAT volume with known damage.
 
+use fs_exfat::fixtures::{
+    bitmap_entry, boot_field, created_on, entry_set, modified_on, upcase_entry, BootField, Builder,
+    BITMAP_CLUSTER, CLUSTER, CLUSTER_COUNT, ROOT_CLUSTER, SECTOR,
+};
+use fs_exfat::primitives::{bitmap_location, BootSector, FAT_END};
 use salvage_core::content::{CLASS_DIRECTORY, CLASS_JPEG, CLASS_MP3, CLASS_ZEROS};
 use salvage_core::engine::{Engine, AUTHOR_CLAUDE, AUTHOR_USER};
-use salvage_core::exfat::{boot_checksum, FAT_END};
 use salvage_core::map::MapDb;
 use salvage_core::mcp::{handle_message, tool_definitions};
 use salvage_core::scan::{read_progress, run_scan, ScanOptions};
@@ -20,19 +24,6 @@ use std::sync::Arc;
 #[path = "parity/synthetic.rs"]
 mod parity;
 
-const SECTOR: usize = 512;
-const CLUSTER: usize = 4096;
-const CLUSTER_COUNT: u32 = 200;
-const FAT_OFFSET: u32 = 24;
-const FAT_LENGTH: u32 = 8;
-const HEAP_OFFSET: u32 = 32;
-const BITMAP_CLUSTER: u32 = 2;
-const ROOT_CLUSTER: u32 = 3;
-
-struct Builder {
-    image: Vec<u8>,
-}
-
 fn noise(seed: u32, length: usize) -> Vec<u8> {
     let mut state = seed.wrapping_mul(2654435761).wrapping_add(1);
     (0..length)
@@ -45,145 +36,11 @@ fn noise(seed: u32, length: usize) -> Vec<u8> {
         .collect()
 }
 
-fn entry_set(
-    name: &str,
-    is_dir: bool,
-    first: u32,
-    length: u64,
-    no_fat_chain: bool,
-    in_use: bool,
-) -> Vec<u8> {
-    let units: Vec<u16> = name.encode_utf16().collect();
-    let name_entries = units.len().div_ceil(15);
-    let secondary = 1 + name_entries;
-    let mut set = vec![0u8; 32 * (secondary + 1)];
-    set[0] = if in_use { 0x85 } else { 0x05 };
-    set[1] = secondary as u8;
-    set[4] = if is_dir { 0x10 } else { 0x20 };
-    let timestamp: u32 = (42 << 25) | (9 << 21) | (5 << 16) | (17 << 11) | (53 << 5) | 27;
-    set[8..12].copy_from_slice(&timestamp.to_le_bytes());
-    set[12..16].copy_from_slice(&timestamp.to_le_bytes());
-    set[32] = if in_use { 0xC0 } else { 0x40 };
-    set[33] = 0x01 | if no_fat_chain { 0x02 } else { 0 };
-    set[35] = units.len() as u8;
-    set[40..48].copy_from_slice(&length.to_le_bytes());
-    set[52..56].copy_from_slice(&first.to_le_bytes());
-    set[56..64].copy_from_slice(&length.to_le_bytes());
-    for index in 0..name_entries {
-        let base = 32 * (2 + index);
-        set[base] = if in_use { 0xC1 } else { 0x41 };
-        for (position, unit) in units.iter().skip(index * 15).take(15).enumerate() {
-            set[base + 2 + position * 2..base + 4 + position * 2]
-                .copy_from_slice(&unit.to_le_bytes());
-        }
-    }
-    seal_entry_set(&mut set);
-    set
-}
-
-/// Changes when an entry says it was last modified.
-fn modified_on(mut set: Vec<u8>, year: u32, month: u32, day: u32) -> Vec<u8> {
-    let timestamp = ((year - 1980) << 25) | (month << 21) | (day << 16);
-    set[12..16].copy_from_slice(&timestamp.to_le_bytes());
-    seal_entry_set(&mut set);
-    set
-}
-
-/// Changes when an entry says it was created.
-fn created_on(mut set: Vec<u8>, year: u32, month: u32, day: u32) -> Vec<u8> {
-    let timestamp = ((year - 1980) << 25) | (month << 21) | (day << 16);
-    set[8..12].copy_from_slice(&timestamp.to_le_bytes());
-    seal_entry_set(&mut set);
-    set
-}
-
-fn seal_entry_set(set: &mut [u8]) {
-    let mut checksum = 0u16;
-    for (index, &byte) in set.iter().enumerate() {
-        if index == 2 || index == 3 {
-            continue;
-        }
-        let value = if index % 32 == 0 { byte | 0x80 } else { byte };
-        checksum = checksum.rotate_right(1).wrapping_add(u16::from(value));
-    }
-    set[2..4].copy_from_slice(&checksum.to_le_bytes());
-}
-
-impl Builder {
-    fn new() -> Self {
-        let sectors = HEAP_OFFSET as usize + CLUSTER_COUNT as usize * (CLUSTER / SECTOR);
-        let mut builder = Self {
-            image: vec![0u8; sectors * SECTOR],
-        };
-        builder.write_boot();
-        builder.fat(0, 0xFFFF_FFF8);
-        builder.fat(1, FAT_END);
-        builder
-    }
-
-    fn write_boot(&mut self) {
-        let mut sector = vec![0u8; SECTOR];
-        sector[0..3].copy_from_slice(&[0xEB, 0x76, 0x90]);
-        sector[3..11].copy_from_slice(b"EXFAT   ");
-        sector[72..80].copy_from_slice(&((self.image.len() / SECTOR) as u64).to_le_bytes());
-        sector[80..84].copy_from_slice(&FAT_OFFSET.to_le_bytes());
-        sector[84..88].copy_from_slice(&FAT_LENGTH.to_le_bytes());
-        sector[88..92].copy_from_slice(&HEAP_OFFSET.to_le_bytes());
-        sector[92..96].copy_from_slice(&CLUSTER_COUNT.to_le_bytes());
-        sector[96..100].copy_from_slice(&ROOT_CLUSTER.to_le_bytes());
-        sector[100..104].copy_from_slice(&0xABCD_1234u32.to_le_bytes());
-        sector[104..106].copy_from_slice(&0x0100u16.to_le_bytes());
-        sector[108] = 9;
-        sector[109] = 3;
-        sector[110] = 1;
-        sector[112] = 5;
-        sector[510] = 0x55;
-        sector[511] = 0xAA;
-        self.image[..SECTOR].copy_from_slice(&sector);
-        let checksum = boot_checksum(&self.image[..SECTOR * 12], SECTOR);
-        for position in (SECTOR * 11..SECTOR * 12).step_by(4) {
-            self.image[position..position + 4].copy_from_slice(&checksum.to_le_bytes());
-        }
-        let region = self.image[..SECTOR * 12].to_vec();
-        self.image[SECTOR * 12..SECTOR * 24].copy_from_slice(&region);
-        // The same difference as the real volume: backup PercentInUse is stale.
-        self.image[SECTOR * 12 + 112] = 59;
-    }
-
-    fn fat(&mut self, cluster: u32, value: u32) {
-        let position = FAT_OFFSET as usize * SECTOR + cluster as usize * 4;
-        self.image[position..position + 4].copy_from_slice(&value.to_le_bytes());
-    }
-
-    fn cluster_position(cluster: u32) -> usize {
-        HEAP_OFFSET as usize * SECTOR + (cluster as usize - 2) * CLUSTER
-    }
-
-    fn put(&mut self, cluster: u32, offset: usize, bytes: &[u8]) {
-        let position = Self::cluster_position(cluster) + offset;
-        self.image[position..position + bytes.len()].copy_from_slice(bytes);
-    }
-
-    fn allocate(&mut self, cluster: u32) {
-        let index = (cluster - 2) as usize;
-        self.image[Self::cluster_position(BITMAP_CLUSTER) + index / 8] |= 1 << (index % 8);
-    }
-
-    fn directory(&mut self, cluster: u32, sets: &[Vec<u8>]) {
-        let mut offset = 0;
-        for set in sets {
-            self.put(cluster, offset, set);
-            offset += set.len();
-        }
-    }
-}
-
-fn special(kind: u8, first: u32, length: u64) -> Vec<u8> {
-    let mut entry = vec![0u8; 32];
-    entry[0] = kind;
-    entry[20..24].copy_from_slice(&first.to_le_bytes());
-    entry[24..32].copy_from_slice(&length.to_le_bytes());
-    entry
+fn fixture_bitmap_entry(builder: &Builder) -> Vec<u8> {
+    let boot = BootSector::parse(&builder.image).expect("fixture boot sector");
+    let entry = bitmap_entry(BITMAP_CLUSTER, u64::MAX);
+    let location = bitmap_location(&boot, &entry).expect("fixture bitmap location");
+    bitmap_entry(location.first_cluster, location.required_length)
 }
 
 /// Builds a volume with a live tree, an orphan tree and every damage class.
@@ -196,8 +53,8 @@ fn build_volume() -> Vec<u8> {
     b.directory(
         ROOT_CLUSTER,
         &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
+            fixture_bitmap_entry(&b),
+            upcase_entry(4, &[0; 100]),
             entry_set("visible", true, 5, CLUSTER as u64, true, true),
             entry_set("gone", true, 6, CLUSTER as u64, true, false),
         ],
@@ -376,7 +233,11 @@ fn boot_regions_parse_and_checksums_ignore_percent_in_use() {
                 region.truncate(SECTOR - 1);
                 "boot sector is shorter than 512 bytes"
             } else {
-                region[3] = 0;
+                *region = boot_field(
+                    std::mem::take(region),
+                    BootField::FileSystemName,
+                    b"\0XFAT   ",
+                );
                 "no exFAT signature at offset 3: this is not an exFAT volume"
             };
             let error = Volume::from_structures(volume.source().clone(), structures)
@@ -1470,6 +1331,20 @@ fn scripts_can_analyse_but_have_no_way_to_write() {
     assert_eq!(result["result"]["free"], true);
     assert!(result["result"]["rows"].as_i64().expect("count") > 0);
 
+    for (limit, expected) in [
+        (-1, json!([])),
+        (0, json!([])),
+        (2, json!([30, 31])),
+        (10_000, json!([30, 31, 33])),
+    ] {
+        let result = call(
+            &engine,
+            "run_script",
+            json!({"source": format!("chain(30, {limit})")}),
+        );
+        assert_eq!(result["result"], expected, "{result}");
+    }
+
     for attempt in ["write(0, 1)", r#"open("/etc/hosts")"#, r#"system("ls")"#] {
         let refused = call(&engine, "run_script", json!({"source": attempt}));
         assert!(
@@ -1705,7 +1580,7 @@ fn custom_structures_decode_with_labels_and_repeat() {
 }
 
 fn salvage_core_cluster_offset(cluster: u32) -> u64 {
-    (HEAP_OFFSET as u64) * SECTOR as u64 + u64::from(cluster - 2) * CLUSTER as u64
+    Builder::cluster_position(cluster) as u64
 }
 
 #[test]
@@ -3302,8 +3177,8 @@ fn a_zip_on_the_disk_can_be_listed_and_checked_through_the_tools() {
     b.directory(
         ROOT_CLUSTER,
         &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
+            fixture_bitmap_entry(&b),
+            upcase_entry(4, &[0; 100]),
             entry_set("bundle.zip", false, 20, zip.len() as u64, true, true),
         ],
     );
@@ -3341,8 +3216,8 @@ fn a_file_inside_a_zip_can_be_shown_and_copied_out() {
     b.directory(
         ROOT_CLUSTER,
         &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
+            fixture_bitmap_entry(&b),
+            upcase_entry(4, &[0; 100]),
             entry_set("bundle.zip", false, 20, zip.len() as u64, true, true),
         ],
     );
@@ -3404,8 +3279,8 @@ fn volume_macos_has_visited() -> Vec<u8> {
     b.directory(
         ROOT_CLUSTER,
         &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
+            fixture_bitmap_entry(&b),
+            upcase_entry(4, &[0; 100]),
             modified_on(
                 entry_set(".fseventsd", true, 5, cluster, true, true),
                 2026,
@@ -3556,8 +3431,11 @@ fn the_folders_macos_keeps_on_a_volume_date_its_visits() {
     let _ = std::fs::remove_dir_all(dir);
 
     // VolumeFlags is left out of the boot checksum, so setting it needs nothing else.
-    let mut dirty = volume_macos_has_visited();
-    dirty[106] = 0x02;
+    let dirty = boot_field(
+        volume_macos_has_visited(),
+        BootField::VolumeFlags,
+        &[0x02, 0],
+    );
     let (engine, _session, dir) = engine_with_image("mounts-dirty", dirty);
     let history = call(&engine, "mount_history", json!({}));
     assert_eq!(history["dirtyFlag"], true);
@@ -4535,10 +4413,7 @@ fn build_jigsaw_volume() -> Vec<u8> {
     b.fat(ROOT_CLUSTER, FAT_END);
     b.directory(
         ROOT_CLUSTER,
-        &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
-        ],
+        &[fixture_bitmap_entry(&b), upcase_entry(4, &[0; 100])],
     );
     let jpeg = |b: &mut Builder, cluster: u32| {
         b.put(cluster, 0, &[0xFF, 0xD8, 0xFF, 0xE0]);
@@ -5630,10 +5505,7 @@ fn a_lost_png_in_free_space_is_carved_with_its_measured_length() {
     b.fat(ROOT_CLUSTER, FAT_END);
     b.directory(
         ROOT_CLUSTER,
-        &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
-        ],
+        &[fixture_bitmap_entry(&b), upcase_entry(4, &[0; 100])],
     );
     // Not allocated and named by nothing: a deleted file whose entry is gone.
     b.put(40, 0, &png);
@@ -5663,10 +5535,7 @@ fn clashing_copies_that_measure_the_same_go_to_the_upper_layer_and_ask_the_perso
     b.fat(ROOT_CLUSTER, FAT_END);
     b.directory(
         ROOT_CLUSTER,
-        &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
-        ],
+        &[fixture_bitmap_entry(&b), upcase_entry(4, &[0; 100])],
     );
     for (folder, song) in [(20u32, 21u32), (30, 31), (40, 41)] {
         b.directory(
@@ -5760,10 +5629,7 @@ fn a_single_file_can_be_laid_over_a_folder_as_its_own_layer() {
     b.fat(ROOT_CLUSTER, FAT_END);
     b.directory(
         ROOT_CLUSTER,
-        &[
-            special(0x81, BITMAP_CLUSTER, u64::from(CLUSTER_COUNT).div_ceil(8)),
-            special(0x82, 4, 100),
-        ],
+        &[fixture_bitmap_entry(&b), upcase_entry(4, &[0; 100])],
     );
     for (folder, song) in [(20u32, 21u32), (30, 31)] {
         b.directory(

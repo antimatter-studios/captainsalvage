@@ -163,7 +163,10 @@ fn boot_sector_outputs_match_the_pre_driver_reference() {
             ("short_without_name", vec![0; SECTOR - 1]),
             ("short_with_name", original.main[..SECTOR - 1].to_vec()),
             ("wrong_name", vec![0; SECTOR]),
-            ("wrong_name_large_region", vec![0; SECTOR * 12]),
+            (
+                "wrong_name_large_region",
+                vec![0; SECTOR * fs_exfat::primitives::BOOT_REGION_SECTORS as usize],
+            ),
         ] {
             let mut structures = original.clone();
             if backup {
@@ -185,7 +188,7 @@ fn boot_sector_outputs_match_the_pre_driver_reference() {
         } else {
             &mut structures.main
         };
-        sector[510..512].fill(0);
+        *sector = boot_field(std::mem::take(sector), BootField::BootSignature, &[0, 0]);
         let volume = Volume::from_structures(source.clone(), structures)
             .expect("main accepts a damaged boot trailer");
         cases.insert(
@@ -193,8 +196,7 @@ fn boot_sector_outputs_match_the_pre_driver_reference() {
             json!({"boot": volume.boot, "backupBoot": volume.backup_boot}),
         );
     }
-    let mut image = build_volume();
-    image[3..11].fill(0);
+    let image = boot_field(build_volume(), BootField::FileSystemName, &[0; 8]);
     let error = Volume::open(Arc::new(MemorySource::new(image)))
         .err()
         .expect("invalid on-disk boot sector");
@@ -203,9 +205,8 @@ fn boot_sector_outputs_match_the_pre_driver_reference() {
         json!({"error": format!("{error:#}"), "reason": error.root_cause().to_string()}),
     );
     for (name, byte) in [("zero_geometry", 0), ("invalid_geometry", u8::MAX)] {
-        let mut sector = [byte; SECTOR];
-        sector[3..11].copy_from_slice(b"EXFAT   ");
-        let boot = salvage_core::exfat::BootSector::parse(&sector)
+        let sector = boot_field(vec![byte; SECTOR], BootField::FileSystemName, b"EXFAT   ");
+        let boot = fs_exfat::primitives::BootSector::parse(&sector)
             .expect("main accepts raw geometry and a damaged boot trailer");
         cases.insert(name.into(), json!({"boot": boot}));
     }

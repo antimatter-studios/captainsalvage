@@ -6,9 +6,12 @@
 //! free then and are in use now, which FAT entries and root entries changed, and so which found
 //! files lost data. Nothing here reads or writes anything but the Mac's own copy.
 
-use crate::exfat::{find_sets, EntrySet, Limits, FIRST_CLUSTER};
 use anyhow::{Context, Result};
 use fs_exfat::primitives;
+use fs_exfat::primitives::{
+    checked_bitmap_bit as bit, checked_fat_entry as fat_entry, find_sets, EntrySet, Limits,
+    FIRST_CLUSTER,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -31,6 +34,30 @@ pub struct StructureCopy {
     pub fat: Vec<u8>,
     pub bitmap: Vec<u8>,
     pub root: Vec<u8>,
+}
+
+impl From<primitives::StructureCopy> for StructureCopy {
+    fn from(copy: primitives::StructureCopy) -> Self {
+        Self {
+            main: copy.main,
+            backup: copy.backup,
+            fat: copy.fat,
+            bitmap: copy.bitmap,
+            root: copy.root,
+        }
+    }
+}
+
+impl From<StructureCopy> for primitives::StructureCopy {
+    fn from(copy: StructureCopy) -> Self {
+        Self {
+            main: copy.main,
+            backup: copy.backup,
+            fat: copy.fat,
+            bitmap: copy.bitmap,
+            root: copy.root,
+        }
+    }
 }
 
 impl StructureCopy {
@@ -182,18 +209,6 @@ fn differing_bytes(before: &[u8], after: &[u8]) -> u64 {
     (common + before.len().abs_diff(after.len())) as u64
 }
 
-fn fat_entry(fat: &[u8], cluster: usize) -> Option<u32> {
-    let entry_size = std::mem::size_of::<u32>();
-    fat.get(cluster * entry_size..(cluster + 1) * entry_size)
-        .map(|bytes| primitives::u32_at(bytes, 0))
-}
-
-fn bit(bitmap: &[u8], cluster: u32) -> bool {
-    let index = (cluster - FIRST_CLUSTER) as usize;
-    index < bitmap.len().saturating_mul(u8::BITS as usize)
-        && primitives::is_allocated(bitmap, cluster)
-}
-
 fn root_changes(before: &[u8], after: &[u8], limits: Limits) -> Vec<RootChange> {
     let sets = |data: &[u8]| -> Vec<(usize, EntrySet)> {
         find_sets(data, data.len(), limits)
@@ -243,7 +258,6 @@ pub fn compare(
 ) -> StructureChanges {
     let mut written = Vec::new();
     let mut freed = 0;
-    let mut fat_entries = 0;
     for cluster in FIRST_CLUSTER..last_cluster_exclusive {
         match (
             bit(&baseline.bitmap, cluster),
@@ -254,12 +268,16 @@ pub fn compare(
             _ => {}
         }
     }
-    let entries = baseline.fat.len().max(current.fat.len()) / std::mem::size_of::<u32>();
-    for cluster in 0..entries {
-        if fat_entry(&baseline.fat, cluster) != fat_entry(&current.fat, cluster) {
-            fat_entries += 1;
-        }
-    }
+    let fat_entries = (0..)
+        .map(|cluster| {
+            (
+                fat_entry(&baseline.fat, cluster),
+                fat_entry(&current.fat, cluster),
+            )
+        })
+        .take_while(|(before, after)| before.is_some() || after.is_some())
+        .filter(|(before, after)| before != after)
+        .count() as u64;
     StructureChanges {
         current_hash: current.hash(),
         boot_main_bytes: differing_bytes(&baseline.main, &current.main),
