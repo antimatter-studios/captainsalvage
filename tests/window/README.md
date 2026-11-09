@@ -25,8 +25,8 @@ Make the ones a test needs before running it:
 
 | Image | Made by |
 |---|---|
-| `jigsaw.img` | `SALVAGE_JIGSAW_IMAGE=$PWD/tests/window/jigsaw.img cargo test -p salvage-core --test synthetic -- --ignored write_the_jigsaw` |
-| `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p salvage-core --test synthetic -- --ignored write_the_macos_visited` |
+| `jigsaw.img` | `SALVAGE_JIGSAW_IMAGE=$PWD/tests/window/jigsaw.img cargo test -p salvage-core --test synthetic write_the_jigsaw` |
+| `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p salvage-core --test synthetic write_the_macos_visited` |
 | `arctest.img` | `tests/window/make_arctest.sh` (archives) |
 | `filmtest.img` | `tests/window/make_filmtest.sh` (two 70 MB films) |
 
