@@ -55,6 +55,8 @@ const SNIFF_BYTES: usize = 4096;
 /// Bytes an MPEG program stream may have before its first pack, such as web headers left by a
 /// download. Players scan past them to the first pack.
 const MPEG_MAX_LEAD_IN: usize = SNIFF_BYTES;
+/// Breaks recorded for one file. A stream that resyncs after each loss can lose many times.
+const MAX_RECORDED_BREAKS: usize = 100;
 const ASF_HEADER_CONTAINER: u32 = 1;
 const ASF_DATA_CONTAINER: u32 = 2;
 /// Clusters macOS never wrote read back as zeros, and compressed media does not hold this many
@@ -195,6 +197,11 @@ pub struct StreamWalk {
     /// The data is not the format its name says, such as raw MPEG video in a .mpg file, so
     /// this walker has nothing to say about it.
     unsupported: bool,
+    /// For MPEG: where the walk lost the stream and is looking for the next pack, the last
+    /// four bytes seen while looking, and how many bytes the losses cost.
+    resync_from: Option<u64>,
+    window: u32,
+    skipped: u64,
     /// The first bytes, kept until there are enough to say what the file really is.
     head: Vec<u8>,
     sniffed: bool,
@@ -225,6 +232,9 @@ impl StreamWalk {
             asf_packet: 0,
             asf_packet_flags: None,
             unsupported: false,
+            resync_from: None,
+            window: u32::MAX,
+            skipped: 0,
             head: Vec::new(),
             sniffed: false,
             has_movie: false,
@@ -238,10 +248,7 @@ impl StreamWalk {
 
     /// Whether valid bytes are counted by position: everything before a break, or all of it.
     fn counts_by_position(&self) -> bool {
-        matches!(
-            self.kind,
-            Kind::Matroska | Kind::MpegPs | Kind::Flv | Kind::Asf
-        )
+        matches!(self.kind, Kind::Matroska | Kind::Flv | Kind::Asf)
     }
 
     fn fail(&mut self, offset: u64, note: String) {
@@ -418,6 +425,23 @@ impl StreamWalk {
 
     fn walk(&mut self, mut data: &[u8]) {
         while !data.is_empty() && !self.broken {
+            if let Some(from) = self.resync_from {
+                // Looking for the next pack, as a player does after damage.
+                let found = data.iter().position(|&byte| {
+                    self.window = self.window << 8 | u32::from(byte);
+                    self.window == u32::from_be_bytes([0, 0, 1, MPEG_PACK])
+                });
+                let Some(index) = found else {
+                    self.at += data.len() as u64;
+                    return;
+                };
+                self.at += index as u64 + 1;
+                data = &data[index + 1..];
+                self.skipped += self.at - 4 - from;
+                self.resync_from = None;
+                self.header = vec![0, 0, 1, MPEG_PACK];
+                continue;
+            }
             if self.at < self.end {
                 // Inside a box or chunk: pass over its data, looking for holes.
                 let take = ((self.end - self.at) as usize).min(data.len());
@@ -497,11 +521,33 @@ impl StreamWalk {
         }
     }
 
+    /// Notes where an MPEG stream was lost and looks for the next pack from there, re-reading
+    /// the header bytes already taken after its first, as a player resyncs.
+    fn lose_mpeg_sync(&mut self, start: u64, header: &[u8], note: String) {
+        if self.report.breaks.len() < MAX_RECORDED_BREAKS {
+            self.report.breaks.push(start);
+            self.report.notes.push(note);
+        }
+        self.resync_from = Some(start);
+        self.window = u32::MAX;
+        self.at = start + 1;
+        self.walk(&header[1..]);
+    }
+
     fn open_mpeg(&mut self, header: &[u8], start: u64) {
         if header[..3] != MPEG_START_CODE {
-            return self.fail(
+            if self.opened == 0 {
+                // No pack where the stream should start: look for the first one.
+                return self.lose_mpeg_sync(
+                    start,
+                    header,
+                    format!("No MPEG pack starts at {start}, as overwritten data would not; the walk resumes at the next pack."),
+                );
+            }
+            return self.lose_mpeg_sync(
                 start,
-                format!("No MPEG start code at {start}, as overwritten data would not have."),
+                header,
+                format!("No MPEG start code at {start}, as overwritten data would not have; the walk resumes at the next pack."),
             );
         }
         let id = header[3];
@@ -525,16 +571,17 @@ impl StreamWalk {
                 let length = u64::from(u16::from_be_bytes([header[4], header[5]]));
                 let end = self.at + length;
                 if end > self.total {
-                    return self.fail(
-                        start,
-                        format!("The MPEG packet at {start} claims {length} bytes, past the end of the data."),
-                    );
+                    // A packet is at most 64 KB, so this is the last one, cut short as
+                    // recordings and downloads often are. Players stop there.
+                    self.report.notes.push(format!("The last MPEG packet, at {start}, is cut short by {} bytes.", end - self.total));
+                    return self.region(start, self.total, false);
                 }
                 self.region(start, end, id != MPEG_PADDING_STREAM);
             }
-            _ => self.fail(
+            _ => self.lose_mpeg_sync(
                 start,
-                format!("The start code at {start} names no program-stream unit, as overwritten data would not."),
+                header,
+                format!("The start code at {start} names no program-stream unit, as overwritten data would not; the walk resumes at the next pack."),
             ),
         }
     }
@@ -878,6 +925,18 @@ impl StreamWalk {
         if !self.sniffed {
             self.sniff();
         }
+        if self.kind == Kind::MpegPs && !self.unsupported {
+            if let Some(from) = self.resync_from.take() {
+                self.skipped += self.at - from;
+            }
+            if !self.header.is_empty() && self.at == self.total {
+                self.report
+                    .notes
+                    .push("The stream stops partway through its last header.".into());
+                self.skipped += self.header.len() as u64;
+                self.header.clear();
+            }
+        }
         if self.unsupported {
             self.report.format = "unknown".into();
             self.report.notes.push("The data is not the format its name says, so this walker has nothing to say about it.".into());
@@ -910,6 +969,9 @@ impl StreamWalk {
         }
         if self.counts_by_position() && !self.broken {
             self.report.valid_bytes = self.at.min(self.total);
+        }
+        if self.kind == Kind::MpegPs && !self.broken {
+            self.report.valid_bytes = self.at.min(self.total).saturating_sub(self.skipped);
         }
         if self.kind == Kind::Matroska && !self.broken && !self.has_movie {
             self.report.notes.push(
@@ -1211,6 +1273,31 @@ mod tests {
             walk_in_pieces("film.mpg", &overwritten, 500).breaks,
             vec![second_pack as u64]
         );
+        // A foreign 4 KB block in the middle, as the volume's NTFS past left: the walk loses the
+        // stream there, picks it up at the next pack, and counts only what was lost.
+        let mut holed = file.clone();
+        let block = 4096 * 3;
+        holed[block..block + 4096].copy_from_slice(&[0x5Au8; 4096]);
+        for piece in [1, 333, holed.len()] {
+            let report = walk_in_pieces("film.mpg", &holed, piece);
+            assert_eq!(report.breaks.len(), 1, "{piece}: {:?}", report.notes);
+            assert!(report.reached_end);
+            assert!(
+                report.valid_fraction > 0.85 && report.valid_fraction < 1.0,
+                "{}",
+                report.valid_fraction
+            );
+        }
+        // A stream cut short partway through its last packet still reaches its end.
+        let last_packet = file.len() - 4 - 300 - 106 - 406 - 2006;
+        let cut = &file[..last_packet + 1000];
+        let report = walk_in_pieces("film.mpg", cut, 500);
+        assert!(
+            report.breaks.is_empty() && report.reached_end,
+            "{:?}",
+            report.notes
+        );
+        assert!(report.notes.iter().any(|note| note.contains("cut short")));
         // Web headers before the first pack are skipped, as players do.
         let downloaded = [b"Content-type: video/mpeg\r\n\r\n".as_slice(), &file].concat();
         let report = walk_in_pieces("film.mpg", &downloaded, 333);
