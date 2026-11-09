@@ -29,10 +29,11 @@ pub const OUTCOME_DAMAGED: &str = "damaged";
 pub const OUTCOME_UNTESTED: &str = "untested";
 /// Formats a player reads past damage in: it finds the next frame and carries on, so a file
 /// that is mostly valid still plays, with a gap where each break is.
-const RESYNC_FORMATS: &[&str] = &["mp3"];
+const RESYNC_FORMATS: &[&str] = &["mp3", "mpeg-ps"];
 /// How much of such a file must be valid frames for it to play with gaps rather than fail.
-/// On a real volume, files failed by small files that reused the starts of some of their
-/// clusters were 80 to 99% valid, and the frames carried on after each overwritten stretch.
+/// On a real volume, MP3s failed by small files that reused the starts of some of their
+/// clusters were 80 to 99% valid, and the frames carried on after each overwritten stretch;
+/// MPEG films carried on at the next pack after each 4 KB block left from the volume's NTFS life.
 pub const GAPS_VALID_FRACTION: f64 = 0.8;
 
 /// Whether a failed test still leaves a file that plays, with gaps where it is damaged.
@@ -536,6 +537,7 @@ mod gap_tests {
     #[test]
     fn only_a_mostly_valid_stream_that_resyncs_plays_with_gaps() {
         assert!(plays_with_gaps(OUTCOME_DAMAGED, "mp3", Some(0.96)));
+        assert!(plays_with_gaps(OUTCOME_DAMAGED, "mpeg-ps", Some(0.99)));
         assert!(!plays_with_gaps(OUTCOME_DAMAGED, "mp3", Some(0.4)));
         assert!(
             !plays_with_gaps(OUTCOME_DAMAGED, "mp4", Some(0.96)),
