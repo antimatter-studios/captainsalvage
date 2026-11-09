@@ -1,10 +1,10 @@
 //! A volume's boot regions, FAT and bitmap, loaded into memory for inspection.
 
 use crate::changes::StructureCopy;
-use crate::exfat::{parse_boot_sector, BootSector, Limits, BOOT_REGION_SECTORS};
 use crate::source::BlockSource;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use fs_exfat::primitives;
+use fs_exfat::primitives::{BootSector, Limits, StructureError, StructureGeometry};
 use std::sync::Arc;
 
 pub use fs_exfat::primitives::{
@@ -12,7 +12,19 @@ pub use fs_exfat::primitives::{
     ALLOC_FREE_FAT, ALLOC_FREE_ZERO, ISLAND_END_BROKEN, ISLAND_END_EOF, ISLAND_END_JOINS_ANOTHER,
 };
 
-const BOOT_SECTOR_ASSUMED: u64 = 512;
+fn structure_error(error: StructureError) -> anyhow::Error {
+    match error {
+        StructureError::Read { operation, source } => anyhow::Error::new(source).context(operation),
+        StructureError::Boot { region, source } => {
+            let error = match source {
+                fs_exfat::Error::Invalid(reason) => anyhow::anyhow!(reason),
+                error => error.into(),
+            };
+            error.context(format!("{region} boot sector"))
+        }
+        error => anyhow::anyhow!(error.to_string()),
+    }
+}
 
 pub struct Volume {
     source: Arc<dyn BlockSource>,
@@ -37,60 +49,9 @@ impl Volume {
 
     /// Reads the boot regions, FAT, root directory and allocation bitmap from the disk.
     pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
-        let region_bytes = (BOOT_REGION_SECTORS * BOOT_SECTOR_ASSUMED) as usize;
-        let mut main = vec![0u8; region_bytes];
-        let mut backup = vec![0u8; region_bytes];
-        source
-            .read_exact_at(0, &mut main)
-            .context("reading main boot region")?;
-        source
-            .read_exact_at(region_bytes as u64, &mut backup)
-            .context("reading backup boot region")?;
-        let boot = parse_boot_sector(&main).context("main boot sector")?;
-        if boot.bytes_per_sector() != BOOT_SECTOR_ASSUMED {
-            bail!("unsupported sector size {}", boot.bytes_per_sector());
-        }
-
-        let fat_bytes = u64::from(boot.fat_length) * boot.bytes_per_sector();
-        let mut fat = vec![0u8; fat_bytes as usize];
-        source
-            .read_exact_at(
-                u64::from(boot.fat_offset) * boot.bytes_per_sector(),
-                &mut fat,
-            )
-            .context("reading FAT")?;
-
-        let root_clusters = primitives::root_chain(&boot, &primitives::decode_fat(&fat, &boot));
-        let cluster_size = boot.cluster_size();
-        let mut root = vec![0u8; root_clusters.len() * cluster_size as usize];
-        for (index, &cluster) in root_clusters.iter().enumerate() {
-            let start = index * cluster_size as usize;
-            let offset = primitives::cluster_offset(&boot, cluster);
-            source
-                .read_exact_at(offset, &mut root[start..start + cluster_size as usize])
-                .context("reading root directory")?;
-        }
-
-        let (bitmap_cluster, bitmap_length) = primitives::find_bitmap_entry(&root)
-            .context("root directory has no allocation bitmap entry")?;
-        let needed_bitmap = u64::from(boot.cluster_count).div_ceil(8);
-        if bitmap_length < needed_bitmap {
-            bail!("allocation bitmap holds {bitmap_length} bytes, volume needs {needed_bitmap}");
-        }
-        let mut bitmap = vec![0u8; bitmap_length as usize];
-        source
-            .read_exact_at(
-                primitives::cluster_offset(&boot, bitmap_cluster),
-                &mut bitmap,
-            )
-            .context("reading allocation bitmap")?;
-        Ok(StructureCopy {
-            main,
-            backup,
-            fat,
-            bitmap,
-            root,
-        })
+        primitives::read_structures(|offset, buffer| source.read_exact_at(offset, buffer))
+            .map(StructureCopy::from)
+            .map_err(structure_error)
     }
 
     /// A volume whose structures come from `structures` rather than from the disk, as a saved
@@ -100,18 +61,15 @@ impl Volume {
         source: Arc<dyn BlockSource>,
         structures: StructureCopy,
     ) -> Result<Self> {
-        let boot = parse_boot_sector(&structures.main).context("main boot sector")?;
-        let backup_boot = parse_boot_sector(&structures.backup).context("backup boot sector")?;
-        if boot.bytes_per_sector() != BOOT_SECTOR_ASSUMED {
-            bail!("unsupported sector size {}", boot.bytes_per_sector());
-        }
-        let sector = boot.bytes_per_sector() as usize;
-        let boot_check = primitives::boot_check(&structures.main, &structures.backup, sector);
-        let fat = primitives::decode_fat(&structures.fat, &boot);
-        let root_clusters = primitives::root_chain(&boot, &fat);
-        if structures.root.len() as u64 != root_clusters.len() as u64 * boot.cluster_size() {
-            bail!("the root directory copy does not match the FAT's root chain");
-        }
+        let structures = structures.into();
+        let StructureGeometry {
+            boot,
+            backup_boot,
+            boot_check,
+            fat,
+            root_clusters,
+        } = primitives::inspect_structures(&structures).map_err(structure_error)?;
+        let structures = StructureCopy::from(structures);
         let structure_hash = structures.hash();
         let mut volume = Self {
             source,
@@ -226,5 +184,81 @@ impl Volume {
     /// to, and end where the chain stops or meets a cluster already walked.
     pub fn chain_islands(&self) -> Vec<Island> {
         primitives::chain_islands(&self.boot, &self.fat, &self.bitmap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Volume;
+    use crate::source::{BlockSource, MemorySource};
+    use fs_exfat::fixtures::{build_volume, SECTOR};
+    use fs_exfat::primitives::BootSector;
+    use std::sync::Arc;
+
+    fn volume() -> Volume {
+        Volume::open(Arc::new(MemorySource::new(build_volume()))).expect("fixture volume")
+    }
+
+    fn check_boot_errors(backup: bool, context: &str) {
+        let volume = volume();
+        for bytes in [
+            Vec::new(),
+            vec![0; SECTOR],
+            volume.structures.main[..SECTOR - 1].to_vec(),
+        ] {
+            let reason = match BootSector::parse(&bytes).expect_err("invalid boot sector") {
+                fs_exfat::Error::Invalid(reason) => reason.to_string(),
+                error => error.to_string(),
+            };
+            let mut structures = volume.structures.clone();
+            if backup {
+                structures.backup = bytes;
+            } else {
+                structures.main = bytes;
+            }
+            let error = Volume::from_structures(volume.source().clone(), structures)
+                .err()
+                .expect("saved boot error");
+            assert_eq!(format!("{error:#}"), format!("{context}: {reason}"));
+            assert_eq!(error.root_cause().to_string(), reason);
+        }
+    }
+
+    #[test]
+    fn saved_main_boot_errors_keep_app_context_and_driver_reason() {
+        check_boot_errors(false, "main boot sector");
+    }
+
+    #[test]
+    fn saved_backup_boot_errors_keep_app_context_and_driver_reason() {
+        check_boot_errors(true, "backup boot sector");
+    }
+
+    #[test]
+    fn saved_root_copy_must_match_the_driver_root_chain() {
+        let volume = volume();
+        let mut structures = volume.structures.clone();
+        structures.root.pop();
+        let error = Volume::from_structures(volume.source().clone(), structures)
+            .err()
+            .expect("truncated root copy");
+        assert_eq!(
+            error.to_string(),
+            "the root directory copy does not match the FAT's root chain"
+        );
+    }
+
+    #[test]
+    fn structure_read_errors_keep_the_failed_region_context() {
+        let volume = volume();
+        for (bytes, context) in [
+            (Vec::new(), "reading main boot region"),
+            (volume.structures.main.clone(), "reading backup boot region"),
+        ] {
+            let source = MemorySource::new(bytes);
+            let error = Volume::read_structures(&source).expect_err("short source");
+            assert_eq!(error.to_string(), context);
+            assert_eq!(source.read_stats().errors, 1);
+        }
     }
 }

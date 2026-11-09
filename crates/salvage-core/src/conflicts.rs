@@ -6,10 +6,10 @@
 //! map works out ownership.
 
 use crate::content::CLASS_NAMES;
-use crate::exfat::FIRST_CLUSTER;
 use crate::map::{file_row, to_extents, Extent, Row, FILE_COLUMNS, FILE_NODE_INDEX};
 use crate::session::Session;
 use anyhow::{Context, Result};
+use fs_exfat::primitives::FIRST_CLUSTER;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 

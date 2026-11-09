@@ -5,10 +5,10 @@
 //! can define its own decoder or carving pass, and cannot change the disk or the map.
 
 use crate::content::{entropy_bits, CLASS_NAMES};
-use crate::exfat::{find_sets, FIRST_CLUSTER};
 use crate::session::{Scope, Session};
 use crate::verify::verify_stream;
 use anyhow::{anyhow, Result};
+use fs_exfat::primitives::{find_sets, FIRST_CLUSTER};
 use rhai::serde::{from_dynamic, to_dynamic};
 use rhai::{Array, Blob, Dynamic, Engine, EvalAltResult, Scope as RhaiScope, INT};
 use serde_json::{json, Value};
@@ -130,17 +130,15 @@ fn register_structures(engine: &mut Engine, session: &Arc<Session>) {
     engine.register_fn(
         "chain",
         move |first: INT, max: INT| -> Result<Array, Box<EvalAltResult>> {
-            let mut out = Array::new();
-            let mut current = cluster_argument(&s, first)?;
-            let mut seen = std::collections::HashSet::new();
-            while s.volume.valid_cluster(current)
-                && (out.len() as INT) < max
-                && seen.insert(current)
-            {
-                out.push(Dynamic::from(INT::from(current)));
-                current = s.volume.fat[current as usize];
-            }
-            Ok(out)
+            let first = cluster_argument(&s, first)?;
+            let count = (max.max(0) as u64).min(u64::from(s.volume.boot.cluster_count));
+            let length = count * s.volume.boot.cluster_size();
+            Ok(s.volume
+                .clusters_for(first, length, false)
+                .clusters
+                .into_iter()
+                .map(|cluster| Dynamic::from(INT::from(cluster)))
+                .collect())
         },
     );
 

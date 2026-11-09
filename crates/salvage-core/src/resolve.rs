@@ -9,7 +9,6 @@ use crate::content::{
     content_match, expected_class, text_head_match, ContentMatch, CLASS_DIRECTORY, CLASS_NAMES,
     CLASS_TEXT, CLASS_ZEROS,
 };
-use crate::exfat::FIRST_CLUSTER;
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
     OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
@@ -21,6 +20,7 @@ use crate::map::{
 use crate::volume::{StreamClusters, Volume};
 use crate::workspace::Workspace;
 use anyhow::Result;
+use fs_exfat::primitives::FIRST_CLUSTER;
 use rusqlite::params;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};

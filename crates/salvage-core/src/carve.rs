@@ -16,10 +16,10 @@ use crate::content::{
     CLASS_ARCHIVE, CLASS_AUDIO, CLASS_DIRECTORY, CLASS_EXECUTABLE, CLASS_FILL, CLASS_GIF,
     CLASS_JPEG, CLASS_MP3, CLASS_OLE, CLASS_PDF, CLASS_PNG, CLASS_VIDEO, CLASS_ZEROS,
 };
-use crate::exfat::FIRST_CLUSTER;
 use crate::resolve::OWNERSHIP_UNEXPLAINED;
 use crate::session::Session;
 use anyhow::Result;
+use fs_exfat::primitives::FIRST_CLUSTER;
 use serde::Serialize;
 
 /// The longest a carved file is followed, which covers all but very long videos.
