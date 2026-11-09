@@ -1,0 +1,960 @@
+{
+  "cases": {
+    "a.tar": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "All of its bytes are there. A tar keeps no checksum for a file's data, so this cannot prove them right.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "All of its bytes are there. A tar keeps no checksum for a file's data, so this cannot prove them right.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "tar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 802816
+      },
+      "sourceSha256": "e716ee6b7863cbdebb823cb67836fdc2453b3afd9068f850806d1ee1fdfe9807"
+    },
+    "a.tar.bz2": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "tar.bz2",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 799933
+      },
+      "sourceSha256": "703eedbf941ae290529aa3d7b0f38602b498a6e54d62c2c63606b6f6676d5a7e"
+    },
+    "a.tar.gz": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "tar.gz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800475
+      },
+      "sourceSha256": "746806a45495c70c341354d37c859ea64302b566c898474f253cfce7a4fc49f2"
+    },
+    "a.tar.xz": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "tar.xz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 801608
+      },
+      "sourceSha256": "d4b89b3b80e06ae833fa1118dc847cb50faf6aa482a0fc4d1fefd661af6515e6"
+    },
+    "a.tar.zst": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "tar.zst",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800277
+      },
+      "sourceSha256": "05caca1f50daa8ffaced900d49483505dc9a12e09d042bfb4b2c25871d6fced8"
+    },
+    "big.bin.bz2": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 800000 bytes, and the compressed stream's own checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "bz2",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 799746
+      },
+      "sourceSha256": "73abca58dba3573658f62f7befd4db2994117b387c7b78485f57a9e32796289a"
+    },
+    "big.bin.bz2-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It stops unpacking after 599979 bytes: bad crc.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "bz2",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 799746
+      },
+      "sourceSha256": "8f2b93a787228807c3bf97d00bab77860cd6630ac85863f44edbd0778b045607"
+    },
+    "big.bin.gz": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 800000 bytes, and the compressed stream's own checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "gz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800263
+      },
+      "sourceSha256": "a7c57885520900c1e396f1dd0144c29fa2a0a150d1a8829147e16a47db0e53f9"
+    },
+    "big.bin.gz-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It stops unpacking after 800000 bytes: corrupt gzip stream does not have a matching checksum.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "gz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800263
+      },
+      "sourceSha256": "ed4a3746f69e5a4f98a2504d5f62252fb9faed30e9573adbcfbd8e987e22381c"
+    },
+    "big.bin.xz": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 800000 bytes, and the compressed stream's own checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "xz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800096
+      },
+      "sourceSha256": "30be24a2060b0e3d8e18eeae613fa6bd0f7b3d98d9f1ce3fd1cebed4012345d9"
+    },
+    "big.bin.xz-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It stops unpacking after 786369 bytes: ContentCrc64Mismatch(9155331978897663917, 5804946666469315157).",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "xz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800096
+      },
+      "sourceSha256": "a407ece9bee65c923d15490052d646080e102b9c355ca10e2851f665a7f37990"
+    },
+    "big.bin.zst": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 800000 bytes, and the compressed stream's own checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "zst",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800031
+      },
+      "sourceSha256": "ec59678756c265611df28f0c1459eb37297d3a85ffe077dd22c457940c695453"
+    },
+    "big.bin.zst-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 800000 bytes, and the compressed stream's own checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "zst",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "big.bin",
+            "size": null
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800031
+      },
+      "sourceSha256": "e5c5ff3e20b23cc4e7dea3b8591fde54a3215c980dc3e0e64eb2616176dc4cb9"
+    },
+    "cut-short-tar": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "All of its bytes unpack without an error. A tar keeps no checksum for a file's data, and the stream's checksum covers the whole archive, so this cannot prove this file right on its own.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It stops after 479955 of its 800000 bytes: incomplete deflate stream.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": false,
+        "format": "tar.gz",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": null,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": "The archive cannot be read past its first 2 files: incomplete deflate stream. The files after that point are lost or damaged.",
+        "source": "directory",
+        "totalBytes": 480285
+      },
+      "sourceSha256": "1d99235ff9e477dd3ef68f63f42477132428449abc7bc790f436c220ed206be6"
+    },
+    "rar29": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It unpacks whole, 120000 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "rar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 30,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 369,
+            "path": "docs/second.bin",
+            "size": 120000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 576
+      },
+      "sourceSha256": "c0fcf9f05c67819f8d69becec0e816521f46aad220fd7ea7ed057064260bb80d"
+    },
+    "rar29-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It cannot be unpacked: while extracting entry 'docs/second.bin': RAR 2.9 oversubscribed Huffman table.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "rar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 30,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 369,
+            "path": "docs/second.bin",
+            "size": 120000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 576
+      },
+      "sourceSha256": "1d82d35a15c22744bb6a43524a439bd963038a65522da6c40b66ad9caa9f29dd"
+    },
+    "rar50": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It unpacks whole, 120000 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "rar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 30,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 222,
+            "path": "docs/second.bin",
+            "size": 120000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 475
+      },
+      "sourceSha256": "5aa7d0b1abe4718267c2db0734ad62845f59e1224b174a9267ea73eb4f1cd0ad"
+    },
+    "rar50-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It cannot be unpacked: while decoding entry 'docs/second.bin': codec input is truncated.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "rar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 30,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 222,
+            "path": "docs/second.bin",
+            "size": 120000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 475
+      },
+      "sourceSha256": "aff12f35d27ef5d53bbe7970ae2af6d11c109cb7b76275c5458aac9d4037c358"
+    },
+    "rar50-solid": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It unpacks whole, 120000 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "rar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 35,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 120096,
+            "path": "docs/second.bin",
+            "size": 120000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 120356
+      },
+      "sourceSha256": "2a8eee892ca0aa0411cfaec40969d053f2afbcd4ab0e79b14c52046271e5bbf1"
+    },
+    "rar50-solid-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It cannot be unpacked: while verifying entry 'docs/second.bin': hash mismatch for hash type 0.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "rar",
+        "members": [
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 35,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": null,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 120096,
+            "path": "docs/second.bin",
+            "size": 120000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 120356
+      },
+      "sourceSha256": "aa8c4299a8b54dce7ec0f140cb189a768834726302727b42a56c28edd8d3e4b5"
+    },
+    "seven-z": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It unpacks whole, 800000 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "7z",
+        "members": [
+          {
+            "crc": 2950579589,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 34,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": 2468907530,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 800040,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800229
+      },
+      "sourceSha256": "881214b6aaf92d33f2bb226f64cf3546fed705444e5405fcfef5994dc36ea683"
+    },
+    "seven-z-damaged": {
+      "checks": [
+        {
+          "index": 0,
+          "result": {
+            "note": "It unpacks whole, 30 bytes, and its checksum agrees.",
+            "status": "intact"
+          }
+        },
+        {
+          "index": 1,
+          "result": {
+            "note": "It stops after 786432 bytes: ChecksumVerificationFailed.",
+            "status": "damaged"
+          }
+        }
+      ],
+      "listing": {
+        "complete": true,
+        "format": "7z",
+        "members": [
+          {
+            "crc": 2950579589,
+            "encrypted": false,
+            "index": 0,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 34,
+            "path": "docs/first.txt",
+            "size": 30
+          },
+          {
+            "crc": 2468907530,
+            "encrypted": false,
+            "index": 1,
+            "isDir": false,
+            "method": 0,
+            "offset": 0,
+            "packed": 800040,
+            "path": "docs/second.bin",
+            "size": 800000
+          }
+        ],
+        "note": null,
+        "source": "directory",
+        "totalBytes": 800229
+      },
+      "sourceSha256": "bfeb00eeab87ca6e1940c323af9579b9a1fe2b8b77471551e5c375f74d049478"
+    }
+  }
+}

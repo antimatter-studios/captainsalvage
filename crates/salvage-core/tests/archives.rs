@@ -7,6 +7,9 @@ use salvage_core::archives::{check, format_of, list, Format, Packing, SharedRead
 use std::io::Write;
 use std::sync::Arc;
 
+#[path = "parity/archives.rs"]
+mod parity;
+
 const FIRST: &[u8] = b"the first file, which is short";
 
 fn second() -> Vec<u8> {

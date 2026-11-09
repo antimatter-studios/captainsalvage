@@ -17,6 +17,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+#[path = "parity/synthetic.rs"]
+mod parity;
+
 const SECTOR: usize = 512;
 const CLUSTER: usize = 4096;
 const CLUSTER_COUNT: u32 = 200;
@@ -3431,13 +3434,10 @@ fn volume_macos_has_visited() -> Vec<u8> {
 }
 
 /// Writes the volume macOS has visited to `SALVAGE_MACOS_IMAGE`, for testing the window.
-/// Run with: SALVAGE_MACOS_IMAGE=/path/macos.img cargo test -p salvage-core --test synthetic -- --ignored write_the_macos_visited
+/// Run with: SALVAGE_MACOS_IMAGE=/path/macos.img cargo test -p salvage-core --test synthetic write_the_macos_visited
 #[test]
-#[ignore]
 fn write_the_macos_visited_volume_for_window_tests() {
-    let path =
-        std::env::var("SALVAGE_MACOS_IMAGE").expect("SALVAGE_MACOS_IMAGE names where to write it");
-    std::fs::write(path, volume_macos_has_visited()).expect("written");
+    verify_window_fixture("macos", "SALVAGE_MACOS_IMAGE", volume_macos_has_visited());
 }
 
 #[test]
@@ -4826,13 +4826,28 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
 }
 
 /// Writes the jigsaw volume to `SALVAGE_JIGSAW_IMAGE`, for testing the window against it.
-/// Run with: SALVAGE_JIGSAW_IMAGE=/path/jigsaw.img cargo test -p salvage-core --test synthetic -- --ignored write_the_jigsaw
+/// Run with: SALVAGE_JIGSAW_IMAGE=/path/jigsaw.img cargo test -p salvage-core --test synthetic write_the_jigsaw
 #[test]
-#[ignore]
 fn write_the_jigsaw_volume_for_window_tests() {
-    let path = std::env::var("SALVAGE_JIGSAW_IMAGE")
-        .expect("SALVAGE_JIGSAW_IMAGE names where to write it");
-    std::fs::write(path, build_jigsaw_volume()).expect("written");
+    verify_window_fixture("jigsaw", "SALVAGE_JIGSAW_IMAGE", build_jigsaw_volume());
+}
+
+fn verify_window_fixture(label: &str, variable: &str, image: Vec<u8>) {
+    let (_workspace, dir) = temp_workspace(&format!("window-fixture-{label}"));
+    let path = dir.join("fixture.img");
+    std::fs::write(&path, &image).expect("written");
+    let written = std::fs::read(&path).expect("read back");
+    assert_eq!(written, image);
+    let volume = Volume::open(Arc::new(MemorySource::new(written))).expect("valid fixture");
+    assert_eq!(volume.boot.cluster_count, CLUSTER_COUNT);
+    assert_eq!(
+        volume.boot_check.main_stored,
+        volume.boot_check.main_computed
+    );
+    if let Some(destination) = std::env::var_os(variable) {
+        std::fs::copy(&path, destination).expect("exported window fixture");
+    }
+    std::fs::remove_dir_all(dir).expect("remove temporary fixture");
 }
 
 #[test]
