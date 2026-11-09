@@ -122,6 +122,19 @@ class Files(unittest.TestCase):
         new = release.replace_readme_block(old, f"{release.README_START}\nnew\n{release.README_END}")
         self.assertEqual(new, f"before\n{release.README_START}\nnew\n{release.README_END}\nafter\n")
 
+    def test_the_version_file_must_hold_one_plain_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = release.ROOT
+            release.ROOT = Path(folder)
+            try:
+                (Path(folder) / release.VERSION_FILE).write_text("0.2\n")
+                with self.assertRaises(SystemExit):
+                    release.source_version()
+                (Path(folder) / release.VERSION_FILE).write_text("0.2.0\n")
+                self.assertEqual(release.source_version(), "0.2.0")
+            finally:
+                release.ROOT = original
+
     def test_every_version_number_moves_and_nothing_else(self):
         files = {
             "x/Cargo.toml": '[package]\nversion = "0.1.0"\n\n[dependencies]\nserde = { version = "1.0.0" }\nother = "1"\n',

@@ -43,6 +43,8 @@ jobs:
         run: bash scripts/changelog-check.sh
       - name: every window string is translated
         run: python3 scripts/check_translations.py
+      - name: every file carries the one version in VERSION
+        run: python3 scripts/release.py check
       - name: engine text is translated sentence by sentence
         run: bash scripts/test_translations.sh
       - name: type check and build the window

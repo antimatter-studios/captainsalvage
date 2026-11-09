@@ -29,6 +29,13 @@ because it only saw the branch's first commit. Run `scripts/install-hooks.sh` on
 
 A refused commit says what to fix. Do what it says, and do not use `--no-verify` to get past it.
 
+## The version lives in one file
+
+`VERSION` holds the project's version, and nothing else states it by hand. `scripts/release.py sync`
+copies it into every manifest and lock file, and `scripts/release.py check` fails when any of them
+differ. CI runs the check on every pull request. Change the version only through the release
+tooling, never by editing a manifest.
+
 ## Cutting a release
 
 Run `scripts/create-release`. It shows what would go out and stops for a yes, then opens the release
