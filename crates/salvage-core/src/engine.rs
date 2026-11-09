@@ -105,6 +105,24 @@ fn need_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
         .with_context(|| format!("argument {key} is required and must be a string"))
 }
 
+/// How close to a join a break must be to count as the join's fault: a few frames or chunks.
+const JOIN_MARGIN_BYTES: u64 = 4096;
+
+/// Whether a stream runs straight across the join between a file's own clusters and the ones
+/// appended to it. A walker that resyncs, as MP3's does, finds valid frames in any audio, so a
+/// high valid fraction proves nothing about a bridge: on a real volume, every MP3 bridge that
+/// scored 98% valid broke at or just after the join. Only a clean crossing is evidence.
+fn join_crossing(join: u64, breaks: &[u64], reached_end: bool) -> &'static str {
+    let near = |offset: &u64| offset.abs_diff(join) <= JOIN_MARGIN_BYTES;
+    if breaks.iter().any(near) {
+        "breaks"
+    } else if reached_end || breaks.iter().any(|&offset| offset > join) {
+        "clean"
+    } else {
+        "unknown"
+    }
+}
+
 fn str_of<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
 }
@@ -1334,12 +1352,23 @@ impl Engine {
                     clusters.len() as u64 * size,
                 )
             };
+        let join = (!append.is_empty())
+            .then(|| clusters.len() as u64 * session.volume.boot.cluster_size());
         clusters.extend(append);
         let length = u64_of(args, "length").unwrap_or(default_length);
         let name = str_of(args, "name").map_or(name, str::to_string);
-        Ok(serde_json::to_value(
-            session.test_stream(&name, &clusters, length)?,
-        )?)
+        let mut answer = serde_json::to_value(session.test_stream(&name, &clusters, length)?)?;
+        if let Some(join) = join {
+            let report = &answer["report"];
+            let breaks: Vec<u64> = report["breaks"]
+                .as_array()
+                .map(|items| items.iter().filter_map(Value::as_u64).collect())
+                .unwrap_or_default();
+            let reached_end = report["reachedEnd"].as_bool().unwrap_or(false);
+            answer["join"] =
+                json!({"offset": join, "crossing": join_crossing(join, &breaks, reached_end)});
+        }
+        Ok(answer)
     }
 
     /// Reads clusters in a chosen order as one file, to show it: a picture, or the start of a
