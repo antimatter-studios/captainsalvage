@@ -283,6 +283,7 @@ The libraries the app names itself:
 | `react-dom` | 19.3.1 | MIT | window |
 | `rhai` | 1.27.0 | MIT OR Apache-2.0 | salvage-core |
 | `rusqlite` | 0.41.1 | MIT | salvage-core |
+| `rust-fs-exfat` | 0.1.0 | MIT | salvage-core |
 | `ruzstd` | 0.9.1 | MIT | salvage-core |
 | `salvage-core` | 0.2.0 | MIT | captain-salvage |
 | `serde` | 1.0.229 | MIT OR Apache-2.0 | captain-salvage, salvage-core |

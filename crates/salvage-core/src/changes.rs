@@ -8,6 +8,7 @@
 
 use crate::exfat::{find_sets, EntrySet, Limits, FIRST_CLUSTER};
 use anyhow::{Context, Result};
+use fs_exfat::primitives;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -182,15 +183,15 @@ fn differing_bytes(before: &[u8], after: &[u8]) -> u64 {
 }
 
 fn fat_entry(fat: &[u8], cluster: usize) -> Option<u32> {
-    fat.get(cluster * 4..cluster * 4 + 4)
-        .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+    let entry_size = std::mem::size_of::<u32>();
+    fat.get(cluster * entry_size..(cluster + 1) * entry_size)
+        .map(|bytes| primitives::u32_at(bytes, 0))
 }
 
 fn bit(bitmap: &[u8], cluster: u32) -> bool {
     let index = (cluster - FIRST_CLUSTER) as usize;
-    bitmap
-        .get(index / 8)
-        .is_some_and(|byte| byte & (1 << (index % 8)) != 0)
+    index < bitmap.len().saturating_mul(u8::BITS as usize)
+        && primitives::is_allocated(bitmap, cluster)
 }
 
 fn root_changes(before: &[u8], after: &[u8], limits: Limits) -> Vec<RootChange> {
@@ -253,7 +254,7 @@ pub fn compare(
             _ => {}
         }
     }
-    let entries = baseline.fat.len().max(current.fat.len()) / 4;
+    let entries = baseline.fat.len().max(current.fat.len()) / std::mem::size_of::<u32>();
     for cluster in 0..entries {
         if fat_entry(&baseline.fat, cluster) != fat_entry(&current.fat, cluster) {
             fat_entries += 1;

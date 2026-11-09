@@ -1,0 +1,162 @@
+{
+  "backup_damaged_trailer": {
+    "backupBoot": {
+      "bytesPerSectorShift": 9,
+      "clusterCount": 200,
+      "clusterHeapOffset": 32,
+      "fatLength": 8,
+      "fatOffset": 24,
+      "fileSystemName": "EXFAT   ",
+      "numberOfFats": 1,
+      "partitionOffset": 0,
+      "percentInUse": 59,
+      "revision": 256,
+      "rootCluster": 3,
+      "sectorsPerClusterShift": 3,
+      "signatureOk": false,
+      "volumeFlags": 0,
+      "volumeLength": 1632,
+      "volumeSerial": 2882343476
+    },
+    "boot": {
+      "bytesPerSectorShift": 9,
+      "clusterCount": 200,
+      "clusterHeapOffset": 32,
+      "fatLength": 8,
+      "fatOffset": 24,
+      "fileSystemName": "EXFAT   ",
+      "numberOfFats": 1,
+      "partitionOffset": 0,
+      "percentInUse": 5,
+      "revision": 256,
+      "rootCluster": 3,
+      "sectorsPerClusterShift": 3,
+      "signatureOk": true,
+      "volumeFlags": 0,
+      "volumeLength": 1632,
+      "volumeSerial": 2882343476
+    }
+  },
+  "backup_empty": {
+    "error": "backup boot sector: boot sector is shorter than 512 bytes",
+    "reason": "boot sector is shorter than 512 bytes"
+  },
+  "backup_short_with_name": {
+    "error": "backup boot sector: boot sector is shorter than 512 bytes",
+    "reason": "boot sector is shorter than 512 bytes"
+  },
+  "backup_short_without_name": {
+    "error": "backup boot sector: boot sector is shorter than 512 bytes",
+    "reason": "boot sector is shorter than 512 bytes"
+  },
+  "backup_wrong_name": {
+    "error": "backup boot sector: no exFAT signature at offset 3: this is not an exFAT volume",
+    "reason": "no exFAT signature at offset 3: this is not an exFAT volume"
+  },
+  "backup_wrong_name_large_region": {
+    "error": "backup boot sector: no exFAT signature at offset 3: this is not an exFAT volume",
+    "reason": "no exFAT signature at offset 3: this is not an exFAT volume"
+  },
+  "invalid_geometry": {
+    "boot": {
+      "bytesPerSectorShift": 255,
+      "clusterCount": 4294967295,
+      "clusterHeapOffset": 4294967295,
+      "fatLength": 4294967295,
+      "fatOffset": 4294967295,
+      "fileSystemName": "EXFAT   ",
+      "numberOfFats": 255,
+      "partitionOffset": 18446744073709551615,
+      "percentInUse": 255,
+      "revision": 65535,
+      "rootCluster": 4294967295,
+      "sectorsPerClusterShift": 255,
+      "signatureOk": false,
+      "volumeFlags": 65535,
+      "volumeLength": 18446744073709551615,
+      "volumeSerial": 4294967295
+    }
+  },
+  "main_damaged_trailer": {
+    "backupBoot": {
+      "bytesPerSectorShift": 9,
+      "clusterCount": 200,
+      "clusterHeapOffset": 32,
+      "fatLength": 8,
+      "fatOffset": 24,
+      "fileSystemName": "EXFAT   ",
+      "numberOfFats": 1,
+      "partitionOffset": 0,
+      "percentInUse": 59,
+      "revision": 256,
+      "rootCluster": 3,
+      "sectorsPerClusterShift": 3,
+      "signatureOk": true,
+      "volumeFlags": 0,
+      "volumeLength": 1632,
+      "volumeSerial": 2882343476
+    },
+    "boot": {
+      "bytesPerSectorShift": 9,
+      "clusterCount": 200,
+      "clusterHeapOffset": 32,
+      "fatLength": 8,
+      "fatOffset": 24,
+      "fileSystemName": "EXFAT   ",
+      "numberOfFats": 1,
+      "partitionOffset": 0,
+      "percentInUse": 5,
+      "revision": 256,
+      "rootCluster": 3,
+      "sectorsPerClusterShift": 3,
+      "signatureOk": false,
+      "volumeFlags": 0,
+      "volumeLength": 1632,
+      "volumeSerial": 2882343476
+    }
+  },
+  "main_empty": {
+    "error": "main boot sector: boot sector is shorter than 512 bytes",
+    "reason": "boot sector is shorter than 512 bytes"
+  },
+  "main_short_with_name": {
+    "error": "main boot sector: boot sector is shorter than 512 bytes",
+    "reason": "boot sector is shorter than 512 bytes"
+  },
+  "main_short_without_name": {
+    "error": "main boot sector: boot sector is shorter than 512 bytes",
+    "reason": "boot sector is shorter than 512 bytes"
+  },
+  "main_wrong_name": {
+    "error": "main boot sector: no exFAT signature at offset 3: this is not an exFAT volume",
+    "reason": "no exFAT signature at offset 3: this is not an exFAT volume"
+  },
+  "main_wrong_name_large_region": {
+    "error": "main boot sector: no exFAT signature at offset 3: this is not an exFAT volume",
+    "reason": "no exFAT signature at offset 3: this is not an exFAT volume"
+  },
+  "open_wrong_name": {
+    "error": "main boot sector: no exFAT signature at offset 3: this is not an exFAT volume",
+    "reason": "no exFAT signature at offset 3: this is not an exFAT volume"
+  },
+  "zero_geometry": {
+    "boot": {
+      "bytesPerSectorShift": 0,
+      "clusterCount": 0,
+      "clusterHeapOffset": 0,
+      "fatLength": 0,
+      "fatOffset": 0,
+      "fileSystemName": "EXFAT   ",
+      "numberOfFats": 0,
+      "partitionOffset": 0,
+      "percentInUse": 0,
+      "revision": 0,
+      "rootCluster": 0,
+      "sectorsPerClusterShift": 0,
+      "signatureOk": false,
+      "volumeFlags": 0,
+      "volumeLength": 0,
+      "volumeSerial": 0
+    }
+  }
+}

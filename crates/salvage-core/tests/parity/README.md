@@ -5,6 +5,10 @@ These references were captured from Captain Salvage main
 rewire. Only tests and tooling were added for the capture; production code and
 dependencies are unchanged. This implements rust-fs-exfat issue #29, not #28.
 
+The additional `reference/boot-sectors.json` was captured from main
+`9035814c0823f636d7f1789b5b31406b7ab50515`, also before the driver rewire, with
+only the new parity test added. Its production code and dependencies were unchanged.
+
 ## Run
 
 From the repository root:
@@ -19,10 +23,10 @@ The script can also be called from another directory by its absolute path.
 An optional first argument selects another reference directory.
 
 The script generates fresh outputs in a temporary directory and uses `diff -u`
-to compare both files byte-for-byte. Any test failure, missing reference, or
+to compare all three files byte-for-byte. Any test failure, missing reference, or
 difference fails the command. It never updates the references. Temporary outputs
 are removed on exit. Ordinary `cargo test --locked -p salvage-core` also compares
-both references, so the existing CI test job enforces parity without a new job.
+all three references, so the existing CI test job enforces parity without a new job.
 
 ## What is frozen
 
@@ -45,6 +49,14 @@ both references, so the existing CI test job enforces parity without a new job.
 
 A scan stopped after one chunk and resumed must match the *entire* damage-fixture
 capture, not just its entry count.
+
+`reference/boot-sectors.json` freezes exact boot-parser errors, including their
+main/backup context and root cause, through `Volume::from_structures`. It covers
+empty and 511-byte sectors (with and without the filesystem name), wrong names
+in 512-byte sectors and full boot regions, and a wrong name through `Volume::open`.
+It also records accepted main/backup sectors with damaged boot trailers and raw
+parser acceptance/field decoding for zero and invalid geometry. Invalid geometry
+is not passed to the unchecked geometry accessors.
 
 `reference/archives.json` reuses `archives.rs`'s synthetic payloads and archive
 builders. It freezes listings and every file-member check for plain tar,

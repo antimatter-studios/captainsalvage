@@ -150,6 +150,73 @@ fn capture(label: &str, image: Vec<u8>, resume: bool) -> Value {
 }
 
 #[test]
+fn boot_sector_outputs_match_the_pre_driver_reference() {
+    let source = Arc::new(MemorySource::new(build_volume()));
+    let original = Volume::open(source.clone())
+        .expect("fixture volume")
+        .structures;
+    let mut cases = serde_json::Map::new();
+    for backup in [false, true] {
+        let region = if backup { "backup" } else { "main" };
+        for (name, sector) in [
+            ("empty", Vec::new()),
+            ("short_without_name", vec![0; SECTOR - 1]),
+            ("short_with_name", original.main[..SECTOR - 1].to_vec()),
+            ("wrong_name", vec![0; SECTOR]),
+            ("wrong_name_large_region", vec![0; SECTOR * 12]),
+        ] {
+            let mut structures = original.clone();
+            if backup {
+                structures.backup = sector;
+            } else {
+                structures.main = sector;
+            }
+            let error = Volume::from_structures(source.clone(), structures)
+                .err()
+                .expect("invalid boot sector");
+            cases.insert(
+                format!("{region}_{name}"),
+                json!({"error": format!("{error:#}"), "reason": error.root_cause().to_string()}),
+            );
+        }
+        let mut structures = original.clone();
+        let sector = if backup {
+            &mut structures.backup
+        } else {
+            &mut structures.main
+        };
+        sector[510..512].fill(0);
+        let volume = Volume::from_structures(source.clone(), structures)
+            .expect("main accepts a damaged boot trailer");
+        cases.insert(
+            format!("{region}_damaged_trailer"),
+            json!({"boot": volume.boot, "backupBoot": volume.backup_boot}),
+        );
+    }
+    let mut image = build_volume();
+    image[3..11].fill(0);
+    let error = Volume::open(Arc::new(MemorySource::new(image)))
+        .err()
+        .expect("invalid on-disk boot sector");
+    cases.insert(
+        "open_wrong_name".into(),
+        json!({"error": format!("{error:#}"), "reason": error.root_cause().to_string()}),
+    );
+    for (name, byte) in [("zero_geometry", 0), ("invalid_geometry", u8::MAX)] {
+        let mut sector = [byte; SECTOR];
+        sector[3..11].copy_from_slice(b"EXFAT   ");
+        let boot = salvage_core::exfat::BootSector::parse(&sector)
+            .expect("main accepts raw geometry and a damaged boot trailer");
+        cases.insert(name.into(), json!({"boot": boot}));
+    }
+    support::record(
+        "boot-sectors.json",
+        json!(cases),
+        include_str!("reference/boot-sectors.json"),
+    );
+}
+
+#[test]
 fn synthetic_outputs_match_the_pre_driver_reference() {
     let mut fixtures = serde_json::Map::new();
     for (name, image) in [
