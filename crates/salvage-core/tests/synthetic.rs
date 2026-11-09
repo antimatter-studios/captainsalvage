@@ -1357,6 +1357,72 @@ fn test_stream_scores_a_proposed_join() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// An MP3 stream of 417-byte frames whose data is seeded, so two seeds are two songs.
+fn mp3_stream(seed: u32, bytes: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes + 417);
+    let mut n = 0u32;
+    while out.len() < bytes {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x64]);
+        out.extend(noise(seed * 1000 + n, 413));
+        n += 1;
+    }
+    out.truncate(bytes);
+    out
+}
+
+#[test]
+fn a_bridge_counts_only_when_the_stream_crosses_the_join() {
+    let mut b = Builder {
+        image: build_volume(),
+    };
+    let song = mp3_stream(1, 4 * CLUSTER);
+    // The file's chain stops after two clusters; its true rest lies at 170, another song at 180.
+    for (cluster, piece) in [(150u32, 0usize), (151, 1), (170, 2), (171, 3)] {
+        b.put(cluster, 0, &song[piece * CLUSTER..(piece + 1) * CLUSTER]);
+    }
+    let other = mp3_stream(2, 2 * CLUSTER);
+    b.put(180, 0, &other[..CLUSTER]);
+    b.put(181, 0, &other[CLUSTER..]);
+    for (from, to) in [(150, 151), (170, 171), (180, 181)] {
+        b.fat(from, to);
+        b.fat(to, FAT_END);
+    }
+    b.directory(
+        28,
+        &[entry_set(
+            "cut.mp3",
+            false,
+            150,
+            4 * CLUSTER as u64,
+            false,
+            true,
+        )],
+    );
+    let (engine, _session, dir) = engine_with_image("join", b.image);
+    let id = id_named(&engine, "cut.mp3");
+    let try_bridge = |first: u32| {
+        call(
+            &engine,
+            "test_stream",
+            json!({"entryId": id, "appendExtents": [{"first": first, "count": 2}], "summary": true}),
+        )
+    };
+    let true_rest = try_bridge(170);
+    assert_eq!(true_rest["join"]["offset"], 2 * CLUSTER);
+    assert_eq!(true_rest["join"]["crossing"], "clean", "{true_rest}");
+    let decoy = try_bridge(180);
+    assert_eq!(decoy["join"]["crossing"], "breaks", "{decoy}");
+    // The decoy is still mostly valid frames, which is why the valid fraction alone misleads.
+    assert!(decoy["report"]["validFraction"].as_f64().expect("fraction") > 0.9);
+    let plain = call(
+        &engine,
+        "test_stream",
+        json!({"entryId": id, "summary": true}),
+    );
+    assert!(plain.get("join").is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn scripts_can_analyse_but_have_no_way_to_write() {
     let (engine, _session, dir) = engine_with_volume("script");
