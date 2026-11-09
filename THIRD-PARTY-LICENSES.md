@@ -266,88 +266,90 @@ write` keeps this file current.
 - **rhai** 1.27.0, MIT OR Apache-2.0: [text 1](#text-1), [text 6](#text-6)
 - **rsqlite-vfs** 0.2.0, MIT: no license file shipped
 - **rusqlite** 0.41.1, MIT: [text 135](#text-135)
+- **rust-fs-core** 0.4.3, MIT: [text 172](#text-172)
+- **rust-fs-exfat** 0.1.0, MIT: [text 173](#text-173)
 - **rustc-hash** 2.1.3, Apache-2.0 OR MIT: [text 16](#text-16), [text 6](#text-6)
 - **rustix** 1.1.6, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT: [text 9](#text-9), [text 136](#text-136), [text 6](#text-6)
-- **ruzstd** 0.9.1, MIT: [text 172](#text-172)
-- **same-file** 1.0.6, Unlicense/MIT: [text 11](#text-11), [text 173](#text-173)
+- **ruzstd** 0.9.1, MIT: [text 174](#text-174)
+- **same-file** 1.0.6, Unlicense/MIT: [text 11](#text-11), [text 175](#text-175)
 - **scheduler** 0.28.0, MIT: [text 167](#text-167)
-- **schemars** 0.8.22, MIT: [text 174](#text-174)
-- **schemars** 0.9.0, MIT: [text 174](#text-174)
-- **schemars** 1.2.3, MIT: [text 174](#text-174)
-- **scopeguard** 1.2.0, MIT OR Apache-2.0: [text 9](#text-9), [text 175](#text-175)
+- **schemars** 0.8.22, MIT: [text 176](#text-176)
+- **schemars** 0.9.0, MIT: [text 176](#text-176)
+- **schemars** 1.2.3, MIT: [text 176](#text-176)
+- **scopeguard** 1.2.0, MIT OR Apache-2.0: [text 9](#text-9), [text 177](#text-177)
 - **selectors** 0.38.0, MPL-2.0: no license file shipped
 - **semver** 1.0.28, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **serde** 1.0.229, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **serde-untagged** 0.1.9, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **serde_core** 1.0.229, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **serde_json** 1.0.154, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
-- **serde_spanned** 1.1.2, MIT OR Apache-2.0: [text 176](#text-176), [text 177](#text-177)
-- **serde_with** 3.24.0, MIT OR Apache-2.0: [text 9](#text-9), [text 178](#text-178)
-- **serialize-to-javascript** 0.1.2, MIT OR Apache-2.0: [text 35](#text-35), [text 179](#text-179)
+- **serde_spanned** 1.1.2, MIT OR Apache-2.0: [text 178](#text-178), [text 179](#text-179)
+- **serde_with** 3.24.0, MIT OR Apache-2.0: [text 9](#text-9), [text 180](#text-180)
+- **serialize-to-javascript** 0.1.2, MIT OR Apache-2.0: [text 35](#text-35), [text 181](#text-181)
 - **servo_arc** 0.4.3, MIT OR Apache-2.0: [text 9](#text-9), [text 6](#text-6)
 - **sevenz-rust2** 0.24.2, Apache-2.0: [text 35](#text-35)
-- **sha1** 0.11.0, MIT OR Apache-2.0: [text 7](#text-7), [text 180](#text-180)
-- **sha2** 0.10.9, MIT OR Apache-2.0: [text 7](#text-7), [text 181](#text-181)
-- **sha2** 0.11.1, MIT OR Apache-2.0: [text 7](#text-7), [text 180](#text-180)
-- **simd-adler32** 0.3.10, MIT: [text 182](#text-182)
-- **siphasher** 1.0.4, MIT OR Apache-2.0: [text 183](#text-183), [text 35](#text-35), [text 19](#text-19)
-- **slab** 0.4.12, MIT: [text 184](#text-184)
-- **smallvec** 1.16.4, MIT OR Apache-2.0: [text 9](#text-9), [text 185](#text-185)
-- **smartstring** 1.0.1, MPL-2.0+: [text 186](#text-186)
+- **sha1** 0.11.0, MIT OR Apache-2.0: [text 7](#text-7), [text 182](#text-182)
+- **sha2** 0.10.9, MIT OR Apache-2.0: [text 7](#text-7), [text 183](#text-183)
+- **sha2** 0.11.1, MIT OR Apache-2.0: [text 7](#text-7), [text 182](#text-182)
+- **simd-adler32** 0.3.10, MIT: [text 184](#text-184)
+- **siphasher** 1.0.4, MIT OR Apache-2.0: [text 185](#text-185), [text 35](#text-35), [text 19](#text-19)
+- **slab** 0.4.12, MIT: [text 186](#text-186)
+- **smallvec** 1.16.4, MIT OR Apache-2.0: [text 9](#text-9), [text 187](#text-187)
+- **smartstring** 1.0.1, MPL-2.0+: [text 188](#text-188)
 - **socket2** 0.6.5, MIT OR Apache-2.0: [text 9](#text-9), [text 39](#text-39)
-- **softbuffer** 0.4.8, MIT OR Apache-2.0: [text 187](#text-187), [text 188](#text-188)
+- **softbuffer** 0.4.8, MIT OR Apache-2.0: [text 189](#text-189), [text 190](#text-190)
 - **soup3** 0.5.0, MIT: [text 123](#text-123)
 - **soup3-sys** 0.5.0, MIT: [text 123](#text-123)
-- **spin** 0.5.2, MIT: [text 189](#text-189)
-- **sqlite-wasm-rs** 0.6.2, MIT: [text 190](#text-190)
-- **stable_deref_trait** 1.2.1, MIT OR Apache-2.0: [text 9](#text-9), [text 191](#text-191)
-- **static_assertions** 1.1.0, MIT OR Apache-2.0: [text 35](#text-35), [text 192](#text-192)
+- **spin** 0.5.2, MIT: [text 191](#text-191)
+- **sqlite-wasm-rs** 0.6.2, MIT: [text 192](#text-192)
+- **stable_deref_trait** 1.2.1, MIT OR Apache-2.0: [text 9](#text-9), [text 193](#text-193)
+- **static_assertions** 1.1.0, MIT OR Apache-2.0: [text 35](#text-35), [text 194](#text-194)
 - **string_cache** 0.9.0, MIT OR Apache-2.0: [text 9](#text-9), [text 53](#text-53)
-- **swift-rs** 1.0.9, MIT OR Apache-2.0: [text 193](#text-193), [text 194](#text-194)
+- **swift-rs** 1.0.9, MIT OR Apache-2.0: [text 195](#text-195), [text 196](#text-196)
 - **sync_wrapper** 1.0.2, Apache-2.0: [text 1](#text-1)
-- **tao** 0.37.2, Apache-2.0: [text 56](#text-56), [text 195](#text-195)
-- **tar** 0.4.46, MIT OR Apache-2.0: [text 9](#text-9), [text 196](#text-196)
+- **tao** 0.37.2, Apache-2.0: [text 56](#text-56), [text 197](#text-197)
+- **tar** 0.4.46, MIT OR Apache-2.0: [text 9](#text-9), [text 198](#text-198)
 - **tauri** 2.12.5, Apache-2.0 OR MIT: [text 1](#text-1), [text 2](#text-2)
 - **tauri-runtime** 2.12.2, Apache-2.0 OR MIT: [text 1](#text-1), [text 2](#text-2)
 - **tauri-runtime-wry** 2.12.3, Apache-2.0 OR MIT: [text 1](#text-1), [text 2](#text-2)
 - **tauri-utils** 2.10.2, Apache-2.0 OR MIT: [text 1](#text-1), [text 2](#text-2)
-- **tendril** 0.5.1, MIT OR Apache-2.0: [text 9](#text-9), [text 197](#text-197)
+- **tendril** 0.5.1, MIT OR Apache-2.0: [text 9](#text-9), [text 199](#text-199)
 - **thin-vec** 0.2.21, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **thiserror** 1.0.69, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **thiserror** 2.0.21, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
-- **tiff** 0.11.3, MIT: [text 198](#text-198)
-- **time** 0.3.55, MIT OR Apache-2.0: [text 1](#text-1), [text 199](#text-199)
-- **time-core** 0.1.9, MIT OR Apache-2.0: [text 1](#text-1), [text 199](#text-199)
-- **tiny_http** 0.12.0, MIT OR Apache-2.0: [text 9](#text-9), [text 200](#text-200)
+- **tiff** 0.11.3, MIT: [text 200](#text-200)
+- **time** 0.3.55, MIT OR Apache-2.0: [text 1](#text-1), [text 201](#text-201)
+- **time-core** 0.1.9, MIT OR Apache-2.0: [text 1](#text-1), [text 201](#text-201)
+- **tiny_http** 0.12.0, MIT OR Apache-2.0: [text 9](#text-9), [text 202](#text-202)
 - **tinystr** 0.8.5, Unicode-3.0: [text 114](#text-114)
 - **tinyvec** 1.13.3, Zlib OR Apache-2.0 OR MIT: [text 35](#text-35), [text 64](#text-64), [text 32](#text-32)
-- **tokio** 1.54.1, MIT: [text 201](#text-201)
-- **tokio-util** 0.7.20, MIT: [text 201](#text-201)
-- **toml** 1.2.0+spec-1.1.0, MIT OR Apache-2.0: [text 176](#text-176), [text 177](#text-177)
-- **toml_datetime** 1.1.2+spec-1.1.0, MIT OR Apache-2.0: [text 176](#text-176), [text 177](#text-177)
-- **toml_parser** 1.1.5+spec-1.1.0, MIT OR Apache-2.0: [text 176](#text-176), [text 177](#text-177)
-- **toml_writer** 1.2.0+spec-1.1.0, MIT OR Apache-2.0: [text 176](#text-176), [text 177](#text-177)
-- **tower** 0.5.3, MIT: [text 202](#text-202)
-- **tower-http** 0.6.11, MIT: [text 203](#text-203)
-- **tower-layer** 0.3.3, MIT: [text 202](#text-202)
-- **tower-service** 0.3.3, MIT: [text 202](#text-202)
-- **tracing** 0.1.44, MIT: [text 204](#text-204)
-- **tracing-core** 0.1.36, MIT: [text 204](#text-204)
-- **tray-icon** 0.25.1, MIT OR Apache-2.0: [text 9](#text-9), [text 146](#text-146), [text 205](#text-205)
-- **try-lock** 0.2.5, MIT: [text 206](#text-206)
-- **twox-hash** 2.1.5, MIT: [text 207](#text-207)
+- **tokio** 1.54.1, MIT: [text 203](#text-203)
+- **tokio-util** 0.7.20, MIT: [text 203](#text-203)
+- **toml** 1.2.0+spec-1.1.0, MIT OR Apache-2.0: [text 178](#text-178), [text 179](#text-179)
+- **toml_datetime** 1.1.2+spec-1.1.0, MIT OR Apache-2.0: [text 178](#text-178), [text 179](#text-179)
+- **toml_parser** 1.1.5+spec-1.1.0, MIT OR Apache-2.0: [text 178](#text-178), [text 179](#text-179)
+- **toml_writer** 1.2.0+spec-1.1.0, MIT OR Apache-2.0: [text 178](#text-178), [text 179](#text-179)
+- **tower** 0.5.3, MIT: [text 204](#text-204)
+- **tower-http** 0.6.11, MIT: [text 205](#text-205)
+- **tower-layer** 0.3.3, MIT: [text 204](#text-204)
+- **tower-service** 0.3.3, MIT: [text 204](#text-204)
+- **tracing** 0.1.44, MIT: [text 206](#text-206)
+- **tracing-core** 0.1.36, MIT: [text 206](#text-206)
+- **tray-icon** 0.25.1, MIT OR Apache-2.0: [text 9](#text-9), [text 146](#text-146), [text 207](#text-207)
+- **try-lock** 0.2.5, MIT: [text 208](#text-208)
+- **twox-hash** 2.1.5, MIT: [text 209](#text-209)
 - **typed-path** 0.13.0, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **typeid** 1.0.3, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
-- **typenum** 1.20.1, MIT OR Apache-2.0: [text 208](#text-208), [text 209](#text-209), [text 210](#text-210)
-- **unicode-ident** 1.0.27, (MIT OR Apache-2.0) AND Unicode-3.0: [text 16](#text-16), [text 6](#text-6), [text 211](#text-211)
+- **typenum** 1.20.1, MIT OR Apache-2.0: [text 210](#text-210), [text 211](#text-211), [text 212](#text-212)
+- **unicode-ident** 1.0.27, (MIT OR Apache-2.0) AND Unicode-3.0: [text 16](#text-16), [text 6](#text-6), [text 213](#text-213)
 - **unicode-segmentation** 1.13.3, MIT OR Apache-2.0: [text 9](#text-9), [text 101](#text-101)
 - **url** 2.5.8, MIT OR Apache-2.0: [text 9](#text-9), [text 115](#text-115)
-- **urlpattern** 0.6.0, MIT: [text 212](#text-212)
-- **utf8_iter** 1.1.0, Apache-2.0 OR MIT: [text 35](#text-35), [text 213](#text-213)
-- **utf_types** 1.0.0, Apache-2.0 OR MIT: [text 35](#text-35), [text 213](#text-213)
-- **uuid** 1.29.0, Apache-2.0 OR MIT: [text 9](#text-9), [text 214](#text-214)
+- **urlpattern** 0.6.0, MIT: [text 214](#text-214)
+- **utf8_iter** 1.1.0, Apache-2.0 OR MIT: [text 35](#text-35), [text 215](#text-215)
+- **utf_types** 1.0.0, Apache-2.0 OR MIT: [text 35](#text-35), [text 215](#text-215)
+- **uuid** 1.29.0, Apache-2.0 OR MIT: [text 9](#text-9), [text 216](#text-216)
 - **walkdir** 2.5.0, Unlicense/MIT: [text 11](#text-11), [text 12](#text-12)
-- **want** 0.3.2, MIT: [text 215](#text-215)
+- **want** 0.3.2, MIT: [text 217](#text-217)
 - **wasi** 0.11.1+wasi-snapshot-preview1, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT: [text 9](#text-9), [text 136](#text-136), [text 6](#text-6)
 - **wasip2** 1.0.4+wasi-0.2.12, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT: [text 9](#text-9), [text 136](#text-136), [text 6](#text-6)
 - **wasm-bindgen** 0.2.130, MIT OR Apache-2.0: [text 9](#text-9), [text 39](#text-39)
@@ -355,57 +357,57 @@ write` keeps this file current.
 - **wasm-bindgen-shared** 0.2.130, MIT OR Apache-2.0: [text 9](#text-9), [text 39](#text-39)
 - **wasm-streams** 0.5.0, MIT OR Apache-2.0: [text 16](#text-16), [text 6](#text-6)
 - **web-sys** 0.3.107, MIT OR Apache-2.0: [text 9](#text-9), [text 39](#text-39)
-- **web-time** 1.1.0, MIT OR Apache-2.0: [text 216](#text-216), [text 217](#text-217)
+- **web-time** 1.1.0, MIT OR Apache-2.0: [text 218](#text-218), [text 219](#text-219)
 - **web_atoms** 0.2.6, MIT OR Apache-2.0: [text 9](#text-9), [text 103](#text-103)
-- **webkit2gtk** 2.0.2, MIT: [text 218](#text-218)
-- **webkit2gtk-sys** 2.0.2, MIT: [text 219](#text-219)
+- **webkit2gtk** 2.0.2, MIT: [text 220](#text-220)
+- **webkit2gtk-sys** 2.0.2, MIT: [text 221](#text-221)
 - **webview2-com** 0.39.1, MIT: no license file shipped
 - **webview2-com-sys** 0.39.1, MIT: no license file shipped
-- **weezl** 0.1.12, MIT OR Apache-2.0: [text 9](#text-9), [text 220](#text-220)
-- **winapi** 0.3.9, MIT/Apache-2.0: [text 56](#text-56), [text 221](#text-221)
+- **weezl** 0.1.12, MIT OR Apache-2.0: [text 9](#text-9), [text 222](#text-222)
+- **winapi** 0.3.9, MIT/Apache-2.0: [text 56](#text-56), [text 223](#text-223)
 - **winapi-i686-pc-windows-gnu** 0.4.0, MIT/Apache-2.0: no license file shipped
-- **winapi-util** 0.1.11, Unlicense OR MIT: [text 11](#text-11), [text 173](#text-173)
+- **winapi-util** 0.1.11, Unlicense OR MIT: [text 11](#text-11), [text 175](#text-175)
 - **winapi-x86_64-pc-windows-gnu** 0.4.0, MIT/Apache-2.0: no license file shipped
-- **window-vibrancy** 0.8.1, Apache-2.0 OR MIT: [text 9](#text-9), [text 222](#text-222), [text 223](#text-223)
-- **windows** 0.62.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-collections** 0.3.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-core** 0.62.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-future** 0.3.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-link** 0.2.1, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-numerics** 0.3.1, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-result** 0.4.1, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-strings** 0.5.1, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-sys** 0.45.0, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-sys** 0.61.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-targets** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-threading** 0.2.1, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows-version** 0.1.7, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_aarch64_gnullvm** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_aarch64_msvc** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_i686_gnu** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_i686_msvc** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_x86_64_gnu** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_x86_64_gnullvm** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **windows_x86_64_msvc** 0.42.2, MIT OR Apache-2.0: [text 224](#text-224), [text 225](#text-225)
-- **winnow** 1.0.4, MIT: [text 226](#text-226)
+- **window-vibrancy** 0.8.1, Apache-2.0 OR MIT: [text 9](#text-9), [text 224](#text-224), [text 225](#text-225)
+- **windows** 0.62.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-collections** 0.3.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-core** 0.62.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-future** 0.3.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-link** 0.2.1, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-numerics** 0.3.1, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-result** 0.4.1, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-strings** 0.5.1, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-sys** 0.45.0, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-sys** 0.61.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-targets** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-threading** 0.2.1, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows-version** 0.1.7, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_aarch64_gnullvm** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_aarch64_msvc** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_i686_gnu** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_i686_msvc** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_x86_64_gnu** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_x86_64_gnullvm** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **windows_x86_64_msvc** 0.42.2, MIT OR Apache-2.0: [text 226](#text-226), [text 227](#text-227)
+- **winnow** 1.0.4, MIT: [text 228](#text-228)
 - **wit-bindgen** 0.57.1, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT: [text 9](#text-9), [text 136](#text-136), [text 6](#text-6)
 - **writeable** 0.6.4, Unicode-3.0: [text 114](#text-114)
-- **wry** 0.57.1, Apache-2.0 OR MIT: [text 9](#text-9), [text 227](#text-227), [text 228](#text-228)
+- **wry** 0.57.1, Apache-2.0 OR MIT: [text 9](#text-9), [text 229](#text-229), [text 230](#text-230)
 - **x11** 2.21.0, MIT: [text 6](#text-6)
 - **x11-dl** 2.21.0, MIT: [text 6](#text-6)
-- **xattr** 1.7.0, MIT OR Apache-2.0: [text 9](#text-9), [text 229](#text-229)
-- **xz4rust** 0.2.3, MIT: [text 230](#text-230)
+- **xattr** 1.7.0, MIT OR Apache-2.0: [text 9](#text-9), [text 231](#text-231)
+- **xz4rust** 0.2.3, MIT: [text 232](#text-232)
 - **yoke** 0.8.4, Unicode-3.0: [text 114](#text-114)
-- **zerocopy** 0.8.63, BSD-2-Clause OR Apache-2.0 OR MIT: [text 231](#text-231), [text 232](#text-232), [text 233](#text-233)
+- **zerocopy** 0.8.63, BSD-2-Clause OR Apache-2.0 OR MIT: [text 233](#text-233), [text 234](#text-234), [text 235](#text-235)
 - **zerofrom** 0.1.8, Unicode-3.0: [text 114](#text-114)
-- **zeroize** 1.9.1, Apache-2.0 OR MIT: [text 35](#text-35), [text 234](#text-234)
+- **zeroize** 1.9.1, Apache-2.0 OR MIT: [text 35](#text-35), [text 236](#text-236)
 - **zerotrie** 0.2.5, Unicode-3.0: [text 114](#text-114)
 - **zerovec** 0.11.9, Unicode-3.0: [text 114](#text-114)
-- **zip** 9.4.1, MIT: [text 189](#text-189)
-- **zlib-rs** 0.6.8, Zlib: [text 235](#text-235)
+- **zip** 9.4.1, MIT: [text 191](#text-191)
+- **zlib-rs** 0.6.8, Zlib: [text 237](#text-237)
 - **zmij** 1.0.23, MIT: [text 6](#text-6)
-- **zune-core** 0.5.3, MIT OR Apache-2.0 OR Zlib: [text 35](#text-35), [text 236](#text-236), [text 237](#text-237)
-- **zune-jpeg** 0.5.15, MIT OR Apache-2.0 OR Zlib: [text 35](#text-35), [text 236](#text-236), [text 237](#text-237)
+- **zune-core** 0.5.3, MIT OR Apache-2.0 OR Zlib: [text 35](#text-35), [text 238](#text-238), [text 239](#text-239)
+- **zune-jpeg** 0.5.15, MIT OR Apache-2.0 OR Zlib: [text 35](#text-35), [text 238](#text-238), [text 239](#text-239)
 
 ## License texts
 
@@ -11163,7 +11165,7 @@ THE SOFTWARE.
 ```text
 MIT License
 
-Copyright (c) 2019 Moritz Borcherding
+Copyright (c) 2026 Antimatter Studios
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -11186,6 +11188,60 @@ SOFTWARE.
 
 <a id="text-173"></a>
 ### Text 173
+
+```text
+MIT License
+
+Copyright (c) 2026 Chris Thomas
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+<a id="text-174"></a>
+### Text 174
+
+```text
+MIT License
+
+Copyright (c) 2019 Moritz Borcherding
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+<a id="text-175"></a>
+### Text 175
 
 ```text
 The MIT License (MIT)
@@ -11211,8 +11267,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-<a id="text-174"></a>
-### Text 174
+<a id="text-176"></a>
+### Text 176
 
 ```text
 MIT License
@@ -11238,8 +11294,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-175"></a>
-### Text 175
+<a id="text-177"></a>
+### Text 177
 
 ```text
 Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
@@ -11269,8 +11325,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-176"></a>
-### Text 176
+<a id="text-178"></a>
+### Text 178
 
 ```text
 Apache License
@@ -11476,8 +11532,8 @@ Apache License
    limitations under the License.
 ```
 
-<a id="text-177"></a>
-### Text 177
+<a id="text-179"></a>
+### Text 179
 
 ```text
 Copyright (c) Individual contributors
@@ -11501,8 +11557,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-178"></a>
-### Text 178
+<a id="text-180"></a>
+### Text 180
 
 ```text
 Copyright (c) 2015
@@ -11532,8 +11588,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-179"></a>
-### Text 179
+<a id="text-181"></a>
+### Text 181
 
 ```text
 MIT License
@@ -11559,8 +11615,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-180"></a>
-### Text 180
+<a id="text-182"></a>
+### Text 182
 
 ```text
 Copyright (c) 2016-2026 The RustCrypto Project Developers
@@ -11593,8 +11649,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-181"></a>
-### Text 181
+<a id="text-183"></a>
+### Text 183
 
 ```text
 Copyright (c) 2006-2009 Graydon Hoare
@@ -11626,8 +11682,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-182"></a>
-### Text 182
+<a id="text-184"></a>
+### Text 184
 
 ```text
 MIT License
@@ -11653,8 +11709,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-183"></a>
-### Text 183
+<a id="text-185"></a>
+### Text 185
 
 ```text
 Copyright 2012-2016 The Rust Project Developers.
@@ -11666,8 +11722,8 @@ http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
 option.
 ```
 
-<a id="text-184"></a>
-### Text 184
+<a id="text-186"></a>
+### Text 186
 
 ```text
 Copyright (c) 2019 Carl Lerche
@@ -11697,8 +11753,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-185"></a>
-### Text 185
+<a id="text-187"></a>
+### Text 187
 
 ```text
 Copyright (c) 2018 The Servo Project Developers
@@ -11728,8 +11784,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-186"></a>
-### Text 186
+<a id="text-188"></a>
+### Text 188
 
 ```text
 Mozilla Public License Version 2.0
@@ -12089,8 +12145,8 @@ You may add additional accurate notices of copyright ownership.
     defined by the Mozilla Public License, v. 2.0.
 ```
 
-<a id="text-187"></a>
-### Text 187
+<a id="text-189"></a>
+### Text 189
 
 ```text
 Apache License
@@ -12296,8 +12352,8 @@ Apache License
    limitations under the License.
 ```
 
-<a id="text-188"></a>
-### Text 188
+<a id="text-190"></a>
+### Text 190
 
 ```text
 Copyright 2022 Kirill Chibisov
@@ -12321,8 +12377,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-189"></a>
-### Text 189
+<a id="text-191"></a>
+### Text 191
 
 ```text
 The MIT License (MIT)
@@ -12348,8 +12404,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-190"></a>
-### Text 190
+<a id="text-192"></a>
+### Text 192
 
 ```text
 MIT License
@@ -12375,8 +12431,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-191"></a>
-### Text 191
+<a id="text-193"></a>
+### Text 193
 
 ```text
 Copyright (c) 2017 Robert Grosse
@@ -12406,8 +12462,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-192"></a>
-### Text 192
+<a id="text-194"></a>
+### Text 194
 
 ```text
 MIT License
@@ -12433,8 +12489,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-193"></a>
-### Text 193
+<a id="text-195"></a>
+### Text 195
 
 ```text
 Apache License
@@ -12640,8 +12696,8 @@ Apache License
    limitations under the License.
 ```
 
-<a id="text-194"></a>
-### Text 194
+<a id="text-196"></a>
+### Text 196
 
 ```text
 Copyright (c) 2023 The swift-rs Developers
@@ -12665,8 +12721,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-195"></a>
-### Text 195
+<a id="text-197"></a>
+### Text 197
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -12689,8 +12745,8 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tao.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-<a id="text-196"></a>
-### Text 196
+<a id="text-198"></a>
+### Text 198
 
 ```text
 Copyright (c) The tar-rs Project Contributors
@@ -12720,8 +12776,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-197"></a>
-### Text 197
+<a id="text-199"></a>
+### Text 199
 
 ```text
 Copyright (c) 2015 Keegan McAllister
@@ -12751,8 +12807,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-198"></a>
-### Text 198
+<a id="text-200"></a>
+### Text 200
 
 ```text
 MIT License
@@ -12778,69 +12834,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-199"></a>
-### Text 199
-
-```text
-Copyright (c) Jacob Pratt et al.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-<a id="text-200"></a>
-### Text 200
-
-```text
-Copyright (c) 2014-2019 The tiny-http contributors
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 <a id="text-201"></a>
 ### Text 201
 
 ```text
-MIT License
-
-Copyright (c) Tokio Contributors
+Copyright (c) Jacob Pratt et al.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -12865,7 +12863,7 @@ SOFTWARE.
 ### Text 202
 
 ```text
-Copyright (c) 2019 Tower Contributors
+Copyright (c) 2014-2019 The tiny-http contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -12896,38 +12894,34 @@ DEALINGS IN THE SOFTWARE.
 ### Text 203
 
 ```text
-Copyright (c) 2019-2021 Tower Contributors
+MIT License
 
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
+Copyright (c) Tokio Contributors
 
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 <a id="text-204"></a>
 ### Text 204
 
 ```text
-Copyright (c) 2019 Tokio Contributors
+Copyright (c) 2019 Tower Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -12958,6 +12952,68 @@ DEALINGS IN THE SOFTWARE.
 ### Text 205
 
 ```text
+Copyright (c) 2019-2021 Tower Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+<a id="text-206"></a>
+### Text 206
+
+```text
+Copyright (c) 2019 Tokio Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+<a id="text-207"></a>
+### Text 207
+
+```text
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
 PackageName: tray-icon
@@ -12979,8 +13035,8 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tray-icon.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-<a id="text-206"></a>
-### Text 206
+<a id="text-208"></a>
+### Text 208
 
 ```text
 Copyright (c) 2018-2023 Sean McArthur
@@ -13005,8 +13061,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-<a id="text-207"></a>
-### Text 207
+<a id="text-209"></a>
+### Text 209
 
 ```text
 The MIT License (MIT)
@@ -13032,15 +13088,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-208"></a>
-### Text 208
+<a id="text-210"></a>
+### Text 210
 
 ```text
 MIT OR Apache-2.0
 ```
 
-<a id="text-209"></a>
-### Text 209
+<a id="text-211"></a>
+### Text 211
 
 ```text
 Apache License
@@ -13246,8 +13302,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-<a id="text-210"></a>
-### Text 210
+<a id="text-212"></a>
+### Text 212
 
 ```text
 The MIT License (MIT)
@@ -13273,8 +13329,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-211"></a>
-### Text 211
+<a id="text-213"></a>
+### Text 213
 
 ```text
 UNICODE LICENSE V3
@@ -13318,8 +13374,8 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 ```
 
-<a id="text-212"></a>
-### Text 212
+<a id="text-214"></a>
+### Text 214
 
 ```text
 MIT License
@@ -13345,8 +13401,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-213"></a>
-### Text 213
+<a id="text-215"></a>
+### Text 215
 
 ```text
 Copyright Mozilla Foundation
@@ -13376,8 +13432,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-214"></a>
-### Text 214
+<a id="text-216"></a>
+### Text 216
 
 ```text
 Copyright (c) 2014 The Rust Project Developers
@@ -13408,8 +13464,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-215"></a>
-### Text 215
+<a id="text-217"></a>
+### Text 217
 
 ```text
 Copyright (c) 2018-2019 Sean McArthur
@@ -13433,8 +13489,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-<a id="text-216"></a>
-### Text 216
+<a id="text-218"></a>
+### Text 218
 
 ```text
 Apache License
@@ -13640,8 +13696,8 @@ Apache License
    limitations under the License.
 ```
 
-<a id="text-217"></a>
-### Text 217
+<a id="text-219"></a>
+### Text 219
 
 ```text
 MIT License
@@ -13667,8 +13723,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-218"></a>
-### Text 218
+<a id="text-220"></a>
+### Text 220
 
 ```text
 Copyright (c) 2016 Boucher, Antoni <bouanto@zoho.com>
@@ -13693,8 +13749,8 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-219"></a>
-### Text 219
+<a id="text-221"></a>
+### Text 221
 
 ```text
 Copyright (c) 2016 Boucher, Antoni <bouanto@zoho.com>
@@ -13717,8 +13773,8 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-220"></a>
-### Text 220
+<a id="text-222"></a>
+### Text 222
 
 ```text
 The MIT License (MIT)
@@ -13744,8 +13800,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-221"></a>
-### Text 221
+<a id="text-223"></a>
+### Text 223
 
 ```text
 Copyright (c) 2015-2018 The winapi-rs Developers
@@ -13769,8 +13825,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-222"></a>
-### Text 222
+<a id="text-224"></a>
+### Text 224
 
 ```text
 MIT License
@@ -13796,8 +13852,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-223"></a>
-### Text 223
+<a id="text-225"></a>
+### Text 225
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -13821,8 +13877,8 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/window-vibrancy.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-<a id="text-224"></a>
-### Text 224
+<a id="text-226"></a>
+### Text 226
 
 ```text
 Apache License
@@ -14028,8 +14084,8 @@ Apache License
    limitations under the License.
 ```
 
-<a id="text-225"></a>
-### Text 225
+<a id="text-227"></a>
+### Text 227
 
 ```text
 MIT License
@@ -14055,8 +14111,8 @@ MIT License
     SOFTWARE
 ```
 
-<a id="text-226"></a>
-### Text 226
+<a id="text-228"></a>
+### Text 228
 
 ```text
 Permission is hereby granted, free of charge, to any person obtaining
@@ -14079,8 +14135,8 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-227"></a>
-### Text 227
+<a id="text-229"></a>
+### Text 229
 
 ```text
 MIT License
@@ -14106,8 +14162,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-228"></a>
-### Text 228
+<a id="text-230"></a>
+### Text 230
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -14132,8 +14188,8 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/wry.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-<a id="text-229"></a>
-### Text 229
+<a id="text-231"></a>
+### Text 231
 
 ```text
 Copyright (c) 2015 Steven Allen
@@ -14163,8 +14219,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-230"></a>
-### Text 230
+<a id="text-232"></a>
+### Text 232
 
 ```text
 MIT License
@@ -14194,8 +14250,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-231"></a>
-### Text 231
+<a id="text-233"></a>
+### Text 233
 
 ```text
 Apache License
@@ -14401,8 +14457,8 @@ Apache License
    limitations under the License.
 ```
 
-<a id="text-232"></a>
-### Text 232
+<a id="text-234"></a>
+### Text 234
 
 ```text
 Copyright 2019 The Fuchsia Authors.
@@ -14431,8 +14487,8 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-<a id="text-233"></a>
-### Text 233
+<a id="text-235"></a>
+### Text 235
 
 ```text
 Copyright 2023 The Fuchsia Authors
@@ -14462,8 +14518,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-234"></a>
-### Text 234
+<a id="text-236"></a>
+### Text 236
 
 ```text
 Copyright (c) 2018-2026 The RustCrypto Project Developers
@@ -14493,8 +14549,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-<a id="text-235"></a>
-### Text 235
+<a id="text-237"></a>
+### Text 237
 
 ```text
 (C) 2024 Trifecta Tech Foundation
@@ -14518,8 +14574,8 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-<a id="text-236"></a>
-### Text 236
+<a id="text-238"></a>
+### Text 238
 
 ```text
 MIT License
@@ -14545,8 +14601,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-<a id="text-237"></a>
-### Text 237
+<a id="text-239"></a>
+### Text 239
 
 ```text
 zlib License
