@@ -663,6 +663,67 @@ fn the_script_reference_names_every_field_it_returns() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// MPEG-1 Layer III frames at 128 kbit/s and 44.1 kHz, each 417 bytes, with varied data.
+fn mp3_frames(bytes: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes);
+    let mut n = 0u32;
+    while out.len() + 417 <= bytes {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x64]);
+        out.extend(noise(9000 + n, 413));
+        n += 1;
+    }
+    out.resize(bytes, 0x55);
+    out
+}
+
+#[test]
+fn a_failed_mp3_that_still_plays_is_marked_as_playing_with_gaps() {
+    let mut b = Builder {
+        image: build_volume(),
+    };
+    let length = 8 * CLUSTER;
+    let whole = mp3_frames(length);
+    // song.mp3 loses 300 bytes at the start of one cluster; wreck.mp3 loses most of itself.
+    let mut song = whole.clone();
+    song[3 * CLUSTER..3 * CLUSTER + 300].copy_from_slice(&noise(77, 300));
+    let mut wreck = whole.clone();
+    wreck[CLUSTER..].copy_from_slice(&noise(78, length - CLUSTER));
+    for (first, data) in [(150u32, &song), (160u32, &wreck)] {
+        for (index, piece) in data.chunks(CLUSTER).enumerate() {
+            b.put(first + index as u32, 0, piece);
+        }
+    }
+    b.directory(
+        28,
+        &[
+            entry_set("song.mp3", false, 150, length as u64, true, true),
+            entry_set("wreck.mp3", false, 160, length as u64, true, true),
+        ],
+    );
+    let (engine, session, dir) = engine_with_image("gaps", b.image);
+    let song_id = id_named(&engine, "song.mp3");
+    let wreck_id = id_named(&engine, "wreck.mp3");
+    call(
+        &engine,
+        "file_tests_start",
+        json!({"ids": [song_id, wreck_id]}),
+    );
+    wait_for_file_tests(&session);
+    let verdict = |id: i64| call(&engine, "entry", json!({"id": id}))["entry"].clone();
+    let song = verdict(song_id);
+    assert_eq!(song["verdict"], "tested-gaps", "{song}");
+    assert!(song["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("It plays"));
+    assert_eq!(verdict(wreck_id)["verdict"], "tested-bad");
+
+    // A rebuild keeps the same judgement.
+    call(&engine, "resolve", json!({}));
+    assert_eq!(verdict(song_id)["verdict"], "tested-gaps");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn rename_residue_is_hidden_by_default_and_damage_is_flagged() {
     let volume = open_volume();

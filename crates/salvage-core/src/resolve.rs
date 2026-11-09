@@ -13,10 +13,10 @@ use crate::exfat::FIRST_CLUSTER;
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
     OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
-    TESTED_BAD_CONFIDENCE, TESTED_GOOD_CONFIDENCE, VERDICT_DAMAGED, VERDICT_EMPTY, VERDICT_FOLDER,
-    VERDICT_FOLDER_EMPTY, VERDICT_FOLDER_MISSING, VERDICT_INTACT, VERDICT_LIVE,
-    VERDICT_OVERWRITTEN, VERDICT_PARTIAL, VERDICT_PLAUSIBLE, VERDICT_RESIDUE, VERDICT_TESTED_BAD,
-    VERDICT_TESTED_GOOD,
+    TESTED_BAD_CONFIDENCE, TESTED_GAPS_CONFIDENCE, TESTED_GOOD_CONFIDENCE, VERDICT_DAMAGED,
+    VERDICT_EMPTY, VERDICT_FOLDER, VERDICT_FOLDER_EMPTY, VERDICT_FOLDER_MISSING, VERDICT_INTACT,
+    VERDICT_LIVE, VERDICT_OVERWRITTEN, VERDICT_PARTIAL, VERDICT_PLAUSIBLE, VERDICT_RESIDUE,
+    VERDICT_TESTED_BAD, VERDICT_TESTED_GAPS, VERDICT_TESTED_GOOD,
 };
 use crate::volume::{StreamClusters, Volume};
 use crate::workspace::Workspace;
@@ -328,6 +328,16 @@ fn apply_file_test(mut assessment: Assessment, test: &crate::filetest::FileTest)
             assessment.verdict = VERDICT_TESTED_GOOD;
         }
         assessment.confidence = assessment.confidence.max(TESTED_GOOD_CONFIDENCE);
+    } else if crate::filetest::plays_with_gaps(&test.outcome, &test.format, test.valid_fraction) {
+        assessment.verdict = VERDICT_TESTED_GAPS;
+        assessment.confidence = TESTED_GAPS_CONFIDENCE;
+        assessment.reason = format!(
+            "{} {} {}",
+            test.note,
+            crate::map::PLAYS_WITH_GAPS,
+            assessment.reason
+        );
+        return assessment;
     } else if test.outcome == crate::filetest::OUTCOME_DAMAGED {
         assessment.verdict = VERDICT_TESTED_BAD;
         assessment.confidence = assessment.confidence.min(TESTED_BAD_CONFIDENCE);
@@ -344,6 +354,7 @@ fn counts_as_file(verdict: &str) -> bool {
         VERDICT_LIVE
             | VERDICT_TESTED_GOOD
             | VERDICT_TESTED_BAD
+            | VERDICT_TESTED_GAPS
             | VERDICT_INTACT
             | VERDICT_PLAUSIBLE
             | VERDICT_PARTIAL

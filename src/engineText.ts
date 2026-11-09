@@ -87,6 +87,7 @@ export const ENGINE_TEXT: string[] = [
   "There is no test for this file type yet.",
   "Tested: {percent}% of its {format} structure is valid, and it breaks at byte {offset}.",
   "Tested: {percent}% of its {format} structure is valid, and the file stops before its end.",
+  "It plays, with a gap where each break is.",
   "It still opens as a picture, so some of it may be fine.",
   "It will not open as a picture.",
   "Tested: it would not decode as an image ({error}).",
