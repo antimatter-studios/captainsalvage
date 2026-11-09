@@ -85,6 +85,7 @@ export const ENGINE_TEXT: string[] = [
   "This is a macOS companion file, not a copy of the file it names.",
   "This is a macOS alias, which points at a file and holds none of it.",
   "There is no test for this file type yet.",
+  "There is no test for this file's contents yet.",
   "Tested: {percent}% of its {format} structure is valid, and it breaks at byte {offset}.",
   "Tested: {percent}% of its {format} structure is valid, and the file stops before its end.",
   "It plays, with a gap where each break is.",
