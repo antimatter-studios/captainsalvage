@@ -578,7 +578,18 @@ impl Engine {
             }
             "file_tests_forget" => {
                 let outcome = args.get("outcome").and_then(Value::as_str);
-                Ok(json!({"forgotten": session.file_tests_forget(outcome)?}))
+                let formats: Vec<String> = args
+                    .get("formats")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(json!({"forgotten": session.file_tests_forget(outcome, &formats)?}))
             }
             "file_tests_status" => Ok(serde_json::to_value(session.file_test_status()?)?),
             "file_tests_by_type" => Ok(

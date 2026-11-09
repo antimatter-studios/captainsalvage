@@ -10,6 +10,11 @@ use serde::Serialize;
 use std::io::Read;
 
 const ID3_HEADER_BYTES: usize = 10;
+/// Set in an ID3v2.4 header when a 10-byte footer follows the tag.
+const ID3_FOOTER_FLAG: u8 = 0x10;
+const ID3V1_TAG_BYTES: usize = 128;
+/// Zeros or 0xFF bytes after a tag or at the end that players skip, at most.
+const MAX_MP3_PADDING: usize = 64 * 1024;
 const MPEG_HEADER_BYTES: usize = 4;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 /// Unwritten clusters read as zeros, which compressed image data never is for this long.
@@ -202,15 +207,32 @@ pub fn verify_mp3(data: &[u8]) -> VerifyReport {
         let size = data[6..10].iter().fold(0usize, |total, &byte| {
             (total << 7) | usize::from(byte & 0x7F)
         });
-        position = ID3_HEADER_BYTES + size;
-        report.valid_bytes += position.min(data.len()) as u64;
+        // ID3v2.4 can add a 10-byte footer after the tag.
+        let footer = if data[3] == 4 && data[5] & ID3_FOOTER_FLAG != 0 {
+            ID3_HEADER_BYTES
+        } else {
+            0
+        };
+        position = ID3_HEADER_BYTES + size + footer;
         report.notes.push(format!("ID3v2 tag of {size} bytes."));
+        // Writers often pad after the tag with zeros its size does not count.
+        let padding = data.get(position..).map_or(0, |rest| {
+            rest.iter()
+                .take(MAX_MP3_PADDING)
+                .take_while(|&&byte| byte == 0)
+                .count()
+        });
+        position += padding;
+        report.valid_bytes += position.min(data.len()) as u64;
     }
     while position + MPEG_HEADER_BYTES <= data.len() {
-        // A frame counts only if another valid header follows it, or the data ends.
+        // A frame counts only if another valid header follows it, a tag or padding that
+        // players skip ends the file after it, or the data ends.
         let frame = mpeg_frame_length(&data[position..]).filter(|&length| {
             let next = position + length;
-            next + MPEG_HEADER_BYTES > data.len() || mpeg_frame_length(&data[next..]).is_some()
+            next + MPEG_HEADER_BYTES > data.len()
+                || mpeg_frame_length(&data[next..]).is_some()
+                || mp3_trailer(&data[next..]).is_some()
         });
         if let Some(length) = frame {
             report.units += 1;
@@ -218,9 +240,9 @@ pub fn verify_mp3(data: &[u8]) -> VerifyReport {
             position += length;
             continue;
         }
-        if data[position..].starts_with(b"TAG") && data.len() - position <= 128 {
+        if let Some(kind) = mp3_trailer(&data[position..]) {
             report.valid_bytes += (data.len() - position) as u64;
-            report.notes.push("ID3v1 tag at the end.".into());
+            report.notes.push(format!("{kind} at the end."));
             position = data.len();
             break;
         }
@@ -244,6 +266,27 @@ pub fn verify_mp3(data: &[u8]) -> VerifyReport {
     }
     report.reached_end = position >= data.len() || data.len() - position < MPEG_HEADER_BYTES;
     report.finish(data.len())
+}
+
+/// What ends an MP3 after its last frame and players skip: tags, or padding. None when the
+/// rest of the data is something else.
+fn mp3_trailer(rest: &[u8]) -> Option<&'static str> {
+    if rest.is_empty() {
+        return None;
+    }
+    if rest.starts_with(b"TAG") && rest.len() <= ID3V1_TAG_BYTES {
+        Some("An ID3v1 tag")
+    } else if rest.starts_with(b"APETAGEX") {
+        Some("An APE tag")
+    } else if rest.starts_with(b"LYRICSBEGIN") {
+        Some("A Lyrics3 tag")
+    } else if rest.starts_with(b"ID3") {
+        Some("An ID3v2 tag")
+    } else if rest.len() <= MAX_MP3_PADDING && rest.iter().all(|&byte| byte == 0 || byte == 0xFF) {
+        Some("Padding")
+    } else {
+        None
+    }
 }
 
 fn crc32(chunks: &[&[u8]]) -> u32 {
@@ -1036,6 +1079,63 @@ pub fn verify_flac(data: &[u8]) -> VerifyReport {
 #[cfg(test)]
 mod walker_tests {
     use super::*;
+
+    /// MPEG-1 Layer III frames at 128 kbit/s and 44.1 kHz, each 417 bytes.
+    fn mp3_frames(count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|n| {
+                let mut frame = vec![0xFF, 0xFB, 0x90, 0x64];
+                frame.extend((0..413).map(|k| ((k + n * 7) % 251 + 1) as u8));
+                frame
+            })
+            .collect()
+    }
+
+    fn id3v2(version: u8, flags: u8, size: usize) -> Vec<u8> {
+        let mut tag = vec![b'I', b'D', b'3', version, 0, flags];
+        tag.extend(
+            (0..4)
+                .rev()
+                .map(|shift| ((size >> (7 * shift)) & 0x7F) as u8),
+        );
+        tag.extend(vec![b'x'; size]);
+        tag
+    }
+
+    #[test]
+    fn mp3_tags_and_padding_that_players_skip_are_not_breaks() {
+        let frames = mp3_frames(40);
+        let whole = |parts: &[&[u8]]| verify_mp3(&parts.concat());
+        let clean = |report: VerifyReport| {
+            assert!(
+                report.breaks.is_empty() && report.reached_end,
+                "{:?}",
+                report.notes
+            );
+            assert!(report.valid_fraction > 0.999, "{}", report.valid_fraction);
+        };
+        let mut id3v1 = b"TAG".to_vec();
+        id3v1.resize(128, b' ');
+        clean(whole(&[&id3v2(3, 0, 300), &frames, &id3v1]));
+        clean(whole(&[&id3v2(3, 0, 300), &[0u8; 2000], &frames]));
+        let mut footer = id3v2(4, 0x10, 300);
+        footer.extend_from_slice(b"3DI\x04\x00\x10\x00\x00\x02\x2c");
+        clean(whole(&[&footer, &frames]));
+        clean(whole(&[
+            &frames,
+            b"APETAGEX\xd0\x07\x00\x00",
+            &[1u8; 60],
+            &id3v1,
+        ]));
+        clean(whole(&[&frames, &[0u8; 900]]));
+
+        // Something else after the last frame, or inside the stream, is still a break.
+        let tail = whole(&[&frames, &[0x5Au8; 600]]);
+        assert!(!tail.breaks.is_empty());
+        let mut holed = frames.clone();
+        holed[417 * 20..417 * 20 + 300].fill(0x33);
+        assert_eq!(verify_mp3(&holed).breaks.len(), 1);
+    }
 
     fn bmff_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
         let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();

@@ -278,7 +278,6 @@ const strings: Record<string, string> = {
   "How damage is weighed": "Cómo se valoran los daños",
   "How random the bytes are, from the scan": "Lo aleatorios que son los bytes, según el escaneo",
   "Hypotheses": "Hipótesis",
-  "ID3v1 tag at the end.": "Etiqueta ID3v1 al final.",
   "ID3v2 tag of {size} bytes.": "Etiqueta ID3v2 de {size} bytes.",
   "Ignore overlaps between found entries": "Ignorar solapamientos entre entradas encontradas",
   "Count clusters reused by newer files as conflicts": "Contar como conflicto los clústeres reutilizados por archivos más nuevos",
@@ -967,6 +966,12 @@ const strings: Record<string, string> = {
   "Plays with gaps": "Se reproduce con cortes",
   "It plays, with a gap where each break is.": "Se reproduce, con un corte en cada rotura.",
   "There is no test for this file's contents yet.": "Todavía no hay prueba para el contenido de este archivo.",
+  "{kind} at the end.": "{kind} al final.",
+  "An ID3v1 tag": "Una etiqueta ID3v1",
+  "An APE tag": "Una etiqueta APE",
+  "A Lyrics3 tag": "Una etiqueta Lyrics3",
+  "An ID3v2 tag": "Una etiqueta ID3v2",
+  "Padding": "Relleno",
 };
 
 export default strings;

@@ -341,11 +341,12 @@ impl Session {
 
     /// Forgets results so files are tested again, after a check has improved. Scores go
     /// back at the rebuild this does. With no outcome given, it forgets every result.
-    pub fn file_tests_forget(&self, outcome: Option<&str>) -> Result<u64> {
+    pub fn file_tests_forget(&self, outcome: Option<&str>, formats: &[String]) -> Result<u64> {
         if self.file_test_status()?.state == STATE_RUNNING {
             bail!("Pause the file tests first.");
         }
-        let forgotten = self.with_database(|database| database.forget_file_tests(outcome))?;
+        let forgotten =
+            self.with_database(|database| database.forget_file_tests(outcome, formats))?;
         self.resolve()?;
         if let Ok(mut status) = self.file_tests.status.lock() {
             *status = FileTestStatus::default();
