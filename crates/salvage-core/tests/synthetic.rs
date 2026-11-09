@@ -2787,6 +2787,23 @@ fn file_tests_can_be_narrowed_and_a_stream_test_summarised() {
 }
 
 #[test]
+fn test_results_can_be_forgotten_for_some_formats_only() {
+    let (engine, session, dir) = engine_with_volume("forget-formats");
+    let photo = id_named(&engine, "photo.jpg");
+    let track = id_named(&engine, "track.mp3");
+    call(&engine, "file_tests_start", json!({"ids": [photo, track]}));
+    wait_for_file_tests(&session);
+    let format = |id: i64| call(&engine, "file_test", json!({"id": id}))["format"].clone();
+    assert_eq!(format(photo), "jpeg");
+    assert_eq!(format(track), "mp3");
+    let forgotten = call(&engine, "file_tests_forget", json!({"formats": ["mp3"]}));
+    assert_eq!(forgotten["forgotten"], 1);
+    assert!(call(&engine, "file_test", json!({"id": track})).is_null());
+    assert_eq!(format(photo), "jpeg", "other formats keep their results");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_disk_that_goes_during_file_tests_marks_nothing_as_damaged() {
     let (engine, session, source, dir) = engine_with_unpluggable_disk("gone-tests");
     let id = id_named(&engine, "photo.jpg");

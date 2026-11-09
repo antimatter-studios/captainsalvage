@@ -1509,13 +1509,30 @@ impl MapDb {
     }
 
     /// Removes stored results, all of them or those with one outcome.
-    pub fn forget_file_tests(&self, outcome: Option<&str>) -> Result<u64> {
-        let removed = match outcome {
-            Some(outcome) => self
-                .connection
-                .execute("DELETE FROM file_tests WHERE outcome = ?1", [outcome])?,
-            None => self.connection.execute("DELETE FROM file_tests", [])?,
+    /// Forgets test results with this outcome and of these formats; an empty list is every format.
+    pub fn forget_file_tests(&self, outcome: Option<&str>, formats: &[String]) -> Result<u64> {
+        let mut conditions = Vec::new();
+        let mut values: Vec<&str> = Vec::new();
+        if let Some(outcome) = outcome {
+            conditions.push("outcome = ?".to_string());
+            values.push(outcome);
+        }
+        if !formats.is_empty() {
+            conditions.push(format!(
+                "format IN ({})",
+                vec!["?"; formats.len()].join(", ")
+            ));
+            values.extend(formats.iter().map(String::as_str));
+        }
+        let filter = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
         };
+        let removed = self.connection.execute(
+            &format!("DELETE FROM file_tests{filter}"),
+            rusqlite::params_from_iter(values),
+        )?;
         Ok(removed as u64)
     }
 
