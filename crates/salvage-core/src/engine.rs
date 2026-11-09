@@ -1310,22 +1310,20 @@ impl Engine {
         let limit = u64_of(args, "max")
             .unwrap_or(MAX_FOLLOW_CLUSTERS)
             .min(MAX_FOLLOW_CLUSTERS);
-        let mut clusters = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let mut current = start;
-        let mut stopped = "limit";
-        while (clusters.len() as u64) < limit {
-            if !session.volume.valid_cluster(current) {
-                stopped = "chain left the valid cluster range";
-                break;
-            }
-            if !seen.insert(current) {
-                stopped = "chain loops back on itself";
-                break;
-            }
-            clusters.push(current);
-            current = session.volume.fat[current as usize];
-        }
+        let length = limit.min(u64::from(session.volume.boot.cluster_count))
+            * session.volume.boot.cluster_size();
+        let clusters = session.volume.clusters_for(start, length, false).clusters;
+        let current = clusters
+            .last()
+            .map(|&cluster| session.volume.fat[cluster as usize])
+            .unwrap_or(start);
+        let stopped = if clusters.len() as u64 == limit {
+            "limit"
+        } else if !session.volume.valid_cluster(current) {
+            "chain left the valid cluster range"
+        } else {
+            "chain loops back on itself"
+        };
         let allocated = clusters
             .iter()
             .filter(|&&cluster| session.volume.is_allocated(cluster))

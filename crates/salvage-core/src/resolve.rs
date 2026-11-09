@@ -1097,17 +1097,17 @@ impl MapDb {
         for island in &islands {
             let owners = owners_by_first.get(&island.head).copied().unwrap_or(0);
             let mut sum = 0u64;
-            let mut current = island.head;
-            for _ in 0..island.length {
-                let index = (current - FIRST_CLUSTER) as usize;
+            let clusters = volume.clusters_for(
+                island.head,
+                island.length * volume.boot.cluster_size(),
+                false,
+            );
+            for cluster in clusters.clusters {
+                let index = (cluster - FIRST_CLUSTER) as usize;
                 sum += u64::from(entropy[index]);
                 if owners == 0 && island.allocated == 0 && ownership[index] == OWNERSHIP_UNEXPLAINED
                 {
                     ownership[index] = OWNERSHIP_NAMELESS_CHAIN;
-                }
-                current = volume.fat[current as usize];
-                if !volume.valid_cluster(current) {
-                    break;
                 }
             }
             let head_class = classes[(island.head - FIRST_CLUSTER) as usize];

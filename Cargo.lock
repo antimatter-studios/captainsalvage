@@ -3018,6 +3018,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-fs-core"
+version = "0.4.3"
+source = "git+https://github.com/antimatter-studios/rust-fs-core?rev=9271095beb76dda54729b517e85179883ad851b4#9271095beb76dda54729b517e85179883ad851b4"
+
+[[package]]
+name = "rust-fs-exfat"
+version = "0.1.0"
+source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=1404648a5e152d9a93fd29f1652d55a93e91fde0#1404648a5e152d9a93fd29f1652d55a93e91fde0"
+dependencies = [
+ "rust-fs-core",
+ "serde",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3074,6 +3088,7 @@ dependencies = [
  "rars",
  "rhai",
  "rusqlite",
+ "rust-fs-exfat",
  "ruzstd",
  "serde",
  "serde_json",

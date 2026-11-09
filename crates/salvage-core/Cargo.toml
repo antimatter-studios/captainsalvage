@@ -19,6 +19,7 @@ path = "src/bin/salvage-scan.rs"
 anyhow = "1.0.104"
 bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
+fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1404648a5e152d9a93fd29f1652d55a93e91fde0" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
 rars = { version = "0.12.4", default-features = false }

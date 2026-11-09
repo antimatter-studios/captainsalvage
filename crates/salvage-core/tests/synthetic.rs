@@ -363,6 +363,28 @@ fn boot_regions_parse_and_checksums_ignore_percent_in_use() {
     assert!(!volume.boot_check.regions_identical);
     assert_eq!(volume.boot.percent_in_use, 5);
     assert_eq!(volume.backup_boot.percent_in_use, 59);
+
+    for (main, label) in [(true, "main boot sector"), (false, "backup boot sector")] {
+        for truncated in [false, true] {
+            let mut structures = volume.structures.clone();
+            let region = if main {
+                &mut structures.main
+            } else {
+                &mut structures.backup
+            };
+            let reason = if truncated {
+                region.truncate(SECTOR - 1);
+                "boot sector is shorter than 512 bytes"
+            } else {
+                region[3] = 0;
+                "no exFAT signature at offset 3: this is not an exFAT volume"
+            };
+            let error = Volume::from_structures(volume.source().clone(), structures)
+                .err()
+                .expect("damaged boot sector is rejected");
+            assert_eq!(format!("{error:#}"), format!("{label}: {reason}"));
+        }
+    }
 }
 
 #[test]
@@ -1476,6 +1498,22 @@ fn scripts_can_analyse_but_have_no_way_to_write() {
 fn breakdown_and_chain_summary_count_without_names() {
     let (engine, _session, dir) = engine_with_volume("breakdown");
 
+    for (limit, count, stopped, last) in [
+        (0, 0, "limit", "next cluster is 100"),
+        (1, 1, "limit", "next cluster is 101"),
+        (2, 2, "limit", "end of chain"),
+        (3, 2, "chain left the valid cluster range", "end of chain"),
+    ] {
+        let followed = call(
+            &engine,
+            "follow_chain",
+            json!({"cluster": 100, "max": limit}),
+        );
+        assert_eq!(followed["clusters"], count);
+        assert_eq!(followed["stoppedBecause"], stopped);
+        assert_eq!(followed["lastFatValue"], last);
+    }
+
     let by_reason = call(&engine, "breakdown", json!({"by": ["verdict", "reason"]}));
     let rows = by_reason["rows"].as_array().expect("rows");
     let has = |verdict: &str, reason: &str| {
@@ -1529,6 +1567,17 @@ fn breakdown_and_chain_summary_count_without_names() {
     let description = query["description"].as_str().expect("description");
     assert!(description.contains("reason_code") && description.contains("islands(head"));
 
+    let _ = std::fs::remove_dir_all(dir);
+
+    let mut builder = Builder {
+        image: build_volume(),
+    };
+    builder.fat(101, 100);
+    let (engine, _session, dir) = engine_with_image("chain-cycle", builder.image);
+    let followed = call(&engine, "follow_chain", json!({"cluster": 100}));
+    assert_eq!(followed["clusters"], 2);
+    assert_eq!(followed["stoppedBecause"], "chain loops back on itself");
+    assert_eq!(followed["lastFatValue"], "next cluster is 100");
     let _ = std::fs::remove_dir_all(dir);
 }
 
