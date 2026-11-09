@@ -24,7 +24,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 PYTHON="${PYTHON:-python3}"
-FILES=(CHANGELOG.md README.md crates/salvage-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
+FILES=(CHANGELOG.md README.md VERSION crates/salvage-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
     package.json Cargo.lock package-lock.json)
 
 VERSION=""; TAG=""; DRY_RUN=false; APPROVED=false

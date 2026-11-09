@@ -49,6 +49,7 @@ start() {
     printf '{\n  "version": "0.1.0"\n}\n' >src-tauri/tauri.conf.json
     printf '{\n  "version": "0.1.0"\n}\n' >package.json
     printf 'name = "salvage-core"\nversion = "0.1.0"\n\nname = "captain-salvage"\nversion = "0.1.0"\n' >Cargo.lock
+    printf '0.1.0\n' >VERSION
     printf '{\n  "version": "0.1.0",\n  "packages": { "": { "version": "0.1.0" } }\n}\n' >package-lock.json
     git add -A
     git commit -q -m "chore(release): v0.1.0 (#1)"
@@ -106,7 +107,7 @@ check "fragment is gone" "$([ -e changelog.d/new-thing.md ] && echo kept || echo
 check "notes file stays" "$([ -e changelog.d/README.md ] && echo kept || echo gone)" kept
 check "readme has the version" "$(grep -c '^### v0.2.0' README.md)" 1
 check "readme keeps its surroundings" "$(grep -c '^Bottom$' README.md)" 1
-for file in crates/salvage-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json; do
+for file in VERSION crates/salvage-core/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json; do
     check "$file is bumped" "$(grep -c '0\.2\.0' "$file")" 1
 done
 check "nothing left over" "$(git status --porcelain | wc -l | tr -d ' ')" 0
