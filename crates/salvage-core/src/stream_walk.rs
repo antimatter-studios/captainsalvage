@@ -1,7 +1,9 @@
 //! Walks a large film as it is read, piece by piece, so a file of many gigabytes is tested
 //! without holding it in memory: MP4 and QuickTime box by box, AVI chunk by chunk down to each
 //! video and audio frame inside its lists, and Matroska (MKV, WebM) element by element down to
-//! each block inside its clusters. It checks every header in turn, that nothing runs past the
+//! each block inside its clusters, MPEG program streams pack by pack and packet by packet, FLV
+//! tag by tag with each tag's back-pointer, and ASF (WMV) object by object and packet by
+//! packet. It checks every header in turn, that nothing runs past the
 //! end of what holds it, and that media data holds no long run of zeros, which is what
 //! unwritten clusters read back as. A cluster overwritten with something else breaks the chain
 //! of headers where it starts. Bytes are fed in order, once, so the same pass can hash the file.
@@ -10,6 +12,51 @@ use crate::verify::VerifyReport;
 
 const BMFF_EXTENSIONS: &[&str] = &["mp4", "m4v", "m4a", "mov", "3gp", "3g2"];
 const MATROSKA_EXTENSIONS: &[&str] = &["mkv", "webm", "mka", "mk3d"];
+const MPEG_PS_EXTENSIONS: &[&str] = &["mpg", "mpeg", "vob", "m2p", "mpe"];
+const ASF_EXTENSIONS: &[&str] = &["wmv", "asf", "wma"];
+const MPEG_START_CODE: [u8; 3] = [0, 0, 1];
+const MPEG_PACK: u8 = 0xBA;
+const MPEG_END: u8 = 0xB9;
+const MPEG_SYSTEM_HEADER: u8 = 0xBB;
+const MPEG_PADDING_STREAM: u8 = 0xBE;
+const MPEG1_PACK_BYTES: usize = 12;
+const MPEG2_PACK_BYTES: usize = 14;
+const MPEG_PACKET_HEADER_BYTES: usize = 6;
+const FLV_FILE_HEADER_BYTES: usize = 9;
+/// Each FLV tag follows the size of the one before it: 4 bytes, then an 11-byte tag header.
+const FLV_TAG_HEADER_BYTES: usize = 4 + 11;
+const FLV_TAG_HEADER_ONLY: u64 = 11;
+const FLV_AUDIO: u8 = 8;
+const FLV_VIDEO: u8 = 9;
+const FLV_SCRIPT: u8 = 18;
+const ASF_HEADER_OBJECT: [u8; 16] = [
+    0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
+const ASF_DATA_OBJECT: [u8; 16] = [
+    0x36, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
+const ASF_FILE_PROPERTIES: [u8; 16] = [
+    0xA1, 0xDC, 0xAB, 0x8C, 0x47, 0xA9, 0xCF, 0x11, 0x8E, 0xE4, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65,
+];
+const ASF_OBJECT_HEADER_BYTES: usize = 24;
+/// The header object adds a count of its objects and two reserved bytes.
+const ASF_HEADER_OBJECT_BYTES: usize = 30;
+/// The data object adds a file id, a packet count and two reserved bytes.
+const ASF_DATA_OBJECT_BYTES: usize = 50;
+/// Enough of the file properties object to hold its minimum and maximum packet sizes.
+const ASF_FILE_PROPERTIES_BYTES: usize = 104;
+const ASF_MIN_PACKET_AT: usize = 92;
+const ASF_MAX_PACKET_AT: usize = 96;
+/// Where a packet's error-correction flags and data sit, which repeat in every packet.
+const ASF_PACKET_START_BYTES: usize = 3;
+/// How much of the start is looked at before choosing a walker: the bytes, not the name, say
+/// what a file is, and a renamed file is common.
+const SNIFF_BYTES: usize = 4096;
+/// Bytes an MPEG program stream may have before its first pack, such as web headers left by a
+/// download. Players scan past them to the first pack.
+const MPEG_MAX_LEAD_IN: usize = SNIFF_BYTES;
+const ASF_HEADER_CONTAINER: u32 = 1;
+const ASF_DATA_CONTAINER: u32 = 2;
 /// Clusters macOS never wrote read back as zeros, and compressed media does not hold this many
 /// zero bytes in a row. The same limit as the in-memory walkers.
 const MAX_ZERO_RUN: u64 = 32 * 1024;
@@ -67,6 +114,9 @@ enum Kind {
     Bmff,
     Avi,
     Matroska,
+    MpegPs,
+    Flv,
+    Asf,
 }
 
 fn kind_of(name: &str) -> Option<Kind> {
@@ -77,6 +127,12 @@ fn kind_of(name: &str) -> Option<Kind> {
         Some(Kind::Avi)
     } else if MATROSKA_EXTENSIONS.contains(&extension.as_str()) {
         Some(Kind::Matroska)
+    } else if MPEG_PS_EXTENSIONS.contains(&extension.as_str()) {
+        Some(Kind::MpegPs)
+    } else if extension == "flv" {
+        Some(Kind::Flv)
+    } else if ASF_EXTENSIONS.contains(&extension.as_str()) {
+        Some(Kind::Asf)
     } else {
         None
     }
@@ -129,8 +185,19 @@ pub struct StreamWalk {
     forms: u32,
     /// AVI lists and Matroska segments and clusters, innermost last.
     stack: Vec<Container>,
-    /// Matroska elements opened so far.
+    /// Matroska elements, MPEG units, FLV tags and ASF objects opened so far.
     opened: u64,
+    /// For FLV: what the next back-pointer must say, the size of the tag before it.
+    flv_previous: u64,
+    /// For ASF: the fixed packet size, and the flags byte every packet starts with.
+    asf_packet: u64,
+    asf_packet_flags: Option<u8>,
+    /// The data is not the format its name says, such as raw MPEG video in a .mpg file, so
+    /// this walker has nothing to say about it.
+    unsupported: bool,
+    /// The first bytes, kept until there are enough to say what the file really is.
+    head: Vec<u8>,
+    sniffed: bool,
     has_movie: bool,
     report: VerifyReport,
     broken: bool,
@@ -154,22 +221,31 @@ impl StreamWalk {
             forms: 0,
             stack: Vec::new(),
             opened: 0,
+            flv_previous: 0,
+            asf_packet: 0,
+            asf_packet_flags: None,
+            unsupported: false,
+            head: Vec::new(),
+            sniffed: false,
             has_movie: false,
             report: VerifyReport {
-                format: match kind {
-                    Kind::Bmff => "mp4",
-                    Kind::Avi => "avi",
-                    Kind::Matroska => "matroska",
-                }
-                .into(),
+                format: Self::format_name(kind).into(),
                 ..VerifyReport::default()
             },
             broken: false,
         })
     }
 
+    /// Whether valid bytes are counted by position: everything before a break, or all of it.
+    fn counts_by_position(&self) -> bool {
+        matches!(
+            self.kind,
+            Kind::Matroska | Kind::MpegPs | Kind::Flv | Kind::Asf
+        )
+    }
+
     fn fail(&mut self, offset: u64, note: String) {
-        if self.kind == Kind::Matroska {
+        if self.counts_by_position() {
             // Everything before the break was walked; Matroska counts bytes by position.
             self.report.valid_bytes = offset;
         }
@@ -211,6 +287,40 @@ impl StreamWalk {
                 }
                 id_length + vint_length(size_first)
             }
+            Kind::MpegPs => match self.header.get(3) {
+                None => 4,
+                Some(&MPEG_PACK) => match self.header.get(4) {
+                    None => 5,
+                    Some(byte) if byte & 0xC0 == 0x40 => MPEG2_PACK_BYTES,
+                    Some(_) => MPEG1_PACK_BYTES,
+                },
+                Some(&MPEG_END) => 4,
+                Some(_) => MPEG_PACKET_HEADER_BYTES,
+            },
+            Kind::Flv if self.opened == 0 => FLV_FILE_HEADER_BYTES,
+            Kind::Flv => FLV_TAG_HEADER_BYTES,
+            Kind::Asf => {
+                if self
+                    .stack
+                    .last()
+                    .is_some_and(|top| top.id == ASF_DATA_CONTAINER)
+                {
+                    return ASF_PACKET_START_BYTES;
+                }
+                if self.header.len() < 16 {
+                    return 16;
+                }
+                let guid = &self.header[..16];
+                if guid == ASF_HEADER_OBJECT {
+                    ASF_HEADER_OBJECT_BYTES
+                } else if guid == ASF_DATA_OBJECT {
+                    ASF_DATA_OBJECT_BYTES
+                } else if guid == ASF_FILE_PROPERTIES {
+                    ASF_FILE_PROPERTIES_BYTES
+                } else {
+                    ASF_OBJECT_HEADER_BYTES
+                }
+            }
         }
     }
 
@@ -238,8 +348,75 @@ impl StreamWalk {
             })
     }
 
-    /// Takes in the next bytes of the file.
-    pub fn feed(&mut self, mut data: &[u8]) {
+    /// Takes in the next bytes of the file. The first few kilobytes are held until they say
+    /// what the file is.
+    pub fn feed(&mut self, data: &[u8]) {
+        if self.sniffed {
+            return self.walk(data);
+        }
+        self.head.extend_from_slice(data);
+        if self.head.len() >= SNIFF_BYTES.min(self.total as usize) {
+            self.sniff();
+        }
+    }
+
+    /// Chooses the walker from the first bytes, falling back to the name, and walks them.
+    fn sniff(&mut self) {
+        self.sniffed = true;
+        let head = std::mem::take(&mut self.head);
+        let by_content = if head.get(4..8) == Some(b"ftyp".as_slice()) {
+            Some(Kind::Bmff)
+        } else if head.starts_with(b"RIFF") && head.get(8..12) == Some(b"AVI ".as_slice()) {
+            Some(Kind::Avi)
+        } else if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+            Some(Kind::Matroska)
+        } else if head.starts_with(&[0, 0, 1, MPEG_PACK]) {
+            Some(Kind::MpegPs)
+        } else if head.starts_with(b"FLV\x01") {
+            Some(Kind::Flv)
+        } else if head.starts_with(&ASF_HEADER_OBJECT) {
+            Some(Kind::Asf)
+        } else {
+            None
+        };
+        if let Some(kind) = by_content.filter(|kind| *kind != self.kind) {
+            let note = format!(
+                "The data is {}, whatever its name says.",
+                Self::format_name(kind)
+            );
+            self.kind = kind;
+            self.report.format = Self::format_name(kind).into();
+            self.report.notes.push(note);
+        }
+        if self.kind == Kind::MpegPs && !head.starts_with(&[0, 0, 1, MPEG_PACK]) {
+            let window = &head[..head.len().min(MPEG_MAX_LEAD_IN)];
+            if let Some(first) = window
+                .windows(4)
+                .position(|bytes| bytes == [0, 0, 1, MPEG_PACK])
+            {
+                self.report.notes.push(format!(
+                    "{first} bytes come before the first pack, which players skip."
+                ));
+                self.start = 0;
+                self.end = first as u64;
+                self.counts = false;
+            }
+        }
+        self.walk(&head);
+    }
+
+    fn format_name(kind: Kind) -> &'static str {
+        match kind {
+            Kind::Bmff => "mp4",
+            Kind::Avi => "avi",
+            Kind::Matroska => "matroska",
+            Kind::MpegPs => "mpeg-ps",
+            Kind::Flv => "flv",
+            Kind::Asf => "asf",
+        }
+    }
+
+    fn walk(&mut self, mut data: &[u8]) {
         while !data.is_empty() && !self.broken {
             if self.at < self.end {
                 // Inside a box or chunk: pass over its data, looking for holes.
@@ -298,7 +475,186 @@ impl StreamWalk {
             Kind::Bmff => self.open_box(header, start),
             Kind::Avi => self.open_chunk(header, start),
             Kind::Matroska => self.open_element(header, start),
+            Kind::MpegPs => self.open_mpeg(header, start),
+            Kind::Flv => self.open_tag(header, start),
+            Kind::Asf => self.open_object(header, start),
         }
+    }
+
+    /// Stops walking a file that is not the format its name says, without calling it damaged.
+    fn give_up(&mut self) {
+        self.unsupported = true;
+        self.broken = true;
+    }
+
+    /// Starts a region of data to pass over, from the end of the header to `end`.
+    fn region(&mut self, start: u64, end: u64, checking: bool) {
+        self.start = start;
+        self.end = end;
+        self.checking = checking;
+        if end == self.at {
+            self.complete();
+        }
+    }
+
+    fn open_mpeg(&mut self, header: &[u8], start: u64) {
+        if header[..3] != MPEG_START_CODE {
+            return self.fail(
+                start,
+                format!("No MPEG start code at {start}, as overwritten data would not have."),
+            );
+        }
+        let id = header[3];
+        if self.opened == 0 && id != MPEG_PACK {
+            // Raw MPEG video, with no packs to walk.
+            return self.give_up();
+        }
+        self.opened += 1;
+        match id {
+            MPEG_PACK => {
+                let stuffing = if header.len() == MPEG2_PACK_BYTES {
+                    u64::from(header[13] & 0x07)
+                } else {
+                    0
+                };
+                self.region(start, self.at + stuffing, false);
+            }
+            // The program end: what follows, if anything, is padding.
+            MPEG_END => self.region(start, self.total, false),
+            MPEG_SYSTEM_HEADER..=0xFF => {
+                let length = u64::from(u16::from_be_bytes([header[4], header[5]]));
+                let end = self.at + length;
+                if end > self.total {
+                    return self.fail(
+                        start,
+                        format!("The MPEG packet at {start} claims {length} bytes, past the end of the data."),
+                    );
+                }
+                self.region(start, end, id != MPEG_PADDING_STREAM);
+            }
+            _ => self.fail(
+                start,
+                format!("The start code at {start} names no program-stream unit, as overwritten data would not."),
+            ),
+        }
+    }
+
+    fn open_tag(&mut self, header: &[u8], start: u64) {
+        if self.opened == 0 {
+            if &header[..3] != b"FLV" {
+                return self.fail(start, "The file does not start with an FLV header.".into());
+            }
+            let offset = u64::from(u32::from_be_bytes(
+                header[5..9].try_into().expect("four bytes"),
+            ));
+            if offset < FLV_FILE_HEADER_BYTES as u64 || offset > self.total {
+                return self.fail(
+                    start,
+                    format!("The FLV header says its data starts at {offset}, which cannot be."),
+                );
+            }
+            self.opened += 1;
+            self.counts = false;
+            return self.region(start, start + offset, false);
+        }
+        let previous = u64::from(u32::from_be_bytes(
+            header[..4].try_into().expect("four bytes"),
+        ));
+        if previous != self.flv_previous {
+            return self.fail(
+                start,
+                format!("The tag at {start} follows a size of {previous}, where the tag before it was {}, as overwritten data would.", self.flv_previous),
+            );
+        }
+        let kind = header[4] & 0x1F;
+        let size = u64::from(header[5]) << 16 | u64::from(header[6]) << 8 | u64::from(header[7]);
+        let stream = &header[12..15];
+        if !matches!(kind, FLV_AUDIO | FLV_VIDEO | FLV_SCRIPT) || stream != [0, 0, 0] {
+            return self.fail(
+                start + 4,
+                format!(
+                    "No FLV tag starts at {}: its type or stream is not one a tag has.",
+                    start + 4
+                ),
+            );
+        }
+        let end = self.at + size;
+        if end > self.total {
+            return self.fail(
+                start + 4,
+                format!(
+                    "The tag at {} claims {size} bytes, past the end of the data.",
+                    start + 4
+                ),
+            );
+        }
+        self.opened += 1;
+        self.flv_previous = FLV_TAG_HEADER_ONLY + size;
+        self.region(start, end, true);
+    }
+
+    fn open_object(&mut self, header: &[u8], start: u64) {
+        if self
+            .stack
+            .last()
+            .is_some_and(|top| top.id == ASF_DATA_CONTAINER)
+        {
+            let flags = header[0];
+            let expected = *self.asf_packet_flags.get_or_insert(flags);
+            if expected & 0x80 != 0 && (flags != expected || header[1..3] != [0, 0]) {
+                return self.fail(
+                    start,
+                    format!("The ASF packet at {start} does not start like the others, as overwritten data would not."),
+                );
+            }
+            // A last stretch shorter than a packet is padding up to the end of the data object.
+            let end = (start + self.asf_packet).min(self.parent_end());
+            return self.region(start, end, false);
+        }
+        let guid = &header[..16];
+        let size = u64::from_le_bytes(header[16..24].try_into().expect("eight bytes"));
+        if self.opened == 0 && guid != ASF_HEADER_OBJECT {
+            return self.fail(
+                start,
+                "The file does not start with an ASF header object.".into(),
+            );
+        }
+        if size < header.len() as u64 || start + size > self.parent_end() {
+            return self.fail(
+                start,
+                format!("The ASF object at {start} claims {size} bytes, which does not fit what holds it."),
+            );
+        }
+        self.opened += 1;
+        let end = start + size;
+        if guid == ASF_HEADER_OBJECT {
+            self.stack.push(Container {
+                id: ASF_HEADER_CONTAINER,
+                end: Some(end),
+            });
+            return self.region(start, self.at, false);
+        }
+        if guid == ASF_FILE_PROPERTIES {
+            let at = |offset: usize| {
+                u64::from(u32::from_le_bytes(
+                    header[offset..offset + 4].try_into().expect("four bytes"),
+                ))
+            };
+            let (min, max) = (at(ASF_MIN_PACKET_AT), at(ASF_MAX_PACKET_AT));
+            if min == max && min as usize >= ASF_PACKET_START_BYTES {
+                self.asf_packet = min;
+            }
+        }
+        if guid == ASF_DATA_OBJECT && self.asf_packet > 0 {
+            self.stack.push(Container {
+                id: ASF_DATA_CONTAINER,
+                end: Some(end),
+            });
+            self.has_movie = true;
+            return self.region(start, self.at, false);
+        }
+        self.has_movie |= guid == ASF_DATA_OBJECT;
+        self.region(start, end, guid == ASF_DATA_OBJECT)
     }
 
     fn open_box(&mut self, header: &[u8], start: u64) {
@@ -519,6 +875,25 @@ impl StreamWalk {
 
     /// The report, once every byte has been fed, or as far as the bytes went.
     pub fn finish(mut self) -> VerifyReport {
+        if !self.sniffed {
+            self.sniff();
+        }
+        if self.unsupported {
+            self.report.format = "unknown".into();
+            self.report.notes.push("The data is not the format its name says, so this walker has nothing to say about it.".into());
+            self.report.bytes_examined = self.total;
+            return self.report;
+        }
+        // An FLV ends with the size of its last tag, a header with nothing after it.
+        if self.kind == Kind::Flv && !self.broken && self.header.len() == 4 && self.at == self.total
+        {
+            let previous = u64::from(u32::from_be_bytes(
+                self.header[..4].try_into().expect("four bytes"),
+            ));
+            if previous == self.flv_previous {
+                self.header.clear();
+            }
+        }
         if !self.broken {
             if self.at < self.total || self.at < self.end || !self.header.is_empty() {
                 let at = self.at;
@@ -533,14 +908,13 @@ impl StreamWalk {
         if self.kind == Kind::Bmff && !self.has_movie && !self.broken {
             self.report.notes.push("There is no moov box, which says how to play the media, so it will not play as it is.".into());
         }
-        if self.kind == Kind::Matroska && !self.broken {
+        if self.counts_by_position() && !self.broken {
             self.report.valid_bytes = self.at.min(self.total);
-            if !self.has_movie {
-                self.report.notes.push(
-                    "There is no Segment, which holds the media, so it will not play as it is."
-                        .into(),
-                );
-            }
+        }
+        if self.kind == Kind::Matroska && !self.broken && !self.has_movie {
+            self.report.notes.push(
+                "There is no Segment, which holds the media, so it will not play as it is.".into(),
+            );
         }
         self.report.bytes_examined = self.total;
         self.report.valid_fraction = if self.total == 0 {
@@ -783,5 +1157,184 @@ mod tests {
         assert!(!walk_in_pieces("film.mkv", &file[10..], 500)
             .breaks
             .is_empty());
+    }
+
+    fn mpeg_pack() -> Vec<u8> {
+        let mut pack = vec![0, 0, 1, 0xBA, 0x44, 0, 4, 0, 4, 1, 0x01, 0x89, 0xC3, 0xF8];
+        pack.extend_from_slice(&[]);
+        pack
+    }
+
+    fn mpeg_packet(id: u8, body: &[u8]) -> Vec<u8> {
+        [&[0, 0, 1, id][..], &(body.len() as u16).to_be_bytes(), body].concat()
+    }
+
+    fn mpeg_file(packs: usize) -> Vec<u8> {
+        let mut file = Vec::new();
+        for n in 0..packs {
+            file.extend(mpeg_pack());
+            if n == 0 {
+                file.extend(mpeg_packet(0xBB, &[0x80; 12]));
+            }
+            file.extend(mpeg_packet(
+                0xE0,
+                &(0..2000).map(|k| (k % 251 + 1) as u8).collect::<Vec<_>>(),
+            ));
+            file.extend(mpeg_packet(0xC0, &[0x33; 400]));
+            file.extend(mpeg_packet(0xBE, &[0xFF; 100]));
+        }
+        file.extend_from_slice(&[0, 0, 1, 0xB9]);
+        file.extend_from_slice(&[0; 300]);
+        file
+    }
+
+    #[test]
+    fn an_mpeg_program_stream_is_walked_packet_by_packet() {
+        let file = mpeg_file(20);
+        for piece in [1, 7, 1000, file.len()] {
+            let report = walk_in_pieces("film.mpg", &file, piece);
+            assert!(
+                report.breaks.is_empty() && report.reached_end,
+                "{piece}: {:?}",
+                report.notes
+            );
+        }
+        assert_eq!(
+            crate::verify::verify_stream("clip.mpeg", &file).format,
+            "mpeg-ps"
+        );
+        // An overwritten packet header breaks the walk where it is.
+        let second_pack = mpeg_pack().len() + 18 + 2006 + 406 + 106;
+        let mut overwritten = file.clone();
+        overwritten[second_pack..second_pack + 4].copy_from_slice(&[0x9A, 0x13, 0x77, 0x02]);
+        assert_eq!(
+            walk_in_pieces("film.mpg", &overwritten, 500).breaks,
+            vec![second_pack as u64]
+        );
+        // Web headers before the first pack are skipped, as players do.
+        let downloaded = [b"Content-type: video/mpeg\r\n\r\n".as_slice(), &file].concat();
+        let report = walk_in_pieces("film.mpg", &downloaded, 333);
+        assert!(
+            report.breaks.is_empty() && report.reached_end,
+            "{:?}",
+            report.notes
+        );
+        // A WMV named .mpg is walked as what it is.
+        let wmv = asf_file(5, 1000);
+        let report = walk_in_pieces("film.mpg", &wmv, 400);
+        assert_eq!(report.format, "asf");
+        assert!(
+            report.breaks.is_empty() && report.reached_end,
+            "{:?}",
+            report.notes
+        );
+        // Raw MPEG video has no packs: the walker says nothing rather than calling it damaged.
+        let raw = [&[0u8, 0, 1, 0xB3][..], &[7u8; 5000]].concat();
+        let report = walk_in_pieces("film.mpg", &raw, 999);
+        assert_eq!(report.format, "unknown");
+        assert!(report.breaks.is_empty());
+    }
+
+    fn flv_file(tags: usize) -> Vec<u8> {
+        let mut file = b"FLV\x01\x05\x00\x00\x00\x09".to_vec();
+        let mut previous = 0u32;
+        for n in 0..tags {
+            let body: Vec<u8> = (0..(300 + n * 7)).map(|k| (k % 249 + 1) as u8).collect();
+            file.extend_from_slice(&previous.to_be_bytes());
+            let kind = if n % 2 == 0 { 9 } else { 8 };
+            let size = body.len() as u32;
+            file.push(kind);
+            file.extend_from_slice(&size.to_be_bytes()[1..]);
+            file.extend_from_slice(&[0, 0, n as u8, 0, 0, 0, 0]);
+            file.extend_from_slice(&body);
+            previous = 11 + size;
+        }
+        file.extend_from_slice(&previous.to_be_bytes());
+        file
+    }
+
+    #[test]
+    fn an_flv_is_walked_tag_by_tag() {
+        let file = flv_file(40);
+        for piece in [1, 13, 4096, file.len()] {
+            let report = walk_in_pieces("clip.flv", &file, piece);
+            assert!(
+                report.breaks.is_empty() && report.reached_end,
+                "{piece}: {:?}",
+                report.notes
+            );
+            assert_eq!(report.units, 40);
+        }
+        assert_eq!(
+            crate::verify::verify_stream("clip.flv", &file).format,
+            "flv"
+        );
+        // A tag whose back-pointer is wrong, as a foreign cluster's bytes would be, breaks there.
+        let tenth = 9 + (0..9).map(|n| 4 + 11 + 300 + n * 7).sum::<usize>();
+        let mut overwritten = file.clone();
+        overwritten[tenth] ^= 0x40;
+        assert_eq!(
+            walk_in_pieces("clip.flv", &overwritten, 700).breaks,
+            vec![tenth as u64]
+        );
+        let cut = &file[..file.len() - 100];
+        assert!(!walk_in_pieces("clip.flv", cut, 700).reached_end);
+    }
+
+    fn asf_file(packets: usize, packet: usize) -> Vec<u8> {
+        let mut properties = ASF_FILE_PROPERTIES.to_vec();
+        properties.extend_from_slice(&104u64.to_le_bytes());
+        properties.resize(104, 0);
+        properties[ASF_MIN_PACKET_AT..ASF_MIN_PACKET_AT + 4]
+            .copy_from_slice(&(packet as u32).to_le_bytes());
+        properties[ASF_MAX_PACKET_AT..ASF_MAX_PACKET_AT + 4]
+            .copy_from_slice(&(packet as u32).to_le_bytes());
+        let header_size = 30 + properties.len();
+        let mut file = ASF_HEADER_OBJECT.to_vec();
+        file.extend_from_slice(&(header_size as u64).to_le_bytes());
+        file.extend_from_slice(&[1, 0, 0, 0, 1, 2]);
+        file.extend(properties);
+        let data_size = 50 + packets * packet;
+        file.extend_from_slice(&ASF_DATA_OBJECT);
+        file.extend_from_slice(&(data_size as u64).to_le_bytes());
+        file.extend_from_slice(&[0; 26]);
+        for n in 0..packets {
+            file.extend_from_slice(&[0x82, 0, 0]);
+            file.extend((0..packet - 3).map(|k| ((k + n) % 251 + 1) as u8));
+        }
+        let mut index = vec![
+            0x90, 0x08, 0x00, 0x33, 0xB1, 0xE5, 0xCF, 0x11, 0x89, 0xF4, 0x00, 0xA0, 0xC9, 0x03,
+            0x49, 0xCB,
+        ];
+        index.extend_from_slice(&40u64.to_le_bytes());
+        index.extend_from_slice(&[0; 16]);
+        file.extend(index);
+        file
+    }
+
+    #[test]
+    fn an_asf_is_walked_object_by_object_and_packet_by_packet() {
+        let file = asf_file(30, 3200);
+        for piece in [1, 11, 4096, file.len()] {
+            let report = walk_in_pieces("clip.wmv", &file, piece);
+            assert!(
+                report.breaks.is_empty() && report.reached_end,
+                "{piece}: {:?}",
+                report.notes
+            );
+        }
+        assert_eq!(
+            crate::verify::verify_stream("clip.asf", &file).format,
+            "asf"
+        );
+        // A packet that no longer starts like the others is where a foreign cluster begins.
+        let header = 30 + 104 + 50;
+        let twelfth = header + 11 * 3200;
+        let mut overwritten = file.clone();
+        overwritten[twelfth] = 0x13;
+        assert_eq!(
+            walk_in_pieces("clip.wmv", &overwritten, 1000).breaks,
+            vec![twelfth as u64]
+        );
     }
 }

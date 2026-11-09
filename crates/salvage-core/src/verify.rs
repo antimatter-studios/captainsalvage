@@ -113,6 +113,15 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
     if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         return verify_matroska(data);
     }
+    if data.starts_with(&[0, 0, 1, 0xBA]) {
+        return walk_whole("film.mpg", data);
+    }
+    if data.starts_with(b"FLV\x01") {
+        return walk_whole("film.flv", data);
+    }
+    if data.starts_with(&[0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11]) {
+        return walk_whole("film.wmv", data);
+    }
     if data.starts_with(FLAC_SIGNATURE) {
         return verify_flac(data);
     }
@@ -126,6 +135,9 @@ pub fn verify_stream(name: &str, data: &[u8]) -> VerifyReport {
         name if BMFF_EXTENSIONS.contains(&name) => return verify_bmff(data),
         "avi" => return verify_avi(data),
         "mkv" | "webm" | "mka" | "mk3d" => return verify_matroska(data),
+        "mpg" | "mpeg" | "vob" | "m2p" | "mpe" | "flv" | "wmv" | "asf" | "wma" => {
+            return walk_whole(&format!("film.{extension}"), data)
+        }
         "flac" => return verify_flac(data),
         name if ZIP_EXTENSIONS.contains(&name) => return verify_zip(data),
         name if TEXT_EXTENSIONS.contains(&name) => return verify_text(data),

@@ -966,6 +966,7 @@ const strings: Record<string, string> = {
   "{from} to {to}: {files} files, {size}": "De {from} a {to}: {files} archivos, {size}",
   "Plays with gaps": "Se reproduce con cortes",
   "It plays, with a gap where each break is.": "Se reproduce, con un corte en cada rotura.",
+  "There is no test for this file's contents yet.": "Todavía no hay prueba para el contenido de este archivo.",
 };
 
 export default strings;

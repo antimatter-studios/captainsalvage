@@ -187,6 +187,16 @@ pub fn judge(name: &str, data: &[u8]) -> Judgement {
 
 /// Judges a large file from a walk made as it was read. There is no decoding for these types.
 pub fn judge_walk(report: &crate::verify::VerifyReport) -> Judgement {
+    if report.format == "unknown" {
+        return Judgement {
+            outcome: OUTCOME_UNTESTED,
+            format: "unknown".into(),
+            valid_fraction: None,
+            first_break: None,
+            decoded: None,
+            note: "There is no test for this file's contents yet.".into(),
+        };
+    }
     let first_break = report.breaks.first().copied();
     let failed =
         report.valid_fraction < PASS_VALID_FRACTION || !report.reached_end || first_break.is_some();
