@@ -19,7 +19,7 @@ path = "src/bin/salvage-scan.rs"
 anyhow = "1.0.104"
 bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
-fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "6b63a7d142626d0fcf9804514abf1defb4730924" }
+fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
 rars = { version = "0.12.4", default-features = false }
@@ -36,7 +36,7 @@ xz4rust = "0.2.3"
 zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2", "deflate64", "aes-crypto"] }
 
 [dev-dependencies]
-fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "6b63a7d142626d0fcf9804514abf1defb4730924", features = ["test-support"] }
+fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f", features = ["test-support"] }
 # Only to build archives for the tests: the app itself never writes one.
 bzip2 = "0.6.1"
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }

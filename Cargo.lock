@@ -3025,7 +3025,7 @@ source = "git+https://github.com/antimatter-studios/rust-fs-core?rev=9271095beb7
 [[package]]
 name = "rust-fs-exfat"
 version = "0.1.0"
-source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=6b63a7d142626d0fcf9804514abf1defb4730924#6b63a7d142626d0fcf9804514abf1defb4730924"
+source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=1dae694062229316371956e5ae8b1067a7e9ce9f#1dae694062229316371956e5ae8b1067a7e9ce9f"
 dependencies = [
  "rust-fs-core",
  "serde",
