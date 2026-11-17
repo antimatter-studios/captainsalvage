@@ -323,7 +323,7 @@ impl Session {
             )
         })?);
         let volume = Volume::open(source)?;
-        let workspace = Workspace::for_serial(volume.geometry.volume_serial)?;
+        let workspace = Workspace::for_volume(&volume)?;
         let session = Self::assemble(path, volume, workspace, None)?;
         crate::startup::remember_volume(&session.workspace, path);
         Ok(session)
@@ -353,17 +353,13 @@ impl Session {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let workspace = Workspace::at(
-            Workspace::for_serial(volume.geometry.volume_serial)?
-                .dir()
-                .join(format!(
-                    "region-{}-{:x}-{:x}-{:x}",
-                    &path_hash[..16],
-                    region.start,
-                    region.length,
-                    region.boot_offset
-                )),
-        )?;
+        let workspace = Workspace::at(Workspace::for_volume(&volume)?.dir().join(format!(
+            "region-{}-{:x}-{:x}-{:x}",
+            &path_hash[..16],
+            region.start,
+            region.length,
+            region.boot_offset
+        )))?;
         let session = Self::assemble(&disk.path, volume, workspace, Some(region))?;
         std::fs::write(
             session.workspace.dir().join("interpretation.json"),
@@ -1055,6 +1051,10 @@ impl Session {
     }
 
     pub fn fat_meaning(&self, value: u32) -> String {
+        if self.volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+            return "NTFS keeps no table of links; a file's run list names its clusters"
+                .to_string();
+        }
         match value {
             0 => "zero: no chain information".to_string(),
             FAT_END => "end of chain".to_string(),
@@ -1072,10 +1072,14 @@ impl Session {
         let lookahead_end = self.volume.geometry.last_cluster_exclusive();
         let mut search = data.clone();
         if cluster + 1 < lookahead_end {
-            search.extend(
-                self.volume
-                    .read_bytes(self.volume.cluster_offset(cluster + 1), 1024)?,
-            );
+            // A FILE record can start in the last sector of this cluster and end in the next.
+            let wanted = self.volume.geometry.record_size.max(1024);
+            let room =
+                u64::from(lookahead_end - (cluster + 1)) * self.volume.geometry.cluster_size();
+            search.extend(self.volume.read_bytes(
+                self.volume.cluster_offset(cluster + 1),
+                wanted.min(room) as usize,
+            )?);
         }
         let sets = self.volume.find_sets(&search, data.len());
         let (class, _) = crate::content::classify(&data, sets.iter().any(|set| set.checksum_ok));
@@ -1087,7 +1091,7 @@ impl Session {
         let confidence = self
             .workspace
             .read_cluster_map(&self.workspace.confidence(), count)[index];
-        let fat_value = self.volume.fat[cluster as usize];
+        let fat_value = self.volume.fat_value(cluster);
         let offset = self.volume.cluster_offset(cluster);
         let chain_head = self.volume.chain_head(cluster);
 
@@ -1453,11 +1457,66 @@ impl Session {
         let row = database
             .entry(id)?
             .with_context(|| format!("no entry with id {id}"))?;
-        let clusters = database.entry_clusters(&self.volume, &row)?;
+        let source = database.entry_source(&self.volume, &row)?;
         drop(database);
         let limit = row.valid_length.min(row.length);
-        let data = self.read_clusters(&clusters, limit, max_bytes)?;
+        let data = match source {
+            crate::map::EntrySource::Clusters(clusters) => {
+                self.read_clusters(&clusters, limit, max_bytes)?
+            }
+            crate::map::EntrySource::Ntfs(stream) => {
+                self.read_ntfs_stream(&stream, 0, limit.min(max_bytes))?
+            }
+        };
         Ok((row, data))
+    }
+
+    /// What an NTFS entry's FILE record says: every name and where it was linked, every stream
+    /// and how it is held, and what was wrong with the record.
+    pub fn ntfs_record(&self, id: i64) -> Result<crate::filesystem::ntfs_salvage::RecordDetails> {
+        let access = self
+            .volume
+            .ntfs
+            .as_ref()
+            .context("this volume is not NTFS")?;
+        let row = self
+            .lock_database()?
+            .entry(id)?
+            .with_context(|| format!("no entry with id {id}"))?;
+        let (Some(cluster), Some(offset)) = (row.source_cluster, row.source_offset) else {
+            bail!("entry {id} has no FILE record");
+        };
+        access.details(self.volume.cluster_offset(cluster) + u64::from(offset))
+    }
+
+    /// Reads part of an NTFS stream through the driver. A failed read is an error: nothing
+    /// that could not be read is returned as zeros, and only the zeros NTFS defines are.
+    pub fn read_ntfs_stream(
+        &self,
+        stream: &crate::filesystem::ntfs_salvage::StreamReference,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>> {
+        let access = self
+            .volume
+            .ntfs
+            .as_ref()
+            .context("this volume is not NTFS")?;
+        let wanted = stream.length.saturating_sub(offset).min(length);
+        let mut data = vec![0u8; usize::try_from(wanted)?];
+        let mut done = 0;
+        while done < data.len() {
+            let count = access.read(stream, offset + done as u64, &mut data[done..])?;
+            if count == 0 {
+                bail!(
+                    "the NTFS stream ended at byte {} of {}",
+                    offset + done as u64,
+                    stream.length
+                );
+            }
+            done += count;
+        }
+        Ok(data)
     }
 
     pub fn entropy_map(&self) -> Vec<u8> {

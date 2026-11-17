@@ -127,7 +127,7 @@ fn finding_ntfs_does_not_stop_discovery_of_exfat_at_the_end() {
     let findings = disk.discover(0, disk.length).unwrap().findings;
     assert!(findings
         .iter()
-        .any(|item| item.format == "NTFS" && item.offset == 0 && !item.supported));
+        .any(|item| item.format == "NTFS" && item.offset == 0 && item.supported));
     assert!(findings
         .iter()
         .any(|item| item.format == "exFAT" && item.volume_start == Some(start as u64)));
@@ -295,19 +295,40 @@ fn bad_interpretations_are_refused_without_changing_the_source() {
 }
 
 #[test]
-fn ntfs_can_be_inspected_without_claiming_ntfs_recovery_support() {
+fn an_ntfs_interpretation_is_chosen_by_its_boot_sector_and_opened_by_the_driver() {
     let mut image = vec![0; 4096];
     image[..512].copy_from_slice(&ntfs_boot(4096));
     let disk = disk(image);
     let mut request = region(0, disk.length);
     request.format = "NTFS".into();
-    assert!(disk
-        .interpretation(&request)
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("not integrated"));
+    // The probe's plausible geometry is enough to choose it; the driver decides if it opens.
+    let source = disk.interpretation(&request).unwrap();
+    let error = Volume::open(source).err().unwrap();
+    assert!(
+        format!("{error:#}").contains("NTFS boot sector"),
+        "{error:#}"
+    );
     assert_eq!(&disk.read(3, 8).unwrap(), b"NTFS    ");
+    // A different format is not accepted for the same bytes.
+    request.format = "exFAT".into();
+    assert!(disk.interpretation(&request).is_err());
+}
+
+#[test]
+fn a_bitlocker_volume_is_refused_by_name_and_never_read() {
+    let mut image = vec![0; 4096];
+    image[3..11].copy_from_slice(b"-FVE-FS-");
+    image[510..512].copy_from_slice(&[0x55, 0xaa]);
+    let disk = disk(image);
+    let findings = disk.discover(0, disk.length).unwrap().findings;
+    assert!(findings
+        .iter()
+        .any(|item| item.format == "BitLocker" && !item.supported));
+    let mut request = region(0, disk.length);
+    request.format = "NTFS".into();
+    let error = disk.interpretation(&request).err().unwrap().to_string();
+    assert!(error.contains("BitLocker"), "{error}");
+    assert!(error.contains("unlocked and decrypted"), "{error}");
 }
 
 #[test]

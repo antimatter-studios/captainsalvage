@@ -232,6 +232,8 @@ pub(crate) struct EntryStream {
     total: u64,
     valid: u64,
     clusters: Vec<u32>,
+    /// NTFS: the stream is read through the driver, not by cluster.
+    ntfs: Option<crate::filesystem::ntfs_salvage::StreamReference>,
 }
 
 /// Part of a file, read live from the disk.
@@ -578,21 +580,29 @@ impl Session {
                 return Ok(stream.clone());
             }
         }
-        let (row, clusters) = self.with_database(|database| {
+        let (row, source) = self.with_database(|database| {
             let row = database
                 .entry(id)?
                 .with_context(|| format!("no entry with id {id}"))?;
-            let clusters = database.entry_clusters(&self.volume, &row)?;
-            Ok((row, clusters))
+            let source = database.entry_source(&self.volume, &row)?;
+            Ok((row, source))
         })?;
+        let (total, clusters, ntfs) = match source {
+            crate::map::EntrySource::Clusters(clusters) => (
+                row.length
+                    .min(clusters.len() as u64 * self.volume.geometry.cluster_size()),
+                clusters,
+                None,
+            ),
+            crate::map::EntrySource::Ntfs(stream) => (stream.length, Vec::new(), Some(stream)),
+        };
         let stream = Arc::new(EntryStream {
             id,
-            total: row
-                .length
-                .min(clusters.len() as u64 * self.volume.geometry.cluster_size()),
+            total,
             valid: row.valid_length.min(row.length),
             name: row.name,
             clusters,
+            ntfs,
         });
         let mut cache = self.lock_browse()?;
         cache.streams.retain(|known| known.id != id);
@@ -646,7 +656,16 @@ impl Session {
         let total = stream.total;
         let end = start.saturating_add(length).min(total);
         let mut data = Vec::new();
-        if start < end {
+        if let (Some(ntfs), true) = (&stream.ntfs, start < end) {
+            data = self.read_ntfs_stream(ntfs, start, end - start)?;
+            self.require_disk()?;
+            // Bytes past the valid length are defined as zeros, and the driver reads them so.
+            if end > stream.valid {
+                let keep = stream.valid.saturating_sub(start) as usize;
+                let from = keep.min(data.len());
+                data[from..].fill(0);
+            }
+        } else if start < end {
             let size = self.volume.geometry.cluster_size();
             let last = ((end - 1) / size) as usize;
             let mut index = (start / size) as usize;

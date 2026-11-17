@@ -971,7 +971,11 @@ impl Session {
         destination: &Path,
         rebuilt: Option<&PathBuf>,
     ) -> Result<Option<ManifestRow>> {
-        let clusters = self.with_database(|database| database.entry_clusters(&self.volume, row))?;
+        let source = self.with_database(|database| database.entry_source(&self.volume, row))?;
+        let (clusters, ntfs) = match source {
+            crate::map::EntrySource::Clusters(clusters) => (clusters, None),
+            crate::map::EntrySource::Ntfs(stream) => (Vec::new(), Some(stream)),
+        };
         let source_path = row.path.clone().unwrap_or_default();
         let relative = rebuilt
             .cloned()
@@ -992,7 +996,50 @@ impl Session {
         let mut unreadable = 0u64;
         let valid = row.valid_length.min(row.length);
         let mut index = 0;
-        while index < clusters.len() && written < row.length {
+        // An NTFS stream is read through the driver in pieces. A piece that cannot be read ends
+        // the copy there: the file is reported partial, and nothing is filled in for it.
+        let mut stream_error: Option<String> = None;
+        if let Some(stream) = &ntfs {
+            while written < row.length {
+                if self.should_stop() {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Ok(None);
+                }
+                let wanted = (row.length - written).min(MAX_RUN_BYTES);
+                let mut chunk = match self.read_ntfs_stream(stream, written, wanted) {
+                    Ok(chunk) if !chunk.is_empty() => chunk,
+                    Ok(_) => {
+                        stream_error = Some("the stream ended early".into());
+                        break;
+                    }
+                    Err(error) => {
+                        stream_error = Some(format!("{error:#}"));
+                        break;
+                    }
+                };
+                if let Err(error) = self.require_disk() {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error);
+                }
+                // Bytes past the valid length are defined as zeros on NTFS too.
+                if written + chunk.len() as u64 > valid {
+                    let keep = valid.saturating_sub(written) as usize;
+                    chunk[keep..].fill(0);
+                }
+                file.write_all(&chunk)?;
+                hasher.update(&chunk);
+                written += chunk.len() as u64;
+                self.update_copy(|status| status.bytes_done += chunk.len() as u64);
+            }
+        }
+        if let (Some(error), 0) = (&stream_error, written) {
+            drop(file);
+            let _ = fs::remove_file(&temporary);
+            bail!("nothing of this NTFS stream could be read, so no file was made: {error}");
+        }
+        while ntfs.is_none() && index < clusters.len() && written < row.length {
             if self.should_stop() {
                 drop(file);
                 let _ = fs::remove_file(&temporary);
@@ -1078,14 +1125,16 @@ impl Session {
         } else {
             (None, None, None)
         };
-        let status = if written < row.length {
-            "partial: chain ended early"
+        let status = if let Some(error) = &stream_error {
+            format!("partial: could not read the stream ({error})")
+        } else if written < row.length {
+            "partial: chain ended early".to_string()
         } else if unreadable > 0 {
-            "partial: unreadable clusters filled with zeros"
+            "partial: unreadable clusters filled with zeros".to_string()
         } else if row.clusters_allocated > 0 && row.verdict != VERDICT_LIVE {
-            "partial: some clusters are in use by current files"
+            "partial: some clusters are in use by current files".to_string()
         } else {
-            "complete"
+            "complete".to_string()
         };
         Ok(Some(ManifestRow {
             id,
@@ -1095,12 +1144,16 @@ impl Session {
             length: row.length,
             bytes_written: written,
             sha256,
-            status: status.to_string(),
+            status,
             verdict: row.verdict.clone(),
             confidence: row.confidence,
             reason: row.reason.clone(),
             first_cluster: row.first_cluster,
-            clusters_found: clusters.len() as u64,
+            clusters_found: if ntfs.is_some() {
+                row.clusters_found
+            } else {
+                clusters.len() as u64
+            },
             clusters_needed: row.length.div_ceil(cluster_size),
             unreadable_clusters: unreadable,
             format,

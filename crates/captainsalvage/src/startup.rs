@@ -20,6 +20,7 @@ const HIDDEN_PARTITIONS: &[&str] = &["EFI"];
 const HIDDEN_PARTITION_TYPE_PREFIX: &str = "Apple_";
 const OPENABLE_FORMATS: &[&str] = &[
     "exfat",
+    "ntfs",
     "unknown",
     "fat12",
     "fat16",

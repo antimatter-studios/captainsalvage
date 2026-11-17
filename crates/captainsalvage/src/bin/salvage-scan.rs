@@ -49,7 +49,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
 
     let source = Arc::new(FileSource::open(path).with_context(|| format!("opening {device}"))?);
     let volume = Volume::open(source.clone())?;
-    let workspace = Workspace::for_serial(volume.geometry.volume_serial)?;
+    let workspace = Workspace::for_volume(&volume)?;
     let baseline = workspace.check_baseline(&volume.structures)?;
 
     println!("device: {device}");

@@ -333,10 +333,21 @@ impl RawDisk {
                     .is_some_and(|boot_end| boot_end <= end),
             "boot evidence is outside selected region"
         );
-        if region.boot_offset != region.start {
+        if region.boot_offset != region.start && region.format.eq_ignore_ascii_case("ntfs") {
+            // The copy of an NTFS boot sector in the volume's last sector stands in for a
+            // main one that was written over. Only the view changes; the source is untouched.
+            let backup = self.read(region.boot_offset, 512)?;
+            let boot = fs_ntfs::mft_io::parse_boot_sector(&backup)
+                .context("the backup NTFS boot sector is not valid")?;
+            ensure!(
+                region.start.checked_add(boot.volume_bytes()) == Some(region.boot_offset),
+                "the NTFS backup boot sector must be one sector past the end of its volume"
+            );
+            source.prefix = backup;
+        } else if region.boot_offset != region.start {
             ensure!(
                 region.format.eq_ignore_ascii_case("exfat"),
-                "alternate boot regions currently require exFAT"
+                "alternate boot regions currently require exFAT or NTFS"
             );
             let boot_bytes = self.read(region.boot_offset, 512)?;
             let boot = fs_exfat::boot::BootSector::parse(&boot_bytes)?;
@@ -362,10 +373,6 @@ impl RawDisk {
             "selected {} interpretation does not match the available {} boot metadata",
             region.format,
             detected
-        );
-        ensure!(
-            detected != crate::filesystem::FilesystemKind::Ntfs,
-            "NTFS is recognised, but its recovery driver is not integrated"
         );
         Ok(Arc::new(source))
     }

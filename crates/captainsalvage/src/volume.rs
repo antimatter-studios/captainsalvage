@@ -2,7 +2,10 @@
 
 use crate::allocation as primitives;
 use crate::changes::StructureCopy;
-use crate::filesystem::{salvage, FilesystemDetails, FilesystemKind, SalvageEntry, VolumeGeometry};
+use crate::filesystem::ntfs_salvage;
+use crate::filesystem::{
+    salvage, FilesystemDetails, FilesystemKind, NtfsRun, SalvageEntry, VolumeGeometry,
+};
 use crate::source::BlockSource;
 use anyhow::{Context, Result};
 use fs_exfat::primitives::Limits;
@@ -32,6 +35,8 @@ pub struct Volume {
     pub structures: StructureCopy,
     pub stats: AllocationStats,
     predecessors: Vec<u32>,
+    /// Reads NTFS streams through the driver. None for every other filesystem.
+    pub(crate) ntfs: Option<ntfs_salvage::Access>,
 }
 
 impl Volume {
@@ -65,6 +70,8 @@ impl Volume {
             root_clusters,
         } = salvage::inspect(&structures)?;
         let structure_hash = structures.hash();
+        let ntfs = (kind == FilesystemKind::Ntfs)
+            .then(|| ntfs_salvage::Access::new(source.clone(), &geometry));
         let mut volume = Self {
             source,
             boot,
@@ -81,10 +88,28 @@ impl Volume {
             structures,
             stats: AllocationStats::default(),
             predecessors: Vec::new(),
+            ntfs,
         };
         volume.stats = volume.compute_stats();
         volume.predecessors = volume.compute_predecessors();
         Ok(volume)
+    }
+
+    /// The name of the folder this volume's workspace lives in. A 32-bit serial would let two
+    /// NTFS volumes share a workspace by chance, so NTFS uses its whole 64-bit serial.
+    pub fn workspace_name(&self) -> String {
+        match &self.filesystem {
+            FilesystemDetails::Ntfs { serial, .. } => format!("ntfs-{serial}"),
+            _ => format!("vol-{:08x}", self.geometry.volume_serial),
+        }
+    }
+
+    /// The volume's serial number as text: eight hex digits, or sixteen for NTFS.
+    pub fn serial_text(&self) -> String {
+        match &self.filesystem {
+            FilesystemDetails::Ntfs { serial, .. } => serial.clone(),
+            _ => format!("{:08x}", self.geometry.volume_serial),
+        }
     }
 
     pub fn source(&self) -> &Arc<dyn BlockSource> {
@@ -123,6 +148,14 @@ impl Volume {
 
     /// Non-zero FAT entries count here, including values outside the valid range.
     pub fn allocation_class(&self, cluster: u32) -> u8 {
+        if self.kind == FilesystemKind::Ntfs {
+            // There are no links to be left behind by a cleared allocation, only the bitmap.
+            return if primitives::is_allocated(&self.bitmap, cluster) {
+                primitives::ALLOC_ALLOCATED
+            } else {
+                primitives::ALLOC_FREE_ZERO
+            };
+        }
         primitives::allocation_class(&self.fat, &self.bitmap, cluster)
     }
 
@@ -148,7 +181,44 @@ impl Volume {
     /// Clusters a stream claims. `clusters` is shorter than `needed` when the
     /// chain ends early or the claim runs off the end of the volume.
     pub fn clusters_for(&self, first: u32, length: u64, no_fat_chain: bool) -> StreamClusters {
-        primitives::clusters_for(&self.geometry, &self.fat, first, length, no_fat_chain)
+        // NTFS has no chain to follow: a guess from a first cluster is a contiguous one.
+        let contiguous = no_fat_chain || self.kind == FilesystemKind::Ntfs;
+        primitives::clusters_for(&self.geometry, &self.fat, first, length, contiguous)
+    }
+
+    /// Clusters an NTFS stream's run list claims, in order. A sparse hole claims nothing, so
+    /// it is not counted as needed; a run list that stops early leaves `needed` larger than
+    /// the clusters returned, as a broken FAT chain does.
+    pub fn clusters_from_runs(&self, runs: &[NtfsRun], length: u64) -> StreamClusters {
+        let size = self.geometry.cluster_size();
+        let total = length.div_ceil(size);
+        let mut clusters = Vec::new();
+        let mut sparse = 0u64;
+        for run in runs {
+            if run.vcn >= total {
+                break;
+            }
+            let count = run.count.min(total - run.vcn);
+            match run.lcn {
+                None => sparse += count,
+                Some(lcn) => {
+                    for index in 0..count {
+                        match lcn
+                            .checked_add(index)
+                            .and_then(|cluster| u32::try_from(cluster).ok())
+                            .filter(|&cluster| self.valid_cluster(cluster))
+                        {
+                            Some(cluster) => clusters.push(cluster),
+                            None => break,
+                        }
+                    }
+                }
+            }
+        }
+        StreamClusters {
+            clusters,
+            needed: total - sparse.min(total),
+        }
     }
 
     /// Reads a stream's bytes, up to `max_bytes`, stopping at its valid length.
@@ -175,27 +245,56 @@ impl Volume {
         Ok(out)
     }
 
+    /// The allocation-table value for a cluster. NTFS keeps no table of links, so it is zero.
+    pub fn fat_value(&self, cluster: u32) -> u32 {
+        self.fat.get(cluster as usize).copied().unwrap_or(0)
+    }
+
     /// One FAT entry that points at this cluster, if any.
     pub fn predecessor(&self, cluster: u32) -> Option<u32> {
+        if self.kind == FilesystemKind::Ntfs {
+            return None;
+        }
         primitives::predecessor(&self.predecessors, cluster)
     }
 
     /// Walks the FAT backward from `cluster` to the start of its chain.
     pub fn chain_head(&self, cluster: u32) -> u32 {
+        if self.kind == FilesystemKind::Ntfs {
+            return cluster;
+        }
         primitives::chain_head(&self.predecessors, cluster)
     }
 
     fn compute_predecessors(&self) -> Vec<u32> {
+        if self.kind == FilesystemKind::Ntfs {
+            return Vec::new();
+        }
         primitives::compute_predecessors(&self.geometry, &self.fat)
     }
 
     fn compute_stats(&self) -> AllocationStats {
+        if self.kind == FilesystemKind::Ntfs {
+            let mut stats = AllocationStats::default();
+            for cluster in 2..self.geometry.last_cluster_exclusive() {
+                if primitives::is_allocated(&self.bitmap, cluster) {
+                    stats.allocated += 1;
+                } else {
+                    stats.free_zero_fat += 1;
+                }
+            }
+            return stats;
+        }
         primitives::compute_stats(&self.geometry, &self.fat, &self.bitmap)
     }
 
     /// Splits the FAT into islands: runs that start at an entry nothing points
     /// to, and end where the chain stops or meets a cluster already walked.
     pub fn chain_islands(&self) -> Vec<Island> {
+        if self.kind == FilesystemKind::Ntfs {
+            // Chains of links exist only where there is a table of links.
+            return Vec::new();
+        }
         primitives::chain_islands(&self.geometry, &self.fat, &self.bitmap)
     }
 }
