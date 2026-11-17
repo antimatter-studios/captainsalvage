@@ -2461,6 +2461,58 @@ const SAMPLE_DISK_INFO: &str = "
    Volume UUID:               52D6C729-7E3F-310C-9073-7142E9EA7C05
 ";
 
+const SAMPLE_WHOLE_DISK_INFO: &str = "
+   Device Identifier:         disk12
+   Device Node:               /dev/disk12
+   Whole:                     Yes
+   Part of Whole:             disk12
+   Device / Media Name:       STORAGE DEVICE
+
+   Volume Name:               Not applicable (no file system)
+   File System:               None
+
+   Content (IOContent):       FDisk_partition_scheme
+
+   Disk Size:                 2.0 TB (2000398934016 Bytes) (exactly 3907029168 512-Byte-Units)
+   Device Location:           External
+";
+
+#[test]
+fn a_whole_disk_is_listed_whether_or_not_it_has_partitions() {
+    use captainsalvage::startup::{parse_disk, parse_disks};
+    let list = "/dev/disk12 (external, physical):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:     FDisk_partition_scheme                        *2.0 TB     disk12
+   1:               Windows_NTFS seagate_2tb             1.4 TB     disk12s1
+
+/dev/disk13 (external, physical):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:                                                   *590.7 GB   disk13
+
+/dev/disk2 (internal, physical):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:      GUID_partition_scheme                        *500.3 GB   disk2
+";
+    assert_eq!(parse_disks(list), ["disk12", "disk13", "disk2"]);
+
+    let disk = parse_disk(SAMPLE_WHOLE_DISK_INFO).expect("disk");
+    assert_eq!(disk.device, "/dev/rdisk12");
+    assert_eq!(disk.name, "STORAGE DEVICE");
+    assert_eq!(disk.bytes, 2_000_398_934_016);
+    assert!(disk.external);
+    assert_eq!(disk.scheme.as_deref(), Some("FDisk_partition_scheme"));
+
+    // A disk whose partition table macOS cannot read has no scheme, but is still a disk.
+    let unreadable = SAMPLE_WHOLE_DISK_INFO.replace(
+        "FDisk_partition_scheme",
+        "Not applicable (no partition scheme)",
+    );
+    assert_eq!(parse_disk(&unreadable).expect("disk").scheme, None);
+    // A partition is not a disk.
+    assert!(parse_disk(SAMPLE_DISK_INFO).is_none());
+    assert!(parse_disk("Could not find disk: x").is_none());
+}
+
 #[test]
 fn the_start_screen_reads_what_diskutil_says() {
     use captainsalvage::startup::{parse_partitions, parse_volume};

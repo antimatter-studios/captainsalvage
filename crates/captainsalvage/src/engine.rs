@@ -515,6 +515,13 @@ impl Engine {
                     .get("includeInternal")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                // Only for driving the window in a test: a made-up list of disks, so a test never
+                // shows or opens a real one. Ignored unless the test hook is on.
+                if std::env::var_os("SALVAGE_TEST_UI").is_some() {
+                    if let Some(file) = std::env::var_os("SALVAGE_TEST_STARTUP_DISKS") {
+                        return Ok(serde_json::from_slice(&std::fs::read(file)?)?);
+                    }
+                }
                 Ok(serde_json::to_value(crate::startup::startup_report(
                     internal,
                 )?)?)
