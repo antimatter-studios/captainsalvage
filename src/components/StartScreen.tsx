@@ -1,11 +1,12 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
+import { call, type DiskAccess, type KnownVolume, type StartupDisk, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
 import { fromEngine, locale, t } from "../i18n";
 import { Command } from "./Command";
 import { MountBlockToggle } from "./MountBlock";
+import { RawChooser } from "./RawChooser";
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 900;
@@ -212,7 +213,7 @@ function KnownLine({ known }: { known: KnownVolume }) {
   );
 }
 
-function VolumeRow({ volume, onOpen, onRaw }: { volume: StartupVolume; onOpen: (path: string) => void; onRaw: (path: string) => void }) {
+function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: string) => void }) {
   const block = volume.device.replace("/dev/rdisk", "/dev/disk");
   const title = volume.name || t("Unnamed volume");
   const ready = volume.canOpen && !volume.mountPoint && volume.readable;
@@ -225,26 +226,32 @@ function VolumeRow({ volume, onOpen, onRaw }: { volume: StartupVolume; onOpen: (
         </div>
         {ready && <button className="primary" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
       </div>
-      <div className="raw-entry-actions">
-        <button onClick={() => onRaw(volume.device)}>{t("Inspect raw partition")}</button>
-        <button onClick={() => onRaw(volume.wholeDisk)}>{t("Inspect whole disk")}</button>
-      </div>
-      {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && <p className="start-new">{t("Not seen before.")}</p>}
+      {volume.known && <KnownLine known={volume.known} />}
       {volume.uuid && <MountBlockToggle uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
-      {!volume.canOpen && <p className="start-new">{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats can be inspected as raw bytes.")}</p>}
-      {volume.mountPoint && (
-        <div className="start-caution">
-          <p>{t("It is mounted, so macOS may be writing to it. Unmounting stops that, but writes a little itself. It has to be unmounted before it can be opened here.")}</p>
-          <Command text={`diskutil unmount ${block}`} />
-        </div>
-      )}
-      {!volume.mountPoint && !volume.readable && (
-        <div className="start-needs">
-          <p>{t("Reading it needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.")}</p>
-          <Command text={`sudo chgrp staff ${volume.device} ${volume.wholeDisk}`} />
-        </div>
-      )}
+      {volume.mountPoint && <Command text={`diskutil unmount ${block}`} />}
     </li>
+  );
+}
+
+/** What to say once under the list, however many volumes need it, so no row repeats a sentence. */
+function ListNotes({ volumes, disks }: { volumes: StartupVolume[]; disks: StartupDisk[] }) {
+  const unreadable = [...new Set([
+    ...volumes.filter((volume) => !volume.mountPoint && !volume.readable).flatMap((volume) => [volume.device, volume.wholeDisk]),
+    ...disks.filter((disk) => !disk.readable).map((disk) => disk.device),
+  ])];
+  return (
+    <div className="start-notes">
+      {volumes.some((volume) => volume.mountPoint) && (
+        <p className="start-caution">{t("Mounted volumes may be written to by macOS. Unmounting stops that, but writes a little itself. A volume has to be unmounted before it can be opened here; the command is under it.")}</p>
+      )}
+      {volumes.some((volume) => !volume.canOpen) && <p className="start-new">{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats can be inspected as raw bytes.")}</p>}
+      {unreadable.length > 0 && (
+        <div className="start-needs">
+          <p>{t("Reading these needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.")}</p>
+          <Command text={`sudo chgrp staff ${unreadable.join(" ")}`} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -287,6 +294,7 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
 
   const recognised = report?.volumes.find((volume) => volume.known)?.known ?? report?.elsewhere[0] ?? null;
   const volumes = report?.volumes ?? [];
+  const disks = report?.disks ?? [];
 
   return (
     <main className="start">
@@ -322,11 +330,13 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
 
         {volumes.length > 0 ? (
           <ul className="start-volumes">
-            {volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} onRaw={onRaw} />)}
+            {volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} />)}
           </ul>
         ) : (
-          !looking && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
+          !looking && disks.length === 0 && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
         )}
+        {report && <ListNotes volumes={volumes} disks={disks} />}
+        {disks.length > 0 && <RawChooser disks={disks} volumes={volumes} onRaw={onRaw} />}
 
         <label className="check start-internal">
           <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> {t("Show internal disks")}
@@ -352,7 +362,7 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
 
         <section className="start-image">
           <h3>{t("Or open a disk image")}</h3>
-          <p>{t("Open a supported filesystem, or inspect any raw disk or partition image without choosing a format.")}</p>
+          <p>{t("A raw image of a disk or a partition, or a device by its path. Opening it needs a filesystem this app reads; any image can be inspected as raw bytes without one.")}</p>
           <form
             onSubmit={(event) => {
               event.preventDefault();

@@ -90,7 +90,7 @@ def start(binary, seconds=600):
     home = os.environ.get('SALVAGE_TEST_HOME') or tempfile.mkdtemp(dir=SCRATCH, prefix='fakehome.')
     state['home'] = home
     state['cfg'] = os.path.join(home, 'Library/Application Support/Captain Salvage/mcp.json')
-    env = {'HOME': home, 'USER': os.environ.get('USER', ''), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'SALVAGE_TEST_UI': '1', 'SALVAGE_TEST_HIDDEN': '1', 'SALVAGE_TEST_COPY_ROOT': SCRATCH, **{k: v for k, v in os.environ.items() if k.startswith('SALVAGE_AGENT_')}}
+    env = {'HOME': home, 'USER': os.environ.get('USER', ''), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'SALVAGE_TEST_UI': '1', 'SALVAGE_TEST_HIDDEN': '1', 'SALVAGE_TEST_COPY_ROOT': SCRATCH, **{k: v for k, v in os.environ.items() if k.startswith(('SALVAGE_AGENT_', 'SALVAGE_TEST_STARTUP'))}}
     program = binary if os.environ.get('SALVAGE_TEST_KEEP_ID') else renamed_copy(binary)
     # The fake home has no global preferences, so App Nap is turned off here. SALVAGE_TEST_NAP
     # leaves it on, for reproducing a nap problem.

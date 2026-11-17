@@ -139,8 +139,19 @@ export interface StartupVolume {
   mountBlocked: boolean;
 }
 
+export interface StartupDisk {
+  device: string;
+  name: string;
+  bytes: number;
+  external: boolean;
+  scheme: string | null;
+  readable: boolean;
+}
+
 export interface StartupReport {
   volumes: StartupVolume[];
+  /** Every whole disk, whether or not its partition table could be read. */
+  disks: StartupDisk[];
   elsewhere: KnownVolume[];
   diskSleepMinutes: number | null;
 }
