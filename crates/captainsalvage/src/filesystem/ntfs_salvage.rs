@@ -466,18 +466,21 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
             runs: Vec::new(),
         };
     };
-    let transformed = |fallback: &'static str| {
+    let transformed = |fallback: &'static str, compressible: bool| {
         if encrypted || attribute.flags & attr_flags::ENCRYPTED != 0 {
             STORAGE_ENCRYPTED
-        } else if attribute.flags & attr_flags::COMPRESSION_MASK != 0 {
+        } else if compressible && attribute.flags & attr_flags::COMPRESSION_MASK != 0 {
             STORAGE_COMPRESSED
         } else {
             fallback
         }
     };
     match &attribute.value {
+        // NTFS compresses clusters, never the bytes held in the FILE record. Windows still sets the
+        // compression flag on that attribute for a small file in a compressed folder, and its
+        // bytes are the file as written.
         AttributeValue::Resident(data) => Data {
-            storage: transformed(STORAGE_RESIDENT),
+            storage: transformed(STORAGE_RESIDENT, false),
             length: data.len() as u64,
             valid_length: data.len() as u64,
             runs: Vec::new(),
@@ -488,7 +491,7 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
             data_size,
             initialized_size,
         } => {
-            let mut storage = transformed(STORAGE_RUNS);
+            let mut storage = transformed(STORAGE_RUNS, true);
             if storage == STORAGE_RUNS && (record.has_attribute_list() || *first_vcn != 0) {
                 storage = if record.has_attribute_list() {
                     STORAGE_ATTRIBUTE_LIST
@@ -751,10 +754,23 @@ impl Access {
                 && (record.record_number.is_none() || record.record_number == entry.record_number),
             "the FILE record no longer matches the one that was found"
         );
-        let (index, _) = data_stream(&record).context("the FILE record has no data stream")?;
+        let (index, attribute) =
+            data_stream(&record).context("the FILE record has no data stream")?;
         let available = entry.length.saturating_sub(offset).min(output.len() as u64) as usize;
         if available == 0 {
             return Ok(0);
+        }
+        // Bytes held in the record are the file as written, whatever flag the attribute carries
+        // (see describe_data), and the driver refuses a flagged stream before looking at it.
+        if let (STORAGE_RESIDENT, AttributeValue::Resident(data)) =
+            (entry.storage.as_str(), &attribute.value)
+        {
+            let start = usize::try_from(offset)
+                .unwrap_or(usize::MAX)
+                .min(data.len());
+            let count = available.min(data.len() - start);
+            output[..count].copy_from_slice(&data[start..start + count]);
+            return Ok(count);
         }
         let count = self
             .volume
