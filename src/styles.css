@@ -670,6 +670,14 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .start-heading h2 { margin: 0; font-size: 25px; font-weight: 650; letter-spacing: -0.01em; }
 .start-panel h3 { margin: 26px 0 2px; font-size: 13px; font-weight: 650; }
+.start-notes { margin-top: 10px; }
+.start-notes p { margin: 8px 0 0; max-width: 70ch; }
+.start-notes .start-caution { color: var(--chart-caution); }
+.start-raw { margin-top: 4px; }
+.start-raw > p { margin: 2px 0 8px; color: var(--muted); max-width: 70ch; }
+.start-raw-choose { display: flex; gap: 8px; max-width: 640px; }
+.start-raw-choose select { flex: 1; min-width: 0; }
+.start-raw .start-raw-scope { margin: 6px 0 0; font-size: 12px; }
 .start-volumes { list-style: none; margin: 0; padding: 0; }
 .start-volume { padding: 15px 0; border-bottom: 0.5px solid var(--line-strong); }
 .start-volume-other { color: var(--muted); }

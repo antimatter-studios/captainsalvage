@@ -10,3 +10,5 @@ archive-out.*
 warnhome.*
 racehome.*
 gradient.*
+picker-*.png
+picker-report.json

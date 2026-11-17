@@ -30,6 +30,17 @@ isolated test app, and resumes the saved scan against a renamed clone. It verifi
 changed sample blocks resume in both the window and the backend. Its temporary source images,
 database and app home never use real disks or the user's application data.
 
+`raw_disk_crowded_test.py` scans a sparse synthetic image holding 1500 NTFS boot sectors and
+checks that the window never stalls, that the evidence list stays one page long, and that "Show
+more" adds a page. `scripts/bench-raw-disk-map.mjs` times the same load without a window.
+
+`device_picker_test.py` gives the start screen a made-up list of disks through
+`SALVAGE_TEST_STARTUP_DISKS` (a JSON file in the shape `startup_disks` returns, honoured only
+while `SALVAGE_TEST_UI` is set), so no real disk is listed. Its "devices" are synthetic images:
+a whole disk with no partition table and a disk with two partitions. It checks that each volume
+is one row, that raw inspection is offered once, and that each scope opens exactly its own bytes.
+It saves `picker-start.png` here.
+
 ## The images
 
 The images and everything else the tests write stay in this folder and are ignored by git.
