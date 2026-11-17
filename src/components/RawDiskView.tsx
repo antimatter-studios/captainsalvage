@@ -42,9 +42,11 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
   const [layer, setLayer] = useState<SourceLayer>("evidence");
   const [inspector, setInspector] = useState<"selected" | "volume">("selected");
   const [visibleFindings, setVisibleFindings] = useState(FINDINGS_PAGE_SIZE);
+  const [visibleErrors, setVisibleErrors] = useState(FINDINGS_PAGE_SIZE);
   useEffect(() => {
     mounted.current = true;
     setVisibleFindings(FINDINGS_PAGE_SIZE);
+    setVisibleErrors(FINDINGS_PAGE_SIZE);
     void call<SavedScans>("list_raw_scans", { diskId: disk.id }).then((result) => {
       if (mounted.current) setSaved(result);
     }).catch((reason) => { if (mounted.current) setFailure(String(reason)); });
@@ -314,7 +316,8 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
           <p className="warn">{t("This app only reads. macOS or other programs may still write to a mounted source.")}</p>
           {disk.warnings.map((warning, index) => <p className="warn" key={index}>{fromEngine(warning)}</p>)}
           {disk.errors.length > 0 && <div className="recovery-tests"><h3>{t("Unreadable regions")}</h3>
-            {disk.errors.map((error, index) => <p className="warn" key={index}>{error.offset} + {error.length}: {fromEngine(error.error)}</p>)}
+            {disk.errors.slice(0, visibleErrors).map((error, index) => <p className="warn" key={index}>{error.offset} + {error.length}: {fromEngine(error.error)}</p>)}
+            {visibleErrors < disk.errors.length && <button onClick={() => setVisibleErrors((shown) => shown + FINDINGS_PAGE_SIZE)}>{t("Show more ({count} left)", { count: count(disk.errors.length - visibleErrors) })}</button>}
           </div>}
         </div>
       </section>}
