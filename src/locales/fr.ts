@@ -1082,6 +1082,20 @@ const strings: Record<string, string> = {
   "No filesystem is needed. Choose a whole disk, even when its partition table is damaged or missing, or one partition on it. The map shows exactly the bytes you choose.": "Aucun système de fichiers n'est nécessaire. Choisissez un disque entier, même si sa table de partitions est endommagée ou absente, ou une partition de celui-ci. La carte montre exactement les octets choisis.",
   "Reading these needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.": "Les lire nécessite votre autorisation. Exécutez ceci dans Terminal. Cela donne un accès en lecture seule, jusqu'à la reconnexion du disque.",
   "Whole disk, {bytes}": "Disque entier, {bytes}",
+  "A partition the table declares. Its filesystem has not been checked.": "Une partition que la table déclare. Son système de fichiers n'a pas été vérifié.",
+  "Byte range": "Plage d'octets",
+  "Declared by the {table} partition table": "Déclarée par la table de partitions {table}",
+  "Declared partition": "Partition déclarée",
+  "Decodable": "Décodable",
+  "Needs related metadata": "Nécessite des métadonnées associées",
+  "Only a fragment. Its volume's boot or related metadata is needed before its files can be placed.": "Un simple fragment. Les métadonnées de démarrage ou associées de son volume sont nécessaires avant de pouvoir situer ses fichiers.",
+  "Pick a partition band or a finding on the map, or in the list, to see what it is.": "Choisissez une bande de partition ou un résultat sur la carte ou dans la liste pour voir ce que c'est.",
+  "Possible volume": "Volume possible",
+  "Recognised": "Reconnu",
+  "Selected item": "Élément sélectionné",
+  "Status": "Statut",
+  "The metadata needed to try opening it as a filesystem is present.": "Les métadonnées nécessaires pour tenter de l'ouvrir comme système de fichiers sont présentes.",
+  "The structure is recognised, but this app cannot decode it.": "La structure est reconnue, mais cette app ne peut pas la décoder.",
 };
 
 export default strings;
