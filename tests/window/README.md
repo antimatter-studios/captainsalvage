@@ -42,9 +42,12 @@ It needs `jigsaw.img` and saves `raw-lanes.png` here.
 `device_picker_test.py` gives the start screen a made-up list of disks through
 `SALVAGE_TEST_STARTUP_DISKS` (a JSON file in the shape `startup_disks` returns, honoured only
 while `SALVAGE_TEST_UI` is set), so no real disk is listed. Its "devices" are synthetic images:
-a whole disk with no partition table and a disk with two partitions. It checks that each volume
-is one row, that raw inspection is offered once, and that each scope opens exactly its own bytes.
-It saves `picker-start.png` here.
+a whole disk with no partition table, a disk with three partitions and a card reader with one.
+It checks that each physical disk is one card with its volumes as rows, that every volume has an
+inline "Block mount" checkbox that sets and clears the block, that the list has one note about it,
+that a disk says once what it needs, that raw inspection is one small control per disk and each
+scope opens exactly its own bytes, and that the three disks fit on the screen at the default
+window size. It saves `picker-start.png` and `picker-start-notices.png` here.
 
 ## The images
 
