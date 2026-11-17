@@ -11,6 +11,8 @@ mod scan;
 mod disk;
 #[path = "filesystem.rs"]
 mod filesystem;
+#[path = "range.rs"]
+mod range;
 
 const USAGE: &str = "Captain Salvage command line\n\
 \n\
@@ -23,6 +25,8 @@ Commands:\n\
   disk <device-or-image> [--scan | --list-scans | --resume ID --accept-sampled-match]\n\
       Open raw bytes and save or resume evidence discovery without mounting.\n\
       New scans accept --offset BYTES and --length BYTES. Resume uses its saved range.\n\
+  range analyze <device-or-image> [--offset BYTES] [--length BYTES] [--step BYTES] [--no-signatures]\n\
+      Slide every filesystem driver over a byte range and report what decodes, and how sure it is.\n\
   scan <device-or-image> [--verify-only | --resolve-only]\n\
       Scan a volume or disk image.\n\
   agent <list|models|ask> ...\n\
@@ -44,6 +48,7 @@ fn main() -> Result<()> {
         Some("scan") => scan::run(&arguments[1..]),
         Some("disk") => disk::run(&arguments[1..]),
         Some("filesystem") => filesystem::run(&arguments[1..]),
+        Some("range") => range::run(&arguments[1..]),
         Some("agent") => agent::run(&arguments[1..]),
         Some(command) => bail!("unknown command '{command}'\n\n{USAGE}"),
     }

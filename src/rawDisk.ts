@@ -222,3 +222,60 @@ export function itemAt(disk: RawDiskState, offset: number, tolerance: number): {
   const index = disk.partitions.findIndex((item) => offset >= item.start && offset < item.start + item.length);
   return index >= 0 ? { kind: "partition", index } : null;
 }
+
+export interface RangeFinding {
+  format: string;
+  structure: string;
+  status: "volume" | "inferred" | "structures" | "island";
+  offset: number;
+  length: number;
+  decodedBytes: number;
+  units: number;
+  confidence: number;
+  level: "high" | "medium" | "low";
+  signature: boolean;
+  volumeStart: number | null;
+  volumeLength: number | null;
+  bootOffset: number | null;
+  supported: boolean;
+  detail: string;
+  names: string[];
+  missing: string[];
+  offer: { formats: string[]; looksFor: string[]; searchStart: number; searchLength: number } | null;
+  insideVolume: number | null;
+}
+
+export interface RangeDriver {
+  driver: string;
+  offsetsTried: number;
+  decodedAt: number;
+  bestOffset: number | null;
+  bestDecodedBytes: number;
+  bestConfidence: number;
+}
+
+export interface RangeReport {
+  start: number;
+  length: number;
+  step: number;
+  signatures: boolean;
+  offsetsTried: number;
+  drivers: RangeDriver[];
+  findings: RangeFinding[];
+  unreadable: { offset: number; length: number; error: string }[];
+  notes: string[];
+}
+
+/** Where a finding says the thing starts and how far it reaches: the volume when it names one. */
+export function findingExtent(finding: RangeFinding): { start: number; length: number } {
+  return finding.volumeStart !== null && finding.volumeLength !== null
+    ? { start: finding.volumeStart, length: finding.volumeLength }
+    : { start: finding.offset, length: finding.length };
+}
+
+/** The same finding found twice, as a second search can: one entry per structure and place. */
+export function mergeFindings(current: RangeFinding[], added: RangeFinding[]): RangeFinding[] {
+  const seen = new Set(current.map((item) => `${item.format}:${item.structure}:${item.offset}`));
+  return [...current, ...added.filter((item) => !seen.has(`${item.format}:${item.structure}:${item.offset}`))]
+    .sort((left, right) => right.confidence - left.confidence || left.offset - right.offset);
+}
