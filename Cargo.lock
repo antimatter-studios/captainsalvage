@@ -3063,7 +3063,7 @@ dependencies = [
 [[package]]
 name = "rust-fs-fat32"
 version = "0.1.0"
-source = "git+https://github.com/antimatter-studios/rust-fs-fat?rev=71a6572d64ae4ac903a52b376e7d725c70fb9d99#71a6572d64ae4ac903a52b376e7d725c70fb9d99"
+source = "git+https://github.com/antimatter-studios/rust-fs-fat?rev=ff10b330df9bde4765bb8790df07121cbe4b9489#ff10b330df9bde4765bb8790df07121cbe4b9489"
 dependencies = [
  "rust-fs-core",
 ]
