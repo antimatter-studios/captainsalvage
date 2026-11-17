@@ -6,6 +6,10 @@ chore_min_version: 0.10.0
 # `chore test:oracle` checks NTFS against two implementations nobody here wrote: ntfs-3g's own
 # tools and the Linux kernel's ntfs3 driver, in the fs-linux-test-harness guest. Nothing is
 # mounted on this machine. See validation/oracle.sh and crates/captainsalvage/tests/ntfs_oracle.rs.
+#
+# `chore test:windows-oracle` checks it against Windows itself: Windows formats and fills NTFS
+# volumes in the Windows guest of fs-windows-test-harness, and reports what it wrote. See
+# validation/windows/ and crates/captainsalvage/tests/ntfs_windows.rs.
 
 vars:
   # The harness and the core checkout its scripts expect, as siblings of this repository.
@@ -13,6 +17,8 @@ vars:
   # thing that decides which versions run, and CI reads them here too.
   LINUX_HARNESS_REF: v0.7.1
   FS_CORE_REF: v0.4.2
+  # The Windows guest's harness, a sibling that only `windows:up` and the Windows oracle use.
+  WINDOWS_HARNESS_REF: v4.6.0
 
 # The harness's own tasks, as `chore linux:<task>` (linux:up, linux:run, linux:down ...).
 # Optional, because `chore siblings` is what checks the harness out.
@@ -65,3 +71,53 @@ tasks:
     cmds:
       - ../fs-linux-test-harness/scripts/vm.sh up
       - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle
+
+  siblings:windows:
+    desc: Check out the Windows test harness beside this repository, at its pinned tag
+    cmds:
+      - |
+        set -eu
+        dir=../fs-windows-test-harness
+        ref='{{.WINDOWS_HARNESS_REF}}'
+        if [ ! -e "$dir/.git" ]; then
+          echo "siblings:windows: cloning fs-windows-test-harness at $ref"
+          git clone --quiet --branch "$ref" https://github.com/antimatter-studios/fs-windows-test-harness.git "$dir"
+          exit 0
+        fi
+        # A harness checkout that is already there is the one the Windows guest was built from. It
+        # is moved only when it is clean, and not at all when it is a development checkout on a branch.
+        if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+          echo "siblings:windows: fs-windows-test-harness has uncommitted changes, so it is not moved." >&2
+          exit 1
+        fi
+        if [ "$(git -C "$dir" rev-parse HEAD)" = "$(git -C "$dir" rev-parse "$ref^{commit}" 2>/dev/null || echo x)" ]; then
+          exit 0
+        fi
+        if [ "$(git -C "$dir" rev-parse --abbrev-ref HEAD)" != HEAD ]; then
+          echo "siblings:windows: fs-windows-test-harness is on a branch, so it is left as it is."
+          exit 0
+        fi
+        git -C "$dir" fetch --quiet --tags origin
+        git -C "$dir" checkout --quiet "$ref"
+
+  windows:up:
+    desc: Start the Windows guest of fs-windows-test-harness and wait until it answers
+    deps: [siblings:windows]
+    # Setting the guest up the first time is the harness's own README (`local-vm.py prepare`, `up
+    # --install`, `provision`). Starting a prepared guest takes about a minute, and a running one
+    # is reused.
+    cmds:
+      - python3 ../fs-windows-test-harness/scripts/local-vm.py up
+      - python3 ../fs-windows-test-harness/scripts/local-vm.py wait
+
+  test:windows-oracle:
+    desc: "Windows itself as the oracle: Windows formats and fills NTFS volumes, and the app must read them as Windows listed them"
+    deps: [windows:up]
+    # The test runs validation/windows/capture.sh, which has the guest format six volumes (512-byte
+    # and 4096-byte sectors, 512 to 65536-byte clusters, 24 to 320 MiB), fill each with a fixed tree
+    # and write down what Windows says it holds, then ships the images back to `.windows-oracle/`
+    # (git ignores it). About three minutes of Windows, then the grading. A guest that cannot be
+    # reached fails the tests; nothing skips. WINDOWS_ORACLE_DIR=<folder> grades a folder an earlier
+    # run (or the hosted-runner workflow) filled, without asking Windows again.
+    cmds:
+      - cargo test --locked -p captainsalvage --features windows-oracle --test ntfs_windows

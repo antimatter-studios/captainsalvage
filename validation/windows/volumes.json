@@ -1,0 +1,8 @@
+[
+  {"name": "win-small-c512",   "sizeMB": 24,  "clusterBytes": 512,   "sectorBytes": 512,  "partitionStyle": "MBR", "scale": "small"},
+  {"name": "win-small-c1024",  "sizeMB": 24,  "clusterBytes": 1024,  "sectorBytes": 512,  "partitionStyle": "MBR", "scale": "small"},
+  {"name": "win-small-c4096",  "sizeMB": 24,  "clusterBytes": 4096,  "sectorBytes": 512,  "partitionStyle": "MBR", "scale": "small"},
+  {"name": "win-4kn-c4096",    "sizeMB": 96,  "clusterBytes": 4096,  "sectorBytes": 4096, "partitionStyle": "GPT", "scale": "small"},
+  {"name": "win-large-c4096",  "sizeMB": 320, "clusterBytes": 4096,  "sectorBytes": 512,  "partitionStyle": "GPT", "scale": "large"},
+  {"name": "win-large-c65536", "sizeMB": 320, "clusterBytes": 65536, "sectorBytes": 512,  "partitionStyle": "MBR", "scale": "large"}
+]

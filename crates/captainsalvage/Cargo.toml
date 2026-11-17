@@ -52,6 +52,15 @@ sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip
 [features]
 oracle = []
 
+# Tests graded by Windows itself: Windows formats and fills NTFS volumes (validation/windows), and
+# the app must read them as Windows listed them. They fail, never skip, when Windows cannot be
+# reached: `chore test:windows-oracle` provides the Windows guest.
+windows-oracle = []
+
 [[test]]
 name = "ntfs_oracle"
 required-features = ["oracle"]
+
+[[test]]
+name = "ntfs_windows"
+required-features = ["windows-oracle"]
