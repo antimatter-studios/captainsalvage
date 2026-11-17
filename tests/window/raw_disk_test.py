@@ -80,7 +80,7 @@ try:
     screenshot("/tmp/captainsalvage-raw-workspace.png")
     click("Bytes", ".center-tabs")
     check("raw bytes use the existing hex layout", wait_for("document.querySelectorAll('.hex-sheet .hex-row').length === 32"), True)
-    check("NTFS bytes are visible without its recovery driver", probe("document.querySelector('.hex-sheet').textContent.includes('NTFS')"), True)
+    check("NTFS bytes are visible before any interpretation is tried", probe("document.querySelector('.hex-sheet').textContent.includes('NTFS')"), True)
     js("[...document.querySelectorAll('.explorer .row')].find((button)=>button.textContent.includes('exFAT'))?.click()")
     check("evidence selects an interpretation", wait_for("document.querySelector('.side select')?.value === 'exFAT' && Number(document.querySelector('.side input').value) === %d" % offset), True)
     click("Try this interpretation", ".side")

@@ -52,7 +52,7 @@
       disk. Captain Salvage reads the source, but macOS and other programs can still
       write to a mounted volume. A read-only recovery app does not make a mounted disk safe.</p>
     <ul>
-      <li>Use an exFAT or FAT12/16/32 partition, or a raw image of one. An image of an entire physical
+      <li>Use an exFAT, FAT12/16/32 or NTFS partition, or a raw image of one. Some NTFS files cannot be read: compressed and encrypted files, and files whose data continues in other records, are listed but not copied. A BitLocker volume is refused until Windows has unlocked and decrypted it. An image of an entire physical
         disk with a partition table is not the same thing as a raw filesystem partition image.</li>
       <li>If you have a suitable image, work on it rather than repeatedly reading an
         unreliable original. Keep another healthy disk available for recovered files.</li>
@@ -397,7 +397,7 @@
     <dl>
       <dt>The disk is not listed</dt><dd>Check the connection, refresh the start screen,
         and use Show internal disks only if appropriate. Do not guess a device path.
-        For an image, verify it is a raw exFAT or FAT12/16/32 partition image.</dd>
+        For an image, verify it is a raw exFAT, FAT12/16/32 or NTFS partition image.</dd>
       <dt>Permission denied</dt><dd>Follow the app's disk-access instructions. Do not
         bypass a safety refusal by selecting a different path to the same source.</dd>
       <dt>A disk disconnects</dt><dd>Stop and address the hardware connection. Do not

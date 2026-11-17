@@ -21,8 +21,9 @@ Each driver has three distinct API layers:
   Captain Salvage exposes no write path to a source volume.
 
 exFAT and FAT12/16/32 use the same salvage algorithms. The FAT-family driver
-handles each variant's encoding and root layout. NTFS is recognized but cannot
-be opened until its driver and adapter implementation are integrated.
+handles each variant's encoding and root layout. NTFS opens through the same workspace,
+but its entries come from FILE records and run lists, not from a table of links, and its
+limits are reported by `FilesystemKind::capabilities`.
 
 ## Development checks
 

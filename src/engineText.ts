@@ -12,6 +12,7 @@ export const ENGINE_TEXT: string[] = [
   "zeros",
   "single-byte fill",
   "exFAT directory",
+  "NTFS file records",
   "text",
   "binary",
   "high entropy",

@@ -100,6 +100,75 @@ where
     }
 }
 
+/// The driver reads a stream one cluster at a time. On a real device that is thousands of tiny
+/// reads for a file a copy could take in a few, so reads are served from a window of 1 MiB that
+/// is read once. A window that cannot be read is not tried again: the exact range asked for is
+/// read instead, so one bad sector costs only the reads that touch it.
+struct ReadAhead {
+    source: Arc<dyn BlockSource>,
+    length: u64,
+    window: Mutex<Option<(u64, Vec<u8>)>>,
+    failed: Mutex<Option<u64>>,
+}
+
+const WINDOW_BYTES: u64 = 1024 * 1024;
+
+impl ReadAhead {
+    fn new(source: Arc<dyn BlockSource>, length: u64) -> Self {
+        Self {
+            source,
+            length,
+            window: Mutex::new(None),
+            failed: Mutex::new(None),
+        }
+    }
+}
+
+impl BlockSource for ReadAhead {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        let end = offset.saturating_add(buffer.len() as u64);
+        let start = offset / WINDOW_BYTES * WINDOW_BYTES;
+        let window_end = (start + WINDOW_BYTES).min(self.length);
+        if buffer.len() as u64 >= WINDOW_BYTES || end > window_end {
+            return self.source.read_exact_at(offset, buffer);
+        }
+        if let Ok(mut window) = self.window.lock() {
+            if let Some((at, data)) = window.as_ref() {
+                if *at == start {
+                    let from = (offset - start) as usize;
+                    buffer.copy_from_slice(&data[from..from + buffer.len()]);
+                    return Ok(());
+                }
+            }
+            let known_bad = self
+                .failed
+                .lock()
+                .is_ok_and(|failed| *failed == Some(start));
+            if !known_bad {
+                let mut data = vec![0; (window_end - start) as usize];
+                if self.source.read_exact_at(start, &mut data).is_ok() {
+                    let from = (offset - start) as usize;
+                    buffer.copy_from_slice(&data[from..from + buffer.len()]);
+                    *window = Some((start, data));
+                    return Ok(());
+                }
+                if let Ok(mut failed) = self.failed.lock() {
+                    *failed = Some(start);
+                }
+            }
+        }
+        self.source.read_exact_at(offset, buffer)
+    }
+
+    fn read_stats(&self) -> crate::source::ReadStats {
+        self.source.read_stats()
+    }
+
+    fn is_gone(&self) -> bool {
+        self.source.is_gone()
+    }
+}
+
 /// What `Inspected` needs from the boot sector and the saved records.
 pub struct NtfsInspected {
     pub boot: NtfsBoot,
@@ -583,7 +652,10 @@ pub struct Access {
 impl Access {
     pub fn new(source: Arc<dyn BlockSource>, geometry: &VolumeGeometry) -> Self {
         Self {
-            volume: RawVolume::open(SourceDevice::new(source, geometry.volume_size)),
+            volume: RawVolume::open(SourceDevice::new(
+                Arc::new(ReadAhead::new(source, geometry.volume_size)) as Arc<dyn BlockSource>,
+                geometry.volume_size,
+            )),
             geometry: *geometry,
             last: Mutex::new(None),
         }

@@ -2,11 +2,13 @@ use anyhow::{bail, ensure, Context, Result};
 use captainsalvage::disk::RawDisk;
 use captainsalvage::filesystem::driver::{Driver, RegionDevice};
 use captainsalvage::filesystem::ntfs::Recovery;
+use captainsalvage::filesystem::FilesystemKind;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
-const USAGE: &str = "usage: captainsalvage filesystem <list|cat|ntfs-record|ntfs-stream> SOURCE [--start BYTES --length BYTES]\n\
+const USAGE: &str = "usage: captainsalvage filesystem <list|cat|capabilities|ntfs-record|ntfs-stream> SOURCE [--start BYTES --length BYTES]\n\
+capabilities: what is supported, limited or missing for the filesystem the boot sector names\n\
 cat: --name ROOT_FILENAME\n\
 ntfs-record and ntfs-stream: --record-offset BYTES [--record-size 1024 --sector-size 512]\n\
 ntfs-stream: --attribute INDEX --cluster-size BYTES\n\
@@ -23,7 +25,10 @@ pub fn run(arguments: &[String]) -> Result<()> {
         return Ok(());
     }
     ensure!(
-        matches!(command, "list" | "cat" | "ntfs-record" | "ntfs-stream"),
+        matches!(
+            command,
+            "list" | "cat" | "capabilities" | "ntfs-record" | "ntfs-stream"
+        ),
         "{USAGE}"
     );
     let path = arguments.get(1).context(USAGE)?;
@@ -67,6 +72,20 @@ pub fn run(arguments: &[String]) -> Result<()> {
     let disk = RawDisk::open(Path::new(path))?;
     let start = number("--start", 0)?;
     let length = number("--length", disk.length.saturating_sub(start))?;
+    if command == "capabilities" {
+        let mut boot = [0u8; 512];
+        let device = RegionDevice::open(&disk, start, length)?;
+        fs_core::BlockRead::read_at(&device, 0, &mut boot)?;
+        let kind = FilesystemKind::detect_boot_sector(&boot)?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "filesystem": kind.to_string(),
+                "capabilities": kind.capabilities(),
+            }))?
+        );
+        return Ok(());
+    }
     if matches!(command, "list" | "cat") {
         let driver = Driver::open(RegionDevice::open(&disk, start, length)?)?;
         let files = driver.root_directory()?;

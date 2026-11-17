@@ -1077,6 +1077,8 @@ const strings: Record<string, string> = {
   "This volume is encrypted with BitLocker. Captain Salvage cannot read its files until it is unlocked and decrypted by Windows, and it does not guess at encrypted data.": "Dieses Volume ist mit BitLocker verschlüsselt. Captain Salvage kann seine Dateien erst lesen, wenn Windows es entsperrt und entschlüsselt hat, und rät keine verschlüsselten Daten.",
   "Very large volumes": "Sehr große Volumes",
   "Its FILE record failed its update-sequence check, so nothing in it can be trusted. It shows only that a record was here.": "Sein FILE-Datensatz hat die Prüfung der Update-Sequenz nicht bestanden, daher ist nichts darin vertrauenswürdig. Er zeigt nur, dass hier ein Datensatz lag.",
+  "NTFS file records": "NTFS-Dateidatensätze",
+  "Free": "Frei",
 };
 
 export default strings;

@@ -778,7 +778,7 @@ impl Session {
                 "freeZeroFat": self.volume.stats.free_zero_fat * size,
             },
             "structureHash": self.volume.structure_hash,
-            "classNames": CLASS_NAMES,
+            "classNames": crate::content::class_names(self.volume.kind == crate::filesystem::FilesystemKind::Ntfs),
             "groupNames": GROUP_NAMES,
             "ownershipNames": OWNERSHIP_NAMES,
         });
@@ -1149,7 +1149,7 @@ impl Session {
             predecessor: self.volume.predecessor(cluster),
             chain_head,
             island,
-            content_class: CLASS_NAMES[usize::from(class)].to_string(),
+            content_class: self.volume.class_name(class).to_string(),
             entropy_bits: entropy_bits(&data),
             ownership: OWNERSHIP_NAMES[usize::from(ownership).min(5)].to_string(),
             confidence: f64::from(confidence) / 255.0,

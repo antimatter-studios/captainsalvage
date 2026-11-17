@@ -126,7 +126,7 @@ impl FilesystemKind {
                 capability("rebuilds", Limited, "Disk Rebuilds can replace a file's clusters and folder links, and are read as clusters. The record, its names and its run list are never altered."),
                 capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A stream that cannot be read is reported failed, never filled with zeros."),
                 capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
-                capability("named_streams", Limited, "Alternate data streams are listed in the record details, not copied as separate files."),
+                capability("named_streams", Limited, "Alternate data streams are listed in the record details, not copied as separate files. Streams held in extension records are not followed."),
                 capability("hard_links", Limited, "A record is one entry under its best name; its other names are listed in the record details."),
                 capability("attribute_lists", Missing, "A file whose attributes continue in extension records is listed, with its size, but its data is not read (rust-fs-ntfs#1379)."),
                 capability("compression", Missing, "NTFS-compressed streams are listed but not decoded (rust-fs-ntfs#1379)."),
@@ -349,7 +349,7 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
             });
         }
         if kind == FilesystemKind::Ntfs {
-            bail!("NTFS volume detected; NTFS driver is not integrated yet");
+            bail!("NTFS has no clusters of links to follow: read it through the NTFS driver adapter, filesystem::driver::Driver");
         }
         let volume =
             fs_fat32::Volume::open(std::sync::Arc::clone(&device)).context("opening FAT volume")?;
@@ -798,7 +798,7 @@ mod tests {
             .err()
             .unwrap()
             .to_string();
-        assert!(error.contains("NTFS volume detected"));
+        assert!(error.contains("NTFS driver adapter"));
     }
 
     #[test]

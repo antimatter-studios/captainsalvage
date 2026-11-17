@@ -104,6 +104,11 @@ impl Volume {
         }
     }
 
+    /// What a content class is called on this volume.
+    pub fn class_name(&self, class: u8) -> &'static str {
+        crate::content::class_names(self.kind == FilesystemKind::Ntfs)[usize::from(class)]
+    }
+
     /// The volume's serial number as text: eight hex digits, or sixteen for NTFS.
     pub fn serial_text(&self) -> String {
         match &self.filesystem {

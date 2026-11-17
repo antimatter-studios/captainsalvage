@@ -496,7 +496,7 @@ impl Context<'_> {
     /// the rest of its cluster can still hold data from before it was written.
     fn content_of(&self, set: &LoadedSet) -> (ContentMatch, String) {
         let class = self.class_at(set.first_cluster);
-        let held = CLASS_NAMES[usize::from(class)].to_string();
+        let held = self.volume.class_name(class).to_string();
         let expected = expected_class(&set.name);
         if expected != Some(CLASS_TEXT) || !self.volume.valid_cluster(set.first_cluster) {
             return (content_match(expected, class), held);
