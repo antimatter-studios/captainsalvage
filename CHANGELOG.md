@@ -8,6 +8,49 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-17
+
+### Added
+
+- **Choose a partition, or the whole disk it belongs to, to inspect.** One chooser on the start screen lists every disk with its partitions. The map then covers exactly the bytes you chose. A disk whose partition table is damaged or missing is still listed, so it can be inspected whole.
+
+- **The raw-disk map shows partitions as bands and findings as lanes.** The top map is one stable view of the bytes: declared partitions are broad background bands, and each filesystem format that was found has its own thin lane. A disk with many findings stays readable, because dense findings are summarised by format and count under the map, and the list can be narrowed to one format.
+- **An inspector explains what you pick.** Click a band or a lane on the map, or an item in the list, and the side panel gives its format, byte range, confidence and status: recognised, needs related metadata, or decodable. The second graph magnifies the selected range, and clicking it shows that place in the main area.
+
+- **FAT12, FAT16 and FAT32 volumes open and scan.** They go through the same filesystem adapter as exFAT, so directories, fragmented files, deleted records, saved baselines, scan resumption and recovery use the same workflow. Volume details are shown without the exFAT-only checksum claims. FAT support is validated with synthetic images.
+- **NTFS records can be inspected and extracted from the command line and MCP.** Surviving FILE records are read without a working boot sector or namespace, and resident and complete uncompressed non-resident streams can be extracted. Damaged fixups and unresolved or unsupported mappings are reported, never silently repaired. The graphical NTFS recovery workspace is not part of this change.
+- **Disks, partitions and images open without a recognised filesystem.** They use the normal workspace and disk graph, working on byte ranges. Declared partitions and overlapping filesystem evidence are separate layers, you can select and label regions, and searching continues after a format is found. FAT, exFAT and NTFS boot evidence is probed, and surviving exFAT backup boot metadata can be used in memory beneath a newer NTFS boot sector without changing the source. The Source bytes tab returns to the underlying source and its findings. The command line and MCP offer the same operations.
+- **Raw discovery scans show throughput and time remaining, and can be resumed.** Each completed batch saves its findings and progress under a stable scan ID. A reopened disk, clone or image can load a matching scan after you acknowledge sampled verification. Mismatches and sources that cannot be verified cannot resume, and regions that were unreadable are retried on a new source. Scans in memory from older builds are lost when those builds close.
+
+- **NTFS volumes open, scan and recover in the normal workspace.** A scan reads every cluster for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found as well as live ones. The folder tree is rebuilt from each record's parent reference. Resident, fragmented, sparse and deleted files are read through the NTFS driver, and can be browsed, previewed, tested, rebuilt, copied and resumed like exFAT files. A saved baseline explains what was written to the volume since, and the volume stays unmounted and unwritten throughout. Volumes made by `mkntfs` and written by the Linux ntfs3 driver or ntfs-3g are read, and what the app lists and reads was checked against both in a Linux VM.
+- **NTFS says what it cannot do.** Compressed files, EFS-encrypted files and files whose data continues in other records are listed with their size and marked unreadable, never filled with zeros. A BitLocker volume is refused by name after one sector is read. Alternate data streams and extra hard-link names are listed in the record details, not copied as files. The window, `captainsalvage filesystem capabilities` and the new `captainsalvage_capabilities` MCP tool report the same table for every filesystem.
+- **A written-over NTFS boot sector can be replaced in memory by its backup.** Choose the copy in the volume's last sector as the boot evidence when you try an NTFS interpretation of a raw disk. The disk's own bytes are never changed.
+- **`captainsalvage_ntfs_entry` shows everything an NTFS record says:** each name and the folder it was linked in, each data stream and whether it is resident, compressed, encrypted or sparse, and any damage found in the record.
+
+- **Analyze a selected range of a raw source.** Choose **Analyze this range** to try every filesystem driver at every start offset of the range and see what decodes: the format, where it starts, how many bytes decode and how sure the app is. It finds structures at odd offsets, and finds FAT directory entries and NTFS MFT records by their shape even when the boot sector and the record signatures are gone. Data that is identified but cannot be placed in a volume is listed as an island, with an offer to search nearby for the missing metadata. For NTFS, the cluster size and where the volume starts are worked out from a surviving `$MFT` record, and the volume is opened read-only with a boot sector rebuilt in memory to check it. The same analysis is `captainsalvage range analyze` on the command line and `captainsalvage_analyze_range` in MCP. Nothing is written to the source.
+
+- **Save what you think a stretch of the disk holds as a hypothesis.** An extent and a format, with a confidence, is kept on this Mac and can be switched on and off, so several guesses over the same bytes compete as layers and the upper one is read. Start and end can be typed or taken from the selection. A hypothesis can come straight from a range analysis finding, and opens as a filesystem with **Try this interpretation**. Nothing is ever written to the disk.
+- **Hypotheses make a virtual layout.** Like a Disk Rebuild, a layout overlays segments of the source at positions of a virtual device, and a virtual partition table is a layout whose segments are partitions. Both are views the app reads through; bytes no segment covers are refused, not shown as zeros. `captainsalvage hypothesis` and the `captainsalvage_*_hypothesis` and `captainsalvage_read_layout` MCP tools do the same as the window.
+
+### Changed
+
+- **The start screen says each thing once.** Each volume is one compact row again, as before raw inspection was added, instead of carrying the same two raw-inspection buttons. The notes about mounted volumes, unsupported formats and read permission appear once under the list, with one permission command for every disk that needs it.
+
+- **The map's layer switch is gone.** Source bytes, declared partitions and filesystem evidence used to be three views to switch between; they are now drawn together.
+
+- **The engine package, library and directory are named `captainsalvage`.** The terminal agent tool `salvage-agent` is now `captainsalvage agent`.
+
+- **NTFS volumes can be opened from the start screen.** They were listed but could not be chosen.
+
+### Fixed
+
+- **A live file is no longer marked partially overwritten because of its own clusters.** Copying a live file does not count the allocation of its own clusters as damage.
+
+- **A raw-disk scan with thousands of findings no longer freezes the window.** The map painted each batch of evidence by checking every finding against every pixel of the strip, so a scan with 2000 findings spent over two seconds repainting while it ran. It now paints each strip in one pass, and the list of unreadable regions shows 100 at a time, as the evidence list already did.
+
+- **A small file in a compressed Windows folder is read.** Windows marks the data of such a file as compressed although it is held, uncompressed, in the file's own record. The app took the mark at its word, called the file partial, refused to show it and left it out of copies. It is now read and copied like any other small file.
+- **A file with a very long name keeps its extension when copied.** A name too long for the destination was cut at its end, so `…long name.jpg` became a name with no `.jpg`. The name is cut before the extension instead.
+
 ## [0.3.0] — 2026-11-17
 
 ### Added
