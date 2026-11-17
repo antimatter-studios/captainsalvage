@@ -85,21 +85,34 @@ export function applyScanBatch(disk: RawDiskState, batch: DiscoveryBatch): RawDi
 export const SOURCE_FORMATS = ["exFAT", "FAT12", "FAT16", "FAT32", "NTFS"];
 export type SourceLayer = "bytes" | "partitions" | "evidence";
 
-export function sourceMap(disk: RawDiskState, layer: SourceLayer, start: number, end: number, buckets: number): Uint8Array {
+/** What the map paints. Gaps are 0; the rest are what the legend names. */
+export const MAP_NOT_SCANNED = 0;
+export const MAP_EXAMINED = 1;
+export const MAP_UNREADABLE = 2;
+export const MAP_BAND = 3;
+/** The format lanes start here, one value each in SOURCE_FORMATS order. */
+export const MAP_FIRST_FORMAT = 4;
+/** Every other partition band, so two bands side by side stay two. */
+export const MAP_BAND_ALTERNATE = 12;
+/** How many canvas rows the partition bands take. The lanes and the scan row take one each. */
+export const BAND_ROWS = 3;
+
+export interface Paint {
+  offset: number;
+  length: number;
+  value: number;
+}
+
+/** Paints each item over the buckets it covers, the later item winning where two overlap, in one sweep. */
+export function paintBuckets(items: Paint[], start: number, end: number, buckets: number): Uint8Array {
   const data = new Uint8Array(buckets);
   const intervals: { start: number; end: number; value: number; order: number }[] = [];
-  let order = 0;
-  const paint = (offset: number, length: number, value: number) => {
-    const currentOrder = order++;
+  items.forEach(({ offset, length, value }, order) => {
     if (length <= 0 || offset >= end || offset + length <= start) return;
     const left = Math.max(0, Math.floor((offset - start) / (end - start) * buckets));
     const right = Math.min(buckets, Math.ceil((offset + length - start) / (end - start) * buckets));
-    if (right > left) intervals.push({ start: left, end: right, value, order: currentOrder });
-  };
-  if (disk.scanStart !== null && disk.nextOffset !== null) paint(disk.scanStart, disk.nextOffset - disk.scanStart, 1);
-  if (layer === "partitions") disk.partitions.forEach((item) => paint(item.start, item.length, 3));
-  if (layer === "evidence") disk.findings.forEach((item) => paint(item.offset, item.length, 4 + Math.max(0, SOURCE_FORMATS.indexOf(item.format))));
-  disk.errors.forEach((item) => paint(item.offset, item.length, 2));
+    if (right > left) intervals.push({ start: left, end: right, value, order });
+  });
 
   intervals.sort((left, right) => left.start - right.start);
   const active: { end: number; value: number; order: number }[] = [];
@@ -133,4 +146,79 @@ export function sourceMap(disk: RawDiskState, layer: SourceLayer, start: number,
     data[bucket] = active[0]?.value ?? 0;
   }
   return data;
+}
+
+function formatValue(format: string): number {
+  return MAP_FIRST_FORMAT + Math.max(0, SOURCE_FORMATS.indexOf(format));
+}
+
+function scanPaints(disk: RawDiskState): Paint[] {
+  const paints: Paint[] = [];
+  if (disk.scanStart !== null && disk.nextOffset !== null) paints.push({ offset: disk.scanStart, length: disk.nextOffset - disk.scanStart, value: MAP_EXAMINED });
+  return paints;
+}
+
+export function sourceMap(disk: RawDiskState, layer: SourceLayer, start: number, end: number, buckets: number): Uint8Array {
+  const paints = scanPaints(disk);
+  if (layer === "partitions") disk.partitions.forEach((item) => paints.push({ offset: item.start, length: item.length, value: MAP_BAND }));
+  if (layer === "evidence") disk.findings.forEach((item) => paints.push({ offset: item.offset, length: item.length, value: formatValue(item.format) }));
+  disk.errors.forEach((item) => paints.push({ offset: item.offset, length: item.length, value: MAP_UNREADABLE }));
+  return paintBuckets(paints, start, end, buckets);
+}
+
+/** The formats that have findings, in a fixed order, each with how many. */
+export function evidenceSummary(findings: DiskEvidence[]): { format: string; count: number }[] {
+  const counts = new Map<string, number>();
+  findings.forEach((item) => counts.set(item.format, (counts.get(item.format) ?? 0) + 1));
+  const known = SOURCE_FORMATS.filter((format) => counts.has(format));
+  const other = [...counts.keys()].filter((format) => !SOURCE_FORMATS.includes(format)).sort();
+  return [...known, ...other].map((format) => ({ format, count: counts.get(format)! }));
+}
+
+/**
+ * The map as rows: what has been scanned on top, then the declared partitions as broad bands, then a
+ * thin lane for each format that has findings. Each row is `buckets` long, one after another.
+ */
+export function laneMap(disk: RawDiskState, lanes: string[], start: number, end: number, buckets: number): Uint8Array {
+  const scan = scanPaints(disk);
+  disk.errors.forEach((item) => scan.push({ offset: item.offset, length: item.length, value: MAP_UNREADABLE }));
+  const bands = disk.partitions.map((item, index): Paint => ({ offset: item.start, length: item.length, value: index % 2 === 0 ? MAP_BAND : MAP_BAND_ALTERNATE }));
+  const rows = [paintBuckets(scan, start, end, buckets)];
+  const band = paintBuckets(bands, start, end, buckets);
+  for (let row = 0; row < BAND_ROWS; row++) rows.push(band);
+  for (const lane of lanes) {
+    rows.push(paintBuckets(disk.findings.filter((item) => item.format === lane).map((item) => ({ offset: item.offset, length: item.length, value: formatValue(item.format) })), start, end, buckets));
+  }
+  const data = new Uint8Array(rows.length * buckets);
+  rows.forEach((row, index) => data.set(row, index * buckets));
+  return data;
+}
+
+export type EvidenceStatus = "recognised" | "needs-metadata" | "decodable";
+
+/**
+ * How far a finding can be taken. A boot sector with plausible geometry can be tried as a filesystem.
+ * A fragment of a directory says nothing of where its volume starts or ends, so it needs related
+ * metadata first. Anything else the probe knew by its signature is recognised, no more.
+ */
+export function evidenceStatus(item: Pick<DiskEvidence, "supported" | "volumeLength" | "volumeStart">): EvidenceStatus {
+  if (!item.supported) return "recognised";
+  if (item.volumeLength === null && item.volumeStart === null) return "needs-metadata";
+  return "decodable";
+}
+
+/** What sits at a byte of the map: a finding within `tolerance` bytes of it, else the partition holding it. */
+export function itemAt(disk: RawDiskState, offset: number, tolerance: number): { kind: "evidence"; item: DiskEvidence } | { kind: "partition"; index: number } | null {
+  let nearest: DiskEvidence | null = null;
+  let nearestDistance = Infinity;
+  for (const item of disk.findings) {
+    const distance = offset < item.offset ? item.offset - offset : offset >= item.offset + item.length ? offset - (item.offset + item.length - 1) : 0;
+    if (distance <= tolerance && distance < nearestDistance) {
+      nearest = item;
+      nearestDistance = distance;
+    }
+  }
+  if (nearest) return { kind: "evidence", item: nearest };
+  const index = disk.partitions.findIndex((item) => offset >= item.start && offset < item.start + item.length);
+  return index >= 0 ? { kind: "partition", index } : null;
 }

@@ -1082,6 +1082,20 @@ const strings: Record<string, string> = {
   "No filesystem is needed. Choose a whole disk, even when its partition table is damaged or missing, or one partition on it. The map shows exactly the bytes you choose.": "No hace falta un sistema de archivos. Elija un disco completo, aunque su tabla de particiones esté dañada o falte, o una partición de él. El mapa muestra exactamente los bytes elegidos.",
   "Reading these needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.": "Leerlos requiere su permiso. Ejecute esto en Terminal. Da acceso de solo lectura y dura hasta que se vuelva a conectar el disco.",
   "Whole disk, {bytes}": "Disco completo, {bytes}",
+  "A partition the table declares. Its filesystem has not been checked.": "Una partición que declara la tabla. Su sistema de archivos no se ha comprobado.",
+  "Byte range": "Rango de bytes",
+  "Declared by the {table} partition table": "Declarada por la tabla de particiones {table}",
+  "Declared partition": "Partición declarada",
+  "Decodable": "Decodificable",
+  "Needs related metadata": "Necesita metadatos relacionados",
+  "Only a fragment. Its volume's boot or related metadata is needed before its files can be placed.": "Solo un fragmento. Hacen falta los metadatos de arranque o relacionados de su volumen antes de poder ubicar sus archivos.",
+  "Pick a partition band or a finding on the map, or in the list, to see what it is.": "Elija una banda de partición o un hallazgo en el mapa o en la lista para ver de qué se trata.",
+  "Possible volume": "Posible volumen",
+  "Recognised": "Reconocido",
+  "Selected item": "Elemento seleccionado",
+  "Status": "Estado",
+  "The metadata needed to try opening it as a filesystem is present.": "Los metadatos necesarios para intentar abrirlo como sistema de archivos están presentes.",
+  "The structure is recognised, but this app cannot decode it.": "La estructura se reconoce, pero esta app no puede decodificarla.",
 };
 
 export default strings;
