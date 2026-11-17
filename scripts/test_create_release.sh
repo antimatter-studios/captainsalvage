@@ -26,6 +26,14 @@ cat >"$BIN/gh" <<'EOF'
 echo "$*" >>"$GH_LOG"
 EOF
 chmod +x "$BIN/gh"
+# Stand-ins for the build tools, which record what they were asked and where.
+for tool in npx npm; do
+    cat >"$BIN/$tool" <<EOF
+#!/bin/sh
+echo "$tool \$* | \$(pwd -P) | \${CARGO_TARGET_DIR:-}" >>"\$BUILD_LOG"
+EOF
+    chmod +x "$BIN/$tool"
+done
 
 # A repository with one release, v0.1.0, and an origin to push to.
 start() {
@@ -38,9 +46,12 @@ start() {
     git config user.email test@example.com
     git config user.name test
     git config core.hooksPath .git/hooks
-    export GH_LOG="$where/gh.log"
+    export GH_LOG="$where/gh.log" BUILD_LOG="$where/build.log"
     mkdir -p scripts changelog.d crates/captainsalvage src-tauri
-    cp "$HERE/create-release" "$HERE/release.py" "$HERE/changelog-check.sh" "$HERE/changelog-gather.sh" scripts/
+    cp "$HERE/create-release" "$HERE/release.py" "$HERE/tag-kind" "$HERE/changelog-check.sh" "$HERE/changelog-gather.sh" scripts/
+    mkdir -p macos/finder
+    printf '#!/bin/sh\nexit 0\n' >macos/finder/package.sh
+    chmod +x macos/finder/package.sh
     echo notes >changelog.d/README.md
     printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.0] — 2026-01-01\n\n### Added\n\n- **First.** One.\n' >CHANGELOG.md
     printf 'Top\n\n<!-- changelog:start -->\n\n### v0.1.0 — 2026-01-01\n\n<!-- changelog:end -->\n\nBottom\n' >README.md
@@ -116,6 +127,55 @@ check "pull request carries the entries" "$(grep -c 'new-thing' "$GH_LOG")" 1
 check "branch pushed" "$(git ls-remote origin release/v0.2.0 | wc -l | tr -d ' ')" 1
 check "nothing tagged yet" "$(git ls-remote origin 'refs/tags/v0.2.0' | wc -l | tr -d ' ')" 0
 
+# A release candidate: the release's content under a version that is not released yet.
+branch_head="$(git rev-parse HEAD)"
+git switch -q main
+check "a candidate off the release branch is refused" "$(run --rc)" 1
+check "it says to switch" "$(said 'not a release branch')" 1
+check "no candidate was tagged off it" "$(git tag -l 'v0.2.0-rc*' | wc -l | tr -d ' ')" 0
+git switch -q release/v0.2.0
+echo more >>work.txt
+check "a candidate with a dirty tree is refused" "$(run --rc)" 1
+check "it names the dirty tree" "$(said 'uncommitted')" 1
+git checkout -q -- work.txt
+echo more >>work.txt
+git add work.txt
+git commit -q -m "chore: a commit nobody pushed"
+check "a candidate of an unpushed branch is refused" "$(run --rc)" 1
+check "it says to push" "$(said 'is not what is on GitHub')" 1
+git reset -q --hard "$branch_head"
+check "a version and --rc together are refused" "$(run --rc 1.0.0)" 2
+check "--build without --rc is refused" "$(run --build)" 2
+check "a dry run changes nothing" "$(run --rc --dry-run)" 0
+check "a dry run names the tag" "$(said 'would tag v0.2.0-rc1')" 1
+check "a dry run tags nothing" "$(git tag -l 'v0.2.0-rc*' | wc -l | tr -d ' ')" 0
+
+check "the first candidate works" "$(run --rc)" 0
+check "it is rc.1" "$(git ls-remote origin 'refs/tags/v0.2.0-rc1' | wc -l | tr -d ' ')" 1
+check "the tag is annotated" "$(git cat-file -t v0.2.0-rc1)" tag
+check "the candidate's commit follows the branch head" "$(git rev-parse 'v0.2.0-rc1^')" "$branch_head"
+check "the candidate's commit says what it is" "$(git log -1 --format=%s v0.2.0-rc1)" "chore(release): v0.2.0-rc1"
+for file in VERSION crates/captainsalvage/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json Cargo.lock package-lock.json; do
+    check "$file says the candidate" "$(git show "v0.2.0-rc1:$file" | grep -c '0\.2\.0-rc1')" "$(git show "$branch_head:$file" | grep -c '0\.2\.0')"
+done
+check "only the version files differ" "$(git diff --name-only "$branch_head" v0.2.0-rc1 | wc -l | tr -d ' ')" 7
+check "the notes are the release's own" "$(git diff --name-only "$branch_head" v0.2.0-rc1 | grep -c 'CHANGELOG\|README')" 0
+check "the release's changelog is at the tag" "$(git show v0.2.0-rc1:CHANGELOG.md | grep -c '^## \[0.2.0\]')" 1
+check "the branch still says the release" "$(cat VERSION)" 0.2.0
+check "the checkout did not move" "$(git symbolic-ref --short HEAD)" release/v0.2.0
+check "the checkout is the branch head" "$(git rev-parse HEAD)" "$branch_head"
+check "the checkout is clean" "$(git status --porcelain | wc -l | tr -d ' ')" 0
+check "the branch on origin did not move" "$(git rev-parse origin/release/v0.2.0)" "$branch_head"
+check "the candidate is not on the branch" "$(git branch -a --contains v0.2.0-rc1 | wc -l | tr -d ' ')" 0
+check "it leaves no worktree" "$(git worktree list | wc -l | tr -d ' ')" 1
+check "it says how to build" "$(said 'release.py install user')" 1
+check "a candidate opens no pull request and no release" "$(grep -c 'release create\|pr create --base main --head release/v0.2.0-rc' "$GH_LOG")" 0
+if [ -n "${GUARD:-}" ] && [ -x "$GUARD" ]; then
+    printf 'refs/tags/v0.2.0-rc1 %s refs/tags/v0.2.0-rc1 0000000000000000000000000000000000000000\n' "$(git rev-parse 'v0.2.0-rc1^{commit}')" |
+        "$GUARD" origin origin >/dev/null 2>"$BASE/guard"
+    check "the real guard accepts the candidate" "$(grep -c 'git-changelog:' "$BASE/guard")" 0
+fi
+
 # A second cut while that branch exists is refused.
 git switch -q main
 check "second cut refused" "$(run --contents-approved)" 1
@@ -123,7 +183,23 @@ check "second cut refused" "$(run --contents-approved)" 1
 # Once merged, the tag stage stops for its own yes, then tags and pushes.
 git push -q origin release/v0.2.0:main
 git pull -q --ff-only origin main
+# A tag that is not a release is refused by name, before anything is checked.
+check "a candidate is not a release tag" "$(run --tag v0.2.0-rc1)" 2
+check "it says to use --rc" "$(said 'Run --rc')" 1
+check "a capital RC is refused" "$(run --tag v0.2.0-RC1)" 2
+check "it names the mistake" "$(said 'must be lowercase')" 1
+check "an unknown suffix is refused" "$(run --tag v0.2.0-hotfix)" 2
+check "it says what is accepted" "$(said 'Accepted shapes')" 1
+check "a candidate is not a version to cut" "$(run v0.2.0-rc1 --contents-approved)" 2
+check "none of those made a tag" "$(git tag -l 'v0.2.0' 'v0.2.0-RC1' 'v0.2.0-hotfix' | wc -l | tr -d ' ')" 0
+
+# Other releases' candidates, and names that only look like one, are not this release's to retire.
+git tag v0.3.0-rc1 HEAD
+git tag v0.2.0-rc01 HEAD
+git tag v0.2.0-rc HEAD
+git push -q origin v0.3.0-rc1 v0.2.0-rc01 v0.2.0-rc
 check "tag needs a yes" "$(run --tag v0.2.0)" 3
+check "it lists the candidates it will retire" "$(said 'retired once the tag is pushed: v0.2.0-rc1 $')" 1
 check "tag shows the entries" "$(said 'new-thing')" 1
 check "no yes makes no tag" "$(git tag -l v0.2.0 | wc -l | tr -d ' ')" 0
 
@@ -135,8 +211,20 @@ check "it says what happened" "$(said 'the push was refused')" 1
 check "a refused push leaves no tag" "$(git tag -l v0.2.0 | wc -l | tr -d ' ')" 0
 check "nor on origin" "$(git ls-remote origin 'refs/tags/v0.2.0' | wc -l | tr -d ' ')" 0
 chmod -x .git/hooks/pre-push
+check "a refused push keeps the candidates" "$(git ls-remote origin 'refs/tags/v0.2.0-rc1' | wc -l | tr -d ' ')" 1
+
+# One candidate that origin will not let go is reported and does not fail the release.
+git tag v0.2.0-rc2 HEAD
+git push -q origin v0.2.0-rc2
+cat >../origin.git/hooks/update <<'HOOK'
+#!/bin/sh
+[ "$1" = refs/tags/v0.2.0-rc2 ] && [ "$3" = 0000000000000000000000000000000000000000 ] && { echo no >&2; exit 1; }
+exit 0
+HOOK
+chmod +x ../origin.git/hooks/update
 
 check "tag works" "$(run --tag v0.2.0 --contents-approved)" 0
+cat "$BASE/out" "$BASE/err" >"$BASE/tagged"
 check "tag is on origin" "$(git ls-remote origin 'refs/tags/v0.2.0' | wc -l | tr -d ' ')" 1
 check "tag is annotated" "$(git cat-file -t v0.2.0)" tag
 check "tag is on the release commit" "$(git log -1 --format=%s v0.2.0)" "chore(release): v0.2.0"
@@ -146,6 +234,14 @@ if [ -n "${GUARD:-}" ] && [ -x "$GUARD" ]; then
     check "the real guard accepts the tag" "$(grep -c 'git-changelog:' "$BASE/guard")" 0
 fi
 check "a second tag is refused" "$(run --tag v0.2.0 --contents-approved)" 1
+check "the release's candidate is retired on origin" "$(git ls-remote origin 'refs/tags/v0.2.0-rc1' | wc -l | tr -d ' ')" 0
+check "and here" "$(git tag -l v0.2.0-rc1 | wc -l | tr -d ' ')" 0
+check "it says how to put it back" "$(grep -c 'v0.2.0-rc1 .*gone (put it back: git push origin [0-9a-f]*:refs/tags/v0.2.0-rc1)' "$BASE/tagged")" 1
+check "it says which one it could not delete" "$(grep -c 'v0.2.0-rc2 .*COULD NOT BE DELETED' "$BASE/tagged")" 1
+check "a candidate origin keeps is reported, not fatal" "$(git ls-remote origin 'refs/tags/v0.2.0-rc2' | wc -l | tr -d ' ')" 1
+check "another release's candidate stays" "$(git ls-remote origin 'refs/tags/v0.3.0-rc1' | wc -l | tr -d ' ')" 1
+check "look-alikes stay" "$(git ls-remote origin 'refs/tags/v0.2.0-rc01' 'refs/tags/v0.2.0-rc' | wc -l | tr -d ' ')" 2
+check "the release itself stays" "$(git ls-remote origin 'refs/tags/v0.2.0' | wc -l | tr -d ' ')" 1
 
 # A fix raises the patch.
 start
@@ -195,6 +291,53 @@ git commit -q -m "chore: broke it"
 git push -q origin main
 check "a malformed fragment is refused" "$(run --contents-approved)" 1
 check "it names the check" "$(said 'malformed')" 1
+
+# A release branch, as a cut leaves it, for the candidates that follow.
+start
+merged "feat: a new thing (#2)" new-thing
+run --contents-approved >/dev/null
+branch_head="$(git rev-parse HEAD)"
+check "the first candidate works" "$(run --rc)" 0
+# More commits on the branch make the next candidate, from the new head.
+echo again >>work.txt
+git add work.txt
+git commit -q -m "chore: another change to the release"
+git push -q origin release/v0.2.0
+branch_head2="$(git rev-parse HEAD)"
+check "the second candidate works" "$(run --rc)" 0
+check "it is rc.2" "$(git ls-remote origin 'refs/tags/v0.2.0-rc2' | wc -l | tr -d ' ')" 1
+check "it follows the new head" "$(git rev-parse 'v0.2.0-rc2^')" "$branch_head2"
+check "rc.1 stayed where it was" "$(git rev-parse 'v0.2.0-rc1^')" "$branch_head"
+check "rc.2 says rc.2" "$(git show v0.2.0-rc2:VERSION)" 0.2.0-rc2
+check "the numbering counts the tags on origin too" "$(git tag -d v0.2.0-rc1 v0.2.0-rc2 >/dev/null; run --rc --dry-run >/dev/null; said 'would tag v0.2.0-rc3')" 1
+git fetch -q --tags origin
+
+# A refused push leaves no tag behind.
+printf '#!/bin/sh\necho refused by a guard >&2\nexit 1\n' >.git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+check "a refused candidate fails" "$(run --rc)" 1
+check "it says what happened" "$(said 'the push was refused')" 1
+check "a refused candidate leaves no tag" "$(git tag -l v0.2.0-rc3 | wc -l | tr -d ' ')" 0
+rm .git/hooks/pre-push
+
+# --build builds the tag in a scratch worktree, and leaves this checkout alone.
+check "a candidate with --build works" "$(run --rc --build)" 0
+check "it is rc.3" "$(git ls-remote origin 'refs/tags/v0.2.0-rc3' | wc -l | tr -d ' ')" 1
+check "the build was asked for the candidate's version" "$(grep -c '0\.2\.0-rc3' "$BUILD_LOG")" 1
+check "the build ran away from this checkout" "$(grep -c "tauri build.* | $(pwd -P) | " "$BUILD_LOG")" 0
+check "the build shares this checkout's target" "$(grep -c " | $(pwd -P)/target$" "$BUILD_LOG")" 1
+check "building leaves no worktree" "$(git worktree list | wc -l | tr -d ' ')" 1
+check "building leaves it clean" "$(git status --porcelain | wc -l | tr -d ' ')" 0
+
+# Candidates are not releases: they do not move the next version, on or off main.
+
+
+# Candidates are not releases: they do not move the next version, on or off main.
+start
+merged "feat: a new thing (#2)" new-thing
+git tag v0.9.0-rc1 main
+git push -q origin v0.9.0-rc1
+check "a candidate tag on main is not the last release" "$(run --dry-run >/dev/null; said 'Release v0.2.0')" 1
 
 echo "create-release: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]

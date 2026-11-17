@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# What kind of release a tag asks for. THE definition, so the rule exists once. It follows the
+# one in inpace's bin/ci/tag-kind, minus the -beta shape this project has never used.
+#
+#   vX.Y.Z       final      the release. It is made from main, and the pipeline builds and
+#                           publishes it.
+#   vX.Y.Z-rc<N> candidate  a build to try before its release pull request merges. It is tagged,
+#                           not cut: it may point at any commit, no notes are written for it, and
+#                           no pipeline runs for it. It is retired when its release ships.
+#
+# THE DISCRIMINATOR IS -rc, not "has a suffix". Anything that is neither of these shapes is an
+# error, not a default, because the answer a careless rule falls back to is "final", the one that
+# publishes. v1.0.0-RC1, v1.0.0-rc, v1.0.0-rc0 and v1.0.0-hotfix would all have shipped.
+#
+# Read by scripts/release.py, scripts/create-release and .github/workflows/release.yml. github-guard's
+# git-tags-on-main and git-changelog hooks cannot call this file, because a hook that runs a file out
+# of the working tree would let a branch replace what runs next, so they carry a copy of the
+# candidate shape (gg_is_release_candidate in its lib/common.sh) and a test holds the two together.
+#
+# Usage:  tag-kind <tag>          prints "final" or "candidate"
+#         tag-kind <tag> --final  exits 0 if final, 1 if a candidate. Exits 2 for any other name.
+set -eo pipefail
+
+TAG="${1:?usage: tag-kind <tag> [--final]}"
+
+# Say what is wrong with the name, because "invalid tag" is no use to someone trying to ship.
+_reject() {
+  echo "tag-kind: '${TAG}' is not a release tag." >&2
+  echo "  $1" >&2
+  echo "  Accepted shapes: vX.Y.Z   vX.Y.Z-rc<N>" >&2
+  exit 2
+}
+
+# No leading zeros in the number: rc09 and rc10 would sort the wrong way round. That is written into
+# the pattern, so a shape the pattern accepts never reaches the diagnostics below.
+if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]]; then
+  # Most specific first. A name with a dash is a problem with its suffix, not with its numbers.
+  case "${TAG}" in
+    *'~'*)       _reject "a ~ cannot appear in a release tag; version ordering reserves it." ;;
+    [!v]*)       _reject "a release tag starts with v, as in v${TAG}." ;;
+    *-rc)        _reject "-rc needs a number: ${TAG}1." ;;
+    *-rc0*)      _reject "no leading zeros in -rc: rc09 sorts after rc10, not before it." ;;
+    *-rc[0-9]*[!0-9]*|*-rc[!0-9]*) _reject "write -rc<N> with the number straight after it and nothing following, as in -rc2." ;;
+    *-[Rr][Cc]*) _reject "-rc must be lowercase. As written this reads as a FINAL release and would publish." ;;
+    *-*)         _reject "unrecognised suffix; only -rc<N> means anything here." ;;
+    v[0-9]*)     _reject "a version is exactly three numbers: vX.Y.Z." ;;
+    *)           _reject "unrecognised shape." ;;
+  esac
+fi
+
+case "${TAG}" in
+  *-rc*) KIND=candidate ;;
+  *)     KIND=final     ;;
+esac
+
+if [ "${2:-}" = "--final" ]; then
+  [ "${KIND}" = "final" ]
+else
+  printf '%s\n' "${KIND}"
+fi
