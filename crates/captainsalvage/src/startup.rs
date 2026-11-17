@@ -94,10 +94,27 @@ pub struct StartupVolume {
     pub mount_blocked: bool,
 }
 
+/// A whole physical disk, listed whether or not its partition table can be read, so a disk with
+/// a corrupt or missing table can still be inspected as one run of bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupDisk {
+    pub device: String,
+    /// The maker's name for the disk, which says nothing about what is on it.
+    pub name: String,
+    pub bytes: u64,
+    pub external: bool,
+    /// What macOS reads the partition scheme as, if it reads one.
+    pub scheme: Option<String>,
+    pub readable: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartupReport {
     pub volumes: Vec<StartupVolume>,
+    /// Every whole disk found, with or without volumes on it.
+    pub disks: Vec<StartupDisk>,
     /// Volumes seen before that are not attached now.
     pub elsewhere: Vec<KnownVolume>,
     /// macOS's `disksleep` setting, in minutes. Zero means disks never sleep.
@@ -111,6 +128,42 @@ pub fn parse_partitions(list: &str) -> Vec<String> {
         .filter(|word| is_partition(word))
         .map(str::to_string)
         .collect()
+}
+
+/// Finds whole disks in `diskutil list` output, where each starts a block with `/dev/diskN (`.
+pub fn parse_disks(list: &str) -> Vec<String> {
+    list.lines()
+        .filter_map(|line| line.strip_prefix("/dev/")?.split_whitespace().next())
+        .filter(|word| is_whole_disk(word))
+        .map(str::to_string)
+        .collect()
+}
+
+fn is_whole_disk(word: &str) -> bool {
+    word.strip_prefix("disk")
+        .is_some_and(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Reads one whole disk from `diskutil info` output.
+pub fn parse_disk(info: &str) -> Option<StartupDisk> {
+    let identifier = info_field(info, "Device Identifier:").filter(|id| is_whole_disk(id))?;
+    let node = info_field(info, "Device Node:")?;
+    let device = node.replacen("/dev/disk", "/dev/rdisk", 1);
+    let bytes = info_field(info, "Disk Size:")
+        .and_then(|size| size.split_once('('))
+        .and_then(|(_, rest)| rest.split_once(" Bytes"))
+        .and_then(|(number, _)| number.parse().ok())
+        .unwrap_or(0);
+    Some(StartupDisk {
+        name: info_field(info, "Device / Media Name:")
+            .unwrap_or(identifier)
+            .to_string(),
+        bytes,
+        external: info_field(info, "Device Location:") == Some("External"),
+        scheme: applicable(info, "Content (IOContent):").map(str::to_string),
+        readable: can_read(&device),
+        device,
+    })
 }
 
 fn is_partition(word: &str) -> bool {
@@ -213,17 +266,23 @@ fn can_read(device: &str) -> bool {
     }
 }
 
-fn list_volumes(place: &str) -> Vec<StartupVolume> {
+fn list_volumes(place: &str) -> (Vec<StartupDisk>, Vec<StartupVolume>) {
     let Ok(output) = Command::new(DISKUTIL)
         .args(["list", place, "physical"])
         .output()
     else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    parse_partitions(&String::from_utf8_lossy(&output.stdout))
+    let list = String::from_utf8_lossy(&output.stdout);
+    let disks = parse_disks(&list)
+        .iter()
+        .filter_map(|id| parse_disk(&diskutil_info(id)?))
+        .collect();
+    let volumes = parse_partitions(&list)
         .iter()
         .filter_map(|id| parse_volume(&diskutil_info(id)?))
-        .collect()
+        .collect();
+    (disks, volumes)
 }
 
 /// Records a volume being opened, so it can be recognised under any disk number later.
@@ -334,17 +393,21 @@ pub fn join_known(mut volumes: Vec<StartupVolume>, known: Vec<KnownVolume>) -> S
     volumes.sort_by_key(|volume| (volume.known.is_none(), !volume.can_open));
     StartupReport {
         volumes,
+        disks: Vec::new(),
         elsewhere,
         disk_sleep_minutes: None,
     }
 }
 
 pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
-    let mut volumes = list_volumes("external");
+    let (mut disks, mut volumes) = list_volumes("external");
     if include_internal {
-        volumes.extend(list_volumes("internal"));
+        let (more_disks, more_volumes) = list_volumes("internal");
+        disks.extend(more_disks);
+        volumes.extend(more_volumes);
     }
     let mut report = join_known(volumes, known_volumes(&Workspace::root()?));
+    report.disks = disks;
     let fstab = fs::read_to_string(FSTAB).unwrap_or_default();
     for volume in &mut report.volumes {
         volume.protected = volume
