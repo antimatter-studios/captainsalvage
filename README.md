@@ -869,6 +869,12 @@ then opens the release pull request. It combines the fragments into `CHANGELOG.m
 newest ten versions into this README, and sets the version. When that has merged, run
 `scripts/create-release --tag v0.3.0`, which tags `main` and pushes. The tag starts the pipeline.
 
+To try a release before its pull request merges, run `scripts/create-release --rc` on the release
+branch. It tags `v0.4.0-rc1`, and `-rc2` after more commits, on a commit that says that version
+everywhere, so a build and the app show it. Add `--install` to build it and install it for this
+user. A candidate publishes nothing, and no pipeline runs for it. When the release has been tagged,
+its candidates are deleted.
+
 Going to 1.0.0 is a deliberate choice: run `scripts/create-release 1.0.0`.
 
 To try the pipeline without publishing anything, run the `release` workflow by hand.

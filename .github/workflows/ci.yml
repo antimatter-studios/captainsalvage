@@ -128,6 +128,7 @@ jobs:
           python3 scripts/test_release.py
           bash scripts/test_changelog_fragment.sh
           bash scripts/test_create_release.sh
+          bash scripts/test_tag_kind.sh
       - name: the Finder extension type checks
         run: |
           swiftc -typecheck -parse-as-library -application-extension macos/finder/Extension.swift

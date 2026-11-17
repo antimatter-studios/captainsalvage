@@ -11,6 +11,8 @@ whose subject is the pull request's title, ending in (#number).
     scripts/release.py contents [VERSION]              print the next version and what is in it
     scripts/release.py section VERSION                 print a version's CHANGELOG.md section
     scripts/release.py check v0.2.0                    fail unless a tag matches the files
+    scripts/release.py next-rc                         print the next release candidate, such as 0.4.0-rc1
+    scripts/release.py stamp-rc 0.4.0-rc1              write a release candidate's version into every file
     scripts/release.py version                         print this build's version
     scripts/release.py build                           build the app with that version
     scripts/release.py install user|system             copy the build to ~/Applications or /Applications
@@ -21,6 +23,12 @@ Version numbers follow what was merged since the last tag. A new feature raises 
 number and resets the patch. A fix raises the patch. Anything else moves nothing. Several
 merges take the largest of these, once. So the number is worked out, and a build shows the
 number that code would be released as. Going to 1.0.0 is a deliberate choice: name it.
+
+A release candidate, 0.4.0-rc1, is a release's content under a version that has not been
+released. The release pull request keeps VERSION at 0.4.0, and the candidate's tag points at a
+commit beside it that says 0.4.0-rc1 everywhere, so a build shows the candidate's number. It
+never counts as a release: the next version is worked out from the last plain tag. What a tag or
+a version may look like is decided once, by scripts/tag-kind, and this file asks it.
 
 Unreleased changes are fragments in changelog.d/. A release gathers them into CHANGELOG.md, and
 the README's list is a copy of the newest versions there, so the two cannot disagree.
@@ -60,13 +68,18 @@ Each release lists the pull requests merged into it, and nothing else. The same 
 appear on the [releases page](https://github.com/{REPO}/releases). `scripts/release.py`
 writes this file.
 """
+# What a tag, or a version, may look like is scripts/tag-kind's to say. Beside this file, not under
+# ROOT, so a test that points ROOT at a scratch project still asks the real one.
+TAG_KIND = Path(__file__).resolve().parent / "tag-kind"
+# A release's tag is plain, and tag-kind accepts no other suffix than a candidate's, so a tag with
+# a dash is never one. `git describe` would otherwise take a candidate for the last release.
+NOT_A_RELEASE = "v*-*"
 # The one file that says the version. Everything else is copied from it by `prepare`.
 VERSION_FILE = "VERSION"
 CARGO_MANIFESTS = ["crates/captainsalvage/Cargo.toml", "src-tauri/Cargo.toml"]
 JSON_MANIFESTS = ["src-tauri/tauri.conf.json", "package.json"]
 LOCKED_CRATES = ["captain-salvage", "captainsalvage"]
 APP_NAME = "Captain Salvage.app"
-BUILT_APP = ROOT / "target/release/bundle/macos" / APP_NAME
 INSTALL_FOLDERS = {"user": Path.home() / "Applications", "system": Path("/Applications")}
 OLD_FINDER_HELPER = "Captain Salvage Finder.app"
 LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
@@ -174,9 +187,41 @@ def set_versions(files, version):
     return out
 
 
+def tag_kind(text):
+    """"final" or "candidate" for a tag or version, as scripts/tag-kind says. Raises ValueError,
+    carrying its message, for a name it does not understand."""
+    done = subprocess.run(["bash", str(TAG_KIND), "v" + text.removeprefix("v")], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise ValueError(done.stderr.strip())
+    return done.stdout.strip()
+
+
+def base_version(text):
+    """The release a version belongs to: 0.4.0 for 0.4.0-rc2, and 0.4.0 for itself."""
+    return text.removeprefix("v").split("-", 1)[0]
+
+
+def is_candidate(text):
+    return tag_kind(text) == "candidate"
+
+
 def parse_version(text):
-    major, minor, patch = text.removeprefix("v").split(".")
+    """A version's three numbers. A candidate counts as the release it is a candidate for."""
+    major, minor, patch = base_version(text).split(".")
     return int(major), int(minor), int(patch)
+
+
+def next_candidate(version, tags):
+    """The version of the next candidate of a release, one past the highest already tagged."""
+    taken = []
+    for tag in tags:
+        # Only a candidate of this release counts, and tag-kind says what one is.
+        try:
+            if tag.startswith(f"v{version}-rc") and tag_kind(tag) == "candidate":
+                taken.append(int(tag.removeprefix(f"v{version}-rc")))
+        except ValueError:
+            continue
+    return f"{version}-rc{max(taken, default=0) + 1}"
 
 
 def release_level(subjects):
@@ -218,14 +263,18 @@ def next_version(manifest, latest_tag, subjects):
 def source_version():
     """The one version the project carries, from VERSION. Every manifest copies it."""
     text = (ROOT / VERSION_FILE).read_text().strip()
-    if not re.fullmatch(r"\d+\.\d+\.\d+", text):
-        raise SystemExit(f"{VERSION_FILE} must hold one version such as 0.2.0, not {text!r}")
+    try:
+        tag_kind(text)
+    except ValueError as problem:
+        raise SystemExit(f"{VERSION_FILE} must hold one version such as 0.2.0 or 0.2.0-rc1, not {text!r}.\n{problem}")
+    if text.startswith("v"):
+        raise SystemExit(f"{VERSION_FILE} holds a version, not a tag: {text!r} has no v.")
     return text
 
 
 def latest_tag():
     done = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "HEAD"],
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", NOT_A_RELEASE, "HEAD"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -246,7 +295,7 @@ def current_version():
 def version_at(ref):
     """The next version going by what is on a branch, whatever is checked out."""
     done = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", ref],
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", NOT_A_RELEASE, ref],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -264,7 +313,7 @@ def git(*args):
 def previous_tag(ref):
     """The last release before a ref, or None for the first one."""
     done = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", f"{ref}^"],
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", NOT_A_RELEASE, f"{ref}^"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -342,8 +391,34 @@ def command_build(_):
     config = json.dumps({"version": version})
     subprocess.run(["npx", "tauri", "build", "--bundles", "app", "--config", config], cwd=ROOT, check=True)
     # The Finder extension goes inside, and the app is signed, when signing material is given.
-    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
-    subprocess.run([str(ROOT / "macos/finder/package.sh"), str(target / "release/bundle/macos" / APP_NAME)], cwd=ROOT, check=True)
+    subprocess.run([str(ROOT / "macos/finder/package.sh"), str(built_app())], cwd=ROOT, check=True)
+
+
+def command_next_rc(_):
+    """The version of the next candidate of the release VERSION names. VERSION must be plain: a
+    candidate is cut from the release's own pull request, which says the release's number."""
+    version = source_version()
+    if is_candidate(version):
+        raise SystemExit(f"{VERSION_FILE} says {version}, which is already a candidate. Cut one from the release's own branch.")
+    print(next_candidate(version, git("tag", "--list", f"v{version}-rc*").splitlines()))
+
+
+def command_stamp_rc(args):
+    """Writes a candidate's version into VERSION and every manifest and lock file, so a build of
+    that commit carries it. Only a candidate of the release VERSION names is accepted: this is
+    not a way to set any other number."""
+    candidate = args.version.removeprefix("v")
+    released = source_version()
+    try:
+        wanted_a_candidate = is_candidate(candidate)
+    except ValueError as problem:
+        raise SystemExit(f"{args.version} is not a release candidate such as {released}-rc1.\n{problem}")
+    if is_candidate(released) or not wanted_a_candidate:
+        raise SystemExit(f"{args.version} is not a release candidate such as {released}-rc1")
+    if base_version(candidate) != released:
+        raise SystemExit(f"{candidate} is a candidate of {base_version(candidate)}, but {VERSION_FILE} says {released}")
+    write_versions(candidate)
+    print(f"Every file carries {candidate}.")
 
 
 def command_prepare(args):
@@ -360,8 +435,10 @@ def command_prepare(args):
 
 def command_check(args):
     """Every manifest and lock file must carry VERSION. Given a tag, the tag must be it too,
-    and the changelog and README must describe it. Runs on every pull request, so drift
-    fails before it merges."""
+    and the changelog and README must describe it. A candidate's tag, v0.4.0-rc1, needs the
+    files to say 0.4.0-rc1, and the changelog and README to describe 0.4.0, the release it is
+    a candidate for. A release's tag must be plain: no file may still say a candidate. Runs on
+    every pull request, so drift fails before it merges."""
     version = source_version()
     problems = []
     for name, found in manifest_versions():
@@ -369,12 +446,19 @@ def command_check(args):
             problems.append(f"{name} says {found}")
     if args.tag:
         tag = args.tag.removeprefix("v")
-        if tag != version:
-            problems.append(f"the tag is {tag}, but {VERSION_FILE} says {version}")
-        if not any(heading.startswith(f"[{version}]") for heading, _ in read_sections()):
-            problems.append(f"CHANGELOG.md has no section for {version}")
-        if f"### v{version}" not in README.read_text():
-            problems.append(f"README.md has no section for {version}")
+        try:
+            tag_kind(tag)
+        except ValueError as problem:
+            # A name tag-kind does not understand is refused, whatever else is true of it.
+            problems.append(str(problem).replace("\n", " "))
+        else:
+            if tag != version:
+                problems.append(f"the tag is {tag}, but {VERSION_FILE} says {version}")
+            described = base_version(tag)
+            if not any(heading.startswith(f"[{described}]") for heading, _ in read_sections()):
+                problems.append(f"CHANGELOG.md has no section for {described}")
+            if f"### v{described}" not in README.read_text():
+                problems.append(f"README.md has no section for {described}")
     if problems:
         raise SystemExit("the version is not one number everywhere: " + "; ".join(problems))
     print(f"Every file carries {version}.")
@@ -446,9 +530,15 @@ def retire_finder_helper(folder):
     return old
 
 
+def built_app():
+    """Where `build` leaves the app: in CARGO_TARGET_DIR when that is set, as `build` itself reads it."""
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
+    return target / "release/bundle/macos" / APP_NAME
+
+
 def command_install(args):
     folder = INSTALL_FOLDERS[args.where]
-    target = install_app(BUILT_APP, folder, running_programs())
+    target = install_app(built_app(), folder, running_programs())
     if Path(LSREGISTER).exists():
         subprocess.run([LSREGISTER, "-f", "-R", "-trusted", str(target)], check=False)
     extension = target / "Contents/PlugIns/Captain Salvage.appex"
@@ -467,6 +557,10 @@ def main():
     notes.add_argument("--from", dest="start")
     notes.add_argument("--to", default="HEAD")
     notes.set_defaults(run=command_notes)
+    commands.add_parser("next-rc").set_defaults(run=command_next_rc)
+    stamp = commands.add_parser("stamp-rc")
+    stamp.add_argument("version")
+    stamp.set_defaults(run=command_stamp_rc)
     commands.add_parser("sync").set_defaults(run=command_sync)
     prepare = commands.add_parser("prepare")
     prepare.add_argument("version", nargs="?")

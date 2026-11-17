@@ -6,9 +6,33 @@
 #       Shows what would go out, then opens the release pull request. The version comes from
 #       what merged since the last tag, unless you name one, such as 1.0.0.
 #
+#   scripts/create-release --rc [--dry-run] [--build | --install]
+#       Run with the release branch checked out, before its pull request has merged. Tags a
+#       release candidate, vX.Y.Z-rc<N>, so that version can be built and installed here under a
+#       real number and a real tag. See "Release candidates" below.
+#
 #   scripts/create-release --tag vX.Y.Z [--contents-approved]
 #       After that pull request has merged, tags main and pushes the tag. github-guard checks
-#       the tag as it goes, and the tag starts the pipeline, which builds and publishes.
+#       the tag as it goes, and the tag starts the pipeline, which builds and publishes. Then it
+#       retires the release's candidate tags, vX.Y.Z-rc<N>, from origin and from here.
+#
+# WHAT A TAG MAY LOOK LIKE is decided in scripts/tag-kind, once. A final tag, vX.Y.Z, must be on
+# main. A candidate, vX.Y.Z-rc<N>, may be on any commit. Any other name is refused by name, and never
+# taken for a release.
+#
+# RELEASE CANDIDATES. The release pull request keeps VERSION at X.Y.Z, so what merges is final.
+# --rc tags a commit beside it: a child of the pushed branch head that says X.Y.Z-rc<N> in VERSION
+# and in every manifest and lock file, so a build of it shows the candidate's number. That commit
+# is reachable only through the tag. Nothing moves in your checkout, and only the tag is pushed.
+# The first is rc1, and each run adds one, so more commits on the branch make rc2. The branch
+# must be pushed and checked out with nothing uncommitted, so a candidate is what the pull
+# request holds. A release branch cut before this tooling merged needs it first:
+# scripts/rebase-pr.sh release/vX.Y.Z.
+#   A candidate is tagged, not cut: no notes, no squash. It is not a release. No pipeline runs for
+# it, there is no GitHub Release, and no build is ever put on GitHub. --build builds it, and
+# --install builds and installs it for this user, in a temporary worktree at the tag. Without them,
+# it prints the commands that do the same. After the pull request has merged, --tag vX.Y.Z makes
+# the real release, and retires the candidates it replaces.
 #
 # This runs on your machine because a release is a deliberate act, and the pipeline only uses
 # what is committed. It calls no agent: the entries were written and reviewed in their own pull
@@ -27,17 +51,37 @@ PYTHON="${PYTHON:-python3}"
 FILES=(CHANGELOG.md README.md VERSION crates/captainsalvage/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
     package.json Cargo.lock package-lock.json)
 
-VERSION=""; TAG=""; DRY_RUN=false; APPROVED=false
+VERSION=""; TAG=""; DRY_RUN=false; APPROVED=false; RC=false; BUILD=false; INSTALL=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --tag) TAG="${2:-}"; [ -n "$TAG" ] || { echo "create-release: --tag needs a version" >&2; exit 2; }; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --contents-approved) APPROVED=true; shift ;;
+        --rc) RC=true; shift ;;
+        --build) BUILD=true; shift ;;
+        --install) INSTALL=true; BUILD=true; shift ;;
         -h|--help) awk 'NR>1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 0 ;;
         -*) echo "create-release: unknown option $1" >&2; exit 2 ;;
         *) VERSION="${1#v}"; shift ;;
     esac
 done
+
+# A name is refused here, by tag-kind's own words, before anything else looks at it.
+require_final() {  # $1 = a tag
+    local kind
+    kind="$(bash "$ROOT/scripts/tag-kind" "$1")" || exit 2
+    [ "$kind" = final ] ||
+        { echo "create-release: $1 is a candidate. Run --rc on the release branch to tag one. A release is vX.Y.Z." >&2; exit 2; }
+}
+[ -z "$TAG" ] || require_final "v${TAG#v}"
+[ -z "$VERSION" ] || require_final "v$VERSION"
+
+if [ "$RC" = "true" ]; then
+    { [ -z "$TAG" ] && [ -z "$VERSION" ]; } ||
+        { echo "create-release: --rc takes no version. It follows the release branch you are on." >&2; exit 2; }
+elif [ "$BUILD" = "true" ]; then
+    echo "create-release: --build and --install go with --rc." >&2; exit 2
+fi
 
 # Every check runs and every failure is reported, so one pass fixes the machine rather than one
 # failure at a time. Nothing here changes anything except fetching.
@@ -76,6 +120,36 @@ ask() {
     case "$answer" in y|Y|yes|YES) ;; *) echo "Stopped. Nothing has changed."; exit 0 ;; esac
 }
 
+# The candidate tags of one release, on origin or here: vX.Y.Z-rc<N> for exactly that X.Y.Z, and no
+# other name. tag-kind says what a candidate is, so a tag that only looks like one is left alone.
+candidates_of() {  # $1 = X.Y.Z
+    local tag
+    { git tag --list "v$1-rc*"
+      git ls-remote --tags origin "refs/tags/v$1-rc*" 2>/dev/null | sed 's#.*refs/tags/##; s#\^{}$##'
+    } | sort -u | while IFS= read -r tag; do
+        [ -n "$tag" ] || continue
+        [ "$(bash scripts/tag-kind "$tag" 2>/dev/null)" = candidate ] && printf '%s ' "$tag"
+    done
+}
+
+# Retires a release's candidates once it has shipped: they were built to try what is now released.
+# Run after the push, and it never fails the release. The objects stay here, so each line says how
+# to put its tag back.
+sweep_candidates() {  # $1 = X.Y.Z
+    local tag sha swept=""
+    for tag in $(candidates_of "$1"); do
+        sha="$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}" || git ls-remote origin "refs/tags/$tag^{}" | cut -f1)"
+        if git push --quiet --delete origin "refs/tags/$tag" 2>/dev/null; then
+            git tag -d "$tag" >/dev/null 2>&1
+            printf '  %-16s gone (put it back: git push origin %s:refs/tags/%s)\n' "$tag" "${sha:0:8}" "$tag"
+        else
+            printf '  %-16s COULD NOT BE DELETED on origin, so it is left where it is\n' "$tag" >&2
+        fi
+        swept="$swept$tag "
+    done
+    [ -n "$swept" ] || echo "  there were none."
+}
+
 stage_tag() {
     local version="${TAG#v}" tag="v${TAG#v}"
     common_checks
@@ -99,6 +173,8 @@ stage_tag() {
     echo
     "$PYTHON" scripts/release.py section "$version"
     echo
+    echo "Its candidates, retired once the tag is pushed: $(candidates_of "$version")"
+    echo
     ask "Tag and publish $tag?"
     git tag -a "$tag" -m "Captain Salvage $version"
     # A guard can refuse the push. Leaving the tag behind would make the next try say it exists.
@@ -111,6 +187,118 @@ stage_tag() {
     echo
     echo "Pushed $tag. The pipeline now builds and publishes it:"
     gh run list --workflow release.yml --limit 1 --json url --jq '.[0].url' 2>/dev/null || true
+    echo
+    echo "Retiring the candidates of $tag:"
+    sweep_candidates "$version"
+}
+
+# What a candidate changes: the version, and nothing else.
+VERSION_FILES=(VERSION crates/captainsalvage/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
+    package.json Cargo.lock package-lock.json)
+SCRATCH=""
+cleanup() {
+    [ -z "$SCRATCH" ] && return 0
+    local tree
+    for tree in "$SCRATCH"/*/; do
+        [ -e "${tree}.git" ] && git worktree remove --force "$tree" >/dev/null 2>&1
+    done
+    rm -rf "$SCRATCH"
+}
+trap cleanup EXIT
+
+stage_rc() {
+    local branch version tag rc head
+    common_checks
+    finish_preflight
+    branch="$(git symbolic-ref --quiet --short HEAD || true)"
+    if [[ "$branch" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]] &&
+        [ "$(bash scripts/tag-kind "v${BASH_REMATCH[1]}" 2>/dev/null)" = final ]; then
+        version="${BASH_REMATCH[1]}"
+    else
+        FAILURES+=("this is not a release branch, release/vX.Y.Z. Switch to the release's branch first.")
+    fi
+    finish_preflight
+    git fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null ||
+        FAILURES+=("$branch is not on GitHub. Push it first, because a candidate is the pushed branch.")
+    finish_preflight
+    head="$(git rev-parse HEAD)"
+    [ "$head" = "$(git rev-parse "refs/remotes/origin/$branch")" ] ||
+        FAILURES+=("$branch is not what is on GitHub. Push it, or pull it, so the candidate is what the pull request holds.")
+    [ "$(tr -d '[:space:]' <VERSION)" = "$version" ] ||
+        FAILURES+=("VERSION is not plain $version, which a release branch keeps. Candidates are cut from it, not from a candidate.")
+    "$PYTHON" scripts/release.py check >/dev/null 2>&1 ||
+        FAILURES+=("the files do not agree on one version. Run: $PYTHON scripts/release.py check")
+    git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null &&
+        FAILURES+=("v$version already exists, so this release is made. A candidate would come after it.")
+    finish_preflight
+    rc="$("$PYTHON" scripts/release.py next-rc)"
+    tag="v$rc"
+    git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null && FAILURES+=("$tag already exists.")
+    finish_preflight
+
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "Dry run: would tag $tag on a commit after $(git log -1 --format='%h %s' HEAD)."
+        echo "Nothing has changed."
+        exit 0
+    fi
+
+    # The candidate's commit is made in a scratch worktree and written with plumbing, so your
+    # checkout never moves and no hook has a say: it is a version stamp, not a change anyone writes.
+    SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/create-release.XXXXXX")"
+    git worktree add --quiet --detach "$SCRATCH/stamp" HEAD
+    (cd "$SCRATCH/stamp" && "$PYTHON" scripts/release.py stamp-rc "$rc" >/dev/null && git add -u)
+    local changed expected
+    changed="$(git -C "$SCRATCH/stamp" diff --cached --name-only | sort)"
+    expected="$(printf '%s\n' "${VERSION_FILES[@]}" | sort)"
+    [ "$changed" = "$expected" ] || {
+        echo "create-release: stamping changed these, not the version files, so nothing is tagged:" >&2
+        printf '%s\n' "$changed" >&2
+        exit 1
+    }
+    local commit
+    commit="$(git commit-tree "$(git -C "$SCRATCH/stamp" write-tree)" -p "$head" -m "chore(release): $tag")"
+    git tag -a "$tag" -m "Captain Salvage $rc, a release candidate" "$commit"
+    # Only the tag goes. A guard can refuse it, and a tag left behind would make the next try say it exists.
+    if ! git push origin "refs/tags/$tag"; then
+        git tag -d "$tag" >/dev/null
+        echo "create-release: the push was refused, so $tag is not published and the local tag is removed." >&2
+        exit 1
+    fi
+    echo
+    echo "Tagged $tag at $(git rev-parse --short "$commit"), a child of $(git rev-parse --short "$head") that says $rc everywhere."
+    echo "$branch still says $version, so what merges is the release. No pipeline runs for a candidate."
+    echo "It is a candidate tag, so it may sit on any commit, and it is retired when v$version is released."
+    if [ "$BUILD" = "true" ]; then
+        build_rc "$tag"
+    else
+        echo
+        echo "To build and install it here, either run this again with --install, or:"
+        echo "  git switch --detach $tag"
+        echo "  $PYTHON scripts/release.py build"
+        echo "  $PYTHON scripts/release.py install user"
+        echo "  git switch $branch"
+    fi
+    echo
+    echo "When the pull request has merged: git switch main && git pull --ff-only && scripts/create-release --tag v$version"
+}
+
+# Builds the tag in a scratch worktree, so this checkout is untouched, and installs it when asked.
+build_rc() {
+    local tag="$1" app="$SCRATCH/app"
+    git worktree add --quiet --detach "$app" "$tag"
+    if [ -d "$ROOT/node_modules" ]; then
+        ln -s "$ROOT/node_modules" "$app/node_modules"
+    else
+        (cd "$app" && npm ci)
+    fi
+    # Dependencies compile once, in this checkout's target, not once per candidate.
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+    (cd "$app" && "$PYTHON" scripts/release.py build)
+    if [ "$INSTALL" = "true" ]; then
+        (cd "$app" && "$PYTHON" scripts/release.py install user)
+    else
+        echo "Built ${tag#v} in $CARGO_TARGET_DIR/release/bundle/macos. To install it: $PYTHON scripts/release.py install user"
+    fi
 }
 
 stage_cut() {
@@ -163,7 +351,9 @@ stage_cut() {
     echo "  scripts/create-release --tag $tag"
 }
 
-if [ -n "$TAG" ]; then
+if [ "$RC" = "true" ]; then
+    stage_rc
+elif [ -n "$TAG" ]; then
     stage_tag
 else
     stage_cut

@@ -4,6 +4,13 @@ name: release
 # version's CHANGELOG.md section. Running this by hand is a dry run: everything except
 # publishing.
 #
+# A release candidate, v0.4.0-rc1, is not a version: it is a build to try before the release's pull
+# request merges, so it is tagged on a commit that is not on main, and nothing here runs for it. The
+# second tag pattern leaves it out, and scripts/test_release.py holds the two patterns to
+# scripts/tag-kind, the one place that says what a tag may look like. The pattern leaves out only a
+# well-formed candidate. A tag that merely looks like one, v0.4.0-RC1 or v0.4.0-rc0, still starts
+# this, and the first step then refuses it by name rather than letting it be taken for a release.
+#
 # Builds never go on GitHub, as a release asset or a workflow artifact, because anyone who can
 # read the repository could download them, and this app will be sold. They go straight from the
 # job that built them to private storage. That step is below, turned off until the bucket
@@ -12,6 +19,7 @@ on:
   push:
     tags:
       - "v*.*.*"
+      - "!v*-rc[1-9]*"
   workflow_dispatch:
 
 # Every job reads, and one job writes. The writing job checks nothing out and runs
@@ -37,6 +45,12 @@ jobs:
       - name: check the tag
         if: github.event_name == 'push'
         run: |
+          # An unrecognised name is refused here, by name. A candidate is not built or published here.
+          kind="$(scripts/tag-kind "$GITHUB_REF_NAME")"
+          [ "$kind" = final ] || {
+            echo "$GITHUB_REF_NAME is a $kind, and only a final release is built and published here" >&2
+            exit 1
+          }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
             echo "$GITHUB_REF_NAME is not on main" >&2
             exit 1

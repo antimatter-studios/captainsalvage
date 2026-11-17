@@ -46,6 +46,26 @@ pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `
   `--contents-approved`.
 - The tag starts the release pipeline, and the pipeline never creates a tag.
 
+### Release candidates, before the release pull request merges
+
+With the release branch `release/vX.Y.Z` checked out, pushed and clean, `scripts/create-release --rc`
+tags `vX.Y.Z-rc1`, then `-rc2` after more commits, and so on. A candidate lets the version be built
+and installed here under a real number and a real tag, before anything merges. Add `--build`, or
+`--install` to install it for this user too, to do that in a scratch worktree at the tag.
+
+- A candidate is tagged, not cut: no notes, no squash, no pipeline, no GitHub Release, and a build
+  never goes on GitHub. The release pull request keeps `VERSION` at X.Y.Z, so what merges is final.
+- The tag points at a commit beside the branch head that says `X.Y.Z-rc<N>` in `VERSION` and every
+  manifest and lock file, so the build and the app show the candidate's number. It is reachable only
+  through the tag. `scripts/tag-kind` says what a tag may look like, once: `vX.Y.Z` is final, must be
+  on `main` and is the only one that publishes; `vX.Y.Z-rc<N>` (lowercase, no leading zero) is a
+  candidate and may be on any commit. Any other name is refused by name, never taken for a release.
+- A release branch cut before this tooling merged needs it first: `scripts/rebase-pr.sh release/vX.Y.Z`.
+- Only the owner decides when to release, and a candidate is part of that. Do not tag one unless they
+  asked. After the pull request has merged, `scripts/create-release --tag vX.Y.Z` makes the real
+  release, then deletes that release's candidate tags from origin and from here. Each deleted tag is
+  printed with the command that puts it back.
+
 ## Testing the window
 
 `tests/window/` drives the real app window against small synthetic disk images. Read its
