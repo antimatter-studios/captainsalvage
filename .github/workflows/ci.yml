@@ -60,9 +60,9 @@ jobs:
       - name: formatting
         run: cargo fmt --all --check
       - name: lint the engine
-        run: cargo clippy -p salvage-core --all-targets --locked -- -D warnings
+        run: cargo clippy -p captainsalvage --all-targets --locked -- -D warnings
       - name: test the engine
-        run: cargo test -p salvage-core --locked
+        run: cargo test -p captainsalvage --locked
 
   app:
     name: app on macOS

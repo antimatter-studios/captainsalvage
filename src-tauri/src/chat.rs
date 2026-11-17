@@ -1,13 +1,13 @@
 //! The Ask agent tab: runs the chosen agent's command-line tool on each question and streams
-//! what it says to the window, through the adapters in `salvage_core::agent`.
+//! what it says to the window, through the adapters in `captainsalvage::agent`.
 //!
 //! Each question is one process, resumed by session id so the conversation continues. The
 //! agent works only through the app's MCP tools, and the engine behind them cannot write to the
 //! examined disk.
 
 use anyhow::{bail, Result};
-use salvage_core::agent::{self, AgentInfo, AgentKind, Ask, CHAT_INSTRUCTIONS};
-use salvage_core::mcp::McpInfo;
+use captainsalvage::agent::{self, AgentInfo, AgentKind, Ask, CHAT_INSTRUCTIONS};
+use captainsalvage::mcp::McpInfo;
 use serde_json::{json, Value};
 use std::process::Child;
 use std::sync::{Arc, Mutex};
@@ -84,7 +84,7 @@ impl ChatState {
             .clone()
             .filter(|(with, _)| *with == kind)
             .map(|(_, id)| id);
-        let work_dir = salvage_core::workspace::app_support()?
+        let work_dir = captainsalvage::workspace::app_support()?
             .join("agent")
             .join(kind.id());
         let (child, output, errors) = kind.start(&Ask {

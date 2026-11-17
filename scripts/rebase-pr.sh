@@ -22,7 +22,7 @@ if ! git rebase "refs/remotes/origin/$BASE" >/dev/null 2>&1; then
 fi
 python3 scripts/check_translations.py | tail -1
 npx tsc --noEmit || { echo "tsc failed, not pushing"; exit 1; }
-cargo clippy -q -p salvage-core --all-targets -- -D warnings || { echo "clippy failed, not pushing"; exit 1; }
+cargo clippy -q -p captainsalvage -p rust-fs-fat32 --all-targets -- -D warnings || { echo "clippy failed, not pushing"; exit 1; }
 echo checks-ok
 OLD=$(git rev-parse "refs/remotes/origin/$BRANCH")
 git -c credential.helper='!gh auth git-credential' push -q --force-with-lease="refs/heads/$BRANCH:$OLD" $URL "HEAD:refs/heads/$BRANCH"

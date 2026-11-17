@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/salvage-core", "src-tauri"]
+members = ["crates/captainsalvage", "src-tauri"]
 resolver = "2"
 
 [patch.crates-io]

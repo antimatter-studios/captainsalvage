@@ -7,7 +7,7 @@
 
 use crate::AppState;
 use anyhow::{bail, Context, Result};
-use salvage_core::media::serial_text;
+use captainsalvage::media::serial_text;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

@@ -480,12 +480,14 @@ export interface Extent {
 
 export interface Overview {
   device: string;
+  interpretation?: import("./rawDisk").DiskRegion;
+  filesystem: FilesystemDetails;
   wholeDisk: string | null;
   workspace: string;
   bootMain: Record<string, unknown>;
-  bootBackup: Record<string, unknown>;
+  bootBackup: Record<string, unknown> | null;
   bootDifferences: Record<string, { main: unknown; backup: unknown }>;
-  bootCheck: { mainStored: number; mainComputed: number; backupStored: number; backupComputed: number; regionsIdentical: boolean };
+  bootCheck: { mainStored: number; mainComputed: number; backupStored: number; backupComputed: number; regionsIdentical: boolean } | null;
   geometry: {
     clusterSize: number;
     clusterCount: number;
@@ -512,6 +514,22 @@ export interface Overview {
   groupNames: string[];
   ownershipNames: string[];
 }
+
+export type FilesystemDetails =
+  | { kind: "exfat" }
+  | {
+      kind: "fat";
+      variant: "FAT12" | "FAT16" | "FAT32";
+      bytesPerSector: number;
+      sectorsPerCluster: number;
+      reservedSectors: number;
+      fatCount: number;
+      rootEntryCount: number;
+      sectorsPerFat: number;
+      totalSectors: number;
+      firstDataSector: number;
+      rootCluster: number;
+    };
 
 export interface ResolvePreview {
   changes: { from: string; to: string; files: number; bytes: number; sampleIds: number[] }[];

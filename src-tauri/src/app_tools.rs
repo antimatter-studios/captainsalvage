@@ -52,7 +52,7 @@ pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Valu
                     let listed = state.engine.call(
                         "canvas_list",
                         &json!({}),
-                        salvage_core::engine::AUTHOR_USER,
+                        captainsalvage::engine::AUTHOR_USER,
                     )?;
                     let found = listed
                         .as_array()

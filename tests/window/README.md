@@ -1,6 +1,6 @@
 # Window tests
 
-These scripts drive the real app window through its MCP server, against small synthetic exFAT
+These scripts drive the real app window through its MCP server, against small synthetic disk
 images. They are for checking a change in the window itself, where the Rust and TypeScript
 tests cannot reach. Each script prints `PASS` or `FAIL` per check and a total at the end.
 
@@ -18,6 +18,18 @@ python3 tests/window/modes_test.py "target/release/bundle/macos/Captain Salvage.
 Run one test at a time, and not while a build is running. Several at once, or a test beside a
 release build, slows the machine enough for the tests to time out.
 
+`raw_disk_test.py` derives a throwaway raw image from `jigsaw.img`, with NTFS boot evidence
+and an older exFAT volume beyond a declared partition. It verifies that raw sources use the
+normal workspace and shared graph, that evidence discovery reaches both formats, that byte
+inspection works before filesystem recognition, and that interpretations return to the same
+workspace without modifying the source. It saves a screenshot to
+`/tmp/captainsalvage-raw-workspace.png` for visual inspection.
+
+`raw_scan_test.py` checks raw-scan speed and ETA, pauses between bounded batches, restarts its
+isolated test app, and resumes the saved scan against a renamed clone. It verifies that a
+changed sample blocks resume in both the window and the backend. Its temporary source images,
+database and app home never use real disks or the user's application data.
+
 ## The images
 
 The images and everything else the tests write stay in this folder and are ignored by git.
@@ -25,8 +37,8 @@ Make the ones a test needs before running it:
 
 | Image | Made by |
 |---|---|
-| `jigsaw.img` | `SALVAGE_JIGSAW_IMAGE=$PWD/tests/window/jigsaw.img cargo test -p salvage-core --test synthetic write_the_jigsaw` |
-| `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p salvage-core --test synthetic write_the_macos_visited` |
+| `jigsaw.img` | `SALVAGE_JIGSAW_IMAGE=$PWD/tests/window/jigsaw.img cargo test -p captainsalvage --test synthetic write_the_jigsaw` |
+| `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p captainsalvage --test synthetic write_the_macos_visited` |
 | `arctest.img` | `tests/window/make_arctest.sh` (archives) |
 | `filmtest.img` | `tests/window/make_filmtest.sh` (two 70 MB films) |
 

@@ -25,6 +25,8 @@ def check(name, got, want):
 
 def call(name, /, **arguments):
     info = json.load(open(state['cfg']))
+    if not name.startswith('captainsalvage_'):
+        name = 'captainsalvage_' + name
     body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}}).encode()
     headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + info['token']}
     with urllib.request.urlopen(urllib.request.Request(info['url'], body, headers), timeout=120) as response:

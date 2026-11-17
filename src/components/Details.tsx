@@ -23,6 +23,7 @@ import { useSimple } from "../mode";
 import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
 import { CopyReport } from "./CopyReport";
+import { FilesystemDetailsPanel } from "./FilesystemDetails";
 import { SimilarPieces } from "./SimilarPieces";
 import { isArchiveName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
@@ -510,6 +511,7 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
   const summary = status?.summary;
   return (
     <div className="detail">
+      <FilesystemDetailsPanel details={overview.filesystem} />
       <h4>{t("Space")}</h4>
       <dl className="facts">
         <Fact label={t("In use")}>{bytes(overview.allocationBytes.allocated)}</Fact>
@@ -518,6 +520,7 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
         <Fact label={t("Free chains")}>{count(overview.allocation.freeChains.chains)}</Fact>
         <Fact label={t("Cross-linked clusters")}>{count(overview.allocation.crossLinks)}</Fact>
       </dl>
+      {overview.filesystem.kind === "exfat" && overview.bootCheck && <>
       <h4>{t("Boot sectors")}</h4>
       <table className="boot-table">
         <thead><tr><th>{t("Field")}</th><th>{t("Main")}</th><th>{t("Backup")}</th></tr></thead>
@@ -526,7 +529,7 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
             <tr key={key} className={overview.bootDifferences[key] ? "boot-different" : ""}>
               <td>{label}</td>
               <td className="mono">{String(overview.bootMain[key])}</td>
-              <td className="mono">{String(overview.bootBackup[key])}</td>
+              <td className="mono">{String(overview.bootBackup?.[key])}</td>
             </tr>
           ))}
         </tbody>
@@ -535,6 +538,7 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
         main: overview.bootCheck.mainStored === overview.bootCheck.mainComputed ? t("valid") : t("invalid"),
         backup: overview.bootCheck.backupStored === overview.bootCheck.backupComputed ? t("valid") : t("invalid"),
       })}</p>
+      </>}
       {summary && (
         <>
           <h4>{t("What the map holds")}</h4>

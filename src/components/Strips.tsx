@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { mapLayer, type Extent, type Layer, type Lens } from "../api";
 import { count, bytes as formatBytes } from "../format";
 import { t } from "../i18n";
-import { colorTable, describeValue, legendFor, onThemeChange, rampGradient, sequentialCaption } from "../palette";
+import { colorTable, describeValue, legendFor, onThemeChange, rampGradient, sequentialCaption, type LegendItem, type Rgb } from "../palette";
 
 const MIN_WINDOW_CLUSTERS = 64;
 const WHEEL_ZOOM_STEP = 1.25;
@@ -40,6 +40,13 @@ function MarkerArrow({ below, left }: { below?: boolean; left: string }) {
   );
 }
 
+export interface StripSource {
+  read: (start: number, end: number, buckets: number) => Uint8Array;
+  legend: () => LegendItem[];
+  colors: () => Rgb[];
+  hypotheses?: Extent[];
+}
+
 interface StripProps {
   layer: Layer;
   start: number;
@@ -63,10 +70,11 @@ interface StripProps {
   onDragRange?: (start: number, end: number) => void;
   onPan?: (deltaClusters: number) => void;
   onZoom?: (centerCluster: number, factor: number) => void;
+  source?: StripSource;
 }
 
-function Strip(props: StripProps) {
-  const { layer, start, end, floor, lens, revision, height, highlight, marker, scanAt, isolate, onValues, clusterSize, label, windowBox } = props;
+export function Strip(props: StripProps) {
+  const { layer, start, end, floor, lens, revision, height, highlight, marker, scanAt, isolate, onValues, clusterSize, label, windowBox, source } = props;
   const wrapper = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
   const marks = useRef<HTMLCanvasElement>(null);
@@ -93,8 +101,9 @@ function Strip(props: StripProps) {
     if (width === 0) return;
     let current = true;
     const buckets = Math.min(Math.ceil(width * window.devicePixelRatio), MAX_BUCKETS);
-    const rows = legendFor(layer).length > 0 ? Math.max(Math.floor(height / CSS_PIXELS_PER_ROW), 1) : 1;
-    mapLayer(layer, start, end, buckets, rows, floor, lens)
+    const rows = source ? 1 : legendFor(layer).length > 0 ? Math.max(Math.floor(height / CSS_PIXELS_PER_ROW), 1) : 1;
+    const loading = source ? Promise.resolve(source.read(start, end, buckets)) : mapLayer(layer, start, end, buckets, rows, floor, lens);
+    loading
       .then((data) => {
         if (!current || !base.current) return;
         setError(null);
@@ -104,7 +113,7 @@ function Strip(props: StripProps) {
         canvas.height = rows;
         const context = canvas.getContext("2d");
         if (!context) return;
-        const table = colorTable(layer);
+        const table = source ? source.colors() : colorTable(layer);
         const image = context.createImageData(buckets, rows);
         data.forEach((value, index) => {
           const [red, green, blue] = table[value];
@@ -121,7 +130,7 @@ function Strip(props: StripProps) {
     return () => {
       current = false;
     };
-  }, [layer, start, end, floor, lens, revision, width, height, themeTick, isolate]);
+  }, [layer, start, end, floor, lens, revision, width, height, themeTick, isolate, source]);
 
   useEffect(() => {
     const canvas = marks.current;
@@ -136,6 +145,15 @@ function Strip(props: StripProps) {
     const toX = (cluster: number) => ((cluster - start) / span) * canvas.width;
     const accent = getComputedStyle(canvas).getPropertyValue("--accent-mark").trim() || "#ffffff";
     context.fillStyle = accent;
+    context.strokeStyle = accent;
+    context.setLineDash([4 * ratio, 3 * ratio]);
+    for (const extent of source?.hypotheses ?? []) {
+      const left = toX(extent.first);
+      const right = toX(extent.first + extent.count);
+      if (right < 0 || left > canvas.width) continue;
+      context.strokeRect(left, ratio / 2, Math.max(right - left, ratio), canvas.height - ratio);
+    }
+    context.setLineDash([]);
     const tickHeight = canvas.height * 0.3;
     for (const extent of highlight) {
       const left = toX(extent.first);
@@ -158,7 +176,7 @@ function Strip(props: StripProps) {
       context.stroke();
       context.setLineDash([]);
     }
-  }, [highlight, marker, scanAt, start, end, width, height, themeTick]);
+  }, [highlight, marker, scanAt, start, end, width, height, themeTick, source]);
 
   const clusterAt = useCallback(
     (clientX: number) => {
@@ -187,12 +205,12 @@ function Strip(props: StripProps) {
       tally.set(value, (tally.get(value) ?? 0) + 1);
     }
     const parts = [...tally.entries()].sort((a, b) => b[1] - a[1]);
-    const legend = legendFor(layer);
+    const legend = source ? source.legend() : legendFor(layer);
     setHover({
       x: event.clientX - rectangle.left,
       cluster,
       parts: parts.slice(0, 5).map(([value, share]) => ({
-        label: describeValue(layer, value),
+        label: source ? legend.find((item) => item.value === value)?.label ?? String(value) : describeValue(layer, value),
         color: legend.find((item) => item.value === value)?.color,
         share: rows === 1 ? null : Math.round((share / rows) * 100),
       })),
@@ -238,7 +256,7 @@ function Strip(props: StripProps) {
       <div className="strip-caption">
         <span>{label}</span>
         <span className="strip-range">
-          {start <= 2 ? "0" : formatBytes((start - 2) * clusterSize)} to {formatBytes((end - 2) * clusterSize)}
+          {formatBytes(source ? start : Math.max(0, start - 2) * clusterSize)} to {formatBytes(source ? end : (end - 2) * clusterSize)}
         </span>
       </div>
       <div
@@ -267,8 +285,8 @@ function Strip(props: StripProps) {
         )}
         {hover && (
           <div className={`strip-tip ${hover.x > width - 240 ? "strip-tip-left" : ""}`} style={{ left: hover.x }}>
-            <strong>{t("Cluster {cluster}", { cluster: count(hover.cluster) })}</strong>
-            <div className="strip-tip-sub">{t("{bytes} into the volume", { bytes: formatBytes((hover.cluster - 2) * clusterSize) })}</div>
+            <strong>{source ? formatBytes(hover.cluster) : t("Cluster {cluster}", { cluster: count(hover.cluster) })}</strong>
+            <div className="strip-tip-sub">{t("{bytes} into the volume", { bytes: formatBytes(source ? hover.cluster : (hover.cluster - 2) * clusterSize) })}</div>
             {hover.parts.map((part) => (
               <div key={part.label} className="strip-tip-row">
                 {part.color && <span className="legend-swatch" style={{ background: part.color }} />}

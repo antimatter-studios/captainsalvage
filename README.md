@@ -7,10 +7,12 @@ says a volume is fine but your files are gone, the data is often still there,
 with only the links to it cut. This app reads the disk directly, maps what it
 finds, and helps you get your files back, without ever writing to the disk.
 
-> **Early development.** It works on one filesystem, exFAT, and has been tested
-> on one real damaged volume plus synthetic test volumes. It is not released yet.
+![Captain Salvage welcome screen, with its chart of a damaged disk and introduction to the read-only recovery app](media/manual/01-start.png)
 
-![Captain Salvage showing the recovery overview of a test disk: files found by name, file tests, and the details panel](media/manual/02-overview.png)
+> **Early development.** Supports exFAT, FAT12, FAT16 and FAT32. exFAT has been tested
+> on one real damaged volume plus synthetic volumes; FAT-family integration is
+> tested with synthetic disk images. NTFS support is still being built. It is not
+> released yet.
 
 The [illustrated user manual](docs/manual/index.html) shows every part of the app: a safe
 first recovery, the Simple and Investigate modes, and a guide to each screen. Open it directly
@@ -123,6 +125,73 @@ Use the value `disksleep` had before if it was not 10. If you added an `/etc/fst
 the volume with an earlier version, remove it with
 `sudo sed -i '' '/^UUID=YOUR-VOLUME-UUID /d' /etc/fstab`.
 
+## Investigating raw disks and overlapping filesystems
+
+Opening raw bytes does not require a recognised filesystem. The normal **Open** action opens
+unrecognised sources in the byte-based graph. To inspect bytes beneath a recognised filesystem,
+use **Source bytes**, **Inspect raw partition**, **Inspect whole disk**, or **Inspect raw disk or image**. The
+source stays read-only, but macOS and other programs may still write to a mounted disk;
+the safety precautions above still apply.
+
+Raw sources open in the normal workspace, with the same toolbar, sidebar, overview, and
+selection inspector. In **Investigate** mode, the existing disk graph works in byte offsets,
+with layers for source bytes, declared MBR/GPT partitions, and filesystem evidence. Nothing
+requires a filesystem to be recognised first. Select a partition in the sidebar, drag across
+any region of the graph, or enter exact byte offsets in the inspector. **Search for filesystem
+evidence** examines that entire range in bounded, pausable batches, including bytes inside
+declared partitions. Finding NTFS does not stop the search for older exFAT or FAT structures.
+Unreadable ranges are reported separately; unrecognised bytes are never assumed to be empty.
+
+Select evidence or label a region with a suspected format, then **Try this interpretation**.
+FAT12/16/32 and exFAT interpretations use the existing scan, browse and recovery workflow,
+with reads bounded to that region. The label, extent, and boot-metadata selection are saved
+with that interpretation's separate recovery workspace, not in the source's partition table.
+The **Source bytes** tab returns from an interpreted filesystem to the whole source and its
+discovery findings, without opening a different interface.
+
+Each completed discovery batch saves its findings and checkpoint atomically in
+`~/Library/Application Support/Captain Salvage/raw-scans.sqlite`, never on the examined source.
+The toolbar shows scan speed and an estimated time remaining after the first batch. Estimates
+use the current running period, excluding time spent paused, and may change around slow or
+unreadable regions. An interrupted batch is repeated from the last committed checkpoint.
+
+A permanent scan ID identifies the saved analysis; a separate versioned fingerprint records
+capacity and SHA-256 hashes of up to sixteen 4 KiB samples spread across the source. Reopen the
+disk or a matching raw image, then choose **Load saved scan** and **Resume scan**. Device numbers,
+paths and hardware serials are not used as proof of matching contents. Multiple scan IDs can
+analyse different ranges of the same contents. Loading explicitly accepts that matching
+samples do not prove every byte is identical; mismatching, unreadable or incompatible
+fingerprints block resume. A scanner-version mismatch also requires a new scan. Previous read
+failures are retained as source-specific evidence, not attributed to a clone: loading rewinds
+to retry those regions, and successful rereads clear the outstanding failures. Sources with
+unreadable fingerprint samples can still be scanned and saved, but cannot be verified for
+resume after reopening. Scans made by older versions without these checkpoints cannot be
+recovered after that older app closes.
+
+The CLI uses the same saved scans:
+
+```sh
+captainsalvage disk /path/to/disk.img --scan
+captainsalvage disk /path/to/clone.img --list-scans
+captainsalvage disk /path/to/clone.img --resume SCAN_ID --accept-sampled-match
+```
+
+New scans may specify `--offset BYTES --length BYTES`; resumed scans always use their saved range.
+
+A surviving exFAT backup boot region can supply an in-memory interpretation when the main
+boot region has been overwritten, for example by NTFS. The original bytes remain available
+in the raw view and are not repaired or replaced on disk. This requires enough surviving
+metadata and valid geometry: isolated directory entries are evidence, not proof of a complete
+volume or enough information to locate every file. Candidate extents may overlap; these are
+hypotheses, not claims that the disk's current partition layout is wrong.
+
+The initial probes recognise FAT boot geometry, exFAT boot regions and checksummed directory
+entry sets, and plausible NTFS boot metadata. NTFS FILE-record inspection and stream
+recovery are available through the command line and MCP, but the full graphical NTFS
+recovery workspace and ext4, Btrfs, and bcachefs probes are not implemented yet.
+Extended MBR chains and backup-GPT recovery are also not
+implemented; unsupported or invalid tables produce warnings without preventing raw access.
+
 ## How far to trust the results
 
 Confidence scores are estimates. Testing on one real damaged volume found:
@@ -139,13 +208,10 @@ its CRC. Bad data inside a file can look perfect from the outside, so test or op
 what matters. Nothing is recovered until it is safely on another disk and you have
 checked it. Some files will not come back.
 
-## Running it
+## Development setup
 
-The app opens on a start screen, and never reopens a disk by itself, because disk numbers
-change on each attach and the same path can be a different disk. Choose the damaged disk
-there. A volume you have opened before is recognised by its UUID, with what was found on it.
-
-You need macOS, Rust and Node.js.
+These instructions build and install Captain Salvage from source. You need macOS, Rust
+and Node.js.
 
 ```sh
 npm install
@@ -159,6 +225,24 @@ open "$HOME/Applications/Captain Salvage.app"
 administrator account. Either replaces the copy already there, and stops if that copy is
 running. To try a build without installing it, open
 `target/release/bundle/macos/Captain Salvage.app`.
+
+### Building Finder support
+
+The optional Finder File Provider extension is included only in a team-signed build with
+provisioning profiles for both the app and extension. Keep the signing key, certificate and
+profiles outside the repository. Set their paths when building and installing:
+
+```sh
+CS_SIGN_KEY=development.key.pem CS_SIGN_CERT=development.cer.pem \
+CS_APP_PROFILE=app.provisionprofile CS_EXT_PROFILE=fileprovider.provisionprofile \
+  npm run app
+npm run install:user
+```
+
+Without these credentials, the app still builds and runs, but does not offer Finder support.
+Use the same signing identity for later builds so macOS and network filters such as Little
+Snitch continue to recognise the app. Installing also removes the separate "Captain Salvage
+Finder" app used by earlier versions.
 
 **First, keep the damaged volume unmounted, and don't run First Aid or `fsck` on it.**
 A repair may be what made your files disappear, and it could overwrite what is left.
@@ -177,17 +261,42 @@ Then open the app, and enter the partition's device, such as `/dev/rdisk4s2`.
 ### Scanning from a terminal
 
 ```sh
-cargo build --release -p salvage-core
-./target/release/salvage-scan /dev/rdisk4s2
+cargo build --release -p captainsalvage
+./target/release/captainsalvage scan /dev/rdisk4s2
 ```
 
 A scan reads the whole partition once, and can stop and resume at any time.
 
+To inspect a disk without choosing a filesystem first:
+
+```sh
+./target/release/captainsalvage disk /path/to/disk.img
+./target/release/captainsalvage disk /path/to/disk.img --scan
+./target/release/captainsalvage disk /path/to/disk.img --scan --offset 1073741824 --length 268435456
+```
+
+The first command prints source information and declared partitions. `--scan` streams JSON
+evidence batches with absolute byte offsets, read failures, and a continuation offset. To
+resume a stopped range, pass that offset and the remaining length. MCP exposes the same
+operations as `captainsalvage_open_raw_disk`, `captainsalvage_discover_raw_disk`,
+`captainsalvage_read_raw_disk`, and `captainsalvage_open_disk_region`.
+
 ### Tests
 
 ```sh
-cargo test -p salvage-core
+cargo test -p captainsalvage
 ```
+
+Treat the existing tests as a regression contract: record the passing tests before a
+driver change, rerun them afterwards, and check that every previously passing test still
+preserves its expected result. When an interface changes, mechanically migrate the
+function calls without changing the assertions, expected bytes, metadata, errors, or
+recovery outcomes. Fix regressions in the implementation rather than weakening the tests.
+Add separate tests for new interfaces, malformed metadata, recovery boundaries, and
+read-only source preservation. Existing tests establish compatibility; independent
+readers and the driver's filesystem-oracle gates also check whether new interpretations
+and writes are correct. Missing fixtures or unavailable oracle gates must be reported,
+not counted as passing or bypassed by changing tests.
 
 ### Screenshots
 
@@ -200,32 +309,16 @@ image before committing it, because bytes and chat answers can still hold names.
 This legacy script uses the existing recovery session: do not use it with a private
 or damaged disk. For synthetic-only manual captures, see [media/README.md](media/README.md).
 
-## Showing a canvas in Finder
+## Showing Disk Rebuilds in Finder
 
-A canvas in the Rebuild tab of the right panel can appear in Finder as a folder, with the
-rebuilt tree inside. It is read only: folders are listed and files are read through the app's
-private port, straight from the map, and nothing done in Finder reaches the disk. The app must
-be open on that disk for Finder to read it.
+A Disk Rebuild from the Rebuild tab can appear in Finder as a folder containing its rebuilt
+tree. It is read-only: folders are listed and files are read through the open app, straight
+from the map, and nothing done in Finder reaches the damaged disk. The app must stay open on
+that disk while Finder reads it. This feature requires a build with the File Provider extension;
+see [Building Finder support](#building-finder-support).
 
-The File Provider extension that does this is built into `Captain Salvage.app`, with a small
-helper that adds and removes the Finder locations. macOS only runs such an extension when the
-app is signed by the team, with provisioning profiles for the app and the extension, so a build
-includes it only when the key and profiles are given. They stay outside the repo:
-
-```sh
-CS_SIGN_KEY=development.key.pem CS_SIGN_CERT=development.cer.pem \
-CS_APP_PROFILE=app.provisionprofile CS_EXT_PROFILE=fileprovider.provisionprofile \
-  npm run app
-npm run install:user
-```
-
-Without them the app builds and runs as before, without Show in Finder. The signed app keeps
-the same signature from build to build, so a network filter's rule for it, such as Little
-Snitch's, keeps working. Installing removes the separate "Captain Salvage Finder" app that
-earlier versions used, which had the same identifier.
-
-The first time, turn the extension on in System Settings, General, Login Items & Extensions,
-File Providers. Then the Rebuild tab shows **Show in Finder**.
+The first time, enable Captain Salvage in System Settings → General → Login Items & Extensions
+→ File Providers. Then the Rebuild tab shows **Show in Finder**.
 
 Finder lets a program write into the folder, but the extension refuses every change, so a file
 saved there stays on this Mac only and is never sent anywhere.
@@ -233,20 +326,21 @@ saved there stays on this Mac only and is never sent anywhere.
 ## Using it from an MCP client
 
 The app runs an MCP server on localhost, protected by a token. Its **Connect** tab shows
-the command that adds it to Claude Code. There are more than 40 tools, covering raw reads,
+the command that adds it to Claude Code. Its server name is `captainsalvage`, and every tool
+starts with `captainsalvage_` so its origin is clear. There are more than 40 tools, covering raw reads,
 FAT chains, pattern search, read-only SQL on the map, format tests, overlays and sandboxed
 scripts.
 
 
 ### Asking an agent from a terminal
 
-`salvage-agent` asks the same agents as the Chat with an agent tab, about the disk open in the app.
-The app must be running.
+`captainsalvage agent` asks the same agents as the Chat with an agent tab, about the disk open
+in the app. The app must be running.
 
 ```sh
-cargo run -p salvage-core --bin salvage-agent -- list
-cargo run -p salvage-core --bin salvage-agent -- models codex
-cargo run -p salvage-core --bin salvage-agent -- ask --agent codex "How many clusters does this volume have?"
+cargo run -p captainsalvage -- agent list
+cargo run -p captainsalvage -- agent models codex
+cargo run -p captainsalvage -- agent ask --agent codex "How many clusters does this volume have?"
 ```
 
 The answer prints as it arrives, each tool the agent uses shows on standard error, and the
@@ -269,32 +363,35 @@ The libraries the app names itself:
 | Library | Version | License | Used by |
 |---|---|---|---|
 | `@tauri-apps/api` | 2.12.4 | Apache-2.0 OR MIT | window |
-| `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
+| `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
-| `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | salvage-core |
-| `flate2` | 1.1.10 | MIT OR Apache-2.0 | salvage-core |
-| `image` | 0.25.10 | MIT OR Apache-2.0 | salvage-core |
-| `libc` | 0.2.191 | MIT OR Apache-2.0 | salvage-core |
+| `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
+| `captainsalvage` | 0.3.0 | MIT | captain-salvage |
+| `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
+| `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
+| `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
 | `objc2` | 0.6.5 | MIT | captain-salvage |
 | `objc2-file-provider` | 0.3.2 | Zlib OR Apache-2.0 OR MIT | captain-salvage |
 | `objc2-foundation` | 0.3.2 | MIT | captain-salvage |
-| `rars` | 0.12.4 | Apache-2.0 | salvage-core |
+| `rars` | 0.12.4 | Apache-2.0 | captainsalvage |
 | `react` | 19.3.1 | MIT | window |
 | `react-dom` | 19.3.1 | MIT | window |
-| `rhai` | 1.27.0 | MIT OR Apache-2.0 | salvage-core |
-| `rusqlite` | 0.41.1 | MIT | salvage-core |
-| `rust-fs-exfat` | 0.1.0 | MIT | salvage-core |
-| `ruzstd` | 0.9.1 | MIT | salvage-core |
-| `salvage-core` | 0.3.0 | MIT | captain-salvage |
-| `serde` | 1.0.229 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
-| `serde_json` | 1.0.154 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
-| `sevenz-rust2` | 0.24.2 | Apache-2.0 | salvage-core |
-| `sha2` | 0.11.1 | MIT OR Apache-2.0 | salvage-core |
-| `tar` | 0.4.46 | MIT OR Apache-2.0 | salvage-core |
+| `rhai` | 1.27.0 | MIT OR Apache-2.0 | captainsalvage |
+| `rusqlite` | 0.41.1 | MIT | captainsalvage |
+| `rust-fs-core` | 0.4.3 | MIT | captainsalvage |
+| `rust-fs-exfat` | 0.1.0 | MIT | captainsalvage |
+| `rust-fs-fat32` | 0.1.0 | MIT | captainsalvage |
+| `rust-fs-ntfs` | 0.11.0 | MIT OR Apache-2.0 | captainsalvage |
+| `ruzstd` | 0.9.1 | MIT | captainsalvage |
+| `serde` | 1.0.229 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
+| `serde_json` | 1.0.154 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
+| `sevenz-rust2` | 0.24.2 | Apache-2.0 | captainsalvage |
+| `sha2` | 0.11.1 | MIT OR Apache-2.0 | captainsalvage |
+| `tar` | 0.4.46 | MIT OR Apache-2.0 | captainsalvage |
 | `tauri` | 2.12.5 | Apache-2.0 OR MIT | captain-salvage |
-| `tiny_http` | 0.12.0 | MIT OR Apache-2.0 | salvage-core |
-| `xz4rust` | 0.2.3 | MIT | salvage-core |
-| `zip` | 9.4.1 | MIT | salvage-core |
+| `tiny_http` | 0.12.0 | MIT OR Apache-2.0 | captainsalvage |
+| `xz4rust` | 0.2.3 | MIT | captainsalvage |
+| `zip` | 9.4.1 | MIT | captainsalvage |
 <!-- dependencies:end -->
 
 Run `python3 scripts/licenses.py write` after changing a dependency, to update this list and
@@ -314,6 +411,64 @@ The window plays common formats by itself. Install [ffmpeg](https://ffmpeg.org) 
 `brew install ffmpeg` and the app finds it and also plays AVI, MKV, MPG, FLV, WMV, WMA and
 others, converting them as they play. It also shows a frame from each video in the grid.
 ffmpeg is optional, is not bundled, and nothing it converts is saved.
+
+## Filesystem driver APIs
+
+Each filesystem driver should provide three complementary APIs:
+
+- **FileAPI** exposes the volume as a normal filesystem: directories, paths, files and
+  file contents. This is the familiar, high-level way to access intact filesystem data.
+- **PrimitiveAPI** exposes the filesystem's low-level structures and primitives. It must
+  support recovery work below the normal file abstraction, including finding and reading
+  candidate data chunks even when metadata or structures are damaged or invalid.
+- **VolumeAPI** exposes the volume itself: volume geometry and metadata, plus volume-relative
+  byte reads and, where the driver and use case permit, writes. It is the layer beneath
+  filesystem interpretation; a read-only recovery driver should not offer a write path.
+
+These layers are related, not interchangeable: FileAPI provides ordinary filesystem
+access, PrimitiveAPI provides format-aware recovery access, and VolumeAPI provides access
+to the underlying volume. Keep the APIs separate so recovery algorithms can use low-level
+primitives without pretending damaged data is a valid file, while ordinary consumers can
+use the filesystem normally.
+
+The shared normal-file adapter at `filesystem::driver::Driver` reads FAT12/16/32,
+exFAT, and NTFS without representing NTFS as a FAT table. Its common geometry
+retains NTFS's full 64-bit serial number. The NTFS driver separately exposes
+read/write FileAPI operations for ordinary filesystem consumers and read-only
+PrimitiveAPI operations for recovery; this app never opens its writable APIs.
+
+### NTFS records on damaged sources
+
+The following tools do not require the NTFS namespace, boot sector, or MFT to be
+intact. First identify a surviving FILE record and the original volume geometry.
+`--record-offset` is relative to the selected volume, which may be a bounded region
+inside a whole-disk image. `--start` and `--length` select that region.
+
+```sh
+captainsalvage filesystem list /path/to/ntfs-partition.img
+captainsalvage filesystem cat /path/to/ntfs-partition.img --name treasure.txt
+captainsalvage filesystem ntfs-record /path/to/damaged.img --record-offset 131072
+captainsalvage filesystem ntfs-stream /path/to/damaged.img \
+  --record-offset 131072 --attribute 2 --cluster-size 4096 > /safe-disk/recovered.bin
+```
+
+The attribute index comes from `ntfs-record`; it is not always 2. Record size and
+fixup sector size default to 1024 and 512 and may be supplied explicitly with
+`--record-size` and `--sector-size`. Never redirect output onto the source disk or
+over an existing file. Binary output can be partial if a later read fails: check
+the command's exit status before treating it as complete.
+
+MCP exposes the same read-only operations as `captainsalvage_inspect_ntfs_record`
+and `captainsalvage_read_ntfs_stream`, using the `diskId` from `open_raw_disk`.
+Resident streams and complete uncompressed, unencrypted mapping pairs can be read
+even from deleted records. Raw evidence and damage diagnostics remain distinct
+from validated structures. Torn records, unresolved attribute-list extents,
+unsupported compression/encryption, and out-of-volume runs are refused rather
+than guessed. Surviving metadata is not proof the clusters have not been reused.
+
+This is record-based NTFS recovery, not yet the full scan/tree/rebuild workflow
+available for FAT and exFAT. The existing raw discovery scanner still identifies
+NTFS boot metadata; it does not yet search for every surviving FILE record.
 
 ## Changelog
 
@@ -551,12 +706,13 @@ On the way to this release, the map changed twice.
 ## Releases
 
 Each version is on the [releases page](https://github.com/antimatter-studios/captainsalvage/releases),
-built and tested by GitHub Actions, with its notes from `CHANGELOG.md`.
+with its notes from `CHANGELOG.md`. No releases currently have app builds attached: the builds
+that were mistakenly published for v0.1.0 and v0.2.0 have been removed. Future app builds will
+be distributed through private storage, since anything attached to GitHub can be downloaded by
+anyone who can read the repository.
 
-Releases after v0.2.0 have no build attached, because the app will be sold and anything on
-GitHub can be downloaded by anyone who can read the repository. Builds will go to private storage.
-To build one yourself, run `python3 scripts/release.py build`. Builds are for Apple Silicon and are
-not signed yet, so macOS asks you to approve the app the first time.
+To build the app yourself, run `python3 scripts/release.py build`. Builds are for Apple Silicon
+and are not signed yet, so macOS asks you to approve the app the first time.
 
 **Version numbers** follow what was merged since the last release:
 

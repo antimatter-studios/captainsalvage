@@ -212,7 +212,7 @@ function KnownLine({ known }: { known: KnownVolume }) {
   );
 }
 
-function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: string) => void }) {
+function VolumeRow({ volume, onOpen, onRaw }: { volume: StartupVolume; onOpen: (path: string) => void; onRaw: (path: string) => void }) {
   const block = volume.device.replace("/dev/rdisk", "/dev/disk");
   const title = volume.name || t("Unnamed volume");
   const ready = volume.canOpen && !volume.mountPoint && volume.readable;
@@ -225,16 +225,20 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
         </div>
         {ready && <button className="primary" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
       </div>
+      <div className="raw-entry-actions">
+        <button onClick={() => onRaw(volume.device)}>{t("Inspect raw partition")}</button>
+        <button onClick={() => onRaw(volume.wholeDisk)}>{t("Inspect whole disk")}</button>
+      </div>
       {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && <p className="start-new">{t("Not seen before.")}</p>}
       {volume.uuid && <MountBlockToggle uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
-      {!volume.canOpen && <p className="start-new">{t("Captain Salvage reads exFAT for now.")}</p>}
-      {volume.canOpen && volume.mountPoint && (
+      {!volume.canOpen && <p className="start-new">{t("Filesystem recovery supports exFAT and FAT12/16/32. Other formats can be inspected as raw bytes.")}</p>}
+      {volume.mountPoint && (
         <div className="start-caution">
           <p>{t("It is mounted, so macOS may be writing to it. Unmounting stops that, but writes a little itself. It has to be unmounted before it can be opened here.")}</p>
           <Command text={`diskutil unmount ${block}`} />
         </div>
       )}
-      {volume.canOpen && !volume.mountPoint && !volume.readable && (
+      {!volume.mountPoint && !volume.readable && (
         <div className="start-needs">
           <p>{t("Reading it needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.")}</p>
           <Command text={`sudo chgrp staff ${volume.device} ${volume.wholeDisk}`} />
@@ -245,10 +249,11 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
 }
 
 /** The first thing a person sees: choose the damaged disk, and see what is known about it. */
-export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }: {
+export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSwitch }: {
   imagePath: string;
   failure: string | null;
   onOpen: (path: string) => void;
+  onRaw: (path: string) => void;
   onBack?: () => void;
   themeSwitch: ReactNode;
 }) {
@@ -300,7 +305,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
       </section>
 
       <section className="start-panel">
-        <div className="start-panel-top" data-tauri-drag-region>
+        <div className="start-panel-top raw-entry-navigation" data-tauri-drag-region>
           {onBack && <button onClick={onBack}>{t("Back to the open disk")}</button>}
           <div className="start-spacer" data-tauri-drag-region />
           {themeSwitch}
@@ -317,7 +322,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
 
         {volumes.length > 0 ? (
           <ul className="start-volumes">
-            {volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} />)}
+            {volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} onRaw={onRaw} />)}
           </ul>
         ) : (
           !looking && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
@@ -347,7 +352,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
 
         <section className="start-image">
           <h3>{t("Or open a disk image")}</h3>
-          <p>{t("A raw image of an exFAT partition, or a device by its path.")}</p>
+          <p>{t("Open a supported filesystem, or inspect any raw disk or partition image without choosing a format.")}</p>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -358,6 +363,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
             <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>{t("Choose a file")}</button>
             <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>{t("Open")}</button>
           </form>
+          <div className="raw-entry-actions"><button type="button" disabled={!path.trim()} onClick={() => onRaw(path.trim())}>{t("Inspect raw disk or image")}</button></div>
         </section>
 
         {report && volumes.length === 0 && (

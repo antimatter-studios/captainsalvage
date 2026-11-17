@@ -29,7 +29,7 @@
       <li><a href="#browse">Browse files: grid and list</a></li>
       <li><a href="#selected">Selected and file preview</a></li>
       <li><a href="#archives">Inside archive</a></li>
-      <li><a href="#rebuild">Rebuild: the folder canvas</a></li>
+      <li><a href="#rebuild">Rebuild: Disk Rebuilds</a></li>
       <li><a href="#agent">Chat with an agent</a></li>
       <li><a href="#treasure">Treasure list and copying</a></li>
       <li><a href="#report">Copy report</a></li>
@@ -52,8 +52,8 @@
       disk. Captain Salvage reads the source, but macOS and other programs can still
       write to a mounted volume. A read-only recovery app does not make a mounted disk safe.</p>
     <ul>
-      <li>Use an exFAT partition or a raw image of one. An image of an entire physical
-        disk with a partition table is not the same thing as an exFAT partition image.</li>
+      <li>Use an exFAT or FAT12/16/32 partition, or a raw image of one. An image of an entire physical
+        disk with a partition table is not the same thing as a raw filesystem partition image.</li>
       <li>If you have a suitable image, work on it rather than repeatedly reading an
         unreliable original. Keep another healthy disk available for recovered files.</li>
       <li>Check the source's identity and the destination before opening or copying.
@@ -215,18 +215,18 @@
       Return to Browse files to select a different archive.</p>
   </section>
   <section id="rebuild">
-    <h2>9. Rebuild: the folder canvas</h2>
-    <figure><a href="../../media/manual/08-rebuild.png"><img src="../../media/manual/08-rebuild.png" alt="Rebuild tab with a named canvas and synthetic folder pieces arranged for recovery."></a><figcaption>A canvas is your proposed output tree, separate from the source filesystem.</figcaption></figure>
-    <p>Open <strong>Rebuild</strong> in Details. Create or select a named canvas, then
+    <h2>9. Rebuild: Disk Rebuilds</h2>
+    <figure><a href="../../media/manual/08-rebuild.png"><img src="../../media/manual/08-rebuild.png" alt="Rebuild tab with a named Disk Rebuild and synthetic folder pieces arranged for recovery."></a><figcaption>A Disk Rebuild is your proposed output tree, separate from the source filesystem.</figcaption></figure>
+    <p>Open <strong>Rebuild</strong> in Details. Create or select a named Disk Rebuild, then
       drag lost folder pieces from the sidebar or files from Browse files into it.
       The drop choices distinguish placing a piece inside a folder from merging its
       contents with that folder. Expand the rebuilt tree to check the result.</p>
     <p>Use a folder's available rename and organisation controls to describe the
       intended tree. Suggestions can help relate similar pieces; review them rather
-      than assuming a match proves the original relationship. Removing a canvas item
+      than assuming a match proves the original relationship. Removing an item from a Disk Rebuild
       removes that arrangement, not source data.</p>
-    <p>Use the canvas copy controls to review and copy the rebuilt tree to a healthy
-      destination. Where available, showing a canvas in Finder exposes a read-only
+    <p>Use the Disk Rebuild copy controls to review and copy the rebuilt tree to a healthy
+      destination. Where available, showing a Disk Rebuild in Finder exposes a read-only
       view through the running app. Finder still needs the app and source available;
       the view is not a substitute for an independent recovered copy.</p>
   </section>
@@ -397,7 +397,7 @@
     <dl>
       <dt>The disk is not listed</dt><dd>Check the connection, refresh the start screen,
         and use Show internal disks only if appropriate. Do not guess a device path.
-        For an image, verify it is a raw exFAT partition image.</dd>
+        For an image, verify it is a raw exFAT or FAT12/16/32 partition image.</dd>
       <dt>Permission denied</dt><dd>Follow the app's disk-access instructions. Do not
         bypass a safety refusal by selecting a different path to the same source.</dd>
       <dt>A disk disconnects</dt><dd>Stop and address the hardware connection. Do not

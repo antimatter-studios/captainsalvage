@@ -1,0 +1,521 @@
+use crate::filesystem::probe::{self, Evidence};
+use crate::source::{BlockSource, ReadStats};
+use anyhow::{ensure, Context, Result};
+use fs_core::BlockRead;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+pub const DISCOVERY_BATCH_BYTES: u64 = 16 * 1024 * 1024;
+const SCAN_CHUNK_BYTES: u64 = 64 * 1024;
+const IO_ALIGNMENT: u64 = 4096;
+const LOOKAHEAD_BYTES: u64 = 1024;
+const MAX_EVIDENCE: usize = 256;
+static NEXT_DISK_ID: AtomicU64 = AtomicU64::new(1);
+
+struct DiskFile {
+    device: fs_core::FileDevice,
+    bytes: AtomicU64,
+    operations: AtomicU64,
+    errors: AtomicU64,
+    gone: AtomicBool,
+}
+
+impl BlockSource for DiskFile {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
+        if self.is_gone() {
+            return Err(io::Error::from_raw_os_error(libc::ENXIO));
+        }
+        let size = self.device.size_bytes();
+        let end = offset
+            .checked_add(buffer.len() as u64)
+            .filter(|end| *end <= size)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "read outside disk"))?;
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        let aligned_start = offset / IO_ALIGNMENT * IO_ALIGNMENT;
+        let aligned_end = end
+            .div_ceil(IO_ALIGNMENT)
+            .saturating_mul(IO_ALIGNMENT)
+            .min(size);
+        let mut aligned = vec![0; (aligned_end - aligned_start) as usize];
+        let result =
+            self.device
+                .read_at(aligned_start, &mut aligned)
+                .map_err(|error| match error {
+                    fs_core::Error::Io(error) => error,
+                    error => io::Error::other(error),
+                });
+        self.operations.fetch_add(1, Ordering::Relaxed);
+        match &result {
+            Ok(()) => {
+                let skip = (offset - aligned_start) as usize;
+                buffer.copy_from_slice(&aligned[skip..skip + buffer.len()]);
+                self.bytes.fetch_add(buffer.len() as u64, Ordering::Relaxed);
+            }
+            Err(error) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                if crate::source::means_device_gone(error) {
+                    self.gone.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        result
+    }
+
+    fn read_stats(&self) -> ReadStats {
+        ReadStats {
+            bytes: self.bytes.load(Ordering::Relaxed),
+            operations: self.operations.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+        }
+    }
+
+    fn is_gone(&self) -> bool {
+        self.gone.load(Ordering::Relaxed)
+    }
+}
+
+pub struct RegionSource {
+    source: Arc<dyn BlockSource>,
+    start: u64,
+    length: u64,
+    prefix: Vec<u8>,
+}
+
+impl RegionSource {
+    pub fn new(
+        source: Arc<dyn BlockSource>,
+        disk_length: u64,
+        start: u64,
+        length: u64,
+    ) -> Result<Self> {
+        ensure!(length > 0, "a region must not be empty");
+        ensure!(
+            start
+                .checked_add(length)
+                .is_some_and(|end| end <= disk_length),
+            "region is outside the raw source"
+        );
+        Ok(Self {
+            source,
+            start,
+            length,
+            prefix: Vec::new(),
+        })
+    }
+}
+
+impl BlockSource for RegionSource {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
+        let end = offset
+            .checked_add(buffer.len() as u64)
+            .filter(|end| *end <= self.length)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "read outside interpretation")
+            })?;
+        if self.is_gone() {
+            return Err(io::Error::from_raw_os_error(libc::ENXIO));
+        }
+        let prefix_end = end.min(self.prefix.len() as u64);
+        let copied = prefix_end.saturating_sub(offset) as usize;
+        if copied > 0 {
+            buffer[..copied].copy_from_slice(&self.prefix[offset as usize..prefix_end as usize]);
+        }
+        if copied < buffer.len() {
+            self.source
+                .read_exact_at(self.start + offset + copied as u64, &mut buffer[copied..])?;
+        }
+        Ok(())
+    }
+
+    fn read_stats(&self) -> ReadStats {
+        self.source.read_stats()
+    }
+    fn is_gone(&self) -> bool {
+        self.source.is_gone()
+    }
+    fn simulate_disconnect(&self) {
+        self.source.simulate_disconnect();
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskRegion {
+    pub start: u64,
+    pub length: u64,
+    pub format: String,
+    pub label: String,
+    pub boot_offset: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Partition {
+    pub start: u64,
+    pub length: u64,
+    pub label: String,
+    pub table: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskOverview {
+    pub id: String,
+    pub path: PathBuf,
+    pub length: u64,
+    pub partitions: Vec<Partition>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFailure {
+    pub offset: u64,
+    pub length: u64,
+    pub error: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryBatch {
+    pub findings: Vec<Evidence>,
+    pub errors: Vec<ReadFailure>,
+    pub next_offset: u64,
+    pub evidence_limit_reached: bool,
+}
+
+pub struct RawDisk {
+    pub id: String,
+    pub path: PathBuf,
+    pub length: u64,
+    pub source: Arc<dyn BlockSource>,
+    pub(crate) scan_tokens: Mutex<HashMap<String, String>>,
+}
+
+impl RawDisk {
+    pub fn open(path: &Path) -> Result<Self> {
+        let device = fs_core::FileDevice::open(path)
+            .with_context(|| format!("opening {} read-only", path.display()))?;
+        let length = device.size_bytes();
+        let source = Arc::new(DiskFile {
+            device,
+            bytes: AtomicU64::new(0),
+            operations: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+            gone: AtomicBool::new(false),
+        });
+        Self::with_source(path, source, length)
+    }
+
+    pub fn with_source(path: &Path, source: Arc<dyn BlockSource>, length: u64) -> Result<Self> {
+        ensure!(length > 0, "raw source is empty");
+        Ok(Self {
+            id: NEXT_DISK_ID.fetch_add(1, Ordering::Relaxed).to_string(),
+            path: path.into(),
+            source,
+            length,
+            scan_tokens: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub fn overview(&self) -> DiskOverview {
+        let mut warnings = Vec::new();
+        let partitions = self.partitions(&mut warnings).unwrap_or_else(|error| {
+            warnings.push(format!(
+                "Partition table unreadable: {error:#}. Raw access remains available."
+            ));
+            Vec::new()
+        });
+        DiskOverview {
+            id: self.id.clone(),
+            path: self.path.clone(),
+            length: self.length,
+            partitions,
+            warnings,
+        }
+    }
+
+    pub fn read(&self, offset: u64, length: u64) -> Result<Vec<u8>> {
+        ensure!(
+            length <= DISCOVERY_BATCH_BYTES,
+            "raw read exceeds 16 MiB limit"
+        );
+        ensure!(
+            offset
+                .checked_add(length)
+                .is_some_and(|end| end <= self.length),
+            "raw read is outside source"
+        );
+        let mut bytes = vec![0; length as usize];
+        self.source.read_exact_at(offset, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    pub fn discover(&self, offset: u64, length: u64) -> Result<DiscoveryBatch> {
+        ensure!(
+            length > 0 && length <= DISCOVERY_BATCH_BYTES,
+            "discovery batch must be 1 byte to 16 MiB"
+        );
+        let end = offset
+            .checked_add(length)
+            .filter(|end| *end <= self.length)
+            .context("scan is outside raw source")?;
+        let mut result = DiscoveryBatch {
+            findings: Vec::new(),
+            errors: Vec::new(),
+            next_offset: offset,
+            evidence_limit_reached: false,
+        };
+        let mut position = offset;
+        while position < end {
+            ensure!(
+                !self.source.is_gone(),
+                "The disk has been disconnected; discovery stopped."
+            );
+            let next = position.saturating_add(SCAN_CHUNK_BYTES).min(end);
+            let read_end = next.saturating_add(LOOKAHEAD_BYTES).min(self.length);
+            match self.read(position, read_end - position) {
+                Ok(data) => {
+                    let mut at = position.div_ceil(32) * 32;
+                    while at < next {
+                        result
+                            .findings
+                            .extend(probe::inspect(&data[(at - position) as usize..], at));
+                        if result.findings.len() >= MAX_EVIDENCE {
+                            result.next_offset = (at + 32).min(end);
+                            result.evidence_limit_reached = true;
+                            return Ok(result);
+                        }
+                        at += 32;
+                    }
+                }
+                Err(error) => {
+                    ensure!(
+                        !self.source.is_gone(),
+                        "The disk has been disconnected; discovery stopped."
+                    );
+                    result.errors.push(ReadFailure {
+                        offset: position,
+                        length: next - position,
+                        error: format!("{error:#}"),
+                    });
+                }
+            }
+            position = next;
+            result.next_offset = position;
+        }
+        Ok(result)
+    }
+
+    pub fn interpretation(&self, region: &DiskRegion) -> Result<Arc<dyn BlockSource>> {
+        let mut source = RegionSource::new(
+            self.source.clone(),
+            self.length,
+            region.start,
+            region.length,
+        )?;
+        ensure!(
+            region.label.len() <= 512,
+            "interpretation label exceeds 512 bytes"
+        );
+        let end = region.start + region.length;
+        ensure!(
+            region.boot_offset >= region.start
+                && region
+                    .boot_offset
+                    .checked_add(512)
+                    .is_some_and(|boot_end| boot_end <= end),
+            "boot evidence is outside selected region"
+        );
+        if region.boot_offset != region.start {
+            ensure!(
+                region.format.eq_ignore_ascii_case("exfat"),
+                "alternate boot regions currently require exFAT"
+            );
+            let boot_bytes = self.read(region.boot_offset, 512)?;
+            let boot = fs_exfat::boot::BootSector::parse(&boot_bytes)?;
+            let boot_region_length = 12 * boot.bytes_per_sector();
+            ensure!(
+                region.start.checked_add(boot_region_length) == Some(region.boot_offset),
+                "exFAT backup boot must be 12 sectors after the selected start"
+            );
+            ensure!(
+                region
+                    .boot_offset
+                    .checked_add(boot_region_length)
+                    .is_some_and(|boot_end| boot_end <= end),
+                "backup boot region exceeds interpretation"
+            );
+            source.prefix = self.read(region.boot_offset, boot_region_length)?;
+        }
+        let mut boot = [0; 512];
+        source.read_exact_at(0, &mut boot)?;
+        let detected = crate::filesystem::FilesystemKind::detect_boot_sector(&boot)?;
+        ensure!(
+            detected.to_string().eq_ignore_ascii_case(&region.format),
+            "selected {} interpretation does not match the available {} boot metadata",
+            region.format,
+            detected
+        );
+        ensure!(
+            detected != crate::filesystem::FilesystemKind::Ntfs,
+            "NTFS is recognised, but its recovery driver is not integrated"
+        );
+        Ok(Arc::new(source))
+    }
+
+    fn partitions(&self, warnings: &mut Vec<String>) -> Result<Vec<Partition>> {
+        if self.length < 512 {
+            return Ok(Vec::new());
+        }
+        let mbr = self.read(0, 512)?;
+        for sector in [512, 4096] {
+            if self.length < sector + 92 {
+                continue;
+            }
+            let header = self.read(sector, 92)?;
+            if &header[..8] == b"EFI PART" {
+                return self.gpt_partitions(sector, warnings);
+            }
+        }
+        let mut found = Vec::new();
+        if mbr[510..512] != [0x55, 0xaa] {
+            return Ok(found);
+        }
+        for entry in mbr[446..510].chunks_exact(16) {
+            let kind = entry[4];
+            if kind == 0 {
+                continue;
+            }
+            if matches!(kind, 0x05 | 0x0f | 0x85 | 0xee) {
+                warnings.push(format!("MBR entry type {kind:02x} requires extended/backup table discovery; it is not treated as empty."));
+                continue;
+            }
+            let start = u64::from(u32::from_le_bytes(entry[8..12].try_into().unwrap())) * 512;
+            let length = u64::from(u32::from_le_bytes(entry[12..16].try_into().unwrap())) * 512;
+            self.add_partition(
+                &mut found,
+                warnings,
+                start,
+                length,
+                format!("MBR type {kind:02x}"),
+                "MBR",
+            );
+        }
+        Ok(found)
+    }
+
+    fn gpt_partitions(&self, sector: u64, warnings: &mut Vec<String>) -> Result<Vec<Partition>> {
+        let header = self.read(sector, sector)?;
+        let size = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+        ensure!(
+            (92..=sector as usize).contains(&size),
+            "invalid GPT header size"
+        );
+        let mut checked = header[..size].to_vec();
+        checked[16..20].fill(0);
+        ensure!(
+            crc32(&checked) == u32::from_le_bytes(header[16..20].try_into().unwrap()),
+            "GPT header checksum mismatch"
+        );
+        let lba = u64::from_le_bytes(header[72..80].try_into().unwrap());
+        let count = u32::from_le_bytes(header[80..84].try_into().unwrap());
+        let entry_size = u32::from_le_bytes(header[84..88].try_into().unwrap());
+        ensure!(
+            entry_size >= 128 && entry_size.is_multiple_of(128),
+            "invalid GPT entry size"
+        );
+        let length = u64::from(count)
+            .checked_mul(u64::from(entry_size))
+            .context("GPT entry size overflow")?;
+        let entries = self.read(
+            lba.checked_mul(sector)
+                .context("GPT table offset overflow")?,
+            length,
+        )?;
+        ensure!(
+            crc32(&entries) == u32::from_le_bytes(header[88..92].try_into().unwrap()),
+            "GPT table checksum mismatch"
+        );
+        let mut found = Vec::new();
+        for entry in entries.chunks_exact(entry_size as usize) {
+            if entry[..16].iter().all(|byte| *byte == 0) {
+                continue;
+            }
+            let first = u64::from_le_bytes(entry[32..40].try_into().unwrap());
+            let last = u64::from_le_bytes(entry[40..48].try_into().unwrap());
+            let start = first
+                .checked_mul(sector)
+                .context("GPT partition offset overflow")?;
+            let length = last
+                .checked_sub(first)
+                .and_then(|value| value.checked_add(1))
+                .and_then(|value| value.checked_mul(sector));
+            let Some(length) = length else {
+                warnings.push("Invalid GPT partition extent ignored.".into());
+                continue;
+            };
+            let units: Vec<u16> = entry[56..128]
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes(pair.try_into().unwrap()))
+                .take_while(|unit| *unit != 0)
+                .collect();
+            self.add_partition(
+                &mut found,
+                warnings,
+                start,
+                length,
+                String::from_utf16_lossy(&units),
+                "GPT",
+            );
+        }
+        Ok(found)
+    }
+
+    fn add_partition(
+        &self,
+        found: &mut Vec<Partition>,
+        warnings: &mut Vec<String>,
+        start: u64,
+        length: u64,
+        label: String,
+        table: &str,
+    ) {
+        if length == 0
+            || start
+                .checked_add(length)
+                .is_none_or(|end| end > self.length)
+        {
+            warnings.push(format!(
+                "{table} entry has an invalid or out-of-source extent."
+            ));
+        } else {
+            found.push(Partition {
+                start,
+                length,
+                label,
+                table: table.into(),
+            });
+        }
+    }
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut checksum = u32::MAX;
+    for byte in bytes {
+        checksum ^= u32::from(*byte);
+        for _ in 0..8 {
+            checksum = (checksum >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(checksum & 1));
+        }
+    }
+    !checksum
+}
+
+#[cfg(test)]
+mod tests;
