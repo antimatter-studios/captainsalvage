@@ -49,7 +49,10 @@ pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `
 ### Release candidates, before the release pull request merges
 
 With the release branch `release/vX.Y.Z` checked out, pushed and clean, `scripts/create-release --rc`
-tags `vX.Y.Z-rc1`, then `-rc2` after more commits, and so on. A candidate lets the version be built
+tags `vX.Y.Z-rc1`, then `-rc2` after more commits, and so on. The branch may also be
+`integration/rc-vX.Y.Z`, which collects several open pull requests so they can be tried together
+before any of them merges: its `VERSION` is plain `X.Y.Z` and its head is pushed, and the candidate is
+cut from it the same way, in one command. A candidate lets the version be built
 and installed here under a real number and a real tag, before anything merges. Add `--build`, or
 `--install` to install it for this user too, to do that in a scratch worktree at the tag.
 

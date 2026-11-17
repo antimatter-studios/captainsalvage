@@ -332,6 +332,34 @@ check "building leaves it clean" "$(git status --porcelain | wc -l | tr -d ' ')"
 # Candidates are not releases: they do not move the next version, on or off main.
 
 
+# An integration branch, integration/rc-vX.Y.Z, collects several pull requests for a candidate.
+# VERSION is plain X.Y.Z on it and its head is pushed, so it is cut like a release branch.
+start
+merged "feat: a new thing (#2)" new-thing
+run --contents-approved >/dev/null
+git switch -q -c integration/rc-v0.2.0
+integration_head="$(git rev-parse HEAD)"
+git push -q origin integration/rc-v0.2.0
+check "an integration branch is a branch to cut from" "$(run --rc --dry-run)" 0
+check "its dry run names the tag" "$(said 'would tag v0.2.0-rc1')" 1
+check "an integration candidate works" "$(run --rc)" 0
+check "it is rc.1" "$(git ls-remote origin 'refs/tags/v0.2.0-rc1' | wc -l | tr -d ' ')" 1
+check "its commit follows the integration head" "$(git rev-parse 'v0.2.0-rc1^')" "$integration_head"
+check "it says the candidate" "$(git show v0.2.0-rc1:VERSION)" 0.2.0-rc1
+check "the integration branch still says the release" "$(cat VERSION)" 0.2.0
+check "the checkout stays on the integration branch" "$(git symbolic-ref --short HEAD)" integration/rc-v0.2.0
+check "the integration branch on origin did not move" "$(git rev-parse origin/integration/rc-v0.2.0)" "$integration_head"
+check "it tags the candidate of the version in the branch name" "$(git ls-remote --refs origin 'refs/tags/v0.2.0-rc*' | wc -l | tr -d ' ')" 1
+# Only the exact name is a release branch: a look-alike is refused, and nothing is tagged.
+git switch -q -c integration/rc-0.2.0
+git push -q origin integration/rc-0.2.0
+check "a look-alike integration branch is refused" "$(run --rc)" 1
+check "it says what a release branch is" "$(said 'integration/rc-vX.Y.Z')" 1
+git switch -q -c integration/rc-v0.2
+git push -q origin integration/rc-v0.2
+check "an integration branch without a full version is refused" "$(run --rc)" 1
+check "neither made a candidate" "$(git ls-remote --refs origin 'refs/tags/v0.2.0-rc*' | wc -l | tr -d ' ')" 1
+
 # Candidates are not releases: they do not move the next version, on or off main.
 start
 merged "feat: a new thing (#2)" new-thing
