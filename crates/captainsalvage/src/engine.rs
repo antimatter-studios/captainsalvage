@@ -314,6 +314,22 @@ impl Engine {
         Ok(session)
     }
 
+    fn open_region(
+        &self,
+        disk: &Arc<crate::disk::RawDisk>,
+        region: crate::disk::DiskRegion,
+    ) -> Result<Value> {
+        let session = Session::open_region(disk, region)?;
+        let mut overview = session.overview();
+        overview["filesystem"] = serde_json::to_value(&session.volume.filesystem)?;
+        self.set_session(session);
+        self.emit(
+            "volume-opened",
+            json!({"path": disk.path, "interpretation": true}),
+        );
+        Ok(overview)
+    }
+
     pub fn set_session(&self, session: Arc<Session>) {
         if let Ok(mut slot) = self.session.write() {
             *slot = Some(session);
@@ -496,15 +512,20 @@ impl Engine {
                         .into(),
                     boot_offset: u64_of(args, "bootOffset").unwrap_or(start),
                 };
-                let session = Session::open_region(&disk, region)?;
-                let mut overview = session.overview();
-                overview["filesystem"] = serde_json::to_value(&session.volume.filesystem)?;
-                self.set_session(session);
-                self.emit(
-                    "volume-opened",
-                    json!({"path": disk.path, "interpretation": true}),
-                );
-                Ok(overview)
+                self.open_region(&disk, region)
+            }
+            "open_hypothesis" => {
+                let disk = self.raw_disk(args)?;
+                let hypothesis = crate::hypotheses::HypothesisStore::for_user()?
+                    .get(&disk, need_str(args, "id")?)?;
+                let region = crate::disk::DiskRegion {
+                    start: hypothesis.start,
+                    length: hypothesis.length,
+                    format: hypothesis.format.clone(),
+                    label: hypothesis.label.clone(),
+                    boot_offset: hypothesis.boot_offset.unwrap_or(hypothesis.start),
+                };
+                self.open_region(&disk, region)
             }
             "disk_access" => {
                 let path = match str_of(args, "path") {
