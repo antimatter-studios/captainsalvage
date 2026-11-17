@@ -2,3 +2,9 @@
 .recovery-table.source-summary td:first-child { width: auto; white-space: nowrap; }
 .raw-entry-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .raw-entry-navigation { flex-wrap: wrap; }
+.format-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 7px 8px; }
+.format-filter button { font-size: 11px; padding: 2px 8px; }
+.format-filter button[aria-pressed="true"] { background: var(--selection); color: var(--on-selection); }
+.inspected .status { font-weight: 600; }
+.inspected .status[data-status="decodable"] { color: var(--accent); }
+.inspected .status[data-status="needs-metadata"] { color: var(--chart-caution); }

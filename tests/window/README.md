@@ -34,6 +34,11 @@ database and app home never use real disks or the user's application data.
 checks that the window never stalls, that the evidence list stays one page long, and that "Show
 more" adds a page. `scripts/bench-raw-disk-map.mjs` times the same load without a window.
 
+`raw_disk_lanes_test.py` scans a synthetic 24 MiB image with three partitions, NTFS and exFAT
+evidence and a dense run of findings, and checks the map's bands and lanes, the format counts, the
+inspector for a picked band and a picked lane, the magnified second graph and the format filter.
+It needs `jigsaw.img` and saves `raw-lanes.png` here.
+
 `device_picker_test.py` gives the start screen a made-up list of disks through
 `SALVAGE_TEST_STARTUP_DISKS` (a JSON file in the shape `startup_disks` returns, honoured only
 while `SALVAGE_TEST_UI` is set), so no real disk is listed. Its "devices" are synthetic images:
