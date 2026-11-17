@@ -1082,6 +1082,20 @@ const strings: Record<string, string> = {
   "No filesystem is needed. Choose a whole disk, even when its partition table is damaged or missing, or one partition on it. The map shows exactly the bytes you choose.": "Es ist kein Dateisystem nötig. Wählen Sie einen ganzen Datenträger, auch bei beschädigter oder fehlender Partitionstabelle, oder eine Partition darauf. Die Karte zeigt genau die gewählten Bytes.",
   "Reading these needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.": "Zum Lesen ist Ihre Erlaubnis nötig. Führen Sie dies im Terminal aus. Es gibt nur Lesezugriff und gilt, bis der Datenträger neu angeschlossen wird.",
   "Whole disk, {bytes}": "Gesamter Datenträger, {bytes}",
+  "A partition the table declares. Its filesystem has not been checked.": "Eine Partition, die die Tabelle angibt. Ihr Dateisystem wurde nicht geprüft.",
+  "Byte range": "Bytebereich",
+  "Declared by the {table} partition table": "Von der {table}-Partitionstabelle angegeben",
+  "Declared partition": "Eingetragene Partition",
+  "Decodable": "Dekodierbar",
+  "Needs related metadata": "Benötigt zugehörige Metadaten",
+  "Only a fragment. Its volume's boot or related metadata is needed before its files can be placed.": "Nur ein Fragment. Die Boot- oder zugehörigen Metadaten seines Volumes werden benötigt, bevor sich seine Dateien zuordnen lassen.",
+  "Pick a partition band or a finding on the map, or in the list, to see what it is.": "Wählen Sie auf der Karte oder in der Liste ein Partitionsband oder einen Fund, um zu sehen, was es ist.",
+  "Possible volume": "Mögliches Volume",
+  "Recognised": "Erkannt",
+  "Selected item": "Ausgewähltes Element",
+  "Status": "Status",
+  "The metadata needed to try opening it as a filesystem is present.": "Die Metadaten, die zum Versuch nötig sind, es als Dateisystem zu öffnen, sind vorhanden.",
+  "The structure is recognised, but this app cannot decode it.": "Die Struktur wird erkannt, aber diese App kann sie nicht dekodieren.",
 };
 
 export default strings;

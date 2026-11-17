@@ -3,8 +3,8 @@ import { call } from "../api";
 import { bytes, count, decimal, duration } from "../format";
 import { fromEngine, t } from "../i18n";
 import { useSimple } from "../mode";
-import { legendFor, type LegendItem, type Rgb } from "../palette";
-import { SOURCE_FORMATS, applyScanBatch, scanEstimate, sourceMap, type SourceLayer, type DiscoveryBatch, type DiskEvidence, type DiskRegion, type RawDiskState, type SavedScans, type ScanSnapshot } from "../rawDisk";
+import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
+import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type DiskRegion, type EvidenceStatus, type RawDiskState, type SavedScans, type ScanSnapshot } from "../rawDisk";
 import { Icon } from "./icons";
 import { Strip, type StripSource } from "./Strips";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
@@ -12,6 +12,12 @@ import "./RawDiskView.css";
 
 const MAX_FINDINGS = 2000;
 const FINDINGS_PAGE_SIZE = 100;
+/** Each row of the map is this tall, so the partition bands (several rows) read broad and each lane thin. */
+const ROW_PIXELS = 9;
+const MAGNIFIED_ROW_PIXELS = 18;
+/** A click this close to a finding, in strip pixels, picks it. */
+const PICK_PIXELS = 3;
+const STRIP_PIXELS = 1200;
 export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, onCenter, controls, leftHandle, rightHandle }: {
   disk: RawDiskState;
   onUpdate: (disk: RawDiskState) => void;
@@ -39,7 +45,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
   const stop = useRef(false);
   const mounted = useRef(true);
   const [selected, setSelected] = useState("source");
-  const [layer, setLayer] = useState<SourceLayer>("evidence");
+  const [filter, setFilter] = useState<string | null>(null);
   const [inspector, setInspector] = useState<"selected" | "volume">("selected");
   const [visibleFindings, setVisibleFindings] = useState(FINDINGS_PAGE_SIZE);
   const [visibleErrors, setVisibleErrors] = useState(FINDINGS_PAGE_SIZE);
@@ -53,6 +59,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     return () => { mounted.current = false; stop.current = true; };
   }, [disk.id]);
 
+  const busy = running || opening;
   const first = Number(start);
   const size = Number(length);
   const boot = Number(bootOffset);
@@ -67,6 +74,12 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     setHex(null);
     setSelected(key);
     setInspector("selected");
+  }
+
+  function selectPartition(index: number) {
+    const partition = disk.partitions[index];
+    selectRange(partition.start, partition.length, `partition:${index}`);
+    setLabel(partition.label);
   }
 
   function selectEvidence(evidence: DiskEvidence) {
@@ -152,7 +165,9 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     }
   }
 
-  const formats = [...new Set(disk.findings.map((item) => item.format))];
+  const summary = useMemo(() => evidenceSummary(disk.findings), [disk.findings]);
+  const shown = useMemo(() => filter === null ? disk.findings : disk.findings.filter((item) => item.format === filter), [disk.findings, filter]);
+  const lanes = useMemo(() => summary.map((item) => item.format), [summary]);
   const complete = disk.nextOffset !== null && disk.scanEnd !== null && disk.nextOffset >= disk.scanEnd;
   const fraction = disk.nextOffset !== null && disk.scanStart !== null && disk.scanEnd !== null
     ? (disk.nextOffset - disk.scanStart) / Math.max(1, disk.scanEnd - disk.scanStart) : 0;
@@ -163,22 +178,26 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
   const mapSource = useMemo<StripSource>(() => {
     const legend = (): LegendItem[] => {
       const palette = legendFor("content");
+      const [bandA, bandB] = bandColors();
       return [
-        { value: 0, label: t("Not scanned yet"), color: palette.find((item) => item.value === 0)!.color },
-        { value: 1, label: t("Examined bytes"), color: palette.find((item) => item.value === 1)!.color },
-        { value: 2, label: t("Unreadable regions"), color: palette.find((item) => item.value === 10)!.color },
-        { value: 3, label: t("Declared partitions"), color: palette[0].color },
-        ...SOURCE_FORMATS.map((name, index) => ({ value: index + 4, label: name, color: palette[index].color })),
+        { value: MAP_NOT_SCANNED, label: t("Not scanned yet"), color: palette.find((item) => item.value === 0)!.color },
+        { value: MAP_EXAMINED, label: t("Examined bytes"), color: palette.find((item) => item.value === 1)!.color },
+        { value: MAP_UNREADABLE, label: t("Unreadable regions"), color: palette.find((item) => item.value === 10)!.color },
+        { value: MAP_BAND, label: t("Declared partitions"), color: bandA },
+        { value: MAP_BAND_ALTERNATE, label: t("Declared partitions"), color: bandB },
+        ...SOURCE_FORMATS.map((name, index) => ({ value: MAP_FIRST_FORMAT + index, label: name, color: palette[index].color })),
       ];
     };
     const hypotheses = new Map<string, { first: number; count: number }>();
-    if (layer === "evidence") disk.findings.forEach((item) => {
+    disk.findings.forEach((item) => {
       if (item.volumeStart !== null && item.volumeLength !== null) {
         hypotheses.set(`${item.volumeStart}:${item.volumeLength}`, { first: item.volumeStart, count: item.volumeLength });
       }
     });
     return {
-      read: (begin, end, buckets) => sourceMap(disk, layer, begin, end, buckets),
+      read: (begin, end, buckets) => laneMap(disk, lanes, begin, end, buckets),
+      rows: 1 + BAND_ROWS + lanes.length,
+      lanes: true,
       legend,
       colors: () => {
         const items = legend();
@@ -190,7 +209,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
       },
       hypotheses: [...hypotheses.values()],
     };
-  }, [disk, layer]);
+  }, [disk, lanes]);
 
   useEffect(() => {
     if (center !== "bytes" || !valid) return;
@@ -212,7 +231,18 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
 
   const mapProps = { layer: "ownership" as const, floor: 0, lens: null, revision: 0,
     highlight: [], marker: null, scanAt: running ? disk.nextOffset : null, clusterSize: 1, source: mapSource };
-  const busy = running || opening;
+  const mapRows = 1 + BAND_ROWS + lanes.length;
+
+  /** A click on the top map picks what is there: a finding, else the partition, else it moves the magnified view. */
+  function pickOnMap(offset: number) {
+    if (busy) return;
+    const found = itemAt(disk, offset, disk.length / STRIP_PIXELS * PICK_PIXELS);
+    if (found?.kind === "evidence") selectEvidence(found.item);
+    else if (found?.kind === "partition") selectPartition(found.index);
+    else changeView(offset - size / 2, offset + size / 2);
+  }
+  const selectedEvidence = selected.startsWith("evidence:") ? disk.findings.find((item) => evidenceKey(item) === selected) ?? null : null;
+  const selectedPartition = selected.startsWith("partition:") ? disk.partitions[Number(selected.slice("partition:".length))] ?? null : null;
   const hexRows = hex?.match(/.{1,32}/g) ?? [];
 
   return <>
@@ -224,17 +254,10 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
       {controls}
     </WorkspaceToolbar>
     {!simple && <section className="strips source-strips" aria-label={t("Raw disk map")}>
-      <div className="strips-controls">
-        <div className="segmented" role="tablist" aria-label={t("Map layer")}>
-          <button role="tab" aria-selected={layer === "bytes"} onClick={() => setLayer("bytes")}>{t("Source bytes")}</button>
-          <button role="tab" aria-selected={layer === "partitions"} onClick={() => setLayer("partitions")}>{t("Declared partitions")}</button>
-          <button role="tab" aria-selected={layer === "evidence"} onClick={() => setLayer("evidence")}>{t("Filesystem evidence")}</button>
-        </div>
-      </div>
-      <Strip {...mapProps} start={0} end={disk.length} height={30} label={t("Source bytes")}
+      <Strip {...mapProps} start={0} end={disk.length} height={mapRows * ROW_PIXELS} label={t("Source bytes")}
         windowBox={valid && size < disk.length ? [first, first + size] : null}
-        onDragRange={changeView} onPick={(offset) => changeView(offset - size / 2, offset + size / 2)} />
-      {valid && <Strip {...mapProps} start={first} end={first + size} height={74} label={t("Selected region")}
+        onDragRange={changeView} onPick={pickOnMap} />
+      {valid && <Strip {...mapProps} start={first} end={first + size} height={Math.max(74, mapRows * MAGNIFIED_ROW_PIXELS)} label={t("Selected region")}
         onPan={(delta) => changeView(first + delta, first + size + delta)}
         onZoom={(offset, factor) => changeView(offset - (offset - first) * factor, offset + (first + size - offset) * factor)}
         onPick={(offset) => { if (!busy) { selectRange(offset, Math.min(512, disk.length - offset)); onCenter("bytes"); } }} />}
@@ -242,8 +265,12 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
         {[0, 0.25, 0.5, 0.75, 1].map((position) => <span key={position} style={{ left: `${position * 100}%` }}>{bytes(Math.round((valid ? first : 0) + (valid ? size : disk.length) * position))}</span>)}
       </div>
       <div className="legend" title={t("Solid marks show observed structures; dashed outlines show possible volume extents.")}>
-        {mapSource.legend().filter((item) => item.value < 3 || layer === "partitions" && item.value === 3 || layer === "evidence" && formats.includes(item.label)).map((item) =>
+        {mapSource.legend().filter((item) => item.value === MAP_NOT_SCANNED || item.value === MAP_EXAMINED || item.value === MAP_UNREADABLE && disk.errors.length > 0 || item.value === MAP_BAND && disk.partitions.length > 0).map((item) =>
           <span className="legend-item" key={item.value}><span className="legend-swatch" style={{ background: item.color }} />{item.label}</span>)}
+        {summary.map((item) => {
+          const entry = mapSource.legend().find((candidate) => candidate.label === item.format);
+          return <span className="legend-item" key={item.format}><span className="legend-swatch" style={{ background: entry?.color }} />{item.format} · {count(item.count)}</span>;
+        })}
       </div>
     </section>}
     <nav className="explorer" aria-label={t("Source bytes")}>
@@ -265,12 +292,16 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
           <span className="row-size">{bytes(partition.length)}</span>
         </button>)}
         <h3 className="source-section-label">{t("Filesystem evidence")}</h3>
-        {disk.findings.slice(0, visibleFindings).map((item, index) => <button key={index} className={`row${selected === evidenceKey(item) ? " row-selected" : ""}`} disabled={busy} onClick={() => selectEvidence(item)}>
+        {summary.length > 1 && <div className="format-filter" role="group" aria-label={t("Filesystem evidence")}>
+          <button aria-pressed={filter === null} onClick={() => { setFilter(null); setVisibleFindings(FINDINGS_PAGE_SIZE); }}>{t("All")} · {count(disk.findings.length)}</button>
+          {summary.map((item) => <button key={item.format} aria-pressed={filter === item.format} onClick={() => { setFilter(item.format); setVisibleFindings(FINDINGS_PAGE_SIZE); }}>{item.format} · {count(item.count)}</button>)}
+        </div>}
+        {shown.slice(0, visibleFindings).map((item, index) => <button key={index} className={`row${selected === evidenceKey(item) ? " row-selected" : ""}`} disabled={busy} onClick={() => selectEvidence(item)}>
           <span className="row-icon"><Icon name="search" size={16} /></span>
           <span className="row-main"><span className="row-name">{item.format} · {fromEngine(item.structure)}</span><span className="row-path">{bytes(item.offset)} · {fromEngine(item.confidence)}</span></span>
         </button>)}
-        {visibleFindings < disk.findings.length && <button className="row" onClick={() => setVisibleFindings((count) => count + FINDINGS_PAGE_SIZE)}>
-          <span className="row-main">{t("Show more ({count} left)", { count: count(disk.findings.length - visibleFindings) })}</span>
+        {visibleFindings < shown.length && <button className="row" onClick={() => setVisibleFindings((current) => current + FINDINGS_PAGE_SIZE)}>
+          <span className="row-main">{t("Show more ({count} left)", { count: count(shown.length - visibleFindings) })}</span>
         </button>}
         {disk.findings.length === 0 && <p className="empty">{t("Current probes cover FAT, exFAT boot and directory structures, and NTFS boot metadata. Other formats remain unknown, not empty.")}</p>}
       </div>
@@ -345,6 +376,32 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
         <div className="inspector-title">{inspector === "selected" ? t("Selected region") : t("Source bytes")}</div>
         <div className="panel-body">
           {inspector === "selected" ? <>
+            <div className="detail inspected" aria-label={t("Selected item")}>
+              {selectedEvidence ? <>
+                <div className="detail-name">{selectedEvidence.format} · {fromEngine(selectedEvidence.structure)}</div>
+                <dl className="facts">
+                  <dt>{t("Format")}</dt><dd>{selectedEvidence.format}</dd>
+                  <dt>{t("Byte range")}</dt><dd>{byteRange(selectedEvidence.offset, selectedEvidence.length)}</dd>
+                  <dt>{t("Confidence")}</dt><dd>{fromEngine(selectedEvidence.confidence)}</dd>
+                  <dt>{t("Status")}</dt><dd className="status" data-status={evidenceStatus(selectedEvidence)}>{statusLabel(evidenceStatus(selectedEvidence))}</dd>
+                  {selectedEvidence.volumeStart !== null && selectedEvidence.volumeLength !== null && <><dt>{t("Possible volume")}</dt><dd>{byteRange(selectedEvidence.volumeStart, selectedEvidence.volumeLength)}</dd></>}
+                </dl>
+                <p className="muted">{statusExplanation(evidenceStatus(selectedEvidence))}</p>
+              </> : selectedPartition ? <>
+                <div className="detail-name">{selectedPartition.label || selectedPartition.table}</div>
+                <dl className="facts">
+                  <dt>{t("Format")}</dt><dd>{t("Declared partition")}</dd>
+                  <dt>{t("Byte range")}</dt><dd>{byteRange(selectedPartition.start, selectedPartition.length)}</dd>
+                  <dt>{t("Confidence")}</dt><dd>{t("Declared by the {table} partition table", { table: selectedPartition.table })}</dd>
+                  <dt>{t("Status")}</dt><dd className="status" data-status="recognised">{statusLabel("recognised")}</dd>
+                </dl>
+                <p className="muted">{t("A partition the table declares. Its filesystem has not been checked.")}</p>
+              </> : <>
+                <div className="detail-name">{t("Selected region")}</div>
+                <dl className="facts"><dt>{t("Byte range")}</dt><dd>{valid ? byteRange(first, size) : "—"}</dd></dl>
+                <p className="muted">{t("Pick a partition band or a finding on the map, or in the list, to see what it is.")}</p>
+              </>}
+            </div>
             <div className="detail">
               <div className="detail-name">{valid ? bytes(size) : t("Selected region")}</div>
               <div className="detail-path">{disk.path}</div>
@@ -371,6 +428,20 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
       </section>
     </div>
   </>;
+}
+
+function byteRange(offset: number, length: number): string {
+  return `${count(offset)}–${count(offset + length)} (${bytes(length)})`;
+}
+
+function statusLabel(status: EvidenceStatus): string {
+  return status === "decodable" ? t("Decodable") : status === "needs-metadata" ? t("Needs related metadata") : t("Recognised");
+}
+
+function statusExplanation(status: EvidenceStatus): string {
+  return status === "decodable" ? t("The metadata needed to try opening it as a filesystem is present.")
+    : status === "needs-metadata" ? t("Only a fragment. Its volume's boot or related metadata is needed before its files can be placed.")
+    : t("The structure is recognised, but this app cannot decode it.");
 }
 
 function evidenceKey(evidence: DiskEvidence): string {

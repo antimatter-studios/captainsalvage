@@ -45,6 +45,12 @@ function theme(): Theme {
     : { series: SERIES_LIGHT, ramp: RAMP_LIGHT, surface: "#ffffff", neutral: "#c3c7cf", faint: "#e9ebef", strong: "#2d3340", softBlue: "#9ec5f4" };
 }
 
+/** Two blues for the partition bands, so neighbouring partitions stay apart. */
+export function bandColors(): [string, string] {
+  const colors = theme();
+  return [colors.ramp[1], colors.ramp[2]];
+}
+
 export interface LegendItem {
   value: number;
   /** Listed even when the strips show none of it. */

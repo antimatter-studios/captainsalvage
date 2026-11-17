@@ -45,6 +45,10 @@ export interface StripSource {
   legend: () => LegendItem[];
   colors: () => Rgb[];
   hypotheses?: Extent[];
+  /** How many rows `read` returns, one after another, each `buckets` long. One when left out. */
+  rows?: number;
+  /** The rows are lanes, so the pointer reads the row under it and not an average of them. */
+  lanes?: boolean;
 }
 
 interface StripProps {
@@ -101,7 +105,7 @@ export function Strip(props: StripProps) {
     if (width === 0) return;
     let current = true;
     const buckets = Math.min(Math.ceil(width * window.devicePixelRatio), MAX_BUCKETS);
-    const rows = source ? 1 : legendFor(layer).length > 0 ? Math.max(Math.floor(height / CSS_PIXELS_PER_ROW), 1) : 1;
+    const rows = source ? source.rows ?? 1 : legendFor(layer).length > 0 ? Math.max(Math.floor(height / CSS_PIXELS_PER_ROW), 1) : 1;
     const loading = source ? Promise.resolve(source.read(start, end, buckets)) : mapLayer(layer, start, end, buckets, rows, floor, lens);
     loading
       .then((data) => {
@@ -200,7 +204,9 @@ export function Strip(props: StripProps) {
     const { data, buckets, rows } = values.current;
     const column = Math.min(Math.max(Math.floor(((event.clientX - rectangle.left) / rectangle.width) * buckets), 0), Math.max(buckets - 1, 0));
     const tally = new Map<number, number>();
-    for (let row = 0; row < rows; row++) {
+    // A map of lanes reads the row under the pointer, not an average of them.
+    const lane = source?.lanes && rows > 1 ? Math.min(Math.max(Math.floor(((event.clientY - rectangle.top) / rectangle.height) * rows), 0), rows - 1) : null;
+    for (let row = lane ?? 0; row < (lane === null ? rows : lane + 1); row++) {
       const value = data[row * buckets + column] ?? 0;
       tally.set(value, (tally.get(value) ?? 0) + 1);
     }
@@ -212,7 +218,7 @@ export function Strip(props: StripProps) {
       parts: parts.slice(0, 5).map(([value, share]) => ({
         label: source ? legend.find((item) => item.value === value)?.label ?? String(value) : describeValue(layer, value),
         color: legend.find((item) => item.value === value)?.color,
-        share: rows === 1 ? null : Math.round((share / rows) * 100),
+        share: rows === 1 || lane !== null ? null : Math.round((share / rows) * 100),
       })),
     });
 
