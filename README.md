@@ -285,7 +285,7 @@ The libraries the app names itself:
 | `rusqlite` | 0.41.1 | MIT | salvage-core |
 | `rust-fs-exfat` | 0.1.0 | MIT | salvage-core |
 | `ruzstd` | 0.9.1 | MIT | salvage-core |
-| `salvage-core` | 0.2.0 | MIT | captain-salvage |
+| `salvage-core` | 0.3.0 | MIT | captain-salvage |
 | `serde` | 1.0.229 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
 | `serde_json` | 1.0.154 | MIT OR Apache-2.0 | captain-salvage, salvage-core |
 | `sevenz-rust2` | 0.24.2 | Apache-2.0 | salvage-core |
