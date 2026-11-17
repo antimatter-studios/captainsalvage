@@ -2,8 +2,9 @@ name: CI
 
 # The engine and the window build run on Linux, where minutes cost a tenth of macOS's on a
 # private repository. Only what needs macOS runs there: the app itself, which links macOS
-# frameworks, the Finder extension and the release tools. The job named CI waits for both,
-# so branch protection keeps one required check. Documentation-only changes skip all of it.
+# frameworks, the Finder extension and the release tools. The job named CI waits for all three,
+# so branch protection keeps one required check. The third job runs the independent NTFS oracles in
+# a Linux VM. Documentation-only changes skip all of it.
 on:
   pull_request:
     paths-ignore: ["**.md", "media/**", "LICENSE"]
@@ -64,6 +65,44 @@ jobs:
       - name: test the engine
         run: cargo test -p captainsalvage --locked
 
+  oracle:
+    # `chore test:oracle`: the NTFS flows against ntfs-3g's tools and the Linux kernel's ntfs3
+    # driver, in the fs-linux-test-harness VM. Only an x86_64 runner has KVM, and
+    # ci-setup-linux.sh is the harness's one setup for it, run from the sibling checkout.
+    name: independent NTFS oracles (ntfs-3g and ntfs3, harness VM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install chore and check out the sibling repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/antimatter-studios/chore/releases/download/v0.11.0/chore-0.11.0-linux-x86_64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin chore
+          chore siblings
+      - name: KVM, QEMU, virtiofsd and Vagrant
+        id: vm-host
+        run: ../fs-linux-test-harness/scripts/ci-setup-linux.sh
+      - name: Cache the Vagrant box
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.vagrant.d/boxes
+          key: ${{ steps.vm-host.outputs.box-cache-key }}
+      - name: chore test:oracle
+        id: oracle
+        run: chore test:oracle
+      # Sessions leave the shared guest up. Stop it on this ephemeral runner.
+      - name: Stop the idle shared guest
+        if: always() && steps.oracle.outcome != 'skipped'
+        run: chore linux:down
+
   app:
     name: app on macOS
     runs-on: macos-15
@@ -97,12 +136,12 @@ jobs:
 
   ci:
     name: CI
-    needs: [engine, app]
+    needs: [engine, app, oracle]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: both passed
+      - name: all passed
         run: |
-          for result in '${{ needs.engine.result }}' '${{ needs.app.result }}'; do
+          for result in '${{ needs.engine.result }}' '${{ needs.app.result }}' '${{ needs.oracle.result }}'; do
             case "$result" in success) ;; *) echo "::error::a job ended with $result"; exit 1 ;; esac
           done

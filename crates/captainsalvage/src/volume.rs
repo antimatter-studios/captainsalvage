@@ -70,8 +70,13 @@ impl Volume {
             root_clusters,
         } = salvage::inspect(&structures)?;
         let structure_hash = structures.hash();
-        let ntfs = (kind == FilesystemKind::Ntfs)
-            .then(|| ntfs_salvage::Access::new(source.clone(), &geometry));
+        let ntfs = (kind == FilesystemKind::Ntfs).then(|| {
+            ntfs_salvage::Access::new(
+                source.clone(),
+                &geometry,
+                ntfs_salvage::mft_runs(&structures, &geometry),
+            )
+        });
         let mut volume = Self {
             source,
             boot,

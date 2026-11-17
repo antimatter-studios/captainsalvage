@@ -83,7 +83,7 @@ ntfs3g_report() {
     if [ -s "$streams" ]; then
         local file stream
         while IFS=$'\t' read -r file stream; do
-            ntfscat -a "$stream" "$img" "/$file" >"$work/cat"
+            ntfscat -n "$stream" "$img" "/$file" >"$work/cat"
             printf 's\t%s\t%s\t%s\n' "$(stat -c %s "$work/cat")" "$(sha256sum "$work/cat" | cut -d' ' -f1)" "$file:$stream"
         done <"$streams"
     fi
@@ -154,37 +154,48 @@ populate() { # CLUSTER_BYTES
     truncate -s 1M sparse.bin
     prng sparse-head 4096 | dd of=sparse.bin conv=notrunc 2>/dev/null
     prng sparse-tail 4096 | dd of=sparse.bin bs=4096 seek=255 conv=notrunc 2>/dev/null
-    # A fragmented file: its clusters are the holes left by files removed from a full run.
-    for i in $(seq 0 79); do put "frag/f$i" "fill$i" 4096; done
+    # A fragmented file. The volume is filled with small files and every other one of the first
+    # hundred removed, so the only free clusters are small and apart and a file written next must
+    # be split across them.
+    mkdir fill
+    i=0
+    while dd if=/dev/zero of="fill/f$i" bs=8192 count=1 2>/dev/null; do i=$((i + 1)); done
     sync
-    for i in $(seq 1 2 79); do rm "frag/f$i"; done
+    for j in $(seq 0 2 99); do rm "fill/f$j"; done
     sync
     put fragmented.bin fragmented 327680
-    sync
-    # Files removed after they were written, for the deleted-file flows. Their clusters are not
-    # written again.
-    put deleted-keepsake.bin keepsake 20000
-    put deleted-small.txt deletedsmall 300
+    # Room for the files removed later, in clusters nothing else wants.
+    for j in $(seq 100 109); do rm "fill/f$j"; done
     sync
     cd /
 }
 for cluster in 512 4096; do
     name="mkntfs-$cluster"
     img="$work/$name.img"
-    truncate -s 48M "$img"
-    mkntfs -F -Q -s 512 -c "$cluster" -L "MKNTFS $cluster" "$img" >/dev/null
+    truncate -s 24M "$img"
+    # mkntfs says a lot about a file that is not a disk. What it says is kept for a failure.
+    mkntfs -F -Q -s 512 -c "$cluster" -L "MKNTFS $cluster" "$img" >"$work/mkntfs.log" 2>&1 \
+        || { cat "$work/mkntfs.log" >&2; exit 1; }
     loop="$(losetup --find --show "$img")"
     mount -t ntfs3 -o rw "$loop" "$mnt"
     populate "$cluster"
+    umount "$mnt"
+    losetup -d "$loop"
+    loop=""
+    # Files removed after they were written, for the deleted-file flows. The kernel's ntfs3
+    # scrubs a deleted file's name, so these are written and removed through ntfs-3g, which
+    # leaves the record as it was but for the in-use flag. Their clusters are not written again.
+    ntfs-3g -o rw "$img" "$mnt"
     : >"$out/$name.deleted.tsv"
+    put "$mnt/deleted-keepsake.bin" keepsake 20000
+    put "$mnt/deleted-small.txt" deletedsmall 300
+    sync
     for file in deleted-keepsake.bin deleted-small.txt; do
         printf 'f\t%s\t%s\t%s\n' "$(stat -c %s "$mnt/$file")" "$(sha256sum "$mnt/$file" | cut -d' ' -f1)" "$file" >>"$out/$name.deleted.tsv"
         rm "$mnt/$file"
     done
     sync
     umount "$mnt"
-    losetup -d "$loop"
-    loop=""
     cp --sparse=always "$img" "$out/$name.img"
     record "$name" "$img" /dev/null
     rm -f "$img"

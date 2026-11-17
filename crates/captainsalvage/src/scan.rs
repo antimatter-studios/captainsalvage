@@ -7,7 +7,7 @@
 use crate::content::{
     classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES,
 };
-use crate::filesystem::SalvageEntry as EntrySet;
+use crate::filesystem::{SalvageEntry as EntrySet, STORAGE_DAMAGED};
 use crate::map::MapDb;
 use crate::session::DISK_GONE;
 use crate::volume::Volume;
@@ -284,8 +284,16 @@ pub fn run_scan(
             found.extend(sets.into_iter().map(|mut set| {
                 // A FILE record in a cluster the bitmap calls free is an old copy of the MFT, whatever
                 // its own flag says, so it is recorded as not in use.
-                if set.ntfs.is_some() {
+                if let Some(ntfs) = set.ntfs.as_mut() {
                     set.in_use &= volume.is_allocated(cluster);
+                    // Records the kernel's ntfs3 driver wrote have no number in their header, so
+                    // it is where `$MFT` puts them.
+                    if ntfs.record_number.is_none() && ntfs.storage != STORAGE_DAMAGED {
+                        ntfs.record_number = volume
+                            .ntfs
+                            .as_ref()
+                            .and_then(|access| access.record_number_at(cluster, set.offset));
+                    }
                 }
                 (cluster, set)
             }));

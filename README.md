@@ -230,11 +230,32 @@ The `in use` flag of an NTFS entry means its record says it is in use *and* its 
 in a cluster `$Bitmap` calls allocated. An in-use record in a free cluster is an old copy of
 the MFT and is shown as not in use.
 
-Tests build volumes with the driver's formatter and compare every listing and every content
-hash with the independent [`ntfs`](https://crates.io/crates/ntfs) reader, a dev-only
-dependency that is never linked into the app. The Linux `ntfs3` kernel and `ntfs-3g`, the
-other oracles the driver names, are not available on a Mac, so they were not run. No real
-damaged NTFS drive has been recovered yet.
+What was checked against something that is not this app:
+
+- **ntfs-3g and the Linux kernel's ntfs3**, in the Linux test VM (`chore test:oracle`, from
+  `tests/ntfs_oracle.rs` and `validation/oracle.sh`). For images the rust-fs-ntfs driver
+  formatted and wrote, `ntfsfix -n` finds nothing, and `ntfsls` and `ntfscat` agree with a
+  read-only ntfs3 mount about every path, size and SHA-256, including an alternate data stream.
+  The app's scan, browse and read report the same tree and the same hashes, every live file is
+  called live, and what the app copies is byte for byte what the oracles read. For images the
+  oracles' own tools made (`mkntfs` at 512 and 4096 byte clusters, filled through a read-write
+  ntfs3 mount: 150 files in one folder, a sparse file, a fragmented file, non-ASCII names), the
+  app lists exactly what ntfs3 and ntfs-3g list, and reads files they deleted through ntfs-3g.
+  The two oracles are compared with each other first, and the script fails if they differ.
+- **The independent [`ntfs`](https://crates.io/crates/ntfs) reader**, a dev-only dependency
+  never linked into the app, for every live file of the driver's images (`tests/ntfs.rs`).
+
+The oracles found two faults, each fixed behind a failing test. Records the Linux ntfs3 driver
+writes carry no record number where the driver looked for one (rust-fs-ntfs#1380), so their
+folders could not be told apart; the driver now reads the number only where the header has one,
+and the app takes it from where `$MFT` places the record. And a live file stored inside its own
+record was called only plausible, so the copy planner left it out.
+
+Not checked: images written by Windows, because no Windows machine took part (the driver's own
+Windows-captured fixtures are graded by the driver's tests, not by this app's), a live NTFS
+mount, the window tests, and a real damaged NTFS drive. A volume a kernel or ntfs-3g has deleted
+a file from through ntfs3 keeps nothing to recover, because ntfs3 scrubs the name; files deleted
+through ntfs-3g keep their records.
 
 ## How far to trust the results
 
@@ -329,7 +350,13 @@ operations as `captainsalvage_open_raw_disk`, `captainsalvage_discover_raw_disk`
 
 ```sh
 cargo test -p captainsalvage
+chore test:oracle     # NTFS against ntfs-3g and the kernel's ntfs3, in the Linux test VM
 ```
+
+`chore test:oracle` needs the sibling checkouts `chore siblings` makes, and boots the shared
+guest of [fs-linux-test-harness](https://github.com/antimatter-studios/fs-linux-test-harness)
+with the `ntfs3` run profile in `run-profiles/`. Nothing is mounted on the Mac. A missing VM, tool
+or kernel driver fails the oracle tests, naming this task; they never skip.
 
 Treat the existing tests as a regression contract: record the passing tests before a
 driver change, rerun them afterwards, and check that every previously passing test still

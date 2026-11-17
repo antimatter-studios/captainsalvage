@@ -125,26 +125,6 @@ fn a_fragmented_file_is_read_from_its_runs_and_copied_with_its_hash() {
     assert_eq!(sha(&copied), sha(&expected));
 }
 
-fn wait_for_copy(session: &Session, files: u64) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    loop {
-        let status = session.copy_status().unwrap();
-        if status.state == "finished" {
-            assert_eq!(status.files_done, files, "{status:?}");
-            return;
-        }
-        assert!(
-            !matches!(status.state.as_str(), "failed" | "stopped"),
-            "{status:?}"
-        );
-        assert!(
-            std::time::Instant::now() < deadline,
-            "copy timed out: {status:?}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-}
-
 #[test]
 fn deleted_files_keep_their_bytes_and_say_how_they_are_held() {
     let fixture = fixture();
@@ -916,4 +896,21 @@ fn mcp_reaches_an_ntfs_volume_through_the_branded_tools() {
         .err()
         .unwrap();
     assert!(error.to_string().contains("Only the person"), "{error}");
+}
+
+#[test]
+fn a_live_resident_file_is_live_and_a_deleted_one_is_not() {
+    let fixture = fixture();
+    let session = open(fixture.image.clone(), "resident-live");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let live = find(&engine, "note.txt");
+    assert_eq!(live["storage"], "resident");
+    assert_eq!(live["verdict"], "live", "{live}");
+    assert_eq!(
+        live["clustersNeeded"], 0,
+        "a resident file needs no cluster"
+    );
+    assert_eq!(find(&engine, "gone.txt")["verdict"], "plausible");
 }

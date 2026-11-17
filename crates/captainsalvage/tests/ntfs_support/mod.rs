@@ -236,3 +236,23 @@ pub fn find(engine: &Engine, name: &str) -> Value {
         .unwrap_or_else(|| panic!("{name} not found in {rows}"))
         .clone()
 }
+
+pub fn wait_for_copy(session: &Session, files: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = session.copy_status().unwrap();
+        if status.state == "finished" {
+            assert_eq!(status.files_done, files, "{status:?}");
+            return;
+        }
+        assert!(
+            !matches!(status.state.as_str(), "failed" | "stopped"),
+            "{status:?}"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "copy timed out: {status:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}

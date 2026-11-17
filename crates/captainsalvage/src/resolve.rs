@@ -362,6 +362,16 @@ impl Streams<'_> {
                 0,
             );
         }
+        if set.is_resident() {
+            // Its bytes are in its record, so it claims no cluster and needs none.
+            return (
+                StreamClusters {
+                    clusters: Vec::new(),
+                    needed: 0,
+                },
+                0,
+            );
+        }
         if let Some(ntfs) = &set.ntfs {
             // A run list names its clusters. Nothing is assumed contiguous.
             return (self.volume.clusters_from_runs(&ntfs.runs, set.length), 0);

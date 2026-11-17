@@ -3172,7 +3172,7 @@ dependencies = [
 [[package]]
 name = "rust-fs-ntfs"
 version = "0.11.0"
-source = "git+https://github.com/antimatter-studios/rust-fs-ntfs?rev=92462538b315bbe1702be0477a70b8a73879069e#92462538b315bbe1702be0477a70b8a73879069e"
+source = "git+https://github.com/antimatter-studios/rust-fs-ntfs?rev=9a4f404f29d5bd2b1ac68caed3a75baaede0eb34#9a4f404f29d5bd2b1ac68caed3a75baaede0eb34"
 dependencies = [
  "libc",
  "log",

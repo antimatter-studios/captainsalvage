@@ -169,6 +169,32 @@ impl BlockSource for ReadAhead {
     }
 }
 
+/// Where `$MFT` lies, from its own saved record.
+pub fn mft_runs(structures: &StructureCopy, geometry: &VolumeGeometry) -> Vec<NtfsRun> {
+    let size = geometry.record_size as usize;
+    let Some(bytes) = structures.root.get(..size) else {
+        return Vec::new();
+    };
+    let record = inspect_file_record(0, bytes.to_vec(), geometry.bytes_per_sector as u16);
+    match data_stream(&record) {
+        Some((
+            _,
+            AttributeEvidence {
+                value: AttributeValue::NonResident { runs, .. },
+                ..
+            },
+        )) => runs
+            .iter()
+            .map(|run| NtfsRun {
+                vcn: run.starting_vcn,
+                lcn: run.lcn,
+                count: run.length,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// What `Inspected` needs from the boot sector and the saved records.
 pub struct NtfsInspected {
     pub boot: NtfsBoot,
@@ -520,7 +546,9 @@ pub fn entry_from_record(record: &RecordEvidence, offset: usize) -> Option<Salva
         (None, Some(name)) => (name.modified_nt, name.created_nt, name.accessed_nt),
         (None, None) => (0, 0, 0),
     };
-    let intact = record.issues.is_empty() && chosen.is_some() && record.record_number.is_some();
+    // A record that fixes up and has a name is intact. Its number may be unknown, which only
+    // means it cannot be named as a folder's parent until the scan works it out from `$MFT`.
+    let intact = record.issues.is_empty() && chosen.is_some();
     Some(SalvageEntry {
         offset,
         name: match chosen {
@@ -644,14 +672,18 @@ pub struct StreamReference {
 /// Reads entries' bytes by asking the driver about the FILE record again, so a record that
 /// changed since the scan is noticed instead of read as if it were the one that was found.
 pub struct Access {
+    /// Where `$MFT` is, from its own record in the saved structures. A record's number is its
+    /// place in this list when its header does not carry one.
+    mft: Vec<NtfsRun>,
     volume: RawVolume<SourceDevice<Arc<dyn BlockSource>>>,
     geometry: VolumeGeometry,
     last: Mutex<Option<(u64, Arc<RecordEvidence>)>>,
 }
 
 impl Access {
-    pub fn new(source: Arc<dyn BlockSource>, geometry: &VolumeGeometry) -> Self {
+    pub fn new(source: Arc<dyn BlockSource>, geometry: &VolumeGeometry, mft: Vec<NtfsRun>) -> Self {
         Self {
+            mft,
             volume: RawVolume::open(SourceDevice::new(
                 Arc::new(ReadAhead::new(source, geometry.volume_size)) as Arc<dyn BlockSource>,
                 geometry.volume_size,
@@ -659,6 +691,24 @@ impl Access {
             geometry: *geometry,
             last: Mutex::new(None),
         }
+    }
+
+    /// The number of the record at `offset` bytes into `cluster`, by where `$MFT` places it. A
+    /// record that is not in the current `$MFT`, such as an old copy in free space, has none.
+    pub fn record_number_at(&self, cluster: u32, offset: usize) -> Option<u64> {
+        let size = self.geometry.cluster_size;
+        let at = u64::from(cluster) * size + offset as u64;
+        self.mft.iter().find_map(|run| {
+            let start = run.lcn? * size;
+            let end = start + run.count * size;
+            if !(start..end).contains(&at) {
+                return None;
+            }
+            let within = run.vcn * size + (at - start);
+            within
+                .is_multiple_of(self.geometry.record_size)
+                .then(|| within / self.geometry.record_size)
+        })
     }
 
     fn record(&self, offset: u64) -> Result<Arc<RecordEvidence>> {
@@ -697,7 +747,8 @@ impl Access {
             record.fixed.is_some()
                 && record.base_reference == 0
                 && record.sequence == entry.sequence
-                && record.record_number == entry.record_number,
+                // A header with no number cannot disagree with the one the scan worked out.
+                && (record.record_number.is_none() || record.record_number == entry.record_number),
             "the FILE record no longer matches the one that was found"
         );
         let (index, _) = data_stream(&record).context("the FILE record has no data stream")?;
