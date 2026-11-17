@@ -17,8 +17,9 @@ const USAGE: &str = "Captain Salvage command line\n\
 Usage: captainsalvage <command> [arguments]\n\
 \n\
 Commands:\n\
-  filesystem <list|cat|ntfs-record|ntfs-stream> <device-or-image> [options]\n\
-      Read FAT/exFAT/NTFS files, or inspect and recover surviving NTFS records.\n\
+  filesystem <list|cat|capabilities|ntfs-record|ntfs-stream> <device-or-image> [options]\n\
+      Read FAT/exFAT/NTFS files, see what is supported for a filesystem, or inspect and recover\n\
+      surviving NTFS records.\n\
   disk <device-or-image> [--scan | --list-scans | --resume ID --accept-sampled-match]\n\
       Open raw bytes and save or resume evidence discovery without mounting.\n\
       New scans accept --offset BYTES and --length BYTES. Resume uses its saved range.\n\

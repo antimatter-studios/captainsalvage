@@ -305,6 +305,10 @@ export interface Row {
   contents?: { group: string; share: number; files: number };
   confidence: number;
   linkConfidence: number | null;
+  /** NTFS only: the FILE record's number and sequence, and how the bytes are held. */
+  recordNumber?: number;
+  sequence?: number;
+  storage?: "resident" | "runs" | "none" | "compressed" | "encrypted" | "attribute-list" | "incomplete";
 }
 
 export interface Page {
@@ -529,7 +533,41 @@ export type FilesystemDetails =
       totalSectors: number;
       firstDataSector: number;
       rootCluster: number;
+    }
+  | {
+      kind: "ntfs";
+      bytesPerSector: number;
+      sectorsPerCluster: number;
+      clusterSize: number;
+      mftCluster: number;
+      fileRecordSize: number;
+      indexBlockSize: number;
+      totalSectors: number;
+      serial: string;
+      version: string | null;
+      label: string | null;
     };
+
+/** What the app does for the open filesystem: supported, limited with the limit stated, or missing. */
+export interface Capability {
+  feature: string;
+  support: "supported" | "limited" | "missing";
+  note: string;
+}
+
+/** What an NTFS entry's FILE record says. */
+export interface NtfsRecord {
+  recordOffset: number;
+  recordNumber: number | null;
+  sequence: number;
+  inUse: boolean;
+  isDirectory: boolean;
+  baseReference: number;
+  hasAttributeList: boolean;
+  issues: string[];
+  names: { name: string; namespace: string; parentRecord: number; parentSequence: number; modified: string | null }[];
+  streams: { name: string; resident: boolean; length: number; initializedLength: number; compressed: boolean; encrypted: boolean; sparse: boolean; runs: { vcn: number; lcn: number | null; count: number }[] }[];
+}
 
 export interface ResolvePreview {
   changes: { from: string; to: string; files: number; bytes: number; sampleIds: number[] }[];

@@ -1,3 +1,4 @@
+use super::ntfs_salvage::{self, NtfsBoot};
 use super::{FilesystemDetails, FilesystemKind, SalvageEntry, VolumeGeometry};
 use crate::allocation;
 use crate::changes::StructureCopy;
@@ -16,13 +17,14 @@ const MAX_STRUCTURE_BYTES: u64 = 256 * 1024 * 1024;
 pub enum FilesystemBoot {
     Exfat(BootSector),
     Fat(FilesystemDetails),
+    Ntfs(NtfsBoot),
 }
 
 impl FilesystemBoot {
     pub fn exfat(&self) -> Option<&BootSector> {
         match self {
             Self::Exfat(boot) => Some(boot),
-            Self::Fat(_) => None,
+            Self::Fat(_) | Self::Ntfs(_) => None,
         }
     }
 }
@@ -69,6 +71,7 @@ fn fat_geometry(boot: &FatBoot) -> VolumeGeometry {
             + u64::from(boot.active_fat) * u64::from(boot.sectors_per_fat))
             * sector,
         fat_bytes: u64::from(boot.sectors_per_fat) * sector,
+        record_size: 0,
     }
 }
 
@@ -137,7 +140,10 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
         .read_exact_at(0, &mut sector)
         .context("reading main boot region")?;
     if &sector[3..11] == b"NTFS    " {
-        bail!("NTFS volume detected; the full recovery workspace is not integrated yet. Use the NTFS record recovery tools.");
+        return ntfs_salvage::read_structures(source);
+    }
+    if &sector[3..11] == super::BITLOCKER_OEM_ID {
+        bail!("{}", super::BITLOCKER_MESSAGE);
     }
     let boot = match FatBoot::parse(&sector) {
         Ok(boot) if &sector[3..11] != b"EXFAT   " => boot,
@@ -198,7 +204,19 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
 
 pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
     if structures.main.get(3..11) == Some(b"NTFS    ") {
-        bail!("NTFS volume detected; the full recovery workspace is not integrated yet. Use the NTFS record recovery tools.");
+        let inspected = ntfs_salvage::inspect(structures)?;
+        return Ok(Inspected {
+            boot: FilesystemBoot::Ntfs(inspected.boot),
+            backup_boot: inspected.backup_boot.map(FilesystemBoot::Ntfs),
+            boot_check: None,
+            geometry: inspected.geometry,
+            fat: Vec::new(),
+            bitmap: inspected.bitmap,
+            root_clusters: Vec::new(),
+            kind: FilesystemKind::Ntfs,
+            details: inspected.details,
+            dirty_flag: inspected.dirty,
+        });
     }
     if structures.main.get(3..11) != Some(b"EXFAT   ") {
         if let Ok(boot) = FatBoot::parse(&structures.main) {
@@ -274,6 +292,7 @@ pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
         data_offset: boot.heap_offset(),
         fat_offset: u64::from(boot.fat_offset) * sector,
         fat_bytes: u64::from(boot.fat_length) * sector,
+        record_size: 0,
     };
     let dirty_flag = boot.volume_dirty();
     Ok(Inspected {
@@ -314,7 +333,7 @@ pub fn find_entries(
         FilesystemKind::Fat12 => FatKind::Fat12,
         FilesystemKind::Fat16 => FatKind::Fat16,
         FilesystemKind::Fat32 => FatKind::Fat32,
-        FilesystemKind::Ntfs => return Vec::new(),
+        FilesystemKind::Ntfs => return ntfs_salvage::find_entries(geometry, data, start_limit),
     };
     let aligned = &data[..data.len() / 32 * 32];
     fs_fat32::directory::scan_directory(aligned, fat_kind)
@@ -374,12 +393,16 @@ pub fn find_entries(
                 modified: stamp(24, Some(22)),
                 accessed: stamp(18, None),
                 slots: 1,
+                ntfs: None,
             })
         })
         .collect()
 }
 
 pub fn comparison_copy(copy: &StructureCopy) -> Result<StructureCopy> {
+    if copy.main.get(3..11) == Some(b"NTFS    ") {
+        return ntfs_salvage::comparison_copy(copy);
+    }
     let inspected = inspect(copy)?;
     let fat = if inspected.kind == FilesystemKind::Exfat {
         copy.fat.clone()
@@ -398,6 +421,10 @@ pub fn comparison_copy(copy: &StructureCopy) -> Result<StructureCopy> {
 }
 
 pub fn changed_fat_entries(before: &StructureCopy, after: &StructureCopy) -> Result<u64> {
+    if before.main.get(3..11) == Some(b"NTFS    ") {
+        // NTFS has no allocation table of links; its bitmap changes are reported as clusters.
+        return Ok(0);
+    }
     let old = FatBoot::parse(&before.main)?;
     let new = FatBoot::parse(&after.main)?;
     let entry = |copy: &StructureCopy, boot: &FatBoot, table: u8, cluster: u32| {

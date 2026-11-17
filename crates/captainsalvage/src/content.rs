@@ -43,6 +43,19 @@ pub const CLASS_NAMES: [&str; CLASS_COUNT] = [
     "read error",
 ];
 
+/// What the directory class is called on an NTFS volume, where the clusters it marks hold
+/// FILE records and not directory entries.
+pub const NTFS_DIRECTORY_NAME: &str = "NTFS file records";
+
+/// The names of the content classes for one filesystem.
+pub fn class_names(ntfs: bool) -> [&'static str; CLASS_COUNT] {
+    let mut names = CLASS_NAMES;
+    if ntfs {
+        names[usize::from(CLASS_DIRECTORY)] = NTFS_DIRECTORY_NAME;
+    }
+    names
+}
+
 const HIGH_ENTROPY_BITS: f64 = 7.5;
 const TEXT_PROBE_BYTES: usize = 4096;
 const TEXT_MIN_RATIO: f64 = 0.93;

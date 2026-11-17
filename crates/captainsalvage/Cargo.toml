@@ -20,7 +20,7 @@ flate2 = "1.1.10"
 fs-core = { package = "rust-fs-core", version = "=0.4.3" }
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "6b63a7d142626d0fcf9804514abf1defb4730924" }
 fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "ff10b330df9bde4765bb8790df07121cbe4b9489" }
-fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "3786ce4d784f5a7d393b5c9cec1cbfc392ee47d4" }
+fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
 rars = { version = "0.12.4", default-features = false }
@@ -37,9 +37,21 @@ xz4rust = "0.2.3"
 zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2", "deflate64", "aes-crypto"] }
 
 [dev-dependencies]
+# An independent NTFS reader, only to check the app against: it is never linked into the app.
+ntfs = { version = "0.4", default-features = false, features = ["std"] }
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "6b63a7d142626d0fcf9804514abf1defb4730924", features = ["test-support"] }
 # Only to build archives for the tests: the app itself never writes one.
 bzip2 = "0.6.1"
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }
 rars = { version = "0.12.4", default-features = false, features = ["write"] }
 sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip2", "deflate", "ppmd", "compress", "util"] }
+
+# Tests that need the independent oracles: ntfs-3g's tools and the Linux kernel's ntfs3 driver,
+# which run in the Linux test VM. They fail, never skip, when the oracles cannot run:
+# `chore test:oracle` provides them.
+[features]
+oracle = []
+
+[[test]]
+name = "ntfs_oracle"
+required-features = ["oracle"]

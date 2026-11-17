@@ -9,10 +9,10 @@ finds, and helps you get your files back, without ever writing to the disk.
 
 ![Captain Salvage welcome screen, with its chart of a damaged disk and introduction to the read-only recovery app](media/manual/01-start.png)
 
-> **Early development.** Supports exFAT, FAT12, FAT16 and FAT32. exFAT has been tested
-> on one real damaged volume plus synthetic volumes; FAT-family integration is
-> tested with synthetic disk images. NTFS support is still being built. It is not
-> released yet.
+> **Early development.** Supports exFAT, FAT12, FAT16, FAT32 and NTFS. exFAT has been tested
+> on one real damaged volume plus synthetic volumes; FAT-family and NTFS integration are
+> tested with synthetic disk images only, so neither has yet recovered a real damaged drive.
+> NTFS has limits, listed under [NTFS volumes](#ntfs-volumes). It is not released yet.
 
 The [illustrated user manual](docs/manual/index.html) shows every part of the app: a safe
 first recovery, the Simple and Investigate modes, and a guide to each screen. Open it directly
@@ -179,18 +179,83 @@ captainsalvage disk /path/to/clone.img --resume SCAN_ID --accept-sampled-match
 New scans may specify `--offset BYTES --length BYTES`; resumed scans always use their saved range.
 
 A surviving exFAT backup boot region can supply an in-memory interpretation when the main
-boot region has been overwritten, for example by NTFS. The original bytes remain available
-in the raw view and are not repaired or replaced on disk. This requires enough surviving
-metadata and valid geometry: isolated directory entries are evidence, not proof of a complete
-volume or enough information to locate every file. Candidate extents may overlap; these are
-hypotheses, not claims that the disk's current partition layout is wrong.
+boot region has been overwritten, for example by NTFS. The same holds for NTFS: the copy of
+its boot sector in the volume's last sector, one sector past the end of the volume, can stand
+in for a main boot sector that was written over. Pass that sector's offset as the boot
+evidence. The original bytes remain available in the raw view and are not repaired or
+replaced on disk. This requires enough surviving metadata and valid geometry: isolated
+directory entries are evidence, not proof of a complete volume or enough information to
+locate every file. Candidate extents may overlap; these are hypotheses, not claims that the
+disk's current partition layout is wrong.
 
 The initial probes recognise FAT boot geometry, exFAT boot regions and checksummed directory
-entry sets, and plausible NTFS boot metadata. NTFS FILE-record inspection and stream
-recovery are available through the command line and MCP, but the full graphical NTFS
-recovery workspace and ext4, Btrfs, and bcachefs probes are not implemented yet.
-Extended MBR chains and backup-GPT recovery are also not
+entry sets, NTFS boot sectors and their backups, and BitLocker boot sectors, which are
+reported as encrypted and not readable. The ext4, Btrfs, and bcachefs probes are not
+implemented yet. Extended MBR chains and backup-GPT recovery are also not
 implemented; unsupported or invalid tables produce warnings without preventing raw access.
+
+## NTFS volumes
+
+NTFS opens in the same workspace as exFAT and FAT, with the same read-only rules: the app
+never writes to the volume, never replays its journal onto it, and never repairs its
+metadata in memory and shows the result as if it were on the disk. The NTFS driver
+(`rust-fs-ntfs`) decodes every structure; the app only turns what it returns into entries,
+a map and a baseline. The window, `captainsalvage filesystem capabilities SOURCE`, the engine
+tool `capabilities` and MCP's `captainsalvage_capabilities` all report the table below from
+one place, so none of them can claim more than the adapter does.
+
+| Feature | Status | What it means for NTFS |
+|---|---|---|
+| Open | Supported | The boot sector, `$MFT`, `$Volume`, the root directory record and `$Bitmap` are read and kept as the volume's baseline, with the boot sector's backup. A BitLocker volume is refused by name after one sector is read. |
+| Scan | Supported | Every cluster is read for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found as well as live ones. A record that fails its update-sequence check is kept as a damaged entry and never read as a file. Resumable. |
+| Map | Supported | Allocation comes from `$Bitmap`. Clusters holding FILE records show as directory structure. The first two clusters, which hold the boot sector and its code, are not drawn: they are covered by the baseline. |
+| Browse | Supported | The tree is rebuilt from each record's parent reference. A folder whose own record was lost is listed with no name, as an exFAT folder is. A name linked under a parent whose sequence number has since changed gets a lower link confidence. |
+| Preview, tests | Limited | Resident, fragmented, sparse and deleted data is read through the driver. Compressed, EFS-encrypted and attribute-list streams are listed with their size and cannot be read. A failed read is an error, never zeros; only the zeros NTFS defines (sparse holes and bytes past the initialised length) read as zeros. |
+| Resume | Supported | Same checkpoints as exFAT. |
+| Baseline copy | Supported | Clusters written since the baseline are reported, and a changed volume is read through the saved structures. |
+| Disk Rebuilds | Limited | A rebuild can replace a file's clusters or a folder's parent and is read as clusters. A record, its names and its run list are never altered. |
+| Copy out | Limited | Hashed, never overwrites, complete or partial. A stream that cannot be read is reported failed and writes no file. |
+| Mount block | Supported | Decided by volume UUID in Disk Arbitration, not by filesystem, so it applies to whichever NTFS driver would mount the volume. It was not exercised against a live NTFS mount in this change. |
+| Alternate data streams, hard links | Limited | Listed in the record details (`captainsalvage_ntfs_entry`), never merged into the file or copied as files of their own. |
+| Attribute lists, compression, journal | Missing | A file whose attributes continue in extension records, and an LZNT1-compressed file, are listed but not read ([rust-fs-ntfs#1379](https://github.com/antimatter-studios/rust-fs-ntfs/issues/1379)). `$LogFile` and `$UsnJrnl` are not interpreted. |
+| Encryption | Missing | EFS files are listed and marked unreadable. BitLocker volumes are refused. |
+| Very large volumes | Limited | Up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters. |
+
+A live deleted file keeps its bytes only while its clusters are untouched: a surviving FILE
+record is evidence, not proof, that the clusters were not reused, and the verdicts say so. A
+file whose bytes are stored inside its own FILE record has no cluster that could have been
+reused, so it is read as it survived.
+
+The `in use` flag of an NTFS entry means its record says it is in use *and* its record sits
+in a cluster `$Bitmap` calls allocated. An in-use record in a free cluster is an old copy of
+the MFT and is shown as not in use.
+
+What was checked against something that is not this app:
+
+- **ntfs-3g and the Linux kernel's ntfs3**, in the Linux test VM (`chore test:oracle`, from
+  `tests/ntfs_oracle.rs` and `validation/oracle.sh`). For images the rust-fs-ntfs driver
+  formatted and wrote, `ntfsfix -n` finds nothing, and `ntfsls` and `ntfscat` agree with a
+  read-only ntfs3 mount about every path, size and SHA-256, including an alternate data stream.
+  The app's scan, browse and read report the same tree and the same hashes, every live file is
+  called live, and what the app copies is byte for byte what the oracles read. For images the
+  oracles' own tools made (`mkntfs` at 512 and 4096 byte clusters, filled through a read-write
+  ntfs3 mount: 150 files in one folder, a sparse file, a fragmented file, non-ASCII names), the
+  app lists exactly what ntfs3 and ntfs-3g list, and reads files they deleted through ntfs-3g.
+  The two oracles are compared with each other first, and the script fails if they differ.
+- **The independent [`ntfs`](https://crates.io/crates/ntfs) reader**, a dev-only dependency
+  never linked into the app, for every live file of the driver's images (`tests/ntfs.rs`).
+
+The oracles found two faults, each fixed behind a failing test. Records the Linux ntfs3 driver
+writes carry no record number where the driver looked for one (rust-fs-ntfs#1380), so their
+folders could not be told apart; the driver now reads the number only where the header has one,
+and the app takes it from where `$MFT` places the record. And a live file stored inside its own
+record was called only plausible, so the copy planner left it out.
+
+Not checked: images written by Windows, because no Windows machine took part (the driver's own
+Windows-captured fixtures are graded by the driver's tests, not by this app's), a live NTFS
+mount, the window tests, and a real damaged NTFS drive. A volume a kernel or ntfs-3g has deleted
+a file from through ntfs3 keeps nothing to recover, because ntfs3 scrubs the name; files deleted
+through ntfs-3g keep their records.
 
 ## How far to trust the results
 
@@ -285,7 +350,13 @@ operations as `captainsalvage_open_raw_disk`, `captainsalvage_discover_raw_disk`
 
 ```sh
 cargo test -p captainsalvage
+chore test:oracle     # NTFS against ntfs-3g and the kernel's ntfs3, in the Linux test VM
 ```
+
+`chore test:oracle` needs the sibling checkouts `chore siblings` makes, and boots the shared
+guest of [fs-linux-test-harness](https://github.com/antimatter-studios/fs-linux-test-harness)
+with the `ntfs3` run profile in `run-profiles/`. Nothing is mounted on the Mac. A missing VM, tool
+or kernel driver fails the oracle tests, naming this task; they never skip.
 
 Treat the existing tests as a regression contract: record the passing tests before a
 driver change, rerun them afterwards, and check that every previously passing test still
@@ -466,9 +537,9 @@ from validated structures. Torn records, unresolved attribute-list extents,
 unsupported compression/encryption, and out-of-volume runs are refused rather
 than guessed. Surviving metadata is not proof the clusters have not been reused.
 
-This is record-based NTFS recovery, not yet the full scan/tree/rebuild workflow
-available for FAT and exFAT. The existing raw discovery scanner still identifies
-NTFS boot metadata; it does not yet search for every surviving FILE record.
+These record tools stay available for sources whose boot sector is gone and cannot be
+opened as a volume. A volume with a readable boot sector, or a backup of one, opens in the
+full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volumes).
 
 ## Changelog
 

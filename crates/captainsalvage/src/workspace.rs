@@ -79,6 +79,12 @@ impl Workspace {
         Self::at(Self::root()?.join(format!("vol-{serial:08x}")))
     }
 
+    /// The workspace of a volume, named by the identity its filesystem gives it: a 32-bit serial
+    /// for the FAT family and exFAT, the 64-bit serial for NTFS. The two never share a folder.
+    pub fn for_volume(volume: &crate::volume::Volume) -> Result<Self> {
+        Self::at(Self::root()?.join(volume.workspace_name()))
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }

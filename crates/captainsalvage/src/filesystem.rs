@@ -6,6 +6,7 @@
 
 pub mod driver;
 pub mod ntfs;
+pub(crate) mod ntfs_salvage;
 pub mod probe;
 pub(crate) mod salvage;
 
@@ -18,6 +19,11 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_VOLUME_ID: AtomicU64 = AtomicU64::new(1);
+
+/// The OEM identifier a BitLocker-encrypted volume carries in place of `NTFS    `.
+pub const BITLOCKER_OEM_ID: &[u8; 8] = b"-FVE-FS-";
+/// What the person is told when a volume is BitLocker encrypted. Nothing is read or guessed.
+pub const BITLOCKER_MESSAGE: &str = "This volume is encrypted with BitLocker. Captain Salvage cannot read its files until it is unlocked and decrypted by Windows, and it does not guess at encrypted data.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FilesystemKind {
@@ -51,12 +57,84 @@ impl FilesystemKind {
         if &boot_sector[3..11] == b"NTFS    " {
             return Ok(Self::Ntfs);
         }
+        if &boot_sector[3..11] == BITLOCKER_OEM_ID {
+            bail!("{BITLOCKER_MESSAGE}");
+        }
         let boot = fs_fat32::BootSector::parse(boot_sector).context("identifying FAT variant")?;
         Ok(match boot.kind {
             fs_fat32::FatKind::Fat12 => Self::Fat12,
             fs_fat32::FatKind::Fat16 => Self::Fat16,
             fs_fat32::FatKind::Fat32 => Self::Fat32,
         })
+    }
+}
+
+/// Whether a feature works for a filesystem, works with stated limits, or is not offered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Support {
+    Supported,
+    Limited,
+    Missing,
+}
+
+/// One row of what the app can and cannot do for a filesystem. The window, the command line
+/// and MCP all report this table, so none of them claims more than the adapter provides.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Capability {
+    pub feature: &'static str,
+    pub support: Support,
+    pub note: &'static str,
+}
+
+const fn capability(feature: &'static str, support: Support, note: &'static str) -> Capability {
+    Capability {
+        feature,
+        support,
+        note,
+    }
+}
+
+impl FilesystemKind {
+    /// What the app does for this filesystem, validated on synthetic images.
+    pub fn capabilities(self) -> Vec<Capability> {
+        use Support::{Limited, Missing, Supported};
+        match self {
+            Self::Exfat | Self::Fat12 | Self::Fat16 | Self::Fat32 => vec![
+                capability("open", Supported, "Boot sector, FAT and allocation bitmap are read and saved as a baseline."),
+                capability("scan", Supported, "Every cluster is read once for directory entries; resumable."),
+                capability("map", Supported, "Allocation, content, ownership and confidence layers."),
+                capability("browse", Supported, "The folder tree is rebuilt from directory clusters."),
+                capability("preview", Supported, "Bytes are read through the FAT chain, or contiguously where the entry says so."),
+                capability("resume", Supported, "A paused or interrupted scan continues from its last saved cluster."),
+                capability("baseline", Supported, "Boot regions, FAT, bitmap and root are hashed and kept; changes are explained."),
+                capability("file_tests", Supported, "File formats are walked through the reassembled bytes."),
+                capability("rebuilds", Supported, "Disk Rebuilds overlay cluster lists and folder links without touching the disk."),
+                capability("export", Supported, "Copies are hashed, never overwrite, and record complete or partial status."),
+                capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
+            ],
+            Self::Ntfs => vec![
+                capability("open", Supported, "The boot sector, $MFT, $Volume, root directory and $Bitmap are read and saved as a baseline. A BitLocker volume is refused by name."),
+                capability("scan", Supported, "Every cluster is read for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found. Resumable."),
+                capability("map", Supported, "Allocation comes from $Bitmap. Clusters holding FILE records are shown as directory structure. The first two clusters, the boot area, are not drawn."),
+                capability("browse", Supported, "The folder tree is rebuilt from each record's parent reference. A folder whose own record was lost is listed unnamed."),
+                capability("preview", Limited, "Resident, fragmented, sparse and deleted data is read through the NTFS driver. Compressed, encrypted (EFS) and attribute-list streams are listed but cannot be read."),
+                capability("resume", Supported, "A paused or interrupted scan continues from its last saved cluster."),
+                capability("baseline", Supported, "The boot sector, its backup, $MFT, $Volume, the root record and $Bitmap are hashed and kept; clusters written since are reported."),
+                capability("file_tests", Limited, "Formats are walked through the bytes the driver reads. Streams that cannot be read are not tested."),
+                capability("rebuilds", Limited, "Disk Rebuilds can replace a file's clusters and folder links, and are read as clusters. The record, its names and its run list are never altered."),
+                capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A stream that cannot be read is reported failed, never filled with zeros."),
+                capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
+                capability("named_streams", Limited, "Alternate data streams are listed in the record details, not copied as separate files. Streams held in extension records are not followed."),
+                capability("hard_links", Limited, "A record is one entry under its best name; its other names are listed in the record details."),
+                capability("attribute_lists", Missing, "A file whose attributes continue in extension records is listed, with its size, but its data is not read (rust-fs-ntfs#1379)."),
+                capability("compression", Missing, "NTFS-compressed streams are listed but not decoded (rust-fs-ntfs#1379)."),
+                capability("encryption", Missing, "EFS-encrypted files are listed and marked unreadable. BitLocker volumes are refused."),
+                capability("journal", Missing, "$LogFile and $UsnJrnl are not interpreted, and nothing is replayed onto the volume."),
+                capability("large_volumes", Limited, "Volumes of up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters."),
+            ],
+        }
     }
 }
 
@@ -92,6 +170,52 @@ pub struct VolumeGeometry {
     pub cluster_size: u64,
     pub cluster_count: u32,
     pub volume_size: u64,
+    /// The size of one NTFS FILE record; zero for every other filesystem.
+    pub record_size: u64,
+}
+
+/// One run of an NTFS data stream: `count` clusters starting at virtual cluster `vcn`,
+/// at logical cluster `lcn`, or a sparse hole when there is none.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NtfsRun {
+    pub vcn: u64,
+    pub lcn: Option<u64>,
+    pub count: u64,
+}
+
+/// How an NTFS entry's bytes are held, and so whether they can be read at all.
+pub const STORAGE_RESIDENT: &str = "resident";
+pub const STORAGE_RUNS: &str = "runs";
+pub const STORAGE_NONE: &str = "none";
+pub const STORAGE_COMPRESSED: &str = "compressed";
+pub const STORAGE_ENCRYPTED: &str = "encrypted";
+pub const STORAGE_ATTRIBUTE_LIST: &str = "attribute-list";
+pub const STORAGE_INCOMPLETE: &str = "incomplete";
+/// Something shaped like a FILE record was here, but it failed its update-sequence check.
+pub const STORAGE_DAMAGED: &str = "damaged-record";
+
+/// What an NTFS FILE record says about an entry, kept beside the common fields. A file
+/// reference names a record and the sequence it had; neither is a cluster.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NtfsEntry {
+    /// The record's own number, when its header says one.
+    pub record_number: Option<u64>,
+    pub sequence: u16,
+    /// The directory its chosen name was last linked in, when it has a name.
+    pub parent_record: Option<u64>,
+    pub parent_sequence: Option<u16>,
+    pub storage: String,
+    /// The unnamed `$DATA` stream's runs, in virtual-cluster order. Empty when resident.
+    pub runs: Vec<NtfsRun>,
+}
+
+impl NtfsEntry {
+    /// Whether the bytes can be read through the driver rather than only described.
+    pub fn is_readable(&self) -> bool {
+        matches!(self.storage.as_str(), STORAGE_RESIDENT | STORAGE_RUNS)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -111,6 +235,9 @@ pub struct SalvageEntry {
     pub modified: Option<String>,
     pub accessed: Option<String>,
     pub slots: usize,
+    /// Set for entries found in NTFS FILE records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ntfs: Option<NtfsEntry>,
 }
 
 impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
@@ -130,6 +257,7 @@ impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
             modified: entry.modified,
             accessed: entry.accessed,
             slots: entry.slots,
+            ntfs: None,
         }
     }
 }
@@ -178,6 +306,20 @@ pub enum FilesystemDetails {
         first_data_sector: u32,
         root_cluster: u32,
     },
+    #[serde(rename_all = "camelCase")]
+    Ntfs {
+        bytes_per_sector: u16,
+        sectors_per_cluster: u64,
+        cluster_size: u64,
+        mft_cluster: u64,
+        file_record_size: u64,
+        index_block_size: u32,
+        total_sectors: u64,
+        serial: String,
+        /// `$Volume`'s version and label, when the record was readable.
+        version: Option<String>,
+        label: Option<String>,
+    },
 }
 
 pub struct FilesystemVolume<Device: BlockRead> {
@@ -207,7 +349,7 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
             });
         }
         if kind == FilesystemKind::Ntfs {
-            bail!("NTFS volume detected; NTFS driver is not integrated yet");
+            bail!("NTFS has no clusters of links to follow: read it through the NTFS driver adapter, filesystem::driver::Driver");
         }
         let volume =
             fs_fat32::Volume::open(std::sync::Arc::clone(&device)).context("opening FAT volume")?;
@@ -260,6 +402,7 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
                     cluster_size: boot.cluster_size(),
                     cluster_count: boot.cluster_count,
                     volume_size: boot.volume_length * bytes_per_sector,
+                    record_size: 0,
                 }
             }
             DriverVolume::Fat(volume) => {
@@ -279,6 +422,7 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
                     cluster_size: boot.cluster_size(),
                     cluster_count: boot.cluster_count,
                     volume_size: u64::from(boot.total_sectors) * u64::from(boot.bytes_per_sector),
+                    record_size: 0,
                 }
             }
         }
@@ -654,7 +798,7 @@ mod tests {
             .err()
             .unwrap()
             .to_string();
-        assert!(error.contains("NTFS volume detected"));
+        assert!(error.contains("NTFS driver adapter"));
     }
 
     #[test]

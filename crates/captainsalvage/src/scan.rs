@@ -7,7 +7,7 @@
 use crate::content::{
     classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES,
 };
-use crate::filesystem::SalvageEntry as EntrySet;
+use crate::filesystem::{SalvageEntry as EntrySet, STORAGE_DAMAGED};
 use crate::map::MapDb;
 use crate::session::DISK_GONE;
 use crate::volume::Volume;
@@ -183,6 +183,8 @@ pub fn run_scan(
     let text_heads = open_map_file(&workspace.text_heads(), cluster_count)?;
 
     let cluster_size = volume.geometry.cluster_size();
+    // A FILE record that starts in the last sector of a cluster ends in the next one.
+    let lookahead_max = LOOKAHEAD_BYTES.max(volume.geometry.record_size);
     let last = volume.geometry.last_cluster_exclusive();
     let mut next = database
         .state_u64(STATE_NEXT)?
@@ -230,7 +232,7 @@ pub fn run_scan(
         let chunk_bytes = u64::from(count) * cluster_size;
         let offset = volume.cluster_offset(next);
         let volume_end = volume.cluster_offset(last - 1) + cluster_size;
-        let lookahead = LOOKAHEAD_BYTES.min(volume_end - (offset + chunk_bytes));
+        let lookahead = lookahead_max.min(volume_end - (offset + chunk_bytes));
         buffer.resize((chunk_bytes + lookahead) as usize, 0);
 
         let mut failed = vec![false; count as usize];
@@ -267,7 +269,7 @@ pub fn run_scan(
             let start = index * cluster_size as usize;
             let end = start + cluster_size as usize;
             let sets = volume.find_sets(
-                &buffer[start..buffer.len().min(end + LOOKAHEAD_BYTES as usize)],
+                &buffer[start..buffer.len().min(end + lookahead_max as usize)],
                 cluster_size as usize,
             );
             let holds_directory = sets.iter().any(|set| set.checksum_ok);
@@ -279,7 +281,22 @@ pub fn run_scan(
                 directories += 1;
             }
             sets_total += sets.len() as u64;
-            found.extend(sets.into_iter().map(|set| (cluster, set)));
+            found.extend(sets.into_iter().map(|mut set| {
+                // A FILE record in a cluster the bitmap calls free is an old copy of the MFT, whatever
+                // its own flag says, so it is recorded as not in use.
+                if let Some(ntfs) = set.ntfs.as_mut() {
+                    set.in_use &= volume.is_allocated(cluster);
+                    // Records the kernel's ntfs3 driver wrote have no number in their header, so
+                    // it is where `$MFT` puts them.
+                    if ntfs.record_number.is_none() && ntfs.storage != STORAGE_DAMAGED {
+                        ntfs.record_number = volume
+                            .ntfs
+                            .as_ref()
+                            .and_then(|access| access.record_number_at(cluster, set.offset));
+                    }
+                }
+                (cluster, set)
+            }));
         }
 
         let map_position = u64::from(next - FIRST_CLUSTER);

@@ -2493,9 +2493,11 @@ fn the_start_screen_reads_what_diskutil_says() {
         Some("/Volumes/Untitled")
     );
 
-    // Another format can be seen but not opened.
+    // NTFS opens through its driver. A format with no recovery driver can be seen but not opened.
     let ntfs = SAMPLE_DISK_INFO.replace("ExFAT", "NTFS");
-    assert!(!parse_volume(&ntfs).expect("volume").can_open);
+    assert!(parse_volume(&ntfs).expect("volume").can_open);
+    let apfs = SAMPLE_DISK_INFO.replace("ExFAT", "APFS");
+    assert!(!parse_volume(&apfs).expect("volume").can_open);
     // A damaged volume may show no format at all, and that is exactly what this app is for.
     let unknown = SAMPLE_DISK_INFO.replace(
         "File System Personality:   ExFAT",
@@ -2600,7 +2602,7 @@ fn a_volume_is_recognised_by_uuid_under_any_disk_number() {
     // What is recognised comes first, then what can be opened, whatever the disk numbers.
     let ntfs = parse_volume(
         &SAMPLE_DISK_INFO
-            .replace("ExFAT", "NTFS")
+            .replace("ExFAT", "APFS")
             .replace("52D6C729", "BBBBBBBB"),
     )
     .expect("volume");

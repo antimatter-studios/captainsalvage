@@ -106,7 +106,7 @@ fn register_structures(engine: &mut Engine, session: &Arc<Session>) {
         "fat",
         move |cluster: INT| -> Result<INT, Box<EvalAltResult>> {
             Ok(INT::from(
-                s.volume.fat[cluster_argument(&s, cluster)? as usize],
+                s.volume.fat_value(cluster_argument(&s, cluster)?),
             ))
         },
     );

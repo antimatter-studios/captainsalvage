@@ -18,3 +18,4 @@ __pycache__/
 
 # The Finder helper, built and signed locally.
 macos/finder/build/
+/.vm-share/

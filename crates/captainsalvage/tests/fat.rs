@@ -396,7 +396,7 @@ fn fat_changed_structures_are_explained_and_saved_baselines_remain_usable() {
 }
 
 #[test]
-fn fat_disk_discovery_marks_msdos_variants_as_openable_but_not_ntfs() {
+fn fat_disk_discovery_marks_msdos_variants_and_ntfs_as_openable() {
     for format in [
         "MS-DOS FAT12",
         "MS-DOS FAT16",
@@ -416,7 +416,7 @@ fn fat_disk_discovery_marks_msdos_variants_as_openable_but_not_ntfs() {
     let info =
         "Device Identifier: disk99s1\nDevice Node: /dev/disk99s1\nFile System Personality: NTFS\n";
     assert!(
-        !captainsalvage::startup::parse_volume(info)
+        captainsalvage::startup::parse_volume(info)
             .unwrap()
             .can_open
     );

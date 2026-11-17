@@ -603,6 +603,13 @@ impl Engine {
         match tool {
             "status" => Ok(serde_json::to_value(session.status()?)?),
             "volume_overview" => Ok(session.overview()),
+            "capabilities" => Ok(json!({
+                "filesystem": session.volume.kind.to_string(),
+                "capabilities": session.volume.kind.capabilities(),
+            })),
+            "ntfs_entry" => Ok(serde_json::to_value(
+                session.ntfs_record(need_i64(args, "id")?)?,
+            )?),
             "verify_unchanged" => Ok(serde_json::to_value(session.verify_unchanged()?)?),
             "structure_changes" => Ok(serde_json::to_value(session.structure_changes()?)?),
 
@@ -1446,6 +1453,9 @@ impl Engine {
         if !session.volume.valid_cluster(start) {
             bail!("cluster {start} is outside the volume");
         }
+        if session.volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+            bail!("NTFS keeps no chain of links between clusters. Use entry to see the runs a file's record names.");
+        }
         let limit = u64_of(args, "max")
             .unwrap_or(MAX_FOLLOW_CLUSTERS)
             .min(MAX_FOLLOW_CLUSTERS);
@@ -1454,7 +1464,7 @@ impl Engine {
         let clusters = session.volume.clusters_for(start, length, false).clusters;
         let current = clusters
             .last()
-            .map(|&cluster| session.volume.fat[cluster as usize])
+            .map(|&cluster| session.volume.fat_value(cluster))
             .unwrap_or(start);
         let stopped = if clusters.len() as u64 == limit {
             "limit"

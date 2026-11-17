@@ -24,6 +24,7 @@ import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
 import { CopyReport } from "./CopyReport";
 import { FilesystemDetailsPanel } from "./FilesystemDetails";
+import { NtfsRecordPanel } from "./NtfsRecord";
 import { SimilarPieces } from "./SimilarPieces";
 import { isArchiveName } from "./ZipView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone, type IconName } from "./icons";
@@ -120,15 +121,17 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
         {/* Where it lies on the disk is for investigating, and Simple mode leaves it out. */}
         {!simple && (
           <>
-            <Fact label={t("First cluster")}>
-              <button className="link" onClick={() => onCluster(row.firstCluster)}>{count(row.firstCluster)}</button>
-            </Fact>
+            {row.storage !== "resident" && (
+              <Fact label={t("First cluster")}>
+                <button className="link" onClick={() => onCluster(row.firstCluster)}>{count(row.firstCluster)}</button>
+              </Fact>
+            )}
             {row.kind === "file" && <Fact label={t("Clusters")}>{t("{found} found of {needed} needed", { found: count(row.clustersFound), needed: count(row.clustersNeeded) })}</Fact>}
             {row.clustersAllocated > 0 && <Fact label={t("In current use")}>{t("{count} clusters", { count: count(row.clustersAllocated) })}</Fact>}
             {row.clustersConflict > 0 && <Fact label={t("Shared")}>{t("{count} clusters", { count: count(row.clustersConflict) })}</Fact>}
             <Fact label={t("Pieces")}>{count(extents.length)}</Fact>
-            <Fact label={t("Layout")}>{row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
-            <Fact label={t("Entry state")}>{row.inUse ? t("In use") : t("Marked deleted")}{row.checksumOk ? "" : t(", checksum failed")}</Fact>
+            <Fact label={t("Layout")}>{row.storage === "resident" ? t("Inside its FILE record") : row.storage !== undefined ? t("Run list") : row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
+            <Fact label={t("Entry state")}>{row.inUse ? t("In use") : t("Marked deleted")}{row.checksumOk ? "" : row.storage !== undefined ? t(", record damaged") : t(", checksum failed")}</Fact>
           </>
         )}
         <Fact label={t("Created")}>{stamp(row.created)}</Fact>
@@ -139,6 +142,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
           </Fact>
         )}
       </dl>
+      {row.storage !== undefined && <NtfsRecordPanel id={id} />}
       {copies.length > 0 && (
         <>
           <h4>{copies.length >= MAX_COPIES_SHOWN ? t("Same bytes also at (first {count})", { count: count(MAX_COPIES_SHOWN) }) : t("Same bytes also at")}</h4>
@@ -515,10 +519,16 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
       <h4>{t("Space")}</h4>
       <dl className="facts">
         <Fact label={t("In use")}>{bytes(overview.allocationBytes.allocated)}</Fact>
-        <Fact label={t("Free, chain remains")}>{bytes(overview.allocationBytes.freeWithFat)}</Fact>
-        <Fact label={t("Free, no chain")}>{bytes(overview.allocationBytes.freeZeroFat)}</Fact>
-        <Fact label={t("Free chains")}>{count(overview.allocation.freeChains.chains)}</Fact>
-        <Fact label={t("Cross-linked clusters")}>{count(overview.allocation.crossLinks)}</Fact>
+        {overview.filesystem.kind === "ntfs" ? (
+          <Fact label={t("Free")}>{bytes(overview.allocationBytes.freeZeroFat)}</Fact>
+        ) : (
+          <>
+            <Fact label={t("Free, chain remains")}>{bytes(overview.allocationBytes.freeWithFat)}</Fact>
+            <Fact label={t("Free, no chain")}>{bytes(overview.allocationBytes.freeZeroFat)}</Fact>
+            <Fact label={t("Free chains")}>{count(overview.allocation.freeChains.chains)}</Fact>
+            <Fact label={t("Cross-linked clusters")}>{count(overview.allocation.crossLinks)}</Fact>
+          </>
+        )}
       </dl>
       {overview.filesystem.kind === "exfat" && overview.bootCheck && <>
       <h4>{t("Boot sectors")}</h4>

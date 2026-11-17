@@ -1,0 +1,16 @@
+# fs-linux-test-harness consumer config (see ../fs-linux-test-harness/README.md).
+#
+# The independent oracles for the NTFS flows run in the Linux guest and nowhere else:
+# ntfs-3g's own tools (ntfsfix, ntfsls, ntfscat, ntfsinfo, mkntfs) and the kernel's ntfs3
+# driver on a loop mount. Nothing is mounted on the host.
+[project]
+name = "captainsalvage"
+
+[setup]
+script = "scripts/vm-setup.sh"
+
+[share]
+dir = ".vm-share"
+
+[vm]
+profile = "ntfs3"

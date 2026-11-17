@@ -9,6 +9,7 @@ use crate::content::{
     content_match, expected_class, text_head_match, ContentMatch, CLASS_DIRECTORY, CLASS_NAMES,
     CLASS_TEXT, CLASS_ZEROS,
 };
+use crate::filesystem::{FilesystemKind, NtfsRun, STORAGE_DAMAGED, STORAGE_RESIDENT, STORAGE_RUNS};
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
     OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
@@ -62,6 +63,10 @@ pub const CODE_RENAME_RESIDUE: &str = "rename_residue";
 pub const CODE_FOLDER_FOUND: &str = "folder_found";
 pub const CODE_FOLDER_EMPTY: &str = "folder_empty";
 pub const CODE_FOLDER_MISSING: &str = "folder_missing";
+/// NTFS: the bytes are in the FILE record itself, which survived, so no cluster can have been reused.
+pub const CODE_RESIDENT: &str = "resident_in_record";
+/// NTFS: the entry is listed, but its stream is compressed, encrypted or otherwise not read here.
+pub const CODE_STREAM_UNREADABLE: &str = "stream_unreadable";
 /// Every code, for tools that list or check them.
 pub const REASON_CODES: &[&str] = &[
     CODE_LIVE,
@@ -80,6 +85,8 @@ pub const REASON_CODES: &[&str] = &[
     CODE_FOLDER_FOUND,
     CODE_FOLDER_EMPTY,
     CODE_FOLDER_MISSING,
+    CODE_RESIDENT,
+    CODE_STREAM_UNREADABLE,
 ];
 
 pub const OWNERSHIP_UNEXPLAINED: u8 = 0;
@@ -141,6 +148,57 @@ struct LoadedSet {
     no_fat_chain: bool,
     created: Option<String>,
     modified: Option<String>,
+    /// NTFS: where the FILE record says this entry sits, and how its bytes are held.
+    ntfs: Option<LoadedNtfs>,
+}
+
+struct LoadedNtfs {
+    record_number: Option<u32>,
+    sequence: u16,
+    parent_record: Option<u32>,
+    parent_sequence: Option<u16>,
+    storage: String,
+    runs: Vec<NtfsRun>,
+}
+
+impl LoadedSet {
+    /// The folder this entry is named by: its record number for NTFS, its first cluster otherwise.
+    fn folder_key(&self) -> u32 {
+        self.ntfs
+            .as_ref()
+            .and_then(|ntfs| ntfs.record_number)
+            .unwrap_or(self.first_cluster)
+    }
+
+    /// Whether the entry's first cluster says which stream it is. A resident NTFS file has none.
+    fn has_clusters(&self) -> bool {
+        !self.is_resident() && (self.ntfs.is_none() || self.first_cluster != 0)
+    }
+
+    /// NTFS: the name was linked under a sequence number the parent record no longer has.
+    fn parent_was_reused(&self, sequences: &HashMap<u32, u16>) -> bool {
+        let Some(ntfs) = &self.ntfs else { return false };
+        match (ntfs.parent_record, ntfs.parent_sequence) {
+            (Some(parent), Some(linked)) => sequences
+                .get(&parent)
+                .is_some_and(|current| *current != linked),
+            _ => false,
+        }
+    }
+
+    fn is_resident(&self) -> bool {
+        self.ntfs
+            .as_ref()
+            .is_some_and(|ntfs| ntfs.storage == STORAGE_RESIDENT)
+    }
+
+    /// Why the driver cannot read this NTFS stream, if it cannot.
+    fn unreadable_storage(&self) -> Option<&str> {
+        self.ntfs
+            .as_ref()
+            .map(|ntfs| ntfs.storage.as_str())
+            .filter(|storage| *storage != STORAGE_RESIDENT && *storage != STORAGE_RUNS)
+    }
 }
 
 /// When the streams starting at one cluster were made, and whether every entry for
@@ -304,6 +362,20 @@ impl Streams<'_> {
                 0,
             );
         }
+        if set.is_resident() {
+            // Its bytes are in its record, so it claims no cluster and needs none.
+            return (
+                StreamClusters {
+                    clusters: Vec::new(),
+                    needed: 0,
+                },
+                0,
+            );
+        }
+        if let Some(ntfs) = &set.ntfs {
+            // A run list names its clusters. Nothing is assumed contiguous.
+            return (self.volume.clusters_from_runs(&ntfs.runs, set.length), 0);
+        }
         let mut stream = self
             .volume
             .clusters_for(set.first_cluster, set.length, set.no_fat_chain);
@@ -423,6 +495,8 @@ struct Context<'a> {
     /// Clusters written since the baseline, from the workspace's record of changes.
     written: &'a HashSet<u32>,
     node_heads: &'a HashSet<u32>,
+    /// NTFS: the folders some entry's name was last linked in.
+    ntfs_children: &'a HashSet<u32>,
     params: ResolveParams,
 }
 
@@ -432,7 +506,7 @@ impl Context<'_> {
     /// the rest of its cluster can still hold data from before it was written.
     fn content_of(&self, set: &LoadedSet) -> (ContentMatch, String) {
         let class = self.class_at(set.first_cluster);
-        let held = CLASS_NAMES[usize::from(class)].to_string();
+        let held = self.volume.class_name(class).to_string();
         let expected = expected_class(&set.name);
         if expected != Some(CLASS_TEXT) || !self.volume.valid_cluster(set.first_cluster) {
             return (content_match(expected, class), held);
@@ -474,6 +548,23 @@ impl Context<'_> {
     }
 
     fn assess_folder(&self, set: &LoadedSet, trust: f64) -> Assessment {
+        if set.ntfs.is_some() {
+            return if self.ntfs_children.contains(&set.folder_key()) {
+                Assessment::plain(
+                    VERDICT_FOLDER,
+                    CODE_FOLDER_FOUND,
+                    "Folder contents found.",
+                    trust,
+                )
+            } else {
+                Assessment::plain(
+                    VERDICT_FOLDER_EMPTY,
+                    CODE_FOLDER_EMPTY,
+                    "No surviving file record names this folder as its parent: it was empty, or its files' records were not found.",
+                    trust * FOLDER_NOT_FOUND_PENALTY,
+                )
+            };
+        }
         let prefix = if set.checksum_ok {
             ""
         } else {
@@ -564,6 +655,26 @@ impl Context<'_> {
             written,
         };
 
+        if let Some(storage) = set.unreadable_storage() {
+            let why = match storage {
+                "compressed" => {
+                    "Its data is NTFS-compressed, which Captain Salvage does not decode."
+                }
+                "encrypted" => "Its data is encrypted (EFS), which Captain Salvage cannot read.",
+                "attribute-list" => {
+                    "Its data continues in other FILE records, which are not followed yet."
+                }
+                "incomplete" => "Only part of its run list is in this record.",
+                _ => "It has no data stream in this record.",
+            };
+            return build(
+                VERDICT_PARTIAL,
+                CODE_STREAM_UNREADABLE,
+                format!("{why} It is listed, but its bytes cannot be copied."),
+                0.0,
+            );
+        }
+
         if set.in_use
             && set.checksum_ok
             && matches!(node_kind, Some("root") | Some("live"))
@@ -596,6 +707,15 @@ impl Context<'_> {
                 CODE_WRITTEN_AFTER_BASELINE,
                 reason,
                 left * WRITTEN_PENALTY,
+            );
+        }
+
+        if set.is_resident() {
+            return build(
+                VERDICT_PLAUSIBLE,
+                CODE_RESIDENT,
+                "Its bytes are stored inside its own FILE record, which survived. No cluster holds them, so none can have been reused.".into(),
+                if set.checksum_ok { 0.9 } else { 0.45 },
             );
         }
 
@@ -648,11 +768,20 @@ impl Context<'_> {
             ));
         }
         let (verdict, code) = if found == 0 {
-            sentences.push("First cluster is outside the volume.".to_string());
+            sentences.push(if self.volume.kind == FilesystemKind::Ntfs {
+                "Its run list names clusters outside the volume.".to_string()
+            } else {
+                "First cluster is outside the volume.".to_string()
+            });
             (VERDICT_PARTIAL, CODE_OUTSIDE_VOLUME)
         } else if found < stream.needed {
             sentences.push(format!(
-                "FAT chain ends early: {found} of {} clusters reachable.",
+                "{} {found} of {} clusters reachable.",
+                if self.volume.kind == FilesystemKind::Ntfs {
+                    "Its run list ends early:"
+                } else {
+                    "FAT chain ends early:"
+                },
                 stream.needed
             ));
             (VERDICT_PARTIAL, CODE_CHAIN_BROKEN)
@@ -764,7 +893,7 @@ impl MapDb {
             .into_iter()
             .map(|test| (test.id, test))
             .collect();
-        let mut sets = self.load_sets()?;
+        let mut sets = self.load_sets(volume)?;
         let corrections = apply_entry_overlays(&mut sets, &overlays);
         let overrides: HashMap<i64, Vec<u32>> = overlays
             .iter()
@@ -790,11 +919,18 @@ impl MapDb {
             .map(|set| set.source_cluster)
             .collect();
 
+        let ntfs = volume.kind == FilesystemKind::Ntfs;
         // A damaged folder entry still counts if it points at a real directory.
-        // Trustworthy entries rank first, so they win any disagreement.
+        // Trustworthy entries rank first, so they win any disagreement. An NTFS folder is
+        // its own FILE record: it has no clusters of entries to look into.
         let mut folder_sets: Vec<&LoadedSet> = sets
             .iter()
             .filter(|set| {
+                if ntfs {
+                    return set.is_dir
+                        && set.checksum_ok
+                        && set.ntfs.as_ref().is_some_and(|n| n.record_number.is_some());
+                }
                 set.is_dir
                     && set.length > 0
                     && (set.checksum_ok || found.contains(&set.first_cluster))
@@ -831,12 +967,38 @@ impl MapDb {
         }
         let head = |cluster: u32| head_of.get(&cluster).copied().unwrap_or(cluster);
 
-        let mut node_heads: HashSet<u32> = found.iter().map(|&cluster| head(cluster)).collect();
+        let mut node_heads: HashSet<u32> = if ntfs {
+            HashSet::new()
+        } else {
+            found.iter().map(|&cluster| head(cluster)).collect()
+        };
         node_heads.insert(root_head);
+        // Every directory record is a folder, and so is any record a name was last linked in:
+        // a folder whose own record was lost is still where its files were.
+        let mut ntfs_children: HashSet<u32> = HashSet::new();
+        // NTFS: the sequence number each folder's own record has, to tell a reused record.
+        let mut directory_sequence: HashMap<u32, u16> = HashMap::new();
+        if ntfs {
+            for set in &folder_sets {
+                node_heads.insert(set.folder_key());
+                if let Some(ntfs) = &set.ntfs {
+                    // The folder sets rank trustworthy records first, so the first one is kept.
+                    directory_sequence
+                        .entry(set.folder_key())
+                        .or_insert(ntfs.sequence);
+                }
+            }
+            for set in &sets {
+                if let Some(parent) = set.ntfs.as_ref().and_then(|n| n.parent_record) {
+                    node_heads.insert(parent);
+                    ntfs_children.insert(parent);
+                }
+            }
+        }
 
         // A cluster holding only damaged entries still becomes a folder, as long
         // as one of those entries points at data that matches what it claims.
-        for set in sets.iter().filter(|set| !set.checksum_ok) {
+        for set in sets.iter().filter(|set| !set.checksum_ok && !ntfs) {
             let confirmed = if set.is_dir {
                 found.contains(&set.first_cluster)
             } else {
@@ -858,18 +1020,26 @@ impl MapDb {
             node_heads.iter().map(|&node| (node, None)).collect();
         let mut names: HashMap<u32, &LoadedSet> = HashMap::new();
         for set in &folder_sets {
-            if set.first_cluster == root_head || !node_heads.contains(&set.first_cluster) {
+            let key = set.folder_key();
+            if key == root_head || !node_heads.contains(&key) {
                 continue;
             }
-            if names.contains_key(&set.first_cluster) {
+            if names.contains_key(&key) {
                 continue;
             }
-            let source_head = head(set.source_cluster);
-            if source_head == set.first_cluster || !node_heads.contains(&source_head) {
+            let source_head = if ntfs {
+                match set.ntfs.as_ref().and_then(|n| n.parent_record) {
+                    Some(parent) => parent,
+                    None => continue,
+                }
+            } else {
+                head(set.source_cluster)
+            };
+            if source_head == key || !node_heads.contains(&source_head) {
                 continue;
             }
-            names.insert(set.first_cluster, set);
-            parent.insert(set.first_cluster, Some(source_head));
+            names.insert(key, set);
+            parent.insert(key, Some(source_head));
         }
 
         // A folder_parent overlay outranks whatever the entries say.
@@ -920,7 +1090,7 @@ impl MapDb {
         let mut ages: HashMap<u32, StreamAge> = HashMap::new();
         for set in sets
             .iter()
-            .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0)
+            .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0 && set.has_clusters())
         {
             let age = ages.entry(set.first_cluster).or_insert(StreamAge {
                 created: None,
@@ -938,7 +1108,7 @@ impl MapDb {
         let mut claimed_first: HashSet<u32> = HashSet::new();
         for set in sets
             .iter()
-            .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0)
+            .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0 && set.has_clusters())
         {
             if claimed_first.insert(set.first_cluster) {
                 let (stream, _) = streams.claim(set);
@@ -993,6 +1163,7 @@ impl MapDb {
             holders: &holders,
             written: &written,
             node_heads: &node_heads,
+            ntfs_children: &ntfs_children,
             params,
         };
 
@@ -1007,7 +1178,14 @@ impl MapDb {
         let mut totals: HashMap<u32, Totals> = HashMap::new();
         let mut results = Vec::with_capacity(sets.len());
         for set in &sets {
-            let source_head = head(set.source_cluster);
+            let source_head = if ntfs {
+                set.ntfs
+                    .as_ref()
+                    .and_then(|n| n.parent_record)
+                    .unwrap_or(u32::MAX)
+            } else {
+                head(set.source_cluster)
+            };
             let node = node_heads.contains(&source_head).then_some(source_head);
             let node_kind = node.and_then(|value| kinds.get(&value).copied());
             let trust = if set.accepted {
@@ -1019,9 +1197,24 @@ impl MapDb {
             };
             let assessment = if set.is_dir {
                 context.assess_folder(set, trust)
+            } else if set
+                .ntfs
+                .as_ref()
+                .is_some_and(|ntfs| ntfs.storage == STORAGE_DAMAGED)
+            {
+                Assessment::plain(
+                    VERDICT_DAMAGED,
+                    CODE_ENTRY_DAMAGED,
+                    "Its FILE record failed its update-sequence check, so nothing in it can be trusted. It shows only that a record was here.",
+                    0.1,
+                )
             } else if set.length == 0 {
                 Assessment::plain(VERDICT_EMPTY, CODE_EMPTY, "Zero-length file.", trust)
-            } else if !set.in_use && set.checksum_ok && in_use_first.contains(&set.first_cluster) {
+            } else if !set.in_use
+                && set.checksum_ok
+                && set.ntfs.is_none()
+                && in_use_first.contains(&set.first_cluster)
+            {
                 Assessment::plain(
                     VERDICT_RESIDUE,
                     CODE_RENAME_RESIDUE,
@@ -1200,6 +1393,10 @@ impl MapDb {
                 } else {
                     match set {
                         Some(value) if !value.checksum_ok => TRUST_DAMAGED_CONFIRMED,
+                        // The folder's own record has been reused since this name was linked in it.
+                        Some(value) if value.parent_was_reused(&directory_sequence) => {
+                            TRUST_DAMAGED
+                        }
                         _ => TRUST_VALID,
                     }
                 };
@@ -1318,17 +1515,50 @@ impl MapDb {
         Ok(preview)
     }
 
-    fn load_sets(&self) -> Result<Vec<LoadedSet>> {
+    fn load_sets(&self, volume: &Volume) -> Result<Vec<LoadedSet>> {
+        let ntfs = volume.kind == FilesystemKind::Ntfs;
+        let mut runs: HashMap<(i64, i64), Vec<NtfsRun>> = HashMap::new();
+        if ntfs {
+            let mut statement = self.connection.prepare(
+                "SELECT source_cluster, source_offset, vcn, lcn, count FROM ntfs_extents \
+                 ORDER BY source_cluster, source_offset, vcn",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    (row.get::<_, i64>(0)?, row.get::<_, i64>(1)?),
+                    NtfsRun {
+                        vcn: row.get::<_, i64>(2)? as u64,
+                        lcn: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
+                        count: row.get::<_, i64>(4)? as u64,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (key, run) = row?;
+                runs.entry(key).or_default().push(run);
+            }
+        }
         let mut statement = self.connection.prepare(
-            "SELECT id, source_cluster, name, in_use, checksum_ok, is_dir, first_cluster, length, no_fat_chain, created, modified \
-             FROM sets",
+            "SELECT s.id, s.source_cluster, s.name, s.in_use, s.checksum_ok, s.is_dir, s.first_cluster, s.length, \
+             s.no_fat_chain, s.created, s.modified, s.source_offset, r.record_number, r.sequence, r.parent_record, \
+             r.parent_sequence, r.storage FROM sets s LEFT JOIN ntfs_records r \
+             ON r.source_cluster = s.source_cluster AND r.source_offset = s.source_offset",
         )?;
         let rows = statement.query_map([], |row| {
+            let source_cluster: u32 = row.get(1)?;
+            let source_offset: i64 = row.get(11)?;
+            let storage: Option<String> = row.get(16)?;
+            let mut in_use: bool = row.get(3)?;
+            if ntfs {
+                // A record that says it is in use but sits in a free cluster is an old copy of
+                // the MFT, not the volume's own.
+                in_use &= volume.is_allocated(source_cluster);
+            }
             Ok(LoadedSet {
                 id: row.get(0)?,
-                source_cluster: row.get(1)?,
+                source_cluster,
                 name: row.get(2)?,
-                in_use: row.get(3)?,
+                in_use,
                 checksum_ok: row.get(4)?,
                 accepted: false,
                 is_dir: row.get(5)?,
@@ -1337,6 +1567,17 @@ impl MapDb {
                 no_fat_chain: row.get(8)?,
                 created: row.get(9)?,
                 modified: row.get(10)?,
+                ntfs: storage.map(|storage| LoadedNtfs {
+                    record_number: row.get::<_, Option<u32>>(12).ok().flatten(),
+                    sequence: row.get::<_, Option<u16>>(13).ok().flatten().unwrap_or(0),
+                    parent_record: row.get::<_, Option<u32>>(14).ok().flatten(),
+                    parent_sequence: row.get::<_, Option<u16>>(15).ok().flatten(),
+                    storage,
+                    runs: runs
+                        .get(&(i64::from(source_cluster), source_offset))
+                        .cloned()
+                        .unwrap_or_default(),
+                }),
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

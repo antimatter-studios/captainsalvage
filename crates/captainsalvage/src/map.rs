@@ -80,6 +80,25 @@ CREATE TABLE IF NOT EXISTS sets (
 );
 CREATE INDEX IF NOT EXISTS sets_first ON sets (first_cluster);
 CREATE INDEX IF NOT EXISTS sets_node ON sets (node);
+CREATE TABLE IF NOT EXISTS ntfs_records (
+    source_cluster INTEGER NOT NULL,
+    source_offset INTEGER NOT NULL,
+    record_number INTEGER,
+    sequence INTEGER NOT NULL,
+    parent_record INTEGER,
+    parent_sequence INTEGER,
+    storage TEXT NOT NULL,
+    PRIMARY KEY (source_cluster, source_offset)
+);
+CREATE TABLE IF NOT EXISTS ntfs_extents (
+    source_cluster INTEGER NOT NULL,
+    source_offset INTEGER NOT NULL,
+    vcn INTEGER NOT NULL,
+    lcn INTEGER,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (source_cluster, source_offset, vcn)
+);
+CREATE INDEX IF NOT EXISTS ntfs_extents_lcn ON ntfs_extents (lcn);
 CREATE TABLE IF NOT EXISTS file_tests (
     id INTEGER PRIMARY KEY,
     first_cluster INTEGER NOT NULL,
@@ -313,6 +332,15 @@ pub fn from_extents(extents: &[Extent]) -> Vec<u32> {
         .collect()
 }
 
+/// Where one entry's bytes are read from.
+pub enum EntrySource {
+    /// Clusters in file order, as a FAT chain, a contiguous run or a rebuild names them.
+    Clusters(Vec<u32>),
+    /// An NTFS stream, read through the driver so sparse ranges, initialised length and
+    /// unreadable streams are what NTFS says they are.
+    Ntfs(crate::filesystem::ntfs_salvage::StreamReference),
+}
+
 /// Largest contiguous file assumed when looking for owners of a cluster: 16 GiB.
 const OWNER_LOOKBACK_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 /// Possible first clusters asked about per query when looking for a cluster's owners.
@@ -374,6 +402,15 @@ pub struct Row {
     pub contents: Option<FolderContents>,
     pub confidence: f64,
     pub link_confidence: Option<f64>,
+    /// NTFS only: the FILE record's own number, and the sequence it had.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_number: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u16>,
+    /// NTFS only: how the bytes are held (`resident`, `runs`) or why they cannot be read
+    /// (`compressed`, `encrypted`, `attribute-list`, `incomplete`, `none`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
 }
 
 /// What a lost folder's own files mostly are, by type, so the window can suggest a label such
@@ -452,10 +489,13 @@ pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_le
     COALESCE(reason, ''), COALESCE(o_first, first_cluster), COALESCE(o_no_fat, no_fat_chain), created, modified, \
     source_cluster, source_offset, COALESCE(clusters_needed, 0), COALESCE(clusters_found, 0), \
     COALESCE(clusters_allocated, 0), COALESCE(clusters_conflict, 0), COALESCE(o_is_dir, is_dir), \
-    COALESCE(confidence, 0)";
+    COALESCE(confidence, 0), \
+    (SELECT record_number FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
+    (SELECT sequence FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
+    (SELECT storage FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset)";
 
 /// Position of `node` when a query appends it to `FILE_COLUMNS`.
-pub(crate) const FILE_NODE_INDEX: usize = 20;
+pub(crate) const FILE_NODE_INDEX: usize = 23;
 
 pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let is_dir: bool = row.get(18)?;
@@ -484,6 +524,9 @@ pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         clusters_allocated: row.get::<_, i64>(16)? as u64,
         clusters_conflict: row.get::<_, i64>(17)? as u64,
         confidence: row.get(19)?,
+        record_number: row.get::<_, Option<i64>>(20)?.map(|value| value as u64),
+        sequence: row.get::<_, Option<i64>>(21)?.map(|value| value as u16),
+        storage: row.get(22)?,
         ..Row::default()
     })
 }
@@ -698,7 +741,16 @@ impl MapDb {
                  is_dir, first_cluster, length, valid_length, no_fat_chain, created, modified, accessed) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             )?;
+            let mut record_insert = transaction.prepare_cached(
+                "INSERT OR IGNORE INTO ntfs_records (source_cluster, source_offset, record_number, sequence, \
+                 parent_record, parent_sequence, storage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            let mut extent_insert = transaction.prepare_cached(
+                "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
             for (cluster, set) in found {
+                let ntfs = set.ntfs.as_ref();
                 insert.execute(params![
                     cluster,
                     set.offset as i64,
@@ -715,6 +767,26 @@ impl MapDb {
                     set.modified,
                     set.accessed,
                 ])?;
+                if let Some(entry) = ntfs {
+                    record_insert.execute(params![
+                        cluster,
+                        set.offset as i64,
+                        entry.record_number.map(|value| value as i64),
+                        i64::from(entry.sequence),
+                        entry.parent_record.map(|value| value as i64),
+                        entry.parent_sequence.map(i64::from),
+                        entry.storage,
+                    ])?;
+                }
+                for run in ntfs.map(|entry| entry.runs.as_slice()).unwrap_or_default() {
+                    extent_insert.execute(params![
+                        cluster,
+                        set.offset as i64,
+                        run.vcn as i64,
+                        run.lcn.map(|value| value as i64),
+                        run.count as i64,
+                    ])?;
+                }
             }
             let mut error_insert = transaction.prepare_cached(
                 "INSERT OR REPLACE INTO read_errors (cluster, message) VALUES (?1, ?2)",
@@ -1103,6 +1175,9 @@ impl MapDb {
     /// the middle of another file's chain. So every cluster on the way back to the head is a
     /// possible first cluster.
     pub fn owners(&self, volume: &Volume, cluster: u32) -> Result<Vec<Row>> {
+        if volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+            return self.ntfs_owners(volume, cluster);
+        }
         let lookback = (OWNER_LOOKBACK_BYTES / volume.geometry.cluster_size()) as u32;
         let mut starts = vec![cluster];
         let mut seen: HashSet<u32> = HashSet::from([cluster]);
@@ -1164,6 +1239,53 @@ impl MapDb {
         rows.sort_by_key(|row| std::cmp::Reverse(row.first_cluster));
         rows.truncate(2000);
         Ok(rows)
+    }
+
+    /// NTFS entries whose run lists include `cluster`. The runs are looked up by their first
+    /// cluster, so a run that began far before `cluster` is found only within the lookback.
+    fn ntfs_owners(&self, volume: &Volume, cluster: u32) -> Result<Vec<Row>> {
+        let lookback = OWNER_LOOKBACK_BYTES / volume.geometry.cluster_size();
+        let sql = format!(
+            "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 AND \
+             (source_cluster, source_offset) IN (SELECT source_cluster, source_offset FROM ntfs_extents \
+             WHERE lcn BETWEEN ?1 AND ?2 AND lcn + count > ?2)"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let found = statement
+            .query_map(
+                params![i64::from(cluster).saturating_sub(lookback as i64), cluster],
+                |row| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?)),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut rows = Vec::new();
+        for (mut row, node) in found {
+            row.path = Some(self.path_of(node)?);
+            rows.push(row);
+        }
+        rows.sort_by_key(|row| std::cmp::Reverse(row.first_cluster));
+        rows.truncate(2000);
+        Ok(rows)
+    }
+
+    /// The runs an NTFS entry was found with, in virtual-cluster order.
+    pub fn entry_runs(
+        &self,
+        source_cluster: u32,
+        source_offset: u32,
+    ) -> Result<Vec<crate::filesystem::NtfsRun>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT vcn, lcn, count FROM ntfs_extents WHERE source_cluster = ?1 AND source_offset = ?2 ORDER BY vcn",
+        )?;
+        let runs = statement
+            .query_map(params![source_cluster, source_offset], |row| {
+                Ok(crate::filesystem::NtfsRun {
+                    vcn: row.get::<_, i64>(0)? as u64,
+                    lcn: row.get::<_, Option<i64>>(1)?.map(|value| value as u64),
+                    count: row.get::<_, i64>(2)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(runs)
     }
 
     /// Valid and damaged entry sets found in a specific cluster.
@@ -1315,6 +1437,14 @@ impl MapDb {
                 return Ok(clusters);
             }
         }
+        if entry.storage.is_some() {
+            // NTFS: the clusters its run list names. Holes claim none.
+            let runs = self.entry_runs(
+                entry.source_cluster.unwrap_or(0),
+                entry.source_offset.unwrap_or(0),
+            )?;
+            return Ok(volume.clusters_from_runs(&runs, entry.length).clusters);
+        }
         let mut stream = volume.clusters_for(entry.first_cluster, entry.length, entry.no_fat_chain);
         if self.params()?.chain_fallback_contiguous && !stream.clusters.is_empty() {
             let mut next = stream.clusters[stream.clusters.len() - 1] + 1;
@@ -1324,6 +1454,34 @@ impl MapDb {
             }
         }
         Ok(stream.clusters)
+    }
+
+    /// Where an entry's bytes come from: an overlay's clusters when a rebuild replaced them,
+    /// the driver for NTFS, and the cluster list for the other filesystems.
+    pub fn entry_source(&self, volume: &Volume, entry: &Row) -> Result<EntrySource> {
+        let overlaid = match entry.id {
+            Some(id) => self.overlay_clusters(id)?.is_some(),
+            None => false,
+        };
+        if !overlaid {
+            if let (Some(storage), Some(cluster), Some(offset)) = (
+                entry.storage.as_ref(),
+                entry.source_cluster,
+                entry.source_offset,
+            ) {
+                return Ok(EntrySource::Ntfs(
+                    crate::filesystem::ntfs_salvage::StreamReference {
+                        record_offset: volume.cluster_offset(cluster) + u64::from(offset),
+                        record_number: entry.record_number,
+                        sequence: entry.sequence.unwrap_or(0),
+                        storage: storage.clone(),
+                        length: entry.length,
+                        valid_length: entry.valid_length.min(entry.length),
+                    },
+                ));
+            }
+        }
+        Ok(EntrySource::Clusters(self.entry_clusters(volume, entry)?))
     }
 
     /// Every file in a folder and the folders beneath it, with its path.

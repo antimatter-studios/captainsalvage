@@ -231,7 +231,7 @@ function VolumeRow({ volume, onOpen, onRaw }: { volume: StartupVolume; onOpen: (
       </div>
       {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && <p className="start-new">{t("Not seen before.")}</p>}
       {volume.uuid && <MountBlockToggle uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
-      {!volume.canOpen && <p className="start-new">{t("Filesystem recovery supports exFAT and FAT12/16/32. Other formats can be inspected as raw bytes.")}</p>}
+      {!volume.canOpen && <p className="start-new">{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats can be inspected as raw bytes.")}</p>}
       {volume.mountPoint && (
         <div className="start-caution">
           <p>{t("It is mounted, so macOS may be writing to it. Unmounting stops that, but writes a little itself. It has to be unmounted before it can be opened here.")}</p>

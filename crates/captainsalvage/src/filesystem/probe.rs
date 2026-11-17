@@ -47,9 +47,33 @@ pub fn inspect(data: &[u8], offset: u64) -> Vec<Evidence> {
                 && sectors > 0
             {
                 if let Some(length) = sectors.checked_mul(u64::from(sector)) {
-                    found.push(boot_evidence(offset, length, "NTFS", false));
+                    found.push(boot_evidence(offset, length, "NTFS", true));
                 }
             }
+            // A volume's last sector holds a copy of its boot sector. When the main one is
+            // overwritten, that copy, one sector past the volume, still gives its geometry.
+            if let Ok(boot) = fs_ntfs::mft_io::parse_boot_sector(data) {
+                let length = boot.volume_bytes();
+                if let Some(start) = offset.checked_sub(length) {
+                    let mut backup = boot_evidence(offset, length, "NTFS", true);
+                    backup.structure = "possible backup boot sector".into();
+                    backup.volume_start = Some(start);
+                    found.push(backup);
+                }
+            }
+        }
+        if &data[3..11] == crate::filesystem::BITLOCKER_OEM_ID && data[510..512] == [0x55, 0xaa] {
+            found.push(Evidence {
+                offset,
+                length: 512,
+                format: "BitLocker".into(),
+                structure: "boot sector".into(),
+                confidence: "encrypted volume; its files cannot be read".into(),
+                volume_start: None,
+                volume_length: None,
+                boot_offset: Some(offset),
+                supported: false,
+            });
         }
     }
     if matches!(data.first(), Some(0x85 | 0x05)) {

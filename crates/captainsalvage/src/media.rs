@@ -365,7 +365,7 @@ pub struct MediaServer {
 
 /// The open disk's serial number as the Finder helper names it.
 pub fn serial_text(session: &Session) -> String {
-    format!("{:08x}", session.volume.geometry.volume_serial)
+    session.volume.serial_text()
 }
 
 fn from_hex(text: &str) -> Result<Vec<u8>> {

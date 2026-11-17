@@ -110,31 +110,50 @@ impl Session {
                 let lookback = (LOOKBACK_BYTES / volume.geometry.cluster_size()) as u32;
                 let mut candidates: Vec<(Row, Option<u32>)> = Vec::new();
                 let read = |row: &rusqlite::Row<'_>| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?));
-                let contiguous = format!(
-                    "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 \
-                     AND id != ?3 AND COALESCE(o_no_fat, no_fat_chain) = 1 AND COALESCE(o_first, first_cluster) BETWEEN ?1 AND ?2"
-                );
-                candidates.extend(
-                    database
-                        .connection
-                        .prepare(&contiguous)?
-                        .query_map(rusqlite::params![low.saturating_sub(lookback), high, id], read)?
-                        .collect::<rusqlite::Result<Vec<_>>>()?,
-                );
-                // The starts are cluster numbers this code produced, so listing them inline is safe.
-                for batch in starts.chunks(START_BATCH) {
-                    let list = batch.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-                    let chained = format!(
+                if volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+                    // Another record claims these clusters when one of its runs covers any of them.
+                    let overlapping = format!(
                         "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 \
-                         AND id != {id} AND COALESCE(o_no_fat, no_fat_chain) = 0 AND COALESCE(o_first, first_cluster) IN ({list})"
+                         AND id != ?3 AND (source_cluster, source_offset) IN (SELECT source_cluster, source_offset \
+                         FROM ntfs_extents WHERE lcn IS NOT NULL AND lcn BETWEEN ?1 AND ?2 AND lcn + count > ?4)"
                     );
                     candidates.extend(
                         database
                             .connection
-                            .prepare(&chained)?
-                            .query_map([], read)?
+                            .prepare(&overlapping)?
+                            .query_map(
+                                rusqlite::params![low.saturating_sub(lookback), high, id, low],
+                                read,
+                            )?
                             .collect::<rusqlite::Result<Vec<_>>>()?,
                     );
+                } else {
+                    let contiguous = format!(
+                        "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 \
+                         AND id != ?3 AND COALESCE(o_no_fat, no_fat_chain) = 1 AND COALESCE(o_first, first_cluster) BETWEEN ?1 AND ?2"
+                    );
+                    candidates.extend(
+                        database
+                            .connection
+                            .prepare(&contiguous)?
+                            .query_map(rusqlite::params![low.saturating_sub(lookback), high, id], read)?
+                            .collect::<rusqlite::Result<Vec<_>>>()?,
+                    );
+                    // The starts are cluster numbers this code produced, so listing them inline is safe.
+                    for batch in starts.chunks(START_BATCH) {
+                        let list = batch.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+                        let chained = format!(
+                            "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 \
+                             AND id != {id} AND COALESCE(o_no_fat, no_fat_chain) = 0 AND COALESCE(o_first, first_cluster) IN ({list})"
+                        );
+                        candidates.extend(
+                            database
+                                .connection
+                                .prepare(&chained)?
+                                .query_map([], read)?
+                                .collect::<rusqlite::Result<Vec<_>>>()?,
+                        );
+                    }
                 }
                 let cut_short = candidates.len() > MAX_CANDIDATES;
                 candidates.truncate(MAX_CANDIDATES);

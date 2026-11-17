@@ -1,0 +1,67 @@
+version: "3"
+chore_min_version: 0.10.0
+
+# The tasks that need the Linux test VM. Everything else is plain `cargo`, and `scripts/`.
+#
+# `chore test:oracle` checks NTFS against two implementations nobody here wrote: ntfs-3g's own
+# tools and the Linux kernel's ntfs3 driver, in the fs-linux-test-harness guest. Nothing is
+# mounted on this machine. See validation/oracle.sh and crates/captainsalvage/tests/ntfs_oracle.rs.
+
+vars:
+  # The harness and the core checkout its scripts expect, as siblings of this repository.
+  # They are tools this repository runs, not cargo dependencies, so these two lines are the only
+  # thing that decides which versions run, and CI reads them here too.
+  LINUX_HARNESS_REF: v0.7.1
+  FS_CORE_REF: v0.4.2
+
+# The harness's own tasks, as `chore linux:<task>` (linux:up, linux:run, linux:down ...).
+# Optional, because `chore siblings` is what checks the harness out.
+includes:
+  linux:
+    taskfile: ../fs-linux-test-harness/vm.chores.yml
+    optional: true
+
+# Reap dead runs and unfinished boots; a healthy shared guest stays up for the next consumer.
+lifecycle:
+  after_all:
+    - '[ ! -x ../fs-linux-test-harness/scripts/vm.sh ] || ../fs-linux-test-harness/scripts/vm.sh reap'
+
+tasks:
+  siblings:
+    desc: Check out the sibling repositories the oracle tests run from, at their pinned tags
+    # It refuses to move a sibling that has uncommitted work, and says nothing when they are
+    # already where the pins say.
+    cmds:
+      - |
+        set -eu
+        printf '%s\t%s\t%s\n' \
+          rust-fs-core          https://github.com/antimatter-studios/rust-fs-core.git          '{{.FS_CORE_REF}}' \
+          fs-linux-test-harness https://github.com/antimatter-studios/fs-linux-test-harness.git '{{.LINUX_HARNESS_REF}}' \
+        | while IFS="$(printf '\t')" read -r name url ref; do
+            dir="../$name"
+            if [ ! -e "$dir/.git" ]; then
+              echo "siblings: cloning $name at $ref"
+              git clone --quiet --branch "$ref" "$url" "$dir"
+              continue
+            fi
+            if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+              echo "siblings: $name has uncommitted changes, so it is not moved." >&2
+              exit 1
+            fi
+            if [ "$(git -C "$dir" rev-parse HEAD)" = "$(git -C "$dir" rev-parse "$ref^{commit}" 2>/dev/null || echo x)" ]; then
+              continue
+            fi
+            echo "siblings: moving $name to $ref"
+            git -C "$dir" fetch --quiet --tags origin
+            git -C "$dir" checkout --quiet "$ref"
+          done
+
+  test:oracle:
+    desc: "Independent validation: ntfs-3g's tools and the kernel's ntfs3 read what the NTFS flows read, in the Linux test VM"
+    deps: [siblings]
+    # `up` boots the shared guest and applies scripts/vm-setup.sh; the session detaches when cargo
+    # ends, however it ends, and leaves the guest up for the next user. A missing VM, tool or
+    # driver fails the tests that needed it. Nothing skips.
+    cmds:
+      - ../fs-linux-test-harness/scripts/vm.sh up
+      - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle

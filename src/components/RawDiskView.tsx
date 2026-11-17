@@ -355,8 +355,8 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
               <label className="field">{t("Format")}<select value={format} disabled={busy} onChange={(event) => setFormat(event.target.value)}>{SOURCE_FORMATS.map((name) => <option key={name}>{name}</option>)}</select></label>
               <label className="field">{t("Label")}<input value={label} disabled={busy} onChange={(event) => setLabel(event.target.value)} maxLength={128} /></label>
               <label className="field">{t("Boot evidence byte")}<input value={bootOffset} inputMode="numeric" disabled={busy} onChange={(event) => setBootOffset(event.target.value)} /></label>
-              <div className="detail-actions"><button className="primary" disabled={!valid || busy || format === "NTFS"} onClick={() => void openInterpretation()}>{opening ? t("Opening") : t("Try this interpretation")}</button></div>
-              {format === "NTFS" && <p className="muted">{t("NTFS record recovery is available through CLI and MCP; the full recovery workspace is not integrated yet.")}</p>}
+              <div className="detail-actions"><button className="primary" disabled={!valid || busy} onClick={() => void openInterpretation()}>{opening ? t("Opening") : t("Try this interpretation")}</button></div>
+              {format === "NTFS" && <p className="muted">{t("If the main NTFS boot sector was overwritten, give the byte of the copy in the volume's last sector as the boot evidence.")}</p>}
             </div>
           </> : <div className="detail">
             <div className="detail-name">{t("Source bytes")}</div><div className="detail-path">{disk.path}</div>
