@@ -37,6 +37,8 @@ const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 /// Files larger than this are copied and hashed, but not walked by format.
 const MAX_FORMAT_CHECK_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NAME_BYTES: usize = 240;
+/// A dot and what follows it is kept as an extension when a name is cut, up to this many bytes.
+const MAX_EXTENSION_BYTES: usize = 16;
 /// "2024-05-01": an offset sign can only come after the date.
 const DATE_LENGTH: usize = 10;
 /// How often a copy asks the destination to commit its cache. Doing it after every file
@@ -353,8 +355,18 @@ fn sanitize_segment(segment: &str) -> String {
     if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
         trimmed = format!("_{trimmed}");
     }
-    while trimmed.len() > MAX_NAME_BYTES {
-        trimmed.pop();
+    if trimmed.len() > MAX_NAME_BYTES {
+        // Cut the name, not its extension: a file that loses ".jpg" is no longer a picture.
+        let extension = match trimmed.rfind('.') {
+            Some(dot) if dot > 0 && trimmed.len() - dot <= MAX_EXTENSION_BYTES => {
+                trimmed.split_off(dot)
+            }
+            _ => String::new(),
+        };
+        while trimmed.len() + extension.len() > MAX_NAME_BYTES {
+            trimmed.pop();
+        }
+        trimmed.push_str(&extension);
     }
     trimmed
 }
@@ -1291,6 +1303,35 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_name_too_long_for_the_destination_is_cut_before_its_extension() {
+        // NTFS and exFAT allow 255 UTF-16 units, and the destination only so many bytes.
+        let long = format!("{}.txt", "L".repeat(251));
+        let cut = sanitize_segment(&long);
+        assert!(cut.len() <= MAX_NAME_BYTES, "{} bytes", cut.len());
+        assert!(cut.starts_with("LLLL") && cut.ends_with(".txt"), "{cut}");
+        // Cut by character, so a name of four-byte characters stays valid text.
+        let emoji = format!("{}.jpeg", "\u{1F600}".repeat(100));
+        let cut = sanitize_segment(&emoji);
+        assert!(
+            cut.len() <= MAX_NAME_BYTES && cut.ends_with(".jpeg"),
+            "{cut}"
+        );
+        assert!(cut.starts_with('\u{1F600}'));
+        // A name that fits, a name with no extension, and a dot that begins the name are not changed
+        // more than before.
+        assert_eq!(sanitize_segment("report.pdf"), "report.pdf");
+        assert_eq!(
+            sanitize_segment(&"d".repeat(300)),
+            "d".repeat(MAX_NAME_BYTES)
+        );
+        let hidden = format!(".{}", "h".repeat(300));
+        assert_eq!(sanitize_segment(&hidden).len(), MAX_NAME_BYTES);
+        // An "extension" too long to be one is cut with the rest.
+        let odd = format!("a.{}", "x".repeat(300));
+        assert_eq!(sanitize_segment(&odd).len(), MAX_NAME_BYTES);
+    }
 
     #[test]
     fn a_copy_date_uses_the_recorded_zone_or_else_this_macs() {

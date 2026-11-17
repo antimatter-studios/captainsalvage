@@ -419,6 +419,33 @@ fn compressed_and_encrypted_streams_are_listed_but_never_zero_filled_or_copied()
 }
 
 #[test]
+fn a_small_file_stored_in_its_record_is_read_whatever_its_compression_flag_says() {
+    // Windows sets the compression flag on the data of a small file in a compressed folder, though
+    // NTFS keeps that data in the FILE record exactly as written: only clusters are compressed. A
+    // volume Windows made has such files (tests/ntfs_windows.rs).
+    let fixture = fixture();
+    let probe = open(fixture.image.clone(), "resident-compressed-probe");
+    scan(&probe);
+    let (_, number) = record_of(&probe, "note.txt");
+    let changed = change_record(&fixture.image, number, |record| {
+        first_data_attribute_flags(record).copy_from_slice(&0x0001u16.to_le_bytes());
+    });
+    let session = open(changed, "resident-compressed");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = find(&engine, "note.txt");
+    assert_eq!(row["storage"], "resident");
+    assert_eq!(row["verdict"], "live");
+    let details = call(&engine, "ntfs_entry", json!({"id": row["id"]}));
+    assert_eq!(details["streams"][0]["resident"], true);
+    let read = session
+        .read_entry_range(row["id"].as_i64().unwrap(), 0, 100)
+        .unwrap();
+    assert_eq!(read.data, fixture.content("/docs/note.txt"));
+}
+
+#[test]
 fn a_file_with_an_attribute_list_is_listed_with_its_streams_and_never_guessed_at() {
     let fixture = fixture();
     let mut device = Image(Arc::new(Mutex::new(fixture.image.clone())));

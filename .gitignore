@@ -19,3 +19,5 @@ __pycache__/
 # The Finder helper, built and signed locally.
 macos/finder/build/
 /.vm-share/
+# Volumes Windows formatted and filled for tests/ntfs_windows.rs (chore test:windows-oracle).
+/.windows-oracle/

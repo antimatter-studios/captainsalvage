@@ -242,6 +242,49 @@ What was checked against something that is not this app:
   ntfs3 mount: 150 files in one folder, a sparse file, a fragmented file, non-ASCII names), the
   app lists exactly what ntfs3 and ntfs-3g list, and reads files they deleted through ntfs-3g.
   The two oracles are compared with each other first, and the script fails if they differ.
+- **Windows itself**, in the Windows 11 guest of
+  [fs-windows-test-harness](https://github.com/antimatter-studios/fs-windows-test-harness)
+  (`chore test:windows-oracle`, from `tests/ntfs_windows.rs` and `validation/windows/`), or on a
+  hosted Windows runner (the opt-in `windows-oracle` workflow). Windows formats six NTFS volumes
+  with `Format-Volume`: 24 MiB at 512, 1024 and 4096 byte clusters, 96 MiB on a disk with
+  4096-byte sectors, and 320 MiB at 4096 and 65536 byte clusters. Windows fills each with a fixed
+  tree through its own file system: nested folders and a path of more than 260 characters, 400
+  files in one folder (1200 on the large volumes) and 150 files with 120-character names in another, names in Latin,
+  Cyrillic, Greek, Hebrew, Japanese and Chinese, an emoji, a decomposed accent and names at the
+  255-character limit, each with the 8.3 name Windows made for it, files either side of the
+  cluster size, files written in turns so they are fragmented, sparse files, alternate data
+  streams on files and on a folder, compressed files, hard links, a junction and two symlinks,
+  and files and a folder it deleted last. Windows' own `chkdsk` finds no problem in any of them,
+  and `Get-ChildItem`, `Get-FileHash` and `fsutil` report what each holds. The app reads the
+  images and must give the same answer:
+  - **Listing and content.** The app lists the same 616 files and 38 folders (1416 files on the
+    320 MiB volumes) with the same size and SHA-256 for every file, nothing more and nothing
+    less, and calls them live. Files Windows lists but never follows (the junction and the
+    symlinks) are listed.
+  - **Records.** Every alternate stream Windows lists, with its length, is in the app's record
+    of that file or folder; every 8.3 name Windows made is among the record's names; the number of
+    extents `fsutil` reports for each file that is not compressed is the number of runs the app
+    finds; and the sparse
+    and compressed flags agree.
+  - **Deleted files.** The app finds the files Windows deleted, at their old paths, and reads
+    back every byte. Windows leaves nothing of a small deleted file that is held inside its own
+    record (the generator searches the whole volume for its first bytes), so none is found and
+    none is invented.
+  - **Copy.** What the app copies is, byte for byte, what Windows hashed.
+  - **Not written.** The image's hash is the same afterwards and the baseline check agrees.
+
+  What the app does not do, as these volumes show it, is pinned in the test by an issue each, and
+  the test fails if one of them stops being true: the data of **NTFS-compressed** files is not
+  read ([#174](https://github.com/antimatter-studios/captainsalvage/issues/174)); **only one name
+  of a hard-linked file** is listed, and the second only in the record details
+  ([#175](https://github.com/antimatter-studios/captainsalvage/issues/175)); **files with no
+  bytes** are left out of a copy
+  ([#176](https://github.com/antimatter-studios/captainsalvage/issues/176)); and a volume on
+  **4096-byte sectors** is refused at open, because the pinned driver expects a record of at
+  least that size and Windows makes one of 1024 bytes
+  ([#177](https://github.com/antimatter-studios/captainsalvage/issues/177)), so that volume is
+  checked only for how Windows made it. Content of alternate streams is not read by the app, so
+  only their names and lengths are compared.
 - **The independent [`ntfs`](https://crates.io/crates/ntfs) reader**, a dev-only dependency
   never linked into the app, for every live file of the driver's images (`tests/ntfs.rs`).
 
@@ -251,11 +294,19 @@ folders could not be told apart; the driver now reads the number only where the 
 and the app takes it from where `$MFT` places the record. And a live file stored inside its own
 record was called only plausible, so the copy planner left it out.
 
-Not checked: images written by Windows, because no Windows machine took part (the driver's own
-Windows-captured fixtures are graded by the driver's tests, not by this app's), a live NTFS
-mount, the window tests, and a real damaged NTFS drive. A volume a kernel or ntfs-3g has deleted
-a file from through ntfs3 keeps nothing to recover, because ntfs3 scrubs the name; files deleted
-through ntfs-3g keep their records.
+Windows' volumes found two more, each fixed behind a failing test. Windows sets the compression
+flag on the data of a small file in a compressed folder, although it holds those bytes
+uncompressed in the file's record, and the app called such a file unreadable and left it out of
+copies. And a name longer than the destination allows was cut at its end, so a long name lost its
+extension when copied.
+
+Not checked: a live NTFS mount, the window tests, a real damaged NTFS drive, reparse points
+followed to their targets, EFS-encrypted files, `$Extend` metadata, a volume with a damaged
+`$LogFile`, and a whole disk with a partition table written by Windows (the images are the
+volume alone). A volume a kernel or ntfs-3g has deleted a file from through ntfs3 keeps nothing
+to recover, because ntfs3 scrubs the name; files deleted through ntfs-3g keep their records. A
+small file Windows deletes keeps nothing either, and a larger one keeps its record and clusters
+until they are reused.
 
 ## How far to trust the results
 
@@ -351,12 +402,24 @@ operations as `captainsalvage_open_raw_disk`, `captainsalvage_discover_raw_disk`
 ```sh
 cargo test -p captainsalvage
 chore test:oracle     # NTFS against ntfs-3g and the kernel's ntfs3, in the Linux test VM
+chore test:windows-oracle   # NTFS against volumes Windows formatted and filled, in the Windows guest
 ```
 
 `chore test:oracle` needs the sibling checkouts `chore siblings` makes, and boots the shared
 guest of [fs-linux-test-harness](https://github.com/antimatter-studios/fs-linux-test-harness)
 with the `ntfs3` run profile in `run-profiles/`. Nothing is mounted on the Mac. A missing VM, tool
 or kernel driver fails the oracle tests, naming this task; they never skip.
+
+`chore test:windows-oracle` starts the Windows guest of
+[fs-windows-test-harness](https://github.com/antimatter-studios/fs-windows-test-harness) (set up
+once with that repository's `local-vm.py prepare` and `up --install`; `chore windows:up` starts
+it afterwards), has Windows format and fill six volumes with
+`validation/windows/make-volume.ps1`, brings the images and what Windows reported about them
+back into `.windows-oracle/`, and grades the app against them. It takes about three minutes of
+Windows and a minute of grading. A guest that cannot be reached fails the tests, naming the task.
+The same generator runs on a hosted Windows runner in the `windows-oracle` workflow, which a pull
+request opts into by carrying the `windows-oracle` label. `WINDOWS_ORACLE_DIR=folder` grades a
+folder an earlier run filled.
 
 Treat the existing tests as a regression contract: record the passing tests before a
 driver change, rerun them afterwards, and check that every previously passing test still
