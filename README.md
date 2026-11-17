@@ -194,6 +194,56 @@ reported as encrypted and not readable. The ext4, Btrfs, and bcachefs probes are
 implemented yet. Extended MBR chains and backup-GPT recovery are also not
 implemented; unsupported or invalid tables produce warnings without preventing raw access.
 
+## Analyzing a selected range
+
+When a region of a raw source holds something you cannot name, select it and choose **Analyze
+this range** in the selected-region panel. The analysis asks every filesystem driver the app has
+(exFAT, FAT12/16/32 and NTFS, plus detection of BitLocker) one question at every start offset it
+tries: how much of this range decodes if the structures start here? Each driver answers by decoding
+from that offset, and the report lists, per driver, the offset where the most decodes, and a list
+of findings. A finding has the format, the offset, how many bytes decoded, and a confidence
+(high, medium or low, with the number behind it).
+
+- **The slide does not need a signature.** Boot sector identifiers and the `FILE` record magic are
+  only the cheap way to reject nearly every offset at once, and they raise confidence. Turn them
+  off (`--no-signatures`, or `signatures: false`) and the structural decoders still find FAT
+  directory entries by the shape of their names, dates and sizes, and NTFS MFT records by their
+  update sequence array and attribute chain, even where the magic was overwritten. A record whose
+  magic is gone is reported as such, with a lower confidence.
+- **Every offset is tried, up to a size.** Offsets are counted from byte zero of the source, so a
+  structure aligned in the source is met wherever the range starts. Ranges up to 128 MiB slide one
+  byte at a time, so structures at odd offsets are found. Larger ranges slide 32 bytes at a time,
+  which still meets every directory entry, record and boot sector that sits on a sector boundary;
+  the report says so, and `--step 1` forces every offset. One analysis reads at most 2 GiB. Analyze
+  a larger source in pieces.
+- **Identified data that cannot be decoded is kept as an island.** A directory with no boot
+  sector, a boot sector whose volume does not open, an encrypted volume: each is reported as
+  *identified, not placed in a volume* with what is missing, and an offer to search for the missing
+  metadata. **Search for missing metadata** analyzes a margin of up to 256 MiB around the island
+  for only that driver, which finds, for example, a boot sector or a backup one nearby.
+- **A volume is only "opens as a volume" when it opens.** A boot sector that decodes is tested by
+  opening the volume read-only and listing its root. NTFS and exFAT backup boot sectors are used
+  when the main one fails. A FAT boot sector, which is plain numbers with no checksum, starts at a
+  low confidence and is raised only when the volume opens.
+- **NTFS geometry can be inferred.** The `$MFT` record describes the MFT's own runs and allocated
+  size, so the cluster size and where the volume must start follow from one surviving record. The
+  proposal is tested by opening the volume with a boot sector rebuilt in memory; if the root lists,
+  the finding is *opens with rebuilt geometry*. Where the records lost their magic, the proposal is
+  reported with a low confidence and not opened. Inference for FAT and exFAT, whose directories
+  do not hold their own geometry, is not done.
+
+```sh
+captainsalvage range analyze /path/to/image.img --offset 1048576 --length 268435456
+captainsalvage range analyze /path/to/image.img --no-signatures --format FAT
+```
+
+The MCP tool `captainsalvage_analyze_range` takes the same options and gives the same answer.
+Findings are evidence, not proof: a plausible run of FAT directory entries can occur by chance
+in data that is not FAT, which is why a lone short run is not reported and every result carries a
+confidence. Compressed or encrypted data is not decoded, and BitLocker volumes are only
+recognised. ext4, Btrfs and bcachefs are not probed yet. Analysis only reads, through the same
+read-only handle every raw operation uses, and a source's hash is unchanged by it.
+
 ## NTFS volumes
 
 NTFS opens in the same workspace as exFAT and FAT, with the same read-only rules: the app

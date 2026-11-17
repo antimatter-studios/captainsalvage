@@ -6,6 +6,7 @@ import { useSimple } from "../mode";
 import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
 import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type DiskRegion, type EvidenceStatus, type RawDiskState, type SavedScans, type ScanSnapshot } from "../rawDisk";
 import { Icon } from "./icons";
+import { RangeAnalysis } from "./RangeAnalysis";
 import { Strip, type StripSource } from "./Strips";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
 import "./RawDiskView.css";
@@ -418,6 +419,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
               <div className="detail-actions"><button className="primary" disabled={!valid || busy} onClick={() => void openInterpretation()}>{opening ? t("Opening") : t("Try this interpretation")}</button></div>
               {format === "NTFS" && <p className="muted">{t("If the main NTFS boot sector was overwritten, give the byte of the copy in the volume's last sector as the boot evidence.")}</p>}
             </div>
+            <RangeAnalysis diskId={disk.id} start={first} length={size} valid={valid} busy={busy} onSelect={(offset, count) => selectRange(offset, Math.min(count, disk.length - offset))} />
           </> : <div className="detail">
             <div className="detail-name">{t("Source bytes")}</div><div className="detail-path">{disk.path}</div>
             <dl className="facts"><dt>{t("Length in bytes")}</dt><dd>{count(disk.length)}</dd><dt>{t("Declared partitions")}</dt><dd>{count(disk.partitions.length)}</dd></dl>
