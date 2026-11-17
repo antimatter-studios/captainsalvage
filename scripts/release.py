@@ -62,9 +62,9 @@ writes this file.
 """
 # The one file that says the version. Everything else is copied from it by `prepare`.
 VERSION_FILE = "VERSION"
-CARGO_MANIFESTS = ["crates/salvage-core/Cargo.toml", "src-tauri/Cargo.toml"]
+CARGO_MANIFESTS = ["crates/captainsalvage/Cargo.toml", "src-tauri/Cargo.toml"]
 JSON_MANIFESTS = ["src-tauri/tauri.conf.json", "package.json"]
-LOCKED_CRATES = ["captain-salvage", "salvage-core"]
+LOCKED_CRATES = ["captain-salvage", "captainsalvage"]
 APP_NAME = "Captain Salvage.app"
 BUILT_APP = ROOT / "target/release/bundle/macos" / APP_NAME
 INSTALL_FOLDERS = {"user": Path.home() / "Applications", "system": Path("/Applications")}

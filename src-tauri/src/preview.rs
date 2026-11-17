@@ -4,9 +4,9 @@
 //! load straight from a file's clusters without a copy anywhere.
 //! `captainsalvage://localhost/thumb/<id>` returns a small JPEG decoded from the file's real bytes.
 
-use salvage_core::browse::{content_type, parse_range, Thumb};
-use salvage_core::engine::Engine;
-use salvage_core::media::MediaServer;
+use captainsalvage::browse::{content_type, parse_range, Thumb};
+use captainsalvage::engine::Engine;
+use captainsalvage::media::MediaServer;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::http::{header, Request, Response, StatusCode};

@@ -306,14 +306,43 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "block2",
+ "captainsalvage",
  "objc2",
  "objc2-file-provider",
  "objc2-foundation",
- "salvage-core",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+]
+
+[[package]]
+name = "captainsalvage"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bzip2",
+ "bzip2-rs",
+ "flate2",
+ "image",
+ "libc",
+ "lzma-rust2",
+ "rars",
+ "rhai",
+ "rusqlite",
+ "rust-fs-core",
+ "rust-fs-exfat",
+ "rust-fs-fat32",
+ "rust-fs-ntfs",
+ "ruzstd",
+ "serde",
+ "serde_json",
+ "sevenz-rust2",
+ "sha2 0.11.1",
+ "tar",
+ "tiny_http",
+ "xz4rust",
+ "zip",
 ]
 
 [[package]]
@@ -3032,6 +3061,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-fs-fat32"
+version = "0.1.0"
+source = "git+https://github.com/antimatter-studios/rust-fs-fat?rev=ff10b330df9bde4765bb8790df07121cbe4b9489#ff10b330df9bde4765bb8790df07121cbe4b9489"
+dependencies = [
+ "rust-fs-core",
+]
+
+[[package]]
+name = "rust-fs-ntfs"
+version = "0.11.0"
+source = "git+https://github.com/antimatter-studios/rust-fs-ntfs?rev=3786ce4d784f5a7d393b5c9cec1cbfc392ee47d4#3786ce4d784f5a7d393b5c9cec1cbfc392ee47d4"
+dependencies = [
+ "libc",
+ "log",
+ "rust-fs-core",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3072,32 +3120,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
 dependencies = [
  "twox-hash",
-]
-
-[[package]]
-name = "salvage-core"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "bzip2",
- "bzip2-rs",
- "flate2",
- "image",
- "libc",
- "lzma-rust2",
- "rars",
- "rhai",
- "rusqlite",
- "rust-fs-exfat",
- "ruzstd",
- "serde",
- "serde_json",
- "sevenz-rust2",
- "sha2 0.11.1",
- "tar",
- "tiny_http",
- "xz4rust",
- "zip",
 ]
 
 [[package]]

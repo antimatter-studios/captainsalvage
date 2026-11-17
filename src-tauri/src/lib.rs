@@ -8,11 +8,11 @@ mod file_provider;
 mod finder;
 mod preview;
 
+use captainsalvage::engine::{Engine, AUTHOR_USER};
+use captainsalvage::mcp::{self, McpInfo};
+use captainsalvage::media::{MediaInfo, MediaServer};
+use captainsalvage::session::{Layer, Lens, Scope, MAX_READ_BYTES};
 use chat::ChatState;
-use salvage_core::engine::{Engine, AUTHOR_USER};
-use salvage_core::mcp::{self, McpInfo};
-use salvage_core::media::{MediaInfo, MediaServer};
-use salvage_core::session::{Layer, Lens, Scope, MAX_READ_BYTES};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,7 +45,7 @@ pub(crate) struct AppState {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    salvage_core::workspace::app_support().ok()
+    captainsalvage::workspace::app_support().ok()
 }
 
 fn text_error(error: impl std::fmt::Display) -> String {
@@ -165,10 +165,10 @@ fn mcp_info(state: State<'_, AppState>) -> Value {
 fn choose_disk_image() -> Option<String> {
     // macOS draws this dialog, so its prompt is chosen here, in the window's language.
     let prompt = match get_language().as_deref() {
-        Some("fr") => "Choisissez une image brute d'une partition exFAT endommagée",
-        Some("de") => "Wählen Sie ein Rohabbild einer beschädigten exFAT-Partition",
-        Some("es") => "Elija una imagen sin procesar de una partición exFAT dañada",
-        _ => "Choose a raw image of a damaged exFAT partition",
+        Some("fr") => "Choisissez une image brute d'un disque ou d'une partition",
+        Some("de") => "Wählen Sie ein Rohabbild eines Datenträgers oder einer Partition",
+        Some("es") => "Elija una imagen sin procesar de un disco o una partición",
+        _ => "Choose a raw disk or partition image",
     };
     let script = format!("POSIX path of (choose file with prompt \"{prompt}\")");
     let output = std::process::Command::new("/usr/bin/osascript")
@@ -257,7 +257,7 @@ fn set_mode(mode: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-fn chat_models(agent: String) -> Result<Vec<salvage_core::agent::Model>, String> {
+fn chat_models(agent: String) -> Result<Vec<captainsalvage::agent::Model>, String> {
     ChatState::models(&agent).map_err(|error| format!("{error:#}"))
 }
 
@@ -282,7 +282,7 @@ fn set_ui_setting(key: String, value: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn chat_agents() -> Vec<salvage_core::agent::AgentInfo> {
+fn chat_agents() -> Vec<captainsalvage::agent::AgentInfo> {
     ChatState::agents()
 }
 
@@ -318,8 +318,8 @@ pub fn run() {
     // From here until the app quits, macOS cannot mount the volumes the person blocked. This
     // comes before the window, because a disk attached at login is mounted within seconds, and
     // on a busy Mac the window can take longer than that to appear.
-    if let Ok(folder) = salvage_core::workspace::app_support() {
-        if let Err(error) = salvage_core::mountblock::start(&folder) {
+    if let Ok(folder) = captainsalvage::workspace::app_support() {
+        if let Err(error) = captainsalvage::mountblock::start(&folder) {
             eprintln!("mount blocking did not start: {error:#}");
         }
     }
@@ -346,7 +346,7 @@ pub fn run() {
             },
         )
         .setup(|app| {
-            salvage_core::mount::keep_disks_awake();
+            captainsalvage::mount::keep_disks_awake();
             let engine = Engine::new();
             let handle = app.handle().clone();
             let allow_test_scripts = std::env::var_os("SALVAGE_TEST_UI").is_some();

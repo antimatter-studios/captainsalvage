@@ -16,7 +16,7 @@ tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-salvage-core = { path = "../crates/salvage-core" }
+captainsalvage = { package = "captainsalvage", path = "../crates/captainsalvage" }
 objc2 = "0.6.5"
 objc2-file-provider = { version = "0.3.2", default-features = false, features = ["std", "block2", "Extension", "NSFileProviderDomain", "NSFileProviderItem"] }
 objc2-foundation = { version = "0.3.2", features = ["NSFileManager", "NSURL", "NSArray", "NSError", "NSString", "NSProcessInfo"] }

@@ -1,0 +1,33 @@
+import type { ReactNode } from "react";
+import { bytes } from "../format";
+import { fromEngine, t } from "../i18n";
+
+export function WorkspaceToolbar({ path, length, label, description, progress, onChangeDisk, children }: {
+  path: string;
+  length: number;
+  label?: string;
+  description?: ReactNode;
+  progress: { text: string; fraction: number; title?: string; error?: string | null };
+  onChangeDisk: () => void;
+  children: ReactNode;
+}) {
+  const fraction = Math.max(0, Math.min(1, progress.fraction));
+  return (
+    <header className="toolbar" data-tauri-drag-region>
+      <div className="brand">
+        <strong className="brand-device" title={path}><bdi>{label || path}</bdi></strong>
+        {description && <span>{description}</span>}
+        <span>{bytes(length)} <button className="link brand-change" onClick={onChangeDisk}>{t("Change disk")}</button></span>
+      </div>
+      <div className="scan">
+        <div className="scan-text" title={progress.title}>{progress.text}</div>
+        <div className="scan-bar" role="progressbar" aria-label={progress.text} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="scan-fill" style={{ width: `${fraction * 100}%` }} />
+        </div>
+        {progress.error && <div className="warn">{fromEngine(progress.error)}</div>}
+      </div>
+      <div className="toolbar-spacer" data-tauri-drag-region />
+      {children}
+    </header>
+  );
+}

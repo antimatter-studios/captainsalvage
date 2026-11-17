@@ -37,6 +37,9 @@ import { MountedWarning } from "./components/MountedWarning";
 import { WrittenWarning } from "./components/WrittenWarning";
 import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
+import { RawDiskView } from "./components/RawDiskView";
+import { WorkspaceToolbar } from "./components/WorkspaceToolbar";
+import type { DiskRegion, RawDiskOverview, RawDiskState } from "./rawDisk";
 import { isArchiveName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, decimal, duration, lostFolderName } from "./format";
@@ -64,6 +67,12 @@ function rememberedCanvas(): number | null {
   }
 }
 const DISK_ACCESS_CHECK_MS = 3000;
+
+async function readSourceBytes(path: string): Promise<RawDiskState> {
+  const disk = await call<RawDiskOverview>("open_raw_disk", { path });
+  if (!Number.isSafeInteger(disk.length)) throw new Error("Source is too large for exact byte offsets in the window. Use the command line.");
+  return { ...disk, scanId: null, findings: [], errors: [], nextOffset: null, scanEnd: null, scanStart: null };
+}
 
 function asBrowseRow(row: Row): BrowseRow {
   return { ...row, id: row.id as number };
@@ -302,19 +311,14 @@ function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode }: { 
   } else if (scan && scan.clustersScanned > 0) scanText = t("Scan paused at {percent}%", { percent: decimal(fraction * 100, 1) });
 
   return (
-    <header className="toolbar" data-tauri-drag-region>
-      <div className="brand">
-        <strong className="brand-device" title={overview.device}><bdi>{overview.device}</bdi></strong>
-        <span>{bytes(overview.geometry.volumeBytes)} <button className="link brand-change" onClick={onChangeDisk}>{t("Change disk")}</button></span>
-      </div>
-      <div className="scan">
-        <div className="scan-text" title={scan ? t("{clusters} directory clusters and {entries} entries found so far", { clusters: count(scan.directoryClusters), entries: count(scan.setsFound) }) : undefined}>{scanText}</div>
-        <div className="scan-bar" role="progressbar" aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
-          <div className="scan-fill" style={{ width: `${fraction * 100}%` }} />
-        </div>
-        {status?.scanError && <div className="warn">{fromEngine(status.scanError)}</div>}
-      </div>
-      <div className="toolbar-spacer" data-tauri-drag-region />
+    <WorkspaceToolbar
+      path={overview.device}
+      length={overview.geometry.volumeBytes}
+      label={overview.interpretation?.label}
+      description={overview.interpretation && <span title={`${overview.device}: ${overview.interpretation.start} + ${overview.interpretation.length}`}>{t("{format} interpretation at byte {offset}", { format: overview.interpretation.format, offset: overview.interpretation.start })}</span>}
+      progress={{ text: scanText, fraction, title: scan ? t("{clusters} directory clusters and {entries} entries found so far", { clusters: count(scan.directoryClusters), entries: count(scan.setsFound) }) : undefined, error: status?.scanError }}
+      onChangeDisk={onChangeDisk}
+    >
       {status?.fileTests.state === "running" && (
         <span className="scan-note muted">{t("Testing {done} of {total}", { done: count(status.fileTests.done), total: count(status.fileTests.total) })}</span>
       )}
@@ -334,7 +338,7 @@ function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode }: { 
       <LanguageSwitch />
       <ThemeSwitch />
       {status && <Safety status={status} />}
-    </header>
+    </WorkspaceToolbar>
   );
 }
 
@@ -356,6 +360,8 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [startPath, setStartPath] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
+  const [rawDisk, setRawDisk] = useState<RawDiskState | null>(null);
+  const [rawVisible, setRawVisible] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [layer, setLayer] = useState<Layer>("ownership");
@@ -503,14 +509,17 @@ export default function App() {
 
   const basketKeys = useMemo(() => new Set(basket.map((item) => `${item.kind}:${item.target}`)), [basket]);
 
-  const open = useCallback(async (path: string) => {
+  const open = useCallback(async (path: string, region?: DiskRegion & { diskId: string }) => {
     setFailure(null);
     setStartPath(path);
     try {
-      const result = await call<Overview>("open_volume", { path });
+      const result = region
+        ? await call<Overview>("open_disk_region", region)
+        : await call<Overview>("open_volume", { path });
       setOverview(result);
       setView([2, result.geometry.clusterCount + 2]);
       setChoosing(false);
+      setRawVisible(false);
       setEntry(null);
       setFolder(null);
       setChain(null);
@@ -521,9 +530,35 @@ export default function App() {
       setCenter("overview");
       bump();
     } catch (reason) {
+      if (region) {
+        setFailure(String(reason));
+        throw reason;
+      }
+      try {
+        setRawDisk(await readSourceBytes(path));
+        setRawVisible(true);
+        setChoosing(false);
+        setCenter("overview");
+        changeMode("investigate");
+      } catch (rawReason) {
+        setFailure(String(rawReason));
+      }
+    }
+  }, [changeMode]);
+
+  const openRaw = useCallback(async (path: string) => {
+    setFailure(null);
+    setStartPath(path);
+    try {
+      setRawDisk(await readSourceBytes(path));
+      setRawVisible(true);
+      setChoosing(false);
+      setCenter("overview");
+      changeMode("investigate");
+    } catch (reason) {
       setFailure(String(reason));
     }
-  }, []);
+  }, [changeMode]);
 
   useEffect(() => {
     invoke<string | null>("last_device")
@@ -767,7 +802,8 @@ export default function App() {
     if (simple && center === "bytes") setCenter("overview");
   }, [simple, center]);
 
-  if (!overview || choosing) {
+  const showingRaw = rawVisible && rawDisk !== null;
+  if ((!overview && !showingRaw) || choosing) {
     return (
       <>
       <MountedWarning />
@@ -775,7 +811,8 @@ export default function App() {
         imagePath={startPath ?? ""}
         failure={failure}
         onOpen={(path) => void open(path)}
-        onBack={overview ? () => setChoosing(false) : undefined}
+        onRaw={(path) => void openRaw(path)}
+        onBack={overview || showingRaw ? () => setChoosing(false) : undefined}
         themeSwitch={<><LanguageSwitch /><ThemeSwitch /></>}
       />
       </>
@@ -788,7 +825,7 @@ export default function App() {
   return (
     <ModeContext.Provider value={mode}>
     <MountedWarning />
-    <WrittenWarning status={status} clusterSize={overview.geometry.clusterSize} onChanged={bump} />
+    {!showingRaw && overview && <WrittenWarning status={status} clusterSize={overview.geometry.clusterSize} onChanged={bump} />}
     <div
       className={simple ? "app app-simple" : "app"}
       style={{ gridTemplateColumns: columns.columns, "--left-width": `${columns.widths.left}px` } as React.CSSProperties}
@@ -796,6 +833,15 @@ export default function App() {
       <div className="sidebar-drag" data-tauri-drag-region>
         <SidebarBrand onHome={() => setCenter("overview")} />
       </div>
+      {showingRaw && rawDisk ? <RawDiskView key={rawDisk.id} disk={rawDisk} onUpdate={setRawDisk}
+        onOpen={(region) => open(rawDisk.path, { ...region, diskId: rawDisk.id })}
+        onBack={() => setChoosing(true)}
+        onReturn={overview?.device === rawDisk.path ? () => { setRawVisible(false); setCenter("overview"); } : undefined}
+        center={center === "bytes" ? "bytes" : "overview"} onCenter={setCenter}
+        controls={<><ModeSwitch mode={mode} onMode={changeMode} /><LanguageSwitch /><ThemeSwitch /></>}
+        leftHandle={<ColumnHandle label={t("Resize the sidebar")} edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
+        rightHandle={<ColumnHandle label={t("Resize the details panel")} edge="right-panel" onWidth={columns.setRight} onReset={columns.resetRight} />}
+      /> : overview && <>
       <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} mode={mode} onMode={changeMode} />
       {!simple && <Strips
         layer={layer}
@@ -840,6 +886,10 @@ export default function App() {
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
             {!simple && <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>}
             <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside archive")}</button>
+            <button role="tab" aria-selected={false} onClick={() => {
+              if (rawDisk?.path === overview.device) { setRawVisible(true); setCenter("overview"); changeMode("investigate"); }
+              else void openRaw(overview.device);
+            }}>{t("Source bytes")}</button>
           </div>
         </div>
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
@@ -937,6 +987,7 @@ export default function App() {
           }
         />
       </div>
+      </>}
     </div>
     </ModeContext.Provider>
   );
