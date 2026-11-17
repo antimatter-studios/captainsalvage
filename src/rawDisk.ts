@@ -279,3 +279,59 @@ export function mergeFindings(current: RangeFinding[], added: RangeFinding[]): R
   return [...current, ...added.filter((item) => !seen.has(`${item.format}:${item.structure}:${item.offset}`))]
     .sort((left, right) => right.confidence - left.confidence || left.offset - right.offset);
 }
+
+export interface Hypothesis {
+  id: string;
+  label: string;
+  format: string;
+  start: number;
+  length: number;
+  bootOffset: number | null;
+  virtualStart: number;
+  confidence: number;
+  origin: "analysis" | "manual";
+  enabled: boolean;
+  layer: number;
+}
+
+export interface HypothesisLayout {
+  segments: { id: string; virtualStart: number; length: number }[];
+  virtualLength: number;
+  gaps: { virtualStart: number; length: number }[];
+  competing: { start: number; length: number; stack: string[] }[];
+  partitionTable: { id: string; label: string; format: string; virtualStart: number; length: number; shadowed: boolean }[];
+}
+
+export interface HypothesisList {
+  hypotheses: Hypothesis[];
+  layout: HypothesisLayout;
+}
+
+/** Whether another enabled hypothesis is read where this one is, and which is on top there. */
+export function competition(layout: HypothesisLayout, id: string): { rivals: number; onTop: boolean } {
+  const stacks = layout.competing.filter((piece) => piece.stack.includes(id));
+  const rivals = new Set(stacks.flatMap((piece) => piece.stack.filter((other) => other !== id))).size;
+  return { rivals, onTop: stacks.every((piece) => piece.stack[0] === id) };
+}
+
+/** The end byte a typed start and end make, or null when they do not make an extent. */
+export function extentFromEnds(start: string, end: string, sourceLength: number): { start: number; length: number } | null {
+  if (start.trim() === "" || end.trim() === "") return null;
+  const first = Number(start);
+  const last = Number(end);
+  if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first < 0 || last <= first || last > sourceLength) return null;
+  return { start: first, length: last - first };
+}
+
+export function hypothesisFromFinding(finding: RangeFinding, label: string): object {
+  const extent = findingExtent(finding);
+  return {
+    format: finding.format,
+    start: extent.start,
+    length: extent.length,
+    confidence: finding.confidence,
+    bootOffset: finding.bootOffset,
+    origin: "analysis",
+    label,
+  };
+}

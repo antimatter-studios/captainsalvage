@@ -16,6 +16,7 @@ pub mod engine;
 pub mod export;
 pub mod filesystem;
 pub mod filetest;
+pub mod hypotheses;
 pub mod keep;
 pub mod map;
 pub mod mcp;
