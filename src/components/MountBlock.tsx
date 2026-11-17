@@ -27,9 +27,10 @@ const CHANGED = "salvage-mount-blocks-changed";
 
 /**
  * The person's switch for keeping one volume unmounted. While Captain Salvage is open, macOS
- * refuses to mount a blocked volume, however the mount is asked for.
+ * refuses to mount a blocked volume, however the mount is asked for. The compact form is a small
+ * inline checkbox for a row; its note and error are siblings for the row to lay out below it.
  */
-export function MountBlockToggle({ uuid, name, mounted }: { uuid: string; name: string; mounted: boolean }) {
+export function MountBlockToggle({ uuid, name, mounted, compact = false }: { uuid: string; name: string; mounted: boolean; compact?: boolean }) {
   const [blocked] = useMountBlocks();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,6 +43,18 @@ export function MountBlockToggle({ uuid, name, mounted }: { uuid: string; name: 
       .catch((reason) => setError(String(reason)))
       .finally(() => setBusy(false));
   };
+  if (compact) {
+    return (
+      <>
+        <label className="check mount-block-inline" title={t("Stop macOS from mounting this volume while Captain Salvage is open.")}>
+          <input type="checkbox" checked={on} disabled={busy} onChange={(event) => change(event.target.checked)} />
+          {t("Block mount")}
+        </label>
+        {on && mounted && <p className="mount-block-note start-row-note">{t("It is mounted now. Blocking stops the next mount, so unmount it once.")}</p>}
+        {error && <p className="warn start-row-note">{fromEngine(error.replace(/^Error: /, ""))}</p>}
+      </>
+    );
+  }
   return (
     <div className="mount-block">
       <label className="check">

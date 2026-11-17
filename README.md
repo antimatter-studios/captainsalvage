@@ -88,8 +88,8 @@ Those clusters could have held lost data.
 Captain Salvage does not unmount anything itself, because unmounting writes to the disk too.
 Set this up before you start:
 
-1. Block mounting. Each volume on the start screen, and on the Overview of the open disk, has
-   **Block mounting while Captain Salvage is open**. While the app is open, macOS refuses
+1. Block mounting. Each volume on the start screen has a **Block mount** checkbox, and on the
+   Overview of the open disk **Block mounting while Captain Salvage is open**. While the app is open, macOS refuses
    every mount of a blocked volume: when the disk is plugged in, from Finder, from Disk Utility
    and from `diskutil mount`. It needs no administrator rights and changes nothing on the
    system. When the app quits, macOS mounts as usual again, so plug the disk in only with the
@@ -115,7 +115,7 @@ the app can turn a block off.
 
 ### Going back to normal
 
-Turn **Block mounting** off for the volume, and set disk sleep back:
+Turn **Block mount** off for the volume, and set disk sleep back:
 
 ```
 sudo pmset -a disksleep 10
@@ -129,7 +129,8 @@ the volume with an earlier version, remove it with
 
 Opening raw bytes does not require a recognised filesystem. The normal **Open** action opens
 unrecognised sources in the byte-based graph. To inspect bytes beneath a recognised filesystem,
-use **Source bytes**, **Inspect raw partition**, **Inspect whole disk**, or **Inspect raw disk or image**. The
+use **Source bytes**, **Inspect raw…** on a disk of the start screen (the whole disk or one of its
+partitions), or **Inspect raw** beside the disk image field. The
 source stays read-only, but macOS and other programs may still write to a mounted disk;
 the safety precautions above still apply.
 
