@@ -12,7 +12,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::Command;
 
-const VOLUME_FILE: &str = "volume.json";
+pub(crate) const VOLUME_FILE: &str = "volume.json";
 const WORKSPACE_PREFIX: &str = "vol-";
 const NOT_APPLICABLE: &str = "Not applicable";
 const HIDDEN_PARTITIONS: &[&str] = &["EFI"];

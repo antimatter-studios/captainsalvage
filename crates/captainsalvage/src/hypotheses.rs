@@ -114,13 +114,27 @@ fn identifier() -> Result<String> {
     Ok(hex(&bytes))
 }
 
-/// How a source is recognised again: by the sampled fingerprint scans use, never by a device
-/// number or a path alone.
-fn source_key(disk: &RawDisk) -> String {
+/// How a source is recognised again by this store: by the sampled fingerprint scans use, never by
+/// a device number or a path alone. The catalog (`catalog.rs`) is what recognises a source by
+/// its markers, so a drive a mount touched is still the same drive; this key is what hypotheses
+/// saved before the catalog carry.
+pub(crate) fn source_key(disk: &RawDisk) -> String {
     Fingerprint::read(disk)
         .sampled_sha256
         .unwrap_or_else(|| format!("path:{}", disk.path.to_string_lossy()))
 }
+
+/// The table of saved hypotheses. Created here, and by the catalog, which refers to it.
+pub(crate) const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS hypotheses (
+    id TEXT PRIMARY KEY, source_key TEXT NOT NULL, source_length INTEGER NOT NULL,
+    source_path TEXT NOT NULL, label TEXT NOT NULL, format TEXT NOT NULL,
+    src_start INTEGER NOT NULL, src_length INTEGER NOT NULL, boot_offset INTEGER,
+    virtual_start INTEGER NOT NULL, confidence REAL NOT NULL, origin TEXT NOT NULL,
+    enabled INTEGER NOT NULL, layer INTEGER NOT NULL,
+    created_at_millis INTEGER NOT NULL, updated_at_millis INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS hypotheses_source ON hypotheses(source_key, source_length);";
 
 pub struct HypothesisStore {
     connection: Connection,
@@ -155,19 +169,9 @@ impl HypothesisStore {
     pub fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
-        connection.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = FULL;
-             CREATE TABLE IF NOT EXISTS hypotheses (
-                 id TEXT PRIMARY KEY, source_key TEXT NOT NULL, source_length INTEGER NOT NULL,
-                 source_path TEXT NOT NULL, label TEXT NOT NULL, format TEXT NOT NULL,
-                 src_start INTEGER NOT NULL, src_length INTEGER NOT NULL, boot_offset INTEGER,
-                 virtual_start INTEGER NOT NULL, confidence REAL NOT NULL, origin TEXT NOT NULL,
-                 enabled INTEGER NOT NULL, layer INTEGER NOT NULL,
-                 created_at_millis INTEGER NOT NULL, updated_at_millis INTEGER NOT NULL
-             );
-             CREATE INDEX IF NOT EXISTS hypotheses_source ON hypotheses(source_key, source_length);",
-        )?;
+        connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;")?;
+        connection.execute_batch(SCHEMA)?;
+        connection.execute_batch(crate::catalog::SCHEMA)?;
         Ok(Self { connection })
     }
 
@@ -176,6 +180,7 @@ impl HypothesisStore {
         let key = source_key(disk);
         let mut statement = self.connection.prepare(&format!(
             "SELECT {COLUMNS} FROM hypotheses WHERE source_key = ?1 AND source_length = ?2
+             AND id NOT IN (SELECT hypothesis_id FROM interpretations WHERE listed = 0)
              ORDER BY layer, created_at_millis, id"
         ))?;
         let rows = statement.query_map(params![key, disk.length as i64], row)?;
@@ -306,6 +311,20 @@ impl HypothesisStore {
 
     pub fn delete(&mut self, disk: &RawDisk, id: &str) -> Result<()> {
         self.get(disk, id)?;
+        // A scan was made under this interpretation. Its results stay with it, so the layer is
+        // taken off the list and the record is kept.
+        let scanned: i64 = self.connection.query_row(
+            "SELECT count(*) FROM scans WHERE interpretation_id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        if scanned > 0 {
+            self.connection.execute(
+                "UPDATE interpretations SET listed = 0 WHERE hypothesis_id = ?1",
+                [id],
+            )?;
+            return Ok(());
+        }
         self.connection
             .execute("DELETE FROM hypotheses WHERE id = ?1", [id])
             .map(|_| ())
