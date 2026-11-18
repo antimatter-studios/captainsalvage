@@ -109,13 +109,25 @@ def npm_packages():
     """The npm packages the window bundles: everything not marked as a development tool."""
     lock = json.loads((ROOT / "package-lock.json").read_text())
     found = []
+    missing = []
     for path, package in lock.get("packages", {}).items():
         if not path or package.get("dev") or package.get("devOptional"):
             continue
         name = path.split("node_modules/")[-1]
         folder = ROOT / path
+        if not (folder / "package.json").is_file():
+            missing.append(name)
+            continue
         license_name = package.get("license") or read_license_field(folder)
         found.append({"name": name, "version": package.get("version", ""), "license": license_name, "folder": folder})
+    if missing:
+        # The license list reads each package's own license files, so it cannot be right without
+        # them. Writing a different list quietly would leave a file that only looks current.
+        raise SystemExit(
+            f"licenses: {len(missing)} npm packages the window bundles are not installed "
+            f"({', '.join(sorted(missing)[:5])}{', ...' if len(missing) > 5 else ''}). "
+            "Run `npm ci`, then run this again. Nothing was checked or written."
+        )
     return found
 
 
