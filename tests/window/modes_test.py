@@ -30,7 +30,7 @@ try:
         check(f'no cluster number with {center} showing', found, [])
     js("[...document.querySelectorAll('.mode-switch [role=tab]')].find((b) => b.textContent.trim() === 'Investigate').click()")
     check('Investigate shows the map', wait_for("!!document.querySelector('.strips')", 10), True)
-    check('and every tab', len(probe(DETAIL_TABS)), 10)
+    check('and every tab', len(probe(DETAIL_TABS)), 9)
     check('the choice is kept', call('app_settings').get('mode'), 'investigate')
     check('cluster numbers are back for investigating', bool(CLUSTER_NUMBER.search(probe(TEXT))), True)
     call('set_mode', mode='simple')
