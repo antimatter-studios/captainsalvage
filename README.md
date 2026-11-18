@@ -416,16 +416,15 @@ What was checked against something that is not this app:
     back every byte. Windows leaves nothing of a small deleted file that is held inside its own
     record (the generator searches the whole volume for its first bytes), so none is found and
     none is invented.
-  - **Copy.** What the app copies is, byte for byte, what Windows hashed.
+  - **Copy.** What the app copies is, byte for byte, what Windows hashed, and the files Windows
+    lists with no bytes are copied empty.
   - **Not written.** The image's hash is the same afterwards and the baseline check agrees.
 
   What the app does not do, as these volumes show it, is pinned in the test by an issue each, and
   the test fails if one of them stops being true: the data of **NTFS-compressed** files is not
   read ([#174](https://github.com/antimatter-studios/captainsalvage/issues/174)); **only one name
   of a hard-linked file** is listed, and the second only in the record details
-  ([#175](https://github.com/antimatter-studios/captainsalvage/issues/175)); **files with no
-  bytes** are left out of a copy
-  ([#176](https://github.com/antimatter-studios/captainsalvage/issues/176)); and a volume on
+  ([#175](https://github.com/antimatter-studios/captainsalvage/issues/175)); and a volume on
   **4096-byte sectors** is refused at open, because the pinned driver expects a record of at
   least that size and Windows makes one of 1024 bytes
   ([#177](https://github.com/antimatter-studios/captainsalvage/issues/177)), so that volume is

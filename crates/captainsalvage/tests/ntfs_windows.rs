@@ -374,7 +374,6 @@ fn diff(path: &str, what: impl Into<String>) -> Diff {
 const COMPRESSED: &str = "files compressed by NTFS (LZNT1) are listed but refused (issue #174)";
 const HARD_LINK: &str =
     "only one name of a file with several hard links is listed, the rest are in its record details (issue #175)";
-const EMPTY: &str = "live files with no bytes are left out of a copy (issue #176)";
 const SECTOR_4096: &str =
     "a volume on 4096-byte sectors with 1024-byte records is refused at open (issue #177)";
 
@@ -401,14 +400,6 @@ fn known_gap(want: &Manifest, difference: &Diff) -> Option<&'static str> {
     {
         return Some(HARD_LINK);
     }
-    if difference.what == "not copied"
-        && want
-            .files
-            .get(&difference.path)
-            .is_some_and(|(size, _)| *size == 0)
-    {
-        return Some(EMPTY);
-    }
     None
 }
 
@@ -422,9 +413,6 @@ fn gaps_expected(want: &Manifest) -> BTreeSet<&'static str> {
     }
     if !want.hard_links.is_empty() {
         gaps.insert(HARD_LINK);
-    }
-    if want.files.values().any(|(size, _)| *size == 0) {
-        gaps.insert(EMPTY);
     }
     gaps
 }

@@ -9,7 +9,7 @@
 //! best-effort: unreadable clusters become zeros and are recorded, so one bad spot
 //! never costs the rest of a file. A manifest says exactly what was recovered.
 
-use crate::map::{Row, VERDICT_LIVE};
+use crate::map::{Row, VERDICT_EMPTY, VERDICT_LIVE};
 use crate::session::{list_disks, whole_disk_path, Session};
 use crate::verify::verify_stream;
 use anyhow::{anyhow, bail, Context, Result};
@@ -412,6 +412,18 @@ fn is_partial(row: &Row) -> bool {
         || (row.clusters_allocated > 0 && row.verdict != VERDICT_LIVE)
 }
 
+/// A live file with no bytes: its entry is in use, its checksum holds, and it is zero length.
+/// A deleted or damaged entry that happens to be empty is not this, because it shows only that
+/// a record was once here, so no file is made from it.
+pub(crate) fn is_live_empty(row: &Row) -> bool {
+    row.length == 0 && row.in_use && row.checksum_ok && row.verdict == VERDICT_EMPTY
+}
+
+/// Whether a copy makes a file for this row: one that has bytes, or a live file that has none.
+fn is_copyable_file(row: &Row) -> bool {
+    row.kind == "file" && (row.length > 0 || is_live_empty(row))
+}
+
 /// Parses an entry's stored date. exFAT dates are local, so this is approximate
 /// by up to the time zone difference, and is used only as the copy's date.
 pub(crate) fn modified_time(text: &str) -> Option<SystemTime> {
@@ -530,7 +542,7 @@ impl Session {
             if let Some(disk_rebuild) = request.disk_rebuild {
                 for file in database.disk_rebuild_files(disk_rebuild)? {
                     let Some(id) = file.row.id else { continue };
-                    if file.row.kind == "file" && file.row.length > 0 {
+                    if is_copyable_file(&file.row) {
                         targets.insert(id, disk_rebuild_target(&file.folders, &file.row.name));
                         rows.push(file.row);
                     }
@@ -538,7 +550,7 @@ impl Session {
             }
             for &id in &request.entry_ids {
                 if let Some(row) = database.entry(id)? {
-                    if row.kind == "file" && row.length > 0 {
+                    if is_copyable_file(&row) {
                         if request.direct {
                             targets.insert(id, PathBuf::from(sanitize_segment(&row.name)));
                         }
@@ -547,7 +559,7 @@ impl Session {
                 }
             }
             for &folder in &request.folders {
-                let under = database.files_under(folder)?;
+                let under = database.files_to_copy_under(folder)?;
                 if request.direct {
                     let base = database
                         .node(folder)?
@@ -1311,6 +1323,39 @@ mod tests {
         assert!(super::is_partial(&row));
         row.clusters_allocated = 0;
         assert!(!super::is_partial(&row));
+    }
+    #[test]
+    fn only_a_live_entry_with_no_bytes_is_copied_empty() {
+        let live = crate::map::Row {
+            kind: "file".into(),
+            in_use: true,
+            checksum_ok: true,
+            verdict: crate::map::VERDICT_EMPTY.into(),
+            ..Default::default()
+        };
+        assert!(super::is_copyable_file(&live));
+        let deleted = crate::map::Row {
+            in_use: false,
+            ..live.clone()
+        };
+        assert!(!super::is_copyable_file(&deleted));
+        let damaged = crate::map::Row {
+            checksum_ok: false,
+            ..live.clone()
+        };
+        assert!(!super::is_copyable_file(&damaged));
+        let folder = crate::map::Row {
+            kind: "missing-folder".into(),
+            ..live.clone()
+        };
+        assert!(!super::is_copyable_file(&folder));
+        let with_bytes = crate::map::Row {
+            length: 3,
+            in_use: false,
+            verdict: crate::map::VERDICT_PLAUSIBLE.into(),
+            ..live
+        };
+        assert!(super::is_copyable_file(&with_bytes));
     }
     #[test]
     fn test_copies_stay_inside_their_folders() {

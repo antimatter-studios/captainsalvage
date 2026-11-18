@@ -489,3 +489,222 @@ fn one_engine_switches_between_exfat_and_fat_sessions() {
         );
     }
 }
+
+fn wait_for_copy(session: &Session, files: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = session.copy_status().unwrap();
+        if status.state == "finished" {
+            assert_eq!(status.files_done, files, "{status:?}");
+            assert_eq!((status.files_failed, status.files_partial), (0, 0));
+            return;
+        }
+        assert!(
+            !matches!(status.state.as_str(), "failed" | "stopped"),
+            "{status:?}"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "copy timed out: {status:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn fat_live_files_with_no_bytes_are_copied_empty_and_a_deleted_one_is_not() {
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        let mut fixture = Fixture::new(kind);
+        // Root: a file with bytes, a live empty file, a deleted empty file, and a folder that
+        // holds a live empty file of its own.
+        let mut root = long_entry("Captain log.txt", b"CAPTAI~1TXT", 5, 700);
+        root.extend(short_entry(b"EMPTY   TXT", 0x20, 0, 0));
+        root.extend(short_entry(b"\xE5MPTYD  TXT", 0x20, 0, 0));
+        root.extend(short_entry(b"ARCHIVE    ", 0x10, 3, 0));
+        fixture.put_sector(fixture.root_sector, &root);
+        let mut archive = short_entry(b"CHILD   TXT", 0x20, 7, 11);
+        archive.extend(short_entry(b"KEEP       ", 0x20, 0, 0));
+        fixture.put_cluster(3, &archive);
+        let session = Session::with_source(
+            Path::new("/test/fat-empty"),
+            Arc::new(MemorySource::new(fixture.image)),
+            workspace(&format!("empty-{kind}")),
+        )
+        .unwrap();
+        scan(&session);
+        let engine = Engine::new();
+        engine.set_session(session.clone());
+        let row = |name: &str| call(&engine, "search", json!({"query": name}))["rows"][0].clone();
+        let empty = row("EMPTY.TXT");
+        assert_eq!(empty["verdict"], "empty", "{kind}: {empty}");
+        assert!(empty["inUse"].as_bool().unwrap());
+        assert!(!row("_MPTYD.TXT")["inUse"].as_bool().unwrap());
+        let keep = row("KEEP");
+        let tree = call(&engine, "tree_path", json!({"entry": keep["id"]}));
+        let archive_head = tree["heads"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .as_u64()
+            .unwrap() as u32;
+
+        let destination = session.workspace.dir().join("recovered");
+        let request = CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![
+                empty["id"].as_i64().unwrap(),
+                row("_MPTYD.TXT")["id"].as_i64().unwrap(),
+            ],
+            folders: vec![archive_head],
+            ..CopyRequest::default()
+        };
+        // CHILD.TXT has bytes, KEEP and EMPTY.TXT have none, and the deleted empty entry is no file.
+        let plan = session.copy_plan(&request).unwrap();
+        assert_eq!((plan.files, plan.bytes), (3, 11), "{kind}: {plan:?}");
+        session.copy_start(request).unwrap();
+        wait_for_copy(&session, 3);
+        let status = session.copy_status().unwrap();
+        assert_eq!(status.files_total, 3);
+        for path in ["Volume root/EMPTY.TXT", "Volume root/ARCHIVE/KEEP"] {
+            let copied = destination.join(path);
+            assert_eq!(
+                std::fs::metadata(&copied).unwrap().len(),
+                0,
+                "{kind}: {path}"
+            );
+        }
+        assert!(!destination.join("Volume root/_MPTYD.TXT").exists());
+        // A second copy of the same empty file lands beside the first, never over it.
+        std::fs::write(destination.join("Volume root/EMPTY.TXT"), b"changed").unwrap();
+        let again = tempdir_copy(&session, &destination, empty["id"].as_i64().unwrap());
+        assert_eq!(again, 0, "{kind}");
+        assert_eq!(
+            std::fs::read(destination.join("Volume root/EMPTY.TXT")).unwrap(),
+            b"changed"
+        );
+    }
+}
+
+/// Copies one entry to a destination that already holds files, and returns the size of the
+/// copy that was made beside the one in the way.
+fn tempdir_copy(session: &Arc<Session>, destination: &Path, id: i64) -> u64 {
+    let before = std::fs::read_dir(destination.join("Volume root"))
+        .unwrap()
+        .count();
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![id],
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    // The first run's manifest already records this entry, and its file was changed, so the copy
+    // makes a new file and leaves the changed one alone.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while session.copy_status().unwrap().state == "running" {
+        assert!(std::time::Instant::now() < deadline, "copy timed out");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let after: Vec<_> = std::fs::read_dir(destination.join("Volume root"))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(after.len(), before + 1, "a copy beside the changed file");
+    let beside = after
+        .iter()
+        .find(|item| item.file_name().to_string_lossy().contains("(entry"))
+        .expect("a file renamed with its entry id");
+    beside.metadata().unwrap().len()
+}
+
+#[test]
+fn exfat_live_files_with_no_bytes_are_copied_empty_with_their_date() {
+    use fs_exfat::fixtures::{
+        bitmap_entry, entry_set, upcase_entry, Builder, BITMAP_CLUSTER, ROOT_CLUSTER,
+    };
+    let mut builder = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4, 5, 6] {
+        builder.allocate(cluster);
+    }
+    builder.fat(ROOT_CLUSTER, fs_exfat::primitives::FAT_END);
+    builder.fat(6, fs_exfat::primitives::FAT_END);
+    let boot = fs_exfat::primitives::BootSector::parse(&builder.image).unwrap();
+    let bitmap_length = u64::from(boot.cluster_count).div_ceil(8);
+    builder.directory(
+        ROOT_CLUSTER,
+        &[
+            bitmap_entry(BITMAP_CLUSTER, bitmap_length),
+            upcase_entry(4, &[0; 100]),
+            entry_set("with-bytes.txt", false, 5, 11, true, true),
+            entry_set("empty.txt", false, 0, 0, false, true),
+            entry_set("deleted-empty.txt", false, 0, 0, false, false),
+            entry_set("sub", true, 6, 4096, true, true),
+        ],
+    );
+    builder.directory(6, &[entry_set(".keep", false, 0, 0, false, true)]);
+    builder.put(5, 0, b"exfat bytes");
+    let session = Session::with_source(
+        Path::new("/test/exfat-empty"),
+        Arc::new(MemorySource::new(builder.image)),
+        workspace("exfat-empty"),
+    )
+    .unwrap();
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = |name: &str| call(&engine, "search", json!({"query": name}))["rows"][0].clone();
+    let empty = row("empty.txt");
+    assert_eq!(empty["verdict"], "empty", "{empty}");
+    assert!(!row("deleted-empty.txt")["inUse"].as_bool().unwrap());
+    let keep = row(".keep");
+    let tree = call(&engine, "tree_path", json!({"entry": keep["id"]}));
+    let sub = tree["heads"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .as_u64()
+        .unwrap() as u32;
+    let destination = session.workspace.dir().join("exported");
+    std::fs::create_dir_all(&destination).unwrap();
+    let request = CopyRequest {
+        destination: destination.to_string_lossy().into_owned(),
+        entry_ids: vec![
+            empty["id"].as_i64().unwrap(),
+            row("deleted-empty.txt")["id"].as_i64().unwrap(),
+        ],
+        folders: vec![sub],
+        direct: true,
+        ..CopyRequest::default()
+    };
+    let plan = session.copy_plan(&request).unwrap();
+    assert_eq!((plan.files, plan.bytes), (2, 0), "{plan:?}");
+    session.copy_start(request).unwrap();
+    wait_for_copy(&session, 2);
+    let copied = destination.join("empty.txt");
+    let modified = std::fs::metadata(&copied)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // The fixture dates its entries in 2022.
+    assert!(
+        (1_640_995_200..1_672_531_200).contains(&modified),
+        "{modified}"
+    );
+    assert_eq!(std::fs::metadata(copied).unwrap().len(), 0);
+    assert_eq!(
+        std::fs::metadata(destination.join("sub/.keep"))
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(!destination.join("deleted-empty.txt").exists());
+}

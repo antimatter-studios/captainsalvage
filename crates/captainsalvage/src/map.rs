@@ -2010,12 +2010,27 @@ impl MapDb {
     }
 
     pub fn files_under(&self, folder: u32) -> Result<Vec<Row>> {
+        self.files_in_folder(folder, false)
+    }
+
+    /// Like `files_under`, and also the live files that have no bytes, which a copy still makes.
+    pub fn files_to_copy_under(&self, folder: u32) -> Result<Vec<Row>> {
+        self.files_in_folder(folder, true)
+    }
+
+    fn files_in_folder(&self, folder: u32, live_empty: bool) -> Result<Vec<Row>> {
+        let has_bytes = if live_empty {
+            "(COALESCE(o_length, length) > 0 OR (in_use = 1 AND COALESCE(o_ok, checksum_ok) = 1 \
+             AND COALESCE(verdict, '') = 'empty'))"
+        } else {
+            "COALESCE(o_length, length) > 0"
+        };
         let sql = format!(
             "WITH RECURSIVE tree(head) AS ( \
                 SELECT ?1 UNION SELECT nodes.head FROM nodes JOIN tree ON nodes.parent = tree.head \
              ) \
              SELECT {FILE_COLUMNS}, node FROM sets WHERE node IN tree AND COALESCE(o_is_dir, is_dir) = 0 \
-             AND COALESCE(o_length, length) > 0 AND COALESCE(verdict, '') != 'rename-residue'"
+             AND {has_bytes} AND COALESCE(verdict, '') != 'rename-residue'"
         );
         let mut statement = self.connection.prepare(&sql)?;
         let found = statement

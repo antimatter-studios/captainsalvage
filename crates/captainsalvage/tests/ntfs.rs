@@ -941,3 +941,154 @@ fn a_live_resident_file_is_live_and_a_deleted_one_is_not() {
     );
     assert_eq!(find(&engine, "gone.txt")["verdict"], "plausible");
 }
+
+/// A volume with live files that hold no bytes, as Windows leaves them: one in the root, one in a
+/// folder, one that once held data and was cut to nothing, and a deleted one.
+fn volume_with_empty_files() -> Vec<u8> {
+    let image = format();
+    let volume = Volume::open_writable(image.clone()).unwrap();
+    volume.create_directory("/", "docs").unwrap();
+    volume.create_directory("/docs", "deep").unwrap();
+    for (parent, name) in [
+        ("/", "empty.txt"),
+        ("/", "gone-empty.txt"),
+        ("/docs", "note.txt"),
+        ("/docs", ".keep"),
+        ("/docs/deep", "zero.bin"),
+    ] {
+        volume.create_file(parent, name).unwrap();
+    }
+    volume
+        .write_file_at("/docs/note.txt", 0, b"a note with bytes")
+        .unwrap();
+    volume
+        .write_file_at("/docs/deep/zero.bin", 0, &pattern(5, 20_000))
+        .unwrap();
+    volume.set_len("/docs/deep/zero.bin", 0).unwrap();
+    volume.remove_file("/gone-empty.txt").unwrap();
+    volume.flush().unwrap();
+    drop(volume);
+    let bytes = image.0.lock().unwrap().clone();
+    bytes
+}
+
+#[test]
+fn live_files_with_no_bytes_are_copied_empty_and_a_deleted_one_is_not() {
+    let session = open(volume_with_empty_files(), "empty-files");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let docs = find(&engine, "note.txt");
+    let heads = call(&engine, "tree_path", json!({"entry": docs["id"]}));
+    let docs_head = heads["heads"][1].as_u64().unwrap() as u32;
+    for name in ["empty.txt", ".keep", "zero.bin"] {
+        let row = find(&engine, name);
+        assert_eq!(row["verdict"], "empty", "{name}");
+        assert_eq!(row["length"], 0, "{name}");
+        assert!(row["inUse"].as_bool().unwrap(), "{name}");
+    }
+    let gone = find(&engine, "gone-empty.txt");
+    assert!(!gone["inUse"].as_bool().unwrap());
+
+    // The folder holds three files, and the plan counts the two with no bytes.
+    let destination = session.workspace.dir().join("recovered");
+    let request = CopyRequest {
+        destination: destination.to_string_lossy().into_owned(),
+        folders: vec![docs_head],
+        ..CopyRequest::default()
+    };
+    let plan = session.copy_plan(&request).unwrap();
+    assert_eq!(plan.files, 3, "{plan:?}");
+    assert_eq!(plan.bytes, b"a note with bytes".len() as u64);
+    assert_eq!(plan.skipped_partial, 0);
+    session.copy_start(request).unwrap();
+    wait_for_copy(&session, 3);
+    let status = session.copy_status().unwrap();
+    assert_eq!(status.files_total, 3);
+    assert_eq!((status.files_failed, status.files_partial), (0, 0));
+    for path in ["docs/.keep", "docs/deep/zero.bin"] {
+        let copied = destination.join("Volume root").join(path);
+        assert!(copied.is_file(), "{path} was not copied");
+        assert_eq!(std::fs::metadata(&copied).unwrap().len(), 0, "{path}");
+    }
+    assert_eq!(
+        std::fs::read(destination.join("Volume root/docs/note.txt")).unwrap(),
+        b"a note with bytes"
+    );
+    assert!(!destination.join("Volume root/gone-empty.txt").exists());
+    // Each is verified: its manifest line is complete and hashes zero bytes.
+    let manifest = std::fs::read_to_string(&status.manifest).unwrap();
+    let empty_hash = sha(&[]);
+    let empties = manifest
+        .lines()
+        .filter(|line| line.contains("\"length\":0,"))
+        .collect::<Vec<_>>();
+    assert_eq!(empties.len(), 2, "{manifest}");
+    for line in empties {
+        assert!(line.contains(&empty_hash) && line.contains("\"status\":\"complete\""));
+    }
+}
+
+#[test]
+fn naming_an_empty_file_or_a_deleted_one_copies_only_the_live_one_and_never_overwrites() {
+    let session = open(volume_with_empty_files(), "empty-named");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let live = find(&engine, "empty.txt")["id"].as_i64().unwrap();
+    let gone = find(&engine, "gone-empty.txt")["id"].as_i64().unwrap();
+    let destination = session.workspace.dir().join("recovered");
+    std::fs::create_dir_all(destination.join("Volume root")).unwrap();
+    std::fs::write(destination.join("Volume root/empty.txt"), b"already here").unwrap();
+    let request = CopyRequest {
+        destination: destination.to_string_lossy().into_owned(),
+        entry_ids: vec![live, gone],
+        ..CopyRequest::default()
+    };
+    assert_eq!(session.copy_plan(&request).unwrap().files, 1);
+    session.copy_start(request).unwrap();
+    wait_for_copy(&session, 1);
+    assert_eq!(
+        std::fs::read(destination.join("Volume root/empty.txt")).unwrap(),
+        b"already here"
+    );
+    let beside = destination.join(format!("Volume root/empty (entry {live}).txt"));
+    assert_eq!(std::fs::metadata(beside).unwrap().len(), 0);
+    assert!(!destination.join("Volume root/gone-empty.txt").exists());
+}
+
+#[test]
+fn an_export_of_an_empty_file_or_a_folder_with_one_makes_the_empty_file() {
+    let session = open(volume_with_empty_files(), "empty-export");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let live = find(&engine, "empty.txt")["id"].as_i64().unwrap();
+    let docs = find(&engine, "note.txt");
+    let heads = call(&engine, "tree_path", json!({"entry": docs["id"]}));
+    let docs_head = heads["heads"][1].as_u64().unwrap() as u32;
+    let destination = session.workspace.dir().join("exported");
+    std::fs::create_dir_all(&destination).unwrap();
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![live],
+            folders: vec![docs_head],
+            direct: true,
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    wait_for_copy(&session, 4);
+    assert_eq!(
+        std::fs::metadata(destination.join("empty.txt"))
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        std::fs::metadata(destination.join("docs/.keep"))
+            .unwrap()
+            .len(),
+        0
+    );
+}
