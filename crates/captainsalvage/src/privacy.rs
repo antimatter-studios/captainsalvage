@@ -26,6 +26,7 @@ pub const CONTENT_TOOLS: &[&str] = &[
     "zip_member_preview",
     "screenshot_app",
     "read_raw_disk",
+    "read_layout",
     "read_ntfs_stream",
 ];
 

@@ -245,6 +245,47 @@ confidence. Compressed or encrypted data is not decoded, and BitLocker volumes a
 recognised. ext4, Btrfs and bcachefs are not probed yet. Analysis only reads, through the same
 read-only handle every raw operation uses, and a source's hash is unchanged by it.
 
+## Hypotheses and virtual layouts
+
+A guess about what a stretch of the source holds is saved as a **hypothesis**: an extent (start
+and end), a format (exFAT, FAT12/16/32 or NTFS) and a confidence. Save one from an analysis
+finding with **Save as hypothesis**, which carries over the finding's extent, boot evidence and
+confidence, or save the current selection. The right panel lists them under **Hypotheses**.
+
+- **Hypotheses overlap and compete.** Each is a layer with an on/off switch. Where enabled
+  extents overlap, the highest layer is the one read; the list says which layer is on top of how
+  many others. Switching a layer off, or putting another on top, deletes nothing. **Try this
+  interpretation** opens a hypothesis as a filesystem through the same read-only path as any
+  interpretation.
+- **Start and end are yours to set.** Type them, or drag across the map and choose **Use the
+  selection**. A moved extent drops boot evidence that no longer lies inside it.
+- **A hypothesis is a segment of an overlay.** Like a Disk Rebuild, a layout is an ordered set of
+  segments: a range of the source and where it sits in a virtual device, which is the segment's
+  start unless you set it elsewhere. Where enabled segments overlap in the virtual device the
+  upper layer is read and the layers below show through where it does not reach. Virtual bytes no
+  segment covers are refused when read, never returned as zeros. A **virtual partition table** is
+  a layout whose segments are partitions, listed by their position in the virtual disk with
+  overlaps and gaps marked. It is a view kept by the app. It is never written to the disk.
+- **Nothing is written to the source.** A segment only names a range of a read-only source, and
+  the overlay has no write path. Hypotheses are saved on this Mac in the same database as raw
+  scans (`raw-scans.sqlite`), keyed by the source's sampled fingerprint, so a clone or image with
+  the same contents finds them again and another source does not.
+
+```sh
+captainsalvage hypothesis save /path/to/image.img --format NTFS --start 1048576 --length 8388608 --confidence 0.8
+captainsalvage hypothesis update /path/to/image.img --id ID --start 1049088 --disabled
+captainsalvage hypothesis list /path/to/image.img
+captainsalvage hypothesis read-layout /path/to/image.img --offset 0 --length 512
+```
+
+MCP offers the same operations as `captainsalvage_save_hypothesis`, `_update_hypothesis`,
+`_delete_hypothesis`, `_raise_hypothesis`, `_list_hypotheses`, `_open_hypothesis` and
+`_read_layout`. Limits: a hypothesis is a claim and carries no proof, and its confidence is only
+what its finding or its author gave it. A layout is read through the app's tools; it is not
+mounted, and no other program sees it. A hypothesis with a virtual position other than its own
+start can be read in the layout, but **Try this interpretation** opens the extent where it lies in
+the source. Layouts of several unrelated filesystems are not merged into one filesystem.
+
 ## NTFS volumes
 
 NTFS opens in the same workspace as exFAT and FAT, with the same read-only rules: the app

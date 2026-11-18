@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { call } from "../api";
 import { bytes, count, percent } from "../format";
 import { fromEngine, t } from "../i18n";
-import { findingExtent, mergeFindings, type RangeFinding, type RangeReport } from "../rawDisk";
+import { findingExtent, hypothesisFromFinding, mergeFindings, type RangeFinding, type RangeReport } from "../rawDisk";
 
 function structureLabel(structure: string): string {
   switch (structure) {
@@ -29,15 +29,15 @@ function statusLabel(status: RangeFinding["status"]): string {
  * Analyzes the selected range: every filesystem driver is tried at every start offset, and what
  * decodes is listed with how sure the app is. Nothing is written; a finding is evidence, not proof.
  */
-export function RangeAnalysis({ diskId, start, length, valid, busy, onSelect, onFindings }: {
+export function RangeAnalysis({ diskId, start, length, valid, busy, onSelect, onSaved }: {
   diskId: string;
   start: number;
   length: number;
   valid: boolean;
   busy: boolean;
   onSelect: (start: number, length: number) => void;
-  /** Told of the findings so the caller can offer to save one as a hypothesis. */
-  onFindings?: (findings: RangeFinding[]) => void;
+  /** Told when a finding was saved as a hypothesis, so the list of hypotheses is read again. */
+  onSaved?: () => void;
 }) {
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<RangeReport | null>(null);
@@ -49,7 +49,6 @@ export function RangeAnalysis({ diskId, start, length, valid, busy, onSelect, on
     return () => { mounted.current = false; };
   }, []);
   useEffect(() => { setReport(null); setFindings([]); setFailure(null); }, [diskId]);
-  useEffect(() => { onFindings?.(findings); }, [findings, onFindings]);
 
   async function analyze(offset: number, size: number, formats?: string[]) {
     if (running) return;
@@ -68,6 +67,16 @@ export function RangeAnalysis({ diskId, start, length, valid, busy, onSelect, on
       if (mounted.current) setFailure(String(reason));
     } finally {
       if (mounted.current) setRunning(false);
+    }
+  }
+
+  async function save(item: RangeFinding) {
+    setFailure(null);
+    try {
+      await call("save_hypothesis", { diskId, ...hypothesisFromFinding(item, `${item.format}: ${structureLabel(item.structure)}`) });
+      if (mounted.current) onSaved?.();
+    } catch (reason) {
+      if (mounted.current) setFailure(String(reason));
     }
   }
 
@@ -96,6 +105,7 @@ export function RangeAnalysis({ diskId, start, length, valid, busy, onSelect, on
           {t("byte {offset}", { offset: count(item.offset) })} · {bytes(item.decodedBytes)} · {percent(item.confidence)} · {item.level === "high" ? t("high confidence") : item.level === "medium" ? t("medium confidence") : t("low confidence")}
         </span>
         <span className="muted">{statusLabel(item.status)}</span>
+        {item.supported && <button disabled={busy || running} onClick={() => void save(item)}>{t("Save as hypothesis")}</button>}
         {item.offer && <button disabled={busy || running} onClick={() => void analyze(item.offer!.searchStart, item.offer!.searchLength, item.offer!.formats)}>
           {t("Search for missing metadata")}
         </button>}

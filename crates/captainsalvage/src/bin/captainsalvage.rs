@@ -11,6 +11,8 @@ mod scan;
 mod disk;
 #[path = "filesystem.rs"]
 mod filesystem;
+#[path = "hypothesis.rs"]
+mod hypothesis;
 #[path = "range.rs"]
 mod range;
 
@@ -25,6 +27,9 @@ Commands:\n\
   disk <device-or-image> [--scan | --list-scans | --resume ID --accept-sampled-match]\n\
       Open raw bytes and save or resume evidence discovery without mounting.\n\
       New scans accept --offset BYTES and --length BYTES. Resume uses its saved range.\n\
+  hypothesis <list|save|update|delete|raise|read-layout> <device-or-image> [options]\n\
+      Keep competing guesses about what a byte range holds, as toggleable layers, and read the overlay\n\
+      they make. Records stay on this Mac; the source is never written.\n\
   range analyze <device-or-image> [--offset BYTES] [--length BYTES] [--step BYTES] [--no-signatures]\n\
       Slide every filesystem driver over a byte range and report what decodes, and how sure it is.\n\
   scan <device-or-image> [--verify-only | --resolve-only]\n\
@@ -49,6 +54,7 @@ fn main() -> Result<()> {
         Some("disk") => disk::run(&arguments[1..]),
         Some("filesystem") => filesystem::run(&arguments[1..]),
         Some("range") => range::run(&arguments[1..]),
+        Some("hypothesis") => hypothesis::run(&arguments[1..]),
         Some("agent") => agent::run(&arguments[1..]),
         Some(command) => bail!("unknown command '{command}'\n\n{USAGE}"),
     }
