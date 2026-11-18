@@ -987,11 +987,37 @@ to the underlying volume. Keep the APIs separate so recovery algorithms can use 
 primitives without pretending damaged data is a valid file, while ordinary consumers can
 use the filesystem normally.
 
-The shared normal-file adapter at `filesystem::driver::Driver` reads FAT12/16/32,
-exFAT, and NTFS without representing NTFS as a FAT table. Its common geometry
-retains NTFS's full 64-bit serial number. The NTFS driver separately exposes
-read/write FileAPI operations for ordinary filesystem consumers and read-only
-PrimitiveAPI operations for recovery; this app never opens its writable APIs.
+### What this app asks of each layer
+
+Captain Salvage is only ever given a read-capable source: `BlockSource` (`source.rs`) has no
+write method and `FileSource` opens its path with `File::open`. Every adapter takes the drivers'
+`BlockRead`, and the writable halves of the drivers (`rust-fs-exfat`'s writer, `rust-fs-ntfs`'s
+`open_writable`, `rust-fs-fat`'s formatter and writer) are used only by tests that build disposable
+images. No path in the app repairs, formats, discards or replays a journal onto a source.
+
+| Layer | FAT12/16/32 (`rust-fs-fat`) | exFAT (`rust-fs-exfat`) | NTFS (`rust-fs-ntfs`) |
+|---|---|---|---|
+| VolumeAPI: raw bounded reads | The app reads raw bytes itself through `BlockSource`. The driver's `RawVolume` is not used. | The driver has no raw-read layer, so the app reads through `BlockSource` and finds structures in a volume the driver cannot open. | `RawVolume` reads bytes and records with no valid boot sector (`filesystem/ntfs.rs`, the `ntfs-record` and `ntfs-stream` commands). |
+| PrimitiveAPI: structures and damage | `BootSector::parse`, `decode_fat_entry` / `classify_fat_value` and the forensic `directory::scan_directory` (`filesystem/salvage.rs`). | `primitives`: `BootSector`, `parse_set` / `find_sets` entry sets, saved structure copies and checked FAT and bitmap accessors (`filesystem/salvage.rs`, `filesystem/probe.rs`). | `primitives::inspect_file_record` and attribute evidence, `mft_io::parse_boot_sector` (`filesystem/ntfs_salvage.rs`). |
+| FileAPI: ordinary access | `file::FileAPI::open_file` and `read_at`, behind `filesystem::driver::Driver` (`captainsalvage filesystem list` / `cat`). | `volume::Volume`, `open_file`, `read_at`, behind the same `Driver`. | `file::FileAPI` and `VolumeAPI::read_directory`, behind the same `Driver`, and reads of NTFS streams through the driver. |
+
+Ordinary reads and forensic records stay apart: a listing from FileAPI is what the filesystem
+says, a candidate from PrimitiveAPI is evidence with a source offset and a check result. The app
+decides how to rank evidence and never lets a salvage guess stand in for a normal read.
+
+What the driver READMEs say today differs. `rust-fs-fat` documents all three layers. The
+`rust-fs-exfat` and `rust-fs-ntfs` READMEs do not name them, and `rust-fs-exfat` has no raw-read
+layer at the revision this app pins; both gaps are tracked in
+[#217](https://github.com/antimatter-studios/captainsalvage/issues/217). What each filesystem
+supports, and what was checked against an independent reader, is under
+[What each filesystem supports](#what-each-filesystem-supports).
+
+The shared normal-file adapter at `filesystem::driver::Driver` reads FAT12/16/32, exFAT and NTFS
+without representing NTFS as a FAT table. Its common geometry retains NTFS's full 64-bit serial
+number. The shared recovery engine is still shaped like a FAT cluster table (map nodes, entry
+rows and baselines are keyed by cluster, with NTFS carried beside them); replacing that with
+typed logical ranges and stable entry identities is
+[#212](https://github.com/antimatter-studios/captainsalvage/issues/212).
 
 ### NTFS records on damaged sources
 
