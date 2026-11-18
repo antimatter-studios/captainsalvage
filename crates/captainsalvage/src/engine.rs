@@ -401,6 +401,10 @@ impl Engine {
                     need_u64(args, "length")?,
                 )?)?)
             }
+            tool if crate::range_tools::TOOLS.contains(&tool) => {
+                let disk = self.raw_disk(args)?;
+                crate::range_tools::call(tool, &disk, args)
+            }
             "list_raw_scans" => {
                 let disk = self.raw_disk(args)?;
                 Ok(serde_json::to_value(

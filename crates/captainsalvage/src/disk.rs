@@ -110,6 +110,15 @@ impl RegionSource {
     }
 }
 
+impl RegionSource {
+    /// Shows `prefix` in place of the region's first bytes, as a saved boot sector would. The
+    /// source underneath is not touched.
+    pub fn with_prefix(mut self, prefix: Vec<u8>) -> Self {
+        self.prefix = prefix;
+        self
+    }
+}
+
 impl BlockSource for RegionSource {
     fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
         let end = offset

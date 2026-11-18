@@ -97,7 +97,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }
         merged
     };
-    vec![
+    let mut tools = vec![
         tool("open_raw_disk", "Opens a whole disk, partition, or raw image read-only without requiring a recognised filesystem. Returns a source ID, byte length, declared partitions and table warnings. Does not replace the current filesystem interpretation.", json!({"path": string("Raw device or image path.")}), &["path"]),
         tool("discover_raw_disk", "Scans all bytes in a bounded batch for filesystem evidence, including old overlapping formats inside currently allocated partitions. Detection never stops at the first format. Returns hypotheses, isolated structures, unreadable ranges and a continuation offset. No findings does not mean empty. Current probes cover FAT, exFAT boot and directory structures, and NTFS boot metadata; other formats remain unknown.", json!({"diskId": string("ID from open_raw_disk."), "offset": integer("Absolute source byte offset."), "length": integer("1 byte to 16 MiB per batch. Continue from nextOffset.")}), &["diskId", "offset", "length"]),
         tool("list_raw_scans", "Lists saved raw scans with source fingerprint verification. Sampled matches are probable, not proof that every byte matches. Disk numbers and hardware identity are not required. Mismatches, unreadable fingerprint samples and incompatible scanners cannot resume.", json!({"diskId": string("ID from open_raw_disk.")}), &["diskId"]),
@@ -251,7 +251,20 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("show_in_app", "Moves the user's view to show something. kind: cluster, entry, folder, range ({start, end}) or lens.", json!({"kind": string("What to show."), "value": integer("Cluster, entry id, folder head or lens overlay id."), "start": integer("Range start."), "end": integer("Range end.")}), &["kind"]),
         tool("log_finding", "Posts a conclusion to the app's activity log, so the user can read it later.", json!({"text": string("The finding, and its evidence.")}), &["text"]),
         tool("activity", "Recent tool calls by anyone, newest first.", json!({"afterId": integer("Only items after this id."), "limit": integer("Default 100.")}), &[]),
-    ]
+    ];
+    tools.extend(
+        crate::range_tools::definitions()
+            .into_iter()
+            .map(|definition| {
+                tool(
+                    definition.name,
+                    definition.description,
+                    definition.properties,
+                    definition.required,
+                )
+            }),
+    );
+    tools
 }
 
 pub(crate) fn base64(data: &[u8]) -> String {
