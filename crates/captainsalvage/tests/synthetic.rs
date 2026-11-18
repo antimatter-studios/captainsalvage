@@ -1783,17 +1783,43 @@ fn copy_and_wait(
     session: &Session,
     args: serde_json::Value,
 ) -> captainsalvage::export::CopyStatus {
-    engine
+    let request: captainsalvage::export::CopyRequest =
+        serde_json::from_value(args).expect("request");
+    // A copy reports "finished" a moment before its thread exits, and a new copy is refused
+    // until then, so a second copy started straight after the first waits for that.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while let Err(error) = engine
         .session()
         .expect("session")
-        .copy_start(serde_json::from_value(args).expect("request"))
-        .expect("copy starts");
+        .copy_start(request.clone())
+    {
+        assert!(
+            format!("{error:#}").contains("already running")
+                && std::time::Instant::now() < deadline,
+            "copy starts: {error:#}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     loop {
         let status = session.copy_status().expect("status");
         if status.state != "running" {
             return status;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Waits until a session reports a copy in the given state, and returns that status. A session
+/// that did not start the copy only learns of it from the database, which the copy thread
+/// writes after it changes its own status, so the answer can lag the copy by a moment.
+fn wait_for_copy_status(session: &Session, state: &str) -> captainsalvage::export::CopyStatus {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let status = session.copy_status().expect("status");
+        if status.state == state || std::time::Instant::now() >= deadline {
+            return status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -4680,7 +4706,9 @@ fn another_process_can_see_a_copy_and_ask_it_to_stop() {
         json!({"destination": destination, "folders": [20]}),
     );
     assert_eq!(status.state, "finished");
-    let seen = window.copy_status().expect("status");
+    // The copy publishes its result in memory first and writes it to the shared database a
+    // moment later, so a window in another process reads it once that write lands.
+    let seen = wait_for_copy_status(&window, "finished");
     assert_eq!(
         seen.state, "finished",
         "the window sees a copy it did not start"
