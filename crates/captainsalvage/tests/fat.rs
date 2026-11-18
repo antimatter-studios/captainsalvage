@@ -708,3 +708,134 @@ fn exfat_live_files_with_no_bytes_are_copied_empty_with_their_date() {
     );
     assert!(!destination.join("deleted-empty.txt").exists());
 }
+
+#[test]
+fn a_disk_rebuild_on_a_fat_volume_places_pieces_and_copies_them_out_at_their_rebuilt_paths() {
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        let fixture = Fixture::new(kind);
+        let image = fixture.image.clone();
+        let expected = fixture.contents.clone();
+        let session = Session::with_source(
+            Path::new("/test/fat-image"),
+            Arc::new(MemorySource::new(fixture.image)),
+            workspace(&format!("rebuild-{kind}")),
+        )
+        .unwrap();
+        scan(&session);
+        let engine = Engine::new();
+        engine.set_session(session.clone());
+        let person = |tool: &str, args: Value| {
+            engine
+                .call(tool, &args, AUTHOR_USER)
+                .unwrap_or_else(|error| panic!("{kind}: {tool}: {error:#}"))
+        };
+        let rebuild = person("disk_rebuild_create", json!({"name": "Mine"}))["id"]
+            .as_i64()
+            .unwrap();
+        // The pieces are the volume's root and two folders no folder links to. A FAT12 or
+        // FAT16 root is the fixed area before the data, which has no cluster, so its head is 0.
+        let unused = person("disk_rebuild_unused", json!({"diskRebuild": rebuild}));
+        let heads: Vec<(String, u64)> = unused["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row["nodeKind"].as_str().unwrap().to_string(),
+                    row["head"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        let root_head = if kind == FilesystemKind::Fat32 { 2 } else { 0 };
+        assert!(
+            heads.contains(&("root".into(), root_head)),
+            "{kind}: {heads:?}"
+        );
+        assert!(heads.contains(&("orphan".into(), 15)), "{kind}: {heads:?}");
+        person(
+            "disk_rebuild_place",
+            json!({"diskRebuild": rebuild, "head": root_head}),
+        );
+        person(
+            "disk_rebuild_place",
+            json!({"diskRebuild": rebuild, "head": 15}),
+        );
+        let top = person("disk_rebuild_tree", json!({"diskRebuild": rebuild}));
+        let names = |value: &Value, key: &str| -> Vec<String> {
+            value[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| {
+                    item["name"]
+                        .as_str()
+                        .or_else(|| item["pathName"].as_str())
+                        .unwrap()
+                        .to_string()
+                })
+                .collect()
+        };
+        assert!(
+            names(&top, "files").contains(&"Captain log.txt".to_string()),
+            "{kind}: {top}"
+        );
+        assert!(
+            names(&top, "folders").contains(&"lost:15".to_string()),
+            "{kind}: {top}"
+        );
+        let destination = session.workspace.dir().join("rebuild-copy");
+        let args =
+            json!({"diskRebuild": rebuild, "destination": destination.display().to_string()});
+        let plan = person("disk_rebuild_copy_plan", args.clone());
+        assert!(plan["files"].as_u64().unwrap() >= 2, "{kind}: {plan}");
+        // The agent can plan the copy; only the person starts it.
+        assert!(engine
+            .call(
+                "disk_rebuild_copy_start",
+                &args,
+                captainsalvage::engine::AUTHOR_CLAUDE
+            )
+            .is_err());
+        person("disk_rebuild_copy_start", args);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let status = session.copy_status().unwrap();
+            if status.state == "finished" {
+                break;
+            }
+            assert!(
+                !matches!(status.state.as_str(), "failed" | "stopped"),
+                "{kind}: {status:?}"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{kind}: copy timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let target = destination.join("Mine");
+        assert_eq!(
+            std::fs::read(target.join("Captain log.txt")).unwrap(),
+            expected,
+            "{kind}: the fragmented file is copied whole"
+        );
+        assert_eq!(
+            std::fs::read(target.join("Lost folder 15/ORPHAN.TXT")).unwrap(),
+            b"orphan bytes",
+            "{kind}"
+        );
+        // The Disk Rebuild is a list in the app's own database: the source is what it was.
+        let mut read_back = vec![0; image.len()];
+        session
+            .volume
+            .source()
+            .read_exact_at(0, &mut read_back)
+            .unwrap();
+        assert!(read_back == image, "{kind}: the source changed");
+        assert!(session.verify_unchanged().unwrap().unchanged);
+    }
+}
