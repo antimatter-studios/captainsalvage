@@ -52,7 +52,9 @@ import { Strips } from "./components/Strips";
 import { bytes, count, decimal, duration, lostFolderName } from "./format";
 import { fromEngine, LANGUAGES, locale, t, useLanguage } from "./i18n";
 import { onThemeChange } from "./palette";
-import appIcon from "../src-tauri/icons/64x64.png";
+// The app icon, from the files `tauri icon` makes from src-tauri/icons/source.png. At 34 px this
+// 256 px file stays sharp on a retina screen. tests/app_icon_test.mjs checks it is the current icon.
+import appIcon from "../src-tauri/icons/128x128@2x.png";
 
 const STATUS_POLL_MILLIS = 2000;
 /** How long the pointer rests on a file row before its pieces are shown on the map. */
@@ -254,8 +256,10 @@ function LanguageSwitch() {
 }
 
 /**
- * The top of the sidebar, beside the window controls: the app's name, and a way home to the
- * overview. The row is part of the window's drag area, so only the button takes clicks.
+ * The left half of the window's title row, beside the window controls: the app's icon and name as a
+ * title, the version under it, and a way home to the overview. The right half is the workspace
+ * toolbar, with the same height and style. The row is part of the window's drag area, so only the
+ * button takes clicks.
  */
 function SidebarBrand({ onHome }: { onHome: () => void }) {
   const [version, setVersion] = useState<string | null>(null);
@@ -264,9 +268,11 @@ function SidebarBrand({ onHome }: { onHome: () => void }) {
   }, []);
   return (
     <div className="sidebar-brand">
-      <img className="sidebar-brand-icon" src={appIcon} alt="" width={20} height={20} />
-      <strong>Captain Salvage</strong>
-      {version && <span className="brand-version">v{version}</span>}
+      <img className="sidebar-brand-icon" src={appIcon} alt="" width={34} height={34} />
+      <div className="title-text">
+        <strong className="title-name">Captain Salvage</strong>
+        {version && <span className="title-sub brand-version">v{version}</span>}
+      </div>
       <button className="sidebar-home" onClick={onHome} aria-label={t("Go to the overview")} title={t("Overview")}>
         <Icon name="home" size={16} />
       </button>

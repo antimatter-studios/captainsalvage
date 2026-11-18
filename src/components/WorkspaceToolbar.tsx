@@ -14,13 +14,16 @@ export function WorkspaceToolbar({ path, length, label, description, progress, o
   const fraction = Math.max(0, Math.min(1, progress.fraction));
   return (
     <header className="toolbar" data-tauri-drag-region>
-      <div className="brand">
-        <strong className="brand-device" title={path}><bdi>{label || path}</bdi></strong>
-        {description && <span>{description}</span>}
-        <span>{bytes(length)} <button className="link brand-change" onClick={onChangeDisk}>{t("Change disk")}</button></span>
+      <div className="brand title-text">
+        <strong className="brand-device title-name" title={path}><bdi>{label || path}</bdi></strong>
+        <div className="brand-meta title-sub">
+          <span className="brand-size">{bytes(length)}</span>
+          <button className="link brand-change" onClick={onChangeDisk}>{t("Change disk")}</button>
+          {description}
+        </div>
       </div>
       <div className="scan">
-        <div className="scan-text" title={progress.title}>{progress.text}</div>
+        <div className="scan-text" title={progress.title ?? progress.text}>{progress.text}</div>
         <div className="scan-bar" role="progressbar" aria-label={progress.text} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
           <div className="scan-fill" style={{ width: `${fraction * 100}%` }} />
         </div>

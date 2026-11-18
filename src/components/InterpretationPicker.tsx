@@ -27,7 +27,7 @@ export function InterpretationPicker({ opened, busy, note, onSwitch, onScans }: 
     <span className="interp">
       {opened.scope === "partition" ? (
         <label className="interp-pick">
-          {t("Filesystem:")}
+          <span className="interp-label">{t("Filesystem:")}</span>
           <select value={current} disabled={busy} aria-label={t("Filesystem")} onChange={(event) => onSwitch(event.target.value as ChoiceId)}>
             {opened.choices.map((choice) => (
               <option key={choice.id} value={choice.id} title={choice.available ? undefined : t("No boot evidence found for this. Choosing it explains how to look for some.")}>{choiceText(choice)}</option>
@@ -35,7 +35,7 @@ export function InterpretationPicker({ opened, busy, note, onSwitch, onScans }: 
           </select>
         </label>
       ) : (
-        <span className="interp-whole">{t("Whole disk: raw bytes. Open one of its extents to read it as a filesystem.")}</span>
+        <span className="interp-whole" title={t("Whole disk: raw bytes. Open one of its extents to read it as a filesystem.")}>{t("Whole disk: raw bytes. Open one of its extents to read it as a filesystem.")}</span>
       )}
       <button className="link interp-scans" onClick={onScans}>{t("Saved scans ({count})", { count: opened.scans.length })}</button>
       {note && <span className={note.warn ? "interp-note warn" : "interp-note"} role="status">{note.text}</span>}

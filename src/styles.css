@@ -7,6 +7,9 @@
   --surface: #ffffff;
   --raised: #ffffff;
   --sidebar: rgba(236, 238, 242, 0.55);
+  /* The title row across the top of the window: the left half over the sidebar, the right half over the workspace. */
+  --title-side: rgba(255, 255, 255, 0.42);
+  --title-main: #fbfbfd;
   --ink: #1d1d1f;
   --ink-2: #4b4d55;
   --muted: #7c7e87;
@@ -44,6 +47,8 @@
     --surface: #17191e;
     --raised: #2a2d34;
     --sidebar: rgba(36, 38, 45, 0.5);
+    --title-side: rgba(255, 255, 255, 0.05);
+    --title-main: #23262c;
     --ink: #f4f4f6;
     --ink-2: #c3c5cc;
     --muted: #8d9099;
@@ -160,12 +165,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   background: var(--sidebar);
   border-right: 0.5px solid var(--line-strong);
 }
-.sidebar-drag { position: absolute; top: 0; left: 0; width: var(--left-width, 320px); height: 52px; z-index: 5; }
+.sidebar-drag { position: absolute; top: 0; left: 0; width: var(--left-width, 320px); height: 52px; z-index: 5; background: var(--title-side); border-bottom: 0.5px solid var(--line-strong); box-sizing: border-box; }
 /* Starts clear of the window controls. Everything but the button lets drags through to the row. */
-.sidebar-brand { display: flex; align-items: center; gap: 7px; height: 100%; padding: 0 10px 0 86px; box-sizing: border-box; pointer-events: none; white-space: nowrap; }
-.sidebar-brand strong { font-size: 13.5px; font-weight: 650; }
-.sidebar-brand .brand-version { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.sidebar-brand-icon { flex: none; width: 20px; height: 20px; }
+.sidebar-brand { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 10px 0 86px; box-sizing: border-box; pointer-events: none; white-space: nowrap; }
+.sidebar-brand .brand-version { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.sidebar-brand-icon { flex: none; width: 34px; height: 34px; }
+/* A title: the name in the heading weight and the app's heading spacing, a small line under it.
+   The left and right halves of the title row use the same two classes, so they read as one row. */
+.title-text { display: flex; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.15; }
+.title-name { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The same height on both halves, tall enough for the picker, so the two titles start on one line. */
+.title-sub { font-size: 12px; color: var(--muted); height: 20px; line-height: 20px; white-space: nowrap; }
 .sidebar-home { pointer-events: auto; margin-left: auto; flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0; background: none; box-shadow: none; border-radius: 7px; color: var(--ink-2); }
 .sidebar-home:hover:not(:disabled) { background: var(--hover); color: var(--ink); filter: none; }
 .sidebar-search { display: flex; align-items: center; gap: 6px; margin: 0 10px 8px; padding: 0 8px; height: 28px; border-radius: 7px; background: var(--hover); color: var(--muted); }
@@ -202,17 +212,36 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   padding: 0 16px;
-  background: var(--window);
+  background: var(--title-main);
+  border-bottom: 0.5px solid var(--line-strong);
   min-width: 0;
+  /* Above the map, so a notice that hangs below the row is not covered. */
+  position: relative;
+  z-index: 2;
 }
-.brand { display: flex; flex-direction: column; line-height: 1.2; flex: 0 1 auto; min-width: 80px; pointer-events: none; }
+.brand { flex: 0 1 auto; min-width: 80px; pointer-events: none; }
 /* A long path shortens from the left, so the file or device name at its end stays readable. */
-.brand-device { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-.brand strong { font-size: 13.5px; font-weight: 650; }
-.brand span { font-size: 11px; color: var(--muted); }
-.scan { flex: 1; min-width: 180px; max-width: 520px; pointer-events: none; }
+.brand-device { direction: rtl; text-align: left; }
+/* The size, Change disk and the interpretation picker, on one line that never wraps. */
+.brand-meta { display: flex; align-items: center; gap: 0 12px; min-width: 0; overflow: hidden; }
+.brand-size { flex: none; font-variant-numeric: tabular-nums; }
+.brand-change { pointer-events: auto; flex: none; font-size: 12px; font-weight: 550; }
+.brand-meta .interp { flex-wrap: nowrap; gap: 0 12px; font-size: 12px; min-width: 0; }
+.brand-meta .interp { flex: 0 1 auto; }
+.brand-meta .interp-pick { flex: 0 1 auto; min-width: 0; gap: 6px; }
+.brand-meta .interp-scans { flex: none; }
+/* The select gives way first when the row is tight, so Change disk and Saved scans stay readable. */
+.brand-meta .interp-pick select { flex: 0 1 auto; min-width: 72px; height: 20px; padding: 0 6px; font-size: 12px; max-width: 200px; text-overflow: ellipsis; }
+@media (max-width: 1660px) { .brand-meta .interp-label { display: none; } }
+.brand-meta .interp-scans { font-size: 12px; }
+.brand-meta .interp-whole { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+/* A note or warning about the interpretation hangs below the title row, so the row stays one height. */
+.toolbar .interp-note, .toolbar .interp-stale { position: absolute; margin: 0; left: 16px; top: calc(100% + 4px); z-index: 30; max-width: min(70ch, calc(100% - 32px)); padding: 6px 10px; border-radius: 8px; background: var(--raised); box-shadow: var(--shadow-float); font-size: 12px; white-space: normal; flex-wrap: wrap; gap: 4px 10px; }
+.toolbar .interp-stale .interp-note { position: static; padding: 0; box-shadow: none; background: none; flex-basis: 100%; }
+.toolbar .interp:has(.interp-note) ~ .interp-stale { top: calc(100% + 46px); }
+.scan { flex: 1 1 90px; min-width: 90px; max-width: 520px; pointer-events: none; }
 .scan-text { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scan-bar { height: 4px; background: var(--hover); border-radius: 4px; overflow: hidden; margin-top: 4px; }
 .scan-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 600ms ease; }
@@ -591,7 +620,6 @@ video.inline-preview { max-height: 380px; background: #000; }
 .member-preview { max-height: 360px; overflow: auto; border: 0.5px solid var(--line-strong); border-radius: 8px; background: var(--hover); }
 .member-preview img { display: block; max-width: 100%; max-height: 340px; margin: 0 auto; object-fit: contain; }
 .member-preview pre { margin: 0; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.brand-change { pointer-events: auto; font-size: 11px; margin-left: 4px; }
 
 /* The start screen: a real nautical chart. Chart magenta is what charts use for cautions. */
 .start {
