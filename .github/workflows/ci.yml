@@ -50,6 +50,8 @@ jobs:
         run: bash scripts/test_translations.sh
       - name: type check and build the window
         run: npm run build
+      - name: the window's logic and its raw-disk speed budget
+        run: node --test tests/*.mjs
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-deny@0.20.2

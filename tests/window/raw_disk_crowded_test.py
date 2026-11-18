@@ -1,9 +1,12 @@
 """A raw scan that finds many filesystems keeps the window responsive and the lists short.
 
 The source is a sparse synthetic image with NTFS boot sectors every 128 KiB, so the scan reports
-well over a thousand findings. While it runs, a 20 ms timer in the window records its worst
-delay: a frozen window shows up as one long gap. The evidence list must also stay one page long
-until more is asked for. The image lives in this folder and is never a real disk.
+well over a thousand findings. While it runs, a message loop in the window records the longest
+gap between two of its turns: a frozen window shows up as one long gap. A timer cannot do this
+job. The web view runs timers once a second when its window is covered or the screen is locked,
+which looks like a freeze of about 980 ms whatever the app does (issue #198). Messages between
+two ports are not slowed that way. The evidence list must also stay one page long until more is
+asked for. The image lives in this folder and is never a real disk.
 """
 import json
 import os
@@ -47,12 +50,15 @@ try:
     check("the raw source opens", wait_for("!!document.querySelector('.app .explorer')"), True)
     click("Investigate", ".mode-switch")
     check("the graph is shown", wait_for("document.querySelectorAll('.strips .strip canvas').length === 4"), True)
-    js("(() => {window.__lag = {worst: 0}; let last = performance.now();"
-       "setInterval(() => {const now = performance.now(); window.__lag.worst = Math.max(window.__lag.worst, now - last - 20); last = now;}, 20);})()")
+    js("(() => {window.__lag = {worst: 0}; const channel = new MessageChannel(); let last = performance.now();"
+       "channel.port1.onmessage = () => {const now = performance.now(); window.__lag.worst = Math.max(window.__lag.worst, now - last); last = now; channel.port2.postMessage(0);};"
+       "channel.port2.postMessage(0);})()")
+    # Startup and the harness's own first requests are not the scan, so the measure starts here.
+    probe("(() => {window.__lag.worst = 0; return true;})()")
     click("Start scan", ".toolbar")
     check("the scan finishes", wait_for("/complete|Display limit/.test(document.querySelector('.app').textContent)", 240), True)
     worst = probe("window.__lag.worst")
-    print("worst timer delay during the scan: %.0f ms" % worst, flush=True)
+    print("longest gap between turns of the window during the scan: %.0f ms" % worst, flush=True)
     check("the window never froze for %d ms during the scan" % WORST_GAP_MILLIS, worst < WORST_GAP_MILLIS, True)
     found = probe("Number(document.querySelector('.source-summary tr:nth-child(2) td.numeric').textContent.replace(/\\D/g, ''))")
     check("the scan found over a thousand filesystems", found > 1000, True)
