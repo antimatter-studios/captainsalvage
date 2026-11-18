@@ -4,7 +4,8 @@ import { bytes, count, decimal, duration } from "../format";
 import { fromEngine, t } from "../i18n";
 import { useSimple } from "../mode";
 import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
-import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type DiskRegion, type EvidenceStatus, type RawDiskState, type SavedScans, type ScanSnapshot } from "../rawDisk";
+import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type EvidenceStatus, type RawDiskState, type ScanSnapshot } from "../rawDisk";
+import type { ByteExtent, OpenedSource } from "../openedSource";
 import { Icon } from "./icons";
 import { Hypotheses } from "./Hypotheses";
 import { RangeAnalysis } from "./RangeAnalysis";
@@ -20,10 +21,15 @@ const MAGNIFIED_ROW_PIXELS = 18;
 /** A click this close to a finding, in strip pixels, picks it. */
 const PICK_PIXELS = 3;
 const STRIP_PIXELS = 1200;
-export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, onCenter, controls, leftHandle, rightHandle }: {
+export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, onReturn, center, onCenter, controls, leftHandle, rightHandle }: {
   disk: RawDiskState;
   onUpdate: (disk: RawDiskState) => void;
-  onOpen: (region: DiskRegion) => Promise<void>;
+  /** What opening the source answered: its scope, its scans and the extents it is known to hold. */
+  opened: OpenedSource | null;
+  /** The interpretation picker, which sits in the header beside the source's name. */
+  picker: ReactNode;
+  /** Opens an extent of this source as a source of its own, as the format given or the one detected. */
+  onOpen: (extent: ByteExtent, reading?: { format: string; bootOffset?: number }) => Promise<void>;
   onBack: () => void;
   onReturn?: () => void;
   center: "overview" | "bytes";
@@ -42,9 +48,6 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
   const [opening, setOpening] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [hex, setHex] = useState<string | null>(null);
-  const [saved, setSaved] = useState<SavedScans | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const [confirming, setConfirming] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<ReturnType<typeof scanEstimate>>(null);
   const stop = useRef(false);
   const mounted = useRef(true);
@@ -58,11 +61,8 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     mounted.current = true;
     setVisibleFindings(FINDINGS_PAGE_SIZE);
     setVisibleErrors(FINDINGS_PAGE_SIZE);
-    void call<SavedScans>("list_raw_scans", { diskId: disk.id, showAll }).then((result) => {
-      if (mounted.current) setSaved(result);
-    }).catch((reason) => { if (mounted.current) setFailure(String(reason)); });
     return () => { mounted.current = false; stop.current = true; };
-  }, [disk.id, showAll]);
+  }, [disk.id]);
 
   const busy = running || opening;
   const first = Number(start);
@@ -79,6 +79,21 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     setHex(null);
     setSelected(key);
     setInspector("selected");
+  }
+
+  /** Opens a declared partition as a source of its own: the detected filesystem, or raw bytes. */
+  async function openPartition(index: number) {
+    const partition = disk.partitions[index];
+    if (running || opening) return;
+    setOpening(true);
+    setFailure(null);
+    try {
+      await onOpen({ start: partition.start, length: partition.length });
+    } catch (reason) {
+      setFailure(String(reason));
+    } finally {
+      setOpening(false);
+    }
   }
 
   function selectPartition(index: number) {
@@ -131,30 +146,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     } catch (reason) {
       if (mounted.current) setFailure(String(reason));
     } finally {
-      if (mounted.current) {
-        setRunning(false);
-        void call<SavedScans>("list_raw_scans", { diskId: disk.id, showAll }).then((result) => {
-          if (mounted.current) setSaved(result);
-        }).catch((reason) => { if (mounted.current) setFailure(String(reason)); });
-      }
-    }
-  }
-
-  async function loadScan(scanId: string, acceptChangedMarkers: boolean) {
-    if (running || opening) return;
-    setOpening(true);
-    setFailure(null);
-    setEstimate(null);
-    setConfirming(null);
-    try {
-      const result = await call<ScanSnapshot>("resume_raw_scan", { diskId: disk.id, scanId, acceptSampledMatch: true, acceptChangedMarkers });
-      if (!mounted.current) return;
-      onUpdate({ ...disk, ...result });
-      selectRange(result.scanStart, result.scanEnd - result.scanStart);
-    } catch (reason) {
-      if (mounted.current) setFailure(String(reason));
-    } finally {
-      if (mounted.current) setOpening(false);
+      if (mounted.current) setRunning(false);
     }
   }
 
@@ -163,7 +155,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     setOpening(true);
     setFailure(null);
     try {
-      await onOpen({ start: first, length: size, format, label: label || t("Filesystem interpretation"), bootOffset: boot });
+      await onOpen({ start: first, length: size }, { format, bootOffset: boot - first });
     } catch (reason) {
       setFailure(String(reason));
     } finally {
@@ -252,7 +244,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
   const hexRows = hex?.match(/.{1,32}/g) ?? [];
 
   return <>
-    <WorkspaceToolbar path={disk.path} length={disk.length} progress={{ text: scanText, fraction, error: failure }} onChangeDisk={onBack}>
+    <WorkspaceToolbar path={disk.path} length={disk.length} description={picker} progress={{ text: scanText, fraction, error: failure }} onChangeDisk={onBack}>
       {running ? <button onClick={() => { stop.current = true; }}>{t("Pause scan")}</button>
         : <button disabled={((disk.nextOffset === null || complete) && !valid) || opening} title={t("Search for filesystem evidence")} onClick={() => void discover(disk.nextOffset !== null && !complete)}>
           {disk.nextOffset !== null && !complete ? t("Resume scan") : t("Start scan")}
@@ -291,12 +283,18 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
           <span className="row-size">{bytes(disk.length)}</span>
         </button>
         <h3 className="source-section-label">{t("Declared partitions")}</h3>
-        {disk.partitions.map((partition, index) => <button key={index} className={`row${selected === `partition:${index}` ? " row-selected" : ""}`} disabled={busy}
-          onClick={() => { selectRange(partition.start, partition.length, `partition:${index}`); setLabel(partition.label); }}>
-          <span className="row-icon"><Icon name="disk" size={16} /></span>
-          <span className="row-main"><span className="row-name">{partition.label || partition.table}</span><span className="row-path">{partition.table} · {bytes(partition.start)}</span></span>
-          <span className="row-size">{bytes(partition.length)}</span>
-        </button>)}
+        {disk.partitions.map((partition, index) => {
+          const known = opened?.extents.find((item) => item.start === partition.start && item.length === partition.length);
+          return <div key={index} className="row-with-open">
+            <button className={`row${selected === `partition:${index}` ? " row-selected" : ""}`} disabled={busy}
+              onClick={() => { selectRange(partition.start, partition.length, `partition:${index}`); setLabel(partition.label); }}>
+              <span className="row-icon"><Icon name="disk" size={16} /></span>
+              <span className="row-main"><span className="row-name">{partition.label || partition.table}</span><span className="row-path">{partition.table} · {bytes(partition.start)}{known && known.scans.length > 0 ? ` · ${t("{count} saved scans", { count: known.scans.length })}` : ""}</span></span>
+              <span className="row-size">{bytes(partition.length)}</span>
+            </button>
+            <button className="row-open" disabled={busy} title={t("Opens this partition as a source of its own, as the filesystem found there or as raw bytes.")} onClick={() => void openPartition(index)}>{t("Open")}</button>
+          </div>;
+        })}
         <h3 className="source-section-label">{t("Filesystem evidence")}</h3>
         {summary.length > 1 && <div className="format-filter" role="group" aria-label={t("Filesystem evidence")}>
           <button aria-pressed={filter === null} onClick={() => { setFilter(null); setVisibleFindings(FINDINGS_PAGE_SIZE); }}>{t("All")} · {count(disk.findings.length)}</button>
@@ -337,29 +335,9 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
           </div>
           {disk.nextOffset !== null && <p className="recovery-note" role="status">{t("Examined through byte {offset}. No findings is not proof of empty space.", { offset: disk.nextOffset })}</p>}
           {disk.scanId && <p className="recovery-note" title={disk.scanId}>{t("Scan {id}. Each completed batch is saved on this Mac.", { id: disk.scanId })}</p>}
-          {saved && saved.fingerprint.samples.length === 0 && <p className="warn">{t("No part of this source could be used to recognise it. Progress can be saved, but a saved scan cannot be matched to this source after reopening.")}</p>}
-          {saved && saved.fingerprint.samples.length > 0 && saved.fingerprint.samples.length < saved.fingerprint.markersWanted && <p className="recovery-note">{t("Only {count} of {wanted} markers could be used, because the source is small, mostly blank or partly unreadable.", { count: saved.fingerprint.samples.length, wanted: saved.fingerprint.markersWanted })}</p>}
+          {opened && opened.fingerprint.samples.length === 0 && <p className="warn">{t("No part of this source could be used to recognise it. Progress can be saved, but a saved scan cannot be matched to this source after reopening.")}</p>}
+          {opened && opened.fingerprint.samples.length > 0 && opened.fingerprint.samples.length < opened.fingerprint.markersWanted && <p className="recovery-note">{t("Only {count} of {wanted} markers could be used, because the source is small, mostly blank or partly unreadable.", { count: opened.fingerprint.samples.length, wanted: opened.fingerprint.markersWanted })}</p>}
           {disk.changedSource && <p className="warn" role="status">{t("This scan was resumed on a source that had changed, so findings near the changed markers may be out of date.")} {fromEngine(disk.changedSource.summary)}</p>}
-          {saved && (saved.scans.some((scan) => scan.id !== disk.scanId) || saved.hidden > 0 || showAll) && <section aria-label={t("Saved scans")}>
-            <h3>{t("Saved scans")}</h3>
-            <p className="recovery-note">{t("A saved scan is matched by markers, small blocks spread over the source. The match is a confidence, not proof that every byte is identical. Loading a saved scan accepts this. Previous unreadable regions will be retried.")}</p>
-            <label className="recovery-note"><input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} /> {t("Show all")}</label>
-            {!showAll && saved.hidden > 0 && <p className="recovery-note">{t("{count} saved scans match too little to be listed (under 60%).", { count: saved.hidden })}</p>}
-            {saved.scans.filter((scan) => scan.id !== disk.scanId).map((scan) => <div key={scan.id} className="raw-entry-actions">
-              <button disabled={busy || (scan.verification !== "exact" && scan.verification !== "probable")} title={scan.id} onClick={() => scan.verification === "probable" ? setConfirming(scan.id) : void loadScan(scan.id, false)}>{t("Load saved scan")}</button>
-              <span>{bytes(scan.scanStart)}–{bytes(scan.scanEnd)} · {decimal((scan.nextOffset - scan.scanStart) / (scan.scanEnd - scan.scanStart) * 100, 1)}% · {new Date(scan.updatedAtMillis).toLocaleString()}</span>
-              <span className={scan.verification === "exact" ? undefined : "warn"}>{t("{percent}% match: {matched} match, {changed} changed, {unreadable} unreadable", { percent: scan.comparison.confidencePercent, matched: scan.comparison.matched, changed: scan.comparison.changed, unreadable: scan.comparison.unreadable })}</span>
-              {scan.verification === "weak" && <span className="warn">{t("Too few markers match to load this scan.")}</span>}
-              {scan.verification === "incompatible" && <span className="warn">{t("Scanner version differs; start a new scan.")}</span>}
-              {scan.verification === "probable" && <span className="warn">{fromEngine(scan.comparison.summary)}</span>}
-              {scan.changedSource && <span className="warn">{t("Resumed before on a changed source.")}</span>}
-              {confirming === scan.id && <div className="recovery-note" role="alertdialog">
-                <p>{t("This source is only a probable match for this scan. Loading it records the changed markers, because findings near them may be out of date.")}</p>
-                <button disabled={busy} onClick={() => void loadScan(scan.id, true)}>{t("Load anyway")}</button>
-                <button onClick={() => setConfirming(null)}>{t("Cancel")}</button>
-              </div>}
-            </div>)}
-          </section>}
           {!simple && <p className="recovery-note">{t("Drag across the source row to select a region, or enter exact byte offsets below.")}</p>}
           <p className="warn">{t("This app only reads. macOS or other programs may still write to a mounted source.")}</p>
           {disk.warnings.map((warning, index) => <p className="warn" key={index}>{fromEngine(warning)}</p>)}
@@ -371,7 +349,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
       </section>}
       {center === "bytes" && <section className="center-panel" aria-label={t("Raw bytes")}>
         <div className="hex-bar"><div className="hex-title"><strong>{t("Raw bytes")}</strong><span className="mono">{first.toString(16).padStart(10, "0")}</span></div></div>
-        <div className="hex-scroll" aria-label={t("Inspect raw bytes")}>
+        <div className="hex-scroll" aria-label={t("Raw bytes")}>
           {hex === null && !failure && <p className="empty">{t("Reading from the disk.")}</p>}
           <div className="hex-sheet" style={{ height: hexRows.length * 20 }}>
             {hexRows.map((row, index) => <div className="hex-row" style={{ top: index * 20 }} key={index}>
@@ -413,6 +391,7 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
                   <dt>{t("Status")}</dt><dd className="status" data-status="recognised">{statusLabel("recognised")}</dd>
                 </dl>
                 <p className="muted">{t("A partition the table declares. Its filesystem has not been checked.")}</p>
+                <div className="detail-actions"><button className="primary" disabled={busy} onClick={() => void openPartition(Number(selected.slice("partition:".length)))}>{t("Open")}</button></div>
               </> : <>
                 <div className="detail-name">{t("Selected region")}</div>
                 <dl className="facts"><dt>{t("Byte range")}</dt><dd>{valid ? byteRange(first, size) : "—"}</dd></dl>
@@ -424,15 +403,15 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
               <div className="detail-path">{disk.path}</div>
               <label className="field">{t("Start byte")}<input value={start} inputMode="numeric" disabled={busy} onChange={(event) => { setStart(event.target.value); setBootOffset(event.target.value); setSelected("region"); }} /></label>
               <label className="field">{t("Length in bytes")}<input value={length} inputMode="numeric" disabled={busy} onChange={(event) => { setLength(event.target.value); setSelected("region"); }} /></label>
-              {!simple && <div className="detail-actions"><button disabled={!valid || busy} onClick={() => onCenter("bytes")}>{t("Inspect raw bytes")}</button></div>}
+              {!simple && <div className="detail-actions"><button disabled={!valid || busy} onClick={() => onCenter("bytes")}>{t("Show the bytes")}</button></div>}
             </div>
             <div className="detail">
-              <h4>{t("Filesystem interpretation")}</h4>
+              <h4>{t("Open this range as a filesystem")}</h4>
               <p className="muted">{t("A hypothesis, not a disk modification. Opening requires surviving boot metadata; directory fragments alone do not establish file locations.")}</p>
               <label className="field">{t("Format")}<select value={format} disabled={busy} onChange={(event) => setFormat(event.target.value)}>{SOURCE_FORMATS.map((name) => <option key={name}>{name}</option>)}</select></label>
               <label className="field">{t("Label")}<input value={label} disabled={busy} onChange={(event) => setLabel(event.target.value)} maxLength={128} /></label>
               <label className="field">{t("Boot evidence byte")}<input value={bootOffset} inputMode="numeric" disabled={busy} onChange={(event) => setBootOffset(event.target.value)} /></label>
-              <div className="detail-actions"><button className="primary" disabled={!valid || busy} onClick={() => void openInterpretation()}>{opening ? t("Opening") : t("Try this interpretation")}</button></div>
+              <div className="detail-actions"><button className="primary" disabled={!valid || busy} onClick={() => void openInterpretation()}>{opening ? t("Opening") : t("Open")}</button></div>
               {format === "NTFS" && <p className="muted">{t("If the main NTFS boot sector was overwritten, give the byte of the copy in the volume's last sector as the boot evidence.")}</p>}
             </div>
             <RangeAnalysis diskId={disk.id} start={first} length={size} valid={valid} busy={busy} onSelect={(offset, count) => selectRange(offset, Math.min(count, disk.length - offset))} onSaved={() => setHypothesesRevision((revision) => revision + 1)} />

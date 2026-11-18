@@ -144,6 +144,9 @@ pub struct FilesystemOpen {
     pub block_count: u64,
     pub options: Value,
     pub accept: Accept,
+    /// The person chose to open this as a source of its own. The volume's old key is not used to
+    /// find a stored source, so a probable match that was not acknowledged is not applied that way.
+    pub fresh: bool,
 }
 
 pub struct OpenedScan {
@@ -471,7 +474,8 @@ impl Catalog {
         if !known && self.root.join(&open.volume_key).is_dir() {
             super::migrate(self)?;
         }
-        let resolution = self.resolve_source(disk, open.accept, Some(&open.volume_key))?;
+        let key = (!open.fresh).then_some(open.volume_key.as_str());
+        let resolution = self.resolve_source(disk, open.accept, key)?;
         let request = ScanRequest {
             source_id: resolution.source.id.clone(),
             kind: ScanKind::Filesystem,
@@ -620,6 +624,36 @@ impl Catalog {
             range_end: start + length,
             volume_key: None,
             raw_scan_id: Some(raw_scan_id.into()),
+            block_size: 0,
+            block_count: 0,
+        };
+        let (scan, _) = ensure_scan(&transaction, &request)?;
+        transaction.commit()?;
+        self.scan(&scan.id)
+    }
+
+    /// The scan of an extent read as raw bytes (no filesystem), made when a person chooses that
+    /// reading and before any raw scan has run on it. Starting a raw scan over the same extent
+    /// later attaches to this row, so the choice is one scan and not two.
+    pub fn raw_placeholder(&self, source_id: &str, start: u64, length: u64) -> Result<ScanRecord> {
+        let transaction = immediate(&self.connection)?;
+        let request = ScanRequest {
+            source_id: source_id.into(),
+            kind: ScanKind::Raw,
+            interpretation: InterpretationRequest {
+                format: NO_FORMAT.into(),
+                start,
+                length,
+                boot_offset: None,
+                origin: "manual".into(),
+                confidence: 0.0,
+            },
+            options: json!({}),
+            scanner_version: crate::raw_scan::SCANNER_VERSION,
+            range_start: start,
+            range_end: start + length,
+            volume_key: None,
+            raw_scan_id: None,
             block_size: 0,
             block_count: 0,
         };
@@ -801,6 +835,35 @@ pub(super) fn ensure_scan(
         .optional()?
     {
         return Ok((existing, false));
+    } else if let Some(placeholder) = connection
+        .query_row(
+            &format!(
+                "SELECT {SCAN_COLUMNS} FROM scans
+                 WHERE scans.source_id = ?1 AND scans.kind = 'raw' AND scans.raw_scan_id IS NULL
+                   AND scans.ext_start = ?2 AND scans.ext_length = ?3 AND scans.scanner_version = ?4
+                 ORDER BY scans.created_at_millis LIMIT 1"
+            ),
+            params![
+                request.source_id,
+                request.interpretation.start as i64,
+                request.interpretation.length as i64,
+                request.scanner_version
+            ],
+            scan_row,
+        )
+        .optional()?
+    {
+        // The extent was already chosen as raw bytes: the scan that now runs is that choice.
+        connection.execute(
+            "UPDATE scans SET raw_scan_id = ?2, updated_at_millis = ?3 WHERE id = ?1",
+            params![placeholder.id, request.raw_scan_id, now_millis() as i64],
+        )?;
+        let attached = connection.query_row(
+            &format!("SELECT {SCAN_COLUMNS} FROM scans WHERE scans.id = ?1"),
+            [&placeholder.id],
+            scan_row,
+        )?;
+        return Ok((attached, false));
     }
     let id = identifier()?;
     let now = now_millis() as i64;

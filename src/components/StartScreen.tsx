@@ -1,12 +1,12 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { call, type DiskAccess, type KnownVolume, type StartupDisk, type StartupReport, type StartupVolume } from "../api";
+import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
 import { fromEngine, locale, t } from "../i18n";
+import { diskGroups, shortDevice, type DiskGroup } from "../diskTree";
 import { Command } from "./Command";
 import { MountBlockToggle } from "./MountBlock";
-import { RawChooser } from "./RawChooser";
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 900;
@@ -219,11 +219,6 @@ function blockDevice(device: string): string {
   return device.replace("/dev/rdisk", "/dev/disk");
 }
 
-/** A short name for a device: disk4s1 for /dev/rdisk4s1, or the file name for an image. */
-function shortDevice(device: string): string {
-  return device.startsWith("/dev/") ? device.replace(/^\/dev\/r?/, "") : device.split("/").pop() || device;
-}
-
 type Status = "ready" | "mounted" | "permission" | "raw";
 
 function statusOf(volume: StartupVolume): Status {
@@ -236,7 +231,8 @@ function statusLabel(status: Status): string {
   return { ready: t("Ready"), mounted: t("Mounted"), permission: t("Needs permission"), raw: t("Raw bytes only") }[status];
 }
 
-/** One volume on one line: what it is, how it stands, whether to block its mounting, and how to open it. */
+/** One partition or volume on one line, nested under its disk: what it is, how it stands, whether to
+ * block its mounting, and how to open it. A format this app cannot read still opens, as raw bytes. */
 function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: string) => void }) {
   const title = volume.name || t("Unnamed volume");
   const status = statusOf(volume);
@@ -251,26 +247,9 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
       </div>
       <span className={`start-status start-status-${status}`}>{statusLabel(status)}</span>
       {volume.uuid && <MountBlockToggle compact uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
-      {status === "ready" && <button className="primary start-open" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
+      {(status === "ready" || status === "raw") && <button className="primary start-open" onClick={() => onOpen(volume.device)}>{t("Open")}</button>}
     </li>
   );
-}
-
-interface DiskGroup {
-  device: string;
-  /** Null when macOS named volumes on a disk it did not list as a whole. */
-  disk: StartupDisk | null;
-  volumes: StartupVolume[];
-}
-
-/** Every volume sits under the physical disk it is on, and a disk with none is still listed. */
-function diskGroups(disks: StartupDisk[], volumes: StartupVolume[]): DiskGroup[] {
-  const groups: DiskGroup[] = disks.map((disk) => ({ device: disk.device, disk, volumes: volumes.filter((volume) => volume.wholeDisk === disk.device) }));
-  for (const volume of volumes) {
-    if (groups.some((group) => group.device === volume.wholeDisk)) continue;
-    groups.push({ device: volume.wholeDisk, disk: null, volumes: volumes.filter((other) => other.wholeDisk === volume.wholeDisk) });
-  }
-  return groups;
 }
 
 /** What the person has to do about this disk before it opens, said once for the whole disk. */
@@ -300,31 +279,33 @@ function DiskNotices({ group }: { group: DiskGroup }) {
   );
 }
 
-/** One physical disk: a short header, its volumes as rows, and what it needs, once. */
-function DiskCard({ group, onOpen, onRaw }: { group: DiskGroup; onOpen: (path: string) => void; onRaw: (path: string) => void }) {
-  const [raw, setRaw] = useState(false);
+/** One physical disk as the top of a tree: its own row with Open, its partitions nested under it, and
+ * what the disk needs, said once. A disk with no readable partition table is still a row, with a note. */
+function DiskCard({ group, onOpen }: { group: DiskGroup; onOpen: (path: string) => void }) {
   const bytesOnDisk = group.disk?.bytes ?? group.volumes.reduce((total, volume) => total + volume.bytes, 0);
+  const readable = group.disk ? group.disk.readable : true;
   return (
     <li className="start-disk">
       <div className="start-disk-head">
-        <strong>{group.disk?.name || t("Disk")}</strong>
-        <span>{t("{bytes}, whole disk {device}", { bytes: bytes(bytesOnDisk), device: shortDevice(group.device) })}</span>
+        <div className="start-volume-title">
+          <strong>{group.disk?.name || t("Disk")}</strong>
+          <span>{t("{bytes}, whole disk {device}", { bytes: bytes(bytesOnDisk), device: shortDevice(group.device) })}</span>
+        </div>
         <button
-          className="start-raw-toggle"
-          aria-expanded={raw}
-          title={t("No filesystem is needed. Choose a whole disk, even when its partition table is damaged or missing, or one partition on it. The map shows exactly the bytes you choose.")}
-          onClick={() => setRaw(!raw)}
+          className="primary start-open start-open-disk"
+          disabled={!readable}
+          title={t("Opens the whole disk as bytes, even when its partition table is damaged or missing. Each partition below opens as itself.")}
+          onClick={() => onOpen(group.device)}
         >
-          {t("Inspect raw…")}
+          {t("Open")}
         </button>
       </div>
-      {raw && <RawChooser disk={group.disk} volumes={group.volumes} onRaw={onRaw} />}
       {group.volumes.length > 0 ? (
         <ul className="start-volumes">
           {group.volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} />)}
         </ul>
       ) : (
-        <p className="start-disk-empty">{t("No volumes found on it. Its partition table may be damaged, but its raw bytes can still be inspected.")}</p>
+        <p className="start-disk-empty">{t("No partitions found: its partition table may be damaged or missing. Its bytes can still be opened.")}</p>
       )}
       <DiskNotices group={group} />
     </li>
@@ -332,11 +313,10 @@ function DiskCard({ group, onOpen, onRaw }: { group: DiskGroup; onOpen: (path: s
 }
 
 /** The first thing a person sees: choose the damaged disk, and see what is known about it. */
-export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSwitch }: {
+export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }: {
   imagePath: string;
   failure: string | null;
   onOpen: (path: string) => void;
-  onRaw: (path: string) => void;
   onBack?: () => void;
   themeSwitch: ReactNode;
 }) {
@@ -413,7 +393,7 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
         <div className="start-list">
           {groups.length > 0 ? (
             <ul className="start-disks">
-              {groups.map((group) => <DiskCard key={group.device} group={group} onOpen={onOpen} onRaw={onRaw} />)}
+              {groups.map((group) => <DiskCard key={group.device} group={group} onOpen={onOpen} />)}
             </ul>
           ) : (
             !looking && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
@@ -443,7 +423,7 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
         {(blockable || volumes.some((volume) => !volume.canOpen)) && (
           <div className="start-notes">
             {blockable && <p className="start-block-note">{t("Block mount is to prevent data loss. While Captain Salvage is open, macOS is stopped from mounting a blocked volume, because mounting a damaged volume lets macOS write to it.")}</p>}
-            {volumes.some((volume) => !volume.canOpen) && <p>{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats can be inspected as raw bytes.")}</p>}
+            {volumes.some((volume) => !volume.canOpen) && <p>{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats open as raw bytes.")}</p>}
           </div>
         )}
 
@@ -461,10 +441,9 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
               onOpen(path.trim());
             }}
           >
-            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label={t("Disk image or device path")} title={t("A raw image of a disk or a partition, or a device by its path. Opening it needs a filesystem this app reads; any image can be inspected as raw bytes without one.")} />
+            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label={t("Disk image or device path")} title={t("A raw image of a disk or a partition, or a device by its path. Any of them opens: a filesystem this app reads is applied, and the rest open as raw bytes.")} />
             <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>{t("Choose a file")}</button>
             <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>{t("Open")}</button>
-            <span className="raw-entry-actions"><button type="button" disabled={!path.trim()} onClick={() => onRaw(path.trim())}>{t("Inspect raw")}</button></span>
           </form>
         </section>
       </section>

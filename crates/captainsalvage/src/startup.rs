@@ -77,6 +77,10 @@ pub struct KindTotal {
 pub struct StartupVolume {
     pub device: String,
     pub whole_disk: String,
+    /// The physical disk this volume lives on, when `whole_disk` is a container macOS made from
+    /// it (an APFS volume's container is `disk8`, made from a store on `disk7`). The start
+    /// screen groups the volume under it, and not under a disk that is not a drive.
+    pub physical_disk: Option<String>,
     pub name: String,
     pub bytes: u64,
     pub format: String,
@@ -236,6 +240,7 @@ pub fn parse_volume(info: &str) -> Option<StartupVolume> {
     let mounted = info_field(info, "Mounted:") == Some("Yes");
     Some(StartupVolume {
         whole_disk: format!("/dev/rdisk{whole}"),
+        physical_disk: applicable(info, "APFS Physical Store:").and_then(physical_store_disk),
         name: name.to_string(),
         bytes,
         can_open: OPENABLE_FORMATS.contains(&format.to_ascii_lowercase().as_str()),
@@ -255,6 +260,13 @@ pub fn parse_volume(info: &str) -> Option<StartupVolume> {
         device,
         known: None,
     })
+}
+
+/// `disk7s2`, an APFS container's physical store, names `/dev/rdisk7`.
+fn physical_store_disk(store: &str) -> Option<String> {
+    let (disk, _) = store.strip_prefix("disk")?.split_once('s')?;
+    (!disk.is_empty() && disk.chars().all(|c| c.is_ascii_digit()))
+        .then(|| format!("/dev/rdisk{disk}"))
 }
 
 /// Asks the OS about permission only. The device is not opened, so the disk is not touched.

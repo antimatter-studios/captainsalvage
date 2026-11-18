@@ -125,6 +125,8 @@ export interface KnownVolume {
 export interface StartupVolume {
   device: string;
   wholeDisk: string;
+  /** The physical disk this volume is on, when `wholeDisk` is a container made from it (APFS). */
+  physicalDisk?: string | null;
   name: string;
   bytes: number;
   format: string;

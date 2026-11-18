@@ -18,15 +18,15 @@ def click(text, scope=".app"):
     js("[...document.querySelectorAll(%s + ' button')].find((button) => button.textContent.trim() === %s)?.click()" % (json.dumps(scope), json.dumps(text)))
 
 
-def open_raw(path):
+def open_raw(path, wait=True):
     js("(() => {const input=document.querySelector('.start-image input');"
        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,%s);"
        "input.dispatchEvent(new Event('input',{bubbles:true}));})()" % json.dumps(str(path)))
-    if not wait_for("!document.querySelector('.raw-entry-actions button').disabled"):
-        raise RuntimeError("the raw action never became available")
+    if not wait_for("!document.querySelector('.start-image button[type=submit]').disabled"):
+        raise RuntimeError("Open never became available")
     js("document.querySelector('.start-image input').form.requestSubmit()")
-    if not wait_for("!!document.querySelector('.recovery-sub') && document.querySelector('.recovery-sub').textContent === 'Raw disk investigation'"):
-        raise RuntimeError("raw source did not open")
+    if wait and not wait_for("!!document.querySelector('.recovery-sub') && document.querySelector('.recovery-sub').textContent === 'Raw disk investigation'"):
+        raise RuntimeError("raw source did not open: " + str(probe("JSON.stringify({sub: document.querySelector('.recovery-sub')?.textContent, saved: !!document.querySelector('.saved-scans'), start: !!document.querySelector('.start'), warn: [...document.querySelectorAll('.warn')].map((n) => n.textContent), interp: document.querySelector('.interp')?.textContent})")))
 
 
 with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as home:
@@ -82,14 +82,18 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         shutil.copyfile(source, clone)
         start(sys.argv[1])
         open_raw(clone)
-        check("saved scans survive app restart and a different path", wait_for("!![...document.querySelectorAll('.recovery button')].find(button=>button.textContent==='Load saved scan' && !button.disabled)"), True)
-        check("the match is shown as a confidence", probe("document.querySelector('.recovery').textContent.includes('100% match: 20 match, 0 changed, 0 unreadable')"), True)
-        check("the sampled limitation is visible", probe("document.querySelector('.recovery').textContent.includes('not proof that every byte is identical')"), True)
-        check("an exact match loads without a second question", probe("!document.querySelector('.recovery [role=alertdialog]')"), True)
-        click("Load saved scan", ".recovery")
-        check("loading restores the same stable scan ID", wait_for("document.querySelector('.recovery').textContent.includes(%s)" % json.dumps("Scan " + scan_id + ".")), True)
-        check("loading restores findings without rescanning", probe("document.querySelector('.explorer').textContent.includes('NTFS')"), True)
-        check("loading restores the committed byte position", probe("document.querySelector('.recovery').textContent.includes(%s)" % json.dumps("Examined through byte %d." % checkpoint)), True)
+        check("an exact match opens its latest scan at once, with no question", wait_for("document.querySelector('.recovery')?.textContent.includes(%s)" % json.dumps("Scan " + scan_id + ".")), True)
+        check("no dialog is in the way", probe("!document.querySelector('.saved-scans')"), True)
+        check("saved scans survive app restart and a different path", probe("document.querySelector('.explorer').textContent.includes('NTFS')"), True)
+        check("opening restores the committed byte position", probe("document.querySelector('.recovery').textContent.includes(%s)" % json.dumps("Examined through byte %d." % checkpoint)), True)
+        check("opening restored the findings without scanning", probe("document.querySelector('.scan-text')?.textContent.startsWith('Scan paused at')"), True)
+        click("Saved scans (1)", ".interp")
+        check("the saved scans are listed on request", wait_for("!!document.querySelector('.saved-scans')"), True)
+        check("the match is shown as a confidence", probe("document.querySelector('.saved-scans').textContent.includes('100% match: 20 match, 0 changed, 0 unreadable')"), True)
+        check("it is an exact match", probe("document.querySelector('.saved-scans .saved-state')?.textContent"), "exact")
+        check("the sampled limitation is visible", probe("document.querySelector('.saved-scans').textContent.includes('not proof that every byte is identical')"), True)
+        check("the scan says it is open now", probe("document.querySelector('.saved-scan-now')?.textContent"), "Open now")
+        click("Close", ".saved-scans")
         click("Resume scan", ".toolbar")
         check("resumed clone reaches completion", wait_for("document.querySelector('.scan-text')?.textContent==='Scan complete'", 120), True)
         with sqlite3.connect(database) as connection:
@@ -101,13 +105,17 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         with clone.open("r+b") as stream:
             stream.seek(-1, 2)
             stream.write(b"\x01")
-        open_raw(clone)
-        check("a changed block leaves a probable match with its confidence", wait_for("document.querySelector('.recovery').textContent.includes('95% match: 19 match, 1 changed, 0 unreadable')"), True)
-        check("the changed marker is explained", probe("document.querySelector('.recovery').textContent.includes('1 of 20 markers changed.')"), True)
-        click("Load saved scan", ".recovery")
-        check("the window asks before loading a probable match", wait_for("!!document.querySelector('.recovery [role=alertdialog]')"), True)
-        click("Load anyway", ".recovery")
-        check("a probable match loads once acknowledged", wait_for("document.querySelector('.recovery').textContent.includes('resumed on a source that had changed')"), True)
+        open_raw(clone, wait=False)
+        check("a changed block leaves a probable match, which asks before anything opens", wait_for("document.querySelector('.saved-scans')?.textContent.includes('This drive looks like one seen before')"), True)
+        check("the confidence is shown", probe("document.querySelector('.saved-scans').textContent.includes('95% match: 19 match, 1 changed, 0 unreadable')"), True)
+        check("it is a probable match", probe("document.querySelector('.saved-scans .saved-state')?.textContent"), "probable")
+        check("the changed marker is explained", probe("document.querySelector('.saved-scans').textContent.includes('1 of 20 markers changed.')"), True)
+        check("nothing was applied: no workspace is behind the question", probe("!document.querySelector('.recovery')"), True)
+        check("Open waits for the person to say they read what changed", probe("[...document.querySelectorAll('.saved-scans .saved-scan button')].every((button) => button.disabled)"), True)
+        js("document.querySelector('.saved-ack input').click()")
+        check("ticking that they read it allows Open", wait_for("[...document.querySelectorAll('.saved-scans .saved-scan button')].every((button) => !button.disabled)"), True)
+        click("Open", ".saved-scans .saved-scan")
+        check("a probable match opens once acknowledged", wait_for("document.querySelector('.recovery')?.textContent.includes('resumed on a source that had changed')"), True)
         opened = call("open_raw_disk", path=str(clone))
         refused = call("resume_raw_scan", diskId=opened["id"], scanId=scan_id, acceptSampledMatch=True)
         check("backend refuses a probable match without acknowledging the changed markers", "error" in refused, True)
@@ -120,7 +128,12 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
             stream.seek(4096)
             stream.write(random.Random(8).randbytes(48 * 1024 * 1024 - 4096))
         open_raw(clone)
-        check("a different drive is not offered, even with Show all", wait_for("!document.querySelector('.recovery').textContent.includes('Saved scans')"), True)
+        check("a different drive is not offered, so it opens as a new source", wait_for("document.querySelector('.interp-scans')?.textContent === 'Saved scans (0)'"), True)
+        click("Saved scans (0)", ".interp")
+        check("the saved scans open", wait_for("!!document.querySelector('.saved-show-all input')"), True)
+        js("document.querySelector('.saved-show-all input').click()")
+        check("only the new source is listed, with nothing stored", wait_for("document.querySelectorAll('.saved-source').length === 1 && document.querySelector('.saved-scans').textContent.includes('No scans are stored for it.')"), True)
+        check("the other drive's scan is not offered, even with Show all", probe("document.querySelectorAll('.saved-scan').length"), 0)
         opened = call("open_raw_disk", path=str(clone))
         refused = call("resume_raw_scan", diskId=opened["id"], scanId=scan_id, acceptSampledMatch=True, acceptChangedMarkers=True)
         check("backend independently refuses a different source", "error" in refused, True)

@@ -26,6 +26,7 @@ pub mod mcp;
 pub mod media;
 pub mod mount;
 pub mod mountblock;
+pub mod opening;
 pub mod privacy;
 pub mod range_analysis;
 pub mod range_tools;

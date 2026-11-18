@@ -42,7 +42,7 @@ try:
     js("(() => {const input=document.querySelector('.start-image input');"
        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,%s);"
        "input.dispatchEvent(new Event('input',{bubbles:true}));})()" % json.dumps(str(source)))
-    check("raw action becomes available", wait_for("!document.querySelector('.raw-entry-actions button').disabled"), True)
+    check("Open becomes available", wait_for("!document.querySelector('.start-image button[type=submit]').disabled"), True)
     js("document.querySelector('.start-image input').form.requestSubmit()")
     check("the raw source opens", wait_for("!!document.querySelector('.app .explorer')"), True)
     click("Investigate", ".mode-switch")
