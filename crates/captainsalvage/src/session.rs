@@ -185,8 +185,21 @@ struct RateSample {
     bytes_per_second: f64,
 }
 
+/// Which scan of which source a session reads and stores, in the catalog.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanBinding {
+    pub scan_id: String,
+    pub source_id: String,
+    /// A scan was made for this open: nothing was stored for this source and interpretation.
+    pub created: bool,
+}
+
 pub struct Session {
     pub path: PathBuf,
+    /// The scan in the catalog this session belongs to. None for a session built around a source
+    /// for a test, and when the catalog could not be opened: the volume's own folder is used.
+    pub scan: Option<ScanBinding>,
     pub interpretation: Option<crate::disk::DiskRegion>,
     pub volume: Volume,
     pub workspace: Workspace,
@@ -314,6 +327,28 @@ pub fn list_disks(device: Option<&str>) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// How sure a boot sector that reads and checks out makes the format of the device it is on.
+const BOOT_CONFIDENCE: f64 = 0.9;
+
+/// A scan found or made for a session, and the files it keeps.
+struct Found {
+    workspace: Workspace,
+    binding: ScanBinding,
+}
+
+impl From<crate::catalog::OpenedScan> for Found {
+    fn from(opened: crate::catalog::OpenedScan) -> Self {
+        Self {
+            binding: ScanBinding {
+                scan_id: opened.scan.id,
+                source_id: opened.source.id,
+                created: opened.created,
+            },
+            workspace: opened.workspace,
+        }
+    }
+}
+
 impl Session {
     pub fn open(path: &Path) -> Result<Arc<Self>> {
         let source = Arc::new(FileSource::open(path).with_context(|| {
@@ -323,10 +358,43 @@ impl Session {
             )
         })?);
         let volume = Volume::open(source)?;
-        let workspace = Workspace::for_volume(&volume)?;
-        let session = Self::assemble(path, volume, workspace, None)?;
+        let (workspace, scan) = match Self::device_scan(path, &volume) {
+            Ok(opened) => (opened.workspace, Some(opened.binding)),
+            Err(error) => {
+                // The volume's own folder is what every version before the catalog used.
+                eprintln!("could not find this volume's scan in the catalog: {error:#}");
+                (Workspace::for_volume(&volume)?, None)
+            }
+        };
+        let session = Self::assemble(path, volume, workspace, None, scan)?;
         crate::startup::remember_volume(&session.workspace, path);
         Ok(session)
+    }
+
+    /// The scan that opening a whole device as the filesystem it holds is: the stored one for
+    /// its source and format, or a new one.
+    fn device_scan(path: &Path, volume: &Volume) -> Result<Found> {
+        let disk = crate::disk::RawDisk::open(path)?;
+        let catalog = crate::catalog::Catalog::for_user()?;
+        let opened = catalog.open_filesystem(
+            &disk,
+            &crate::catalog::FilesystemOpen {
+                interpretation: crate::catalog::InterpretationRequest {
+                    format: volume.kind.to_string(),
+                    start: 0,
+                    length: disk.length,
+                    boot_offset: None,
+                    origin: "analysis".into(),
+                    confidence: BOOT_CONFIDENCE,
+                },
+                volume_key: volume.workspace_name(),
+                block_size: volume.geometry.cluster_size(),
+                block_count: u64::from(volume.geometry.cluster_count),
+                options: serde_json::json!({}),
+                accept: crate::catalog::Accept::Exact,
+            },
+        )?;
+        Ok(Found::from(opened))
     }
 
     /// Builds a session around any source, for tests and for disk images.
@@ -335,7 +403,7 @@ impl Session {
         source: Arc<dyn BlockSource>,
         workspace: Workspace,
     ) -> Result<Arc<Self>> {
-        Self::assemble(path, Volume::open(source)?, workspace, None)
+        Self::assemble(path, Volume::open(source)?, workspace, None, None)
     }
 
     pub fn open_region(
@@ -353,18 +421,109 @@ impl Session {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let workspace = Workspace::at(Workspace::for_volume(&volume)?.dir().join(format!(
-            "region-{}-{:x}-{:x}-{:x}",
+        let key = format!(
+            "{}/region-{}-{:x}-{:x}-{:x}",
+            volume.workspace_name(),
             &path_hash[..16],
             region.start,
             region.length,
             region.boot_offset
-        )))?;
-        let session = Self::assemble(&disk.path, volume, workspace, Some(region))?;
+        );
+        let (workspace, scan) = match Self::region_scan(disk, &region, &volume, &key) {
+            Ok(opened) => (opened.workspace, Some(opened.binding)),
+            Err(error) => {
+                eprintln!("could not find this interpretation's scan in the catalog: {error:#}");
+                (Workspace::at(Workspace::root()?.join(&key))?, None)
+            }
+        };
+        let session = Self::assemble(&disk.path, volume, workspace, Some(region), scan)?;
         std::fs::write(
             session.workspace.dir().join("interpretation.json"),
             serde_json::to_vec_pretty(&session.interpretation)?,
         )?;
+        Ok(session)
+    }
+
+    /// The scan that reading an extent of a raw source as a filesystem is.
+    fn region_scan(
+        disk: &crate::disk::RawDisk,
+        region: &crate::disk::DiskRegion,
+        volume: &Volume,
+        key: &str,
+    ) -> Result<Found> {
+        let catalog = crate::catalog::Catalog::for_user()?;
+        let opened = catalog.open_filesystem(
+            disk,
+            &crate::catalog::FilesystemOpen {
+                interpretation: crate::catalog::InterpretationRequest {
+                    format: volume.kind.to_string(),
+                    start: region.start,
+                    length: region.length,
+                    boot_offset: (region.boot_offset != region.start).then_some(region.boot_offset),
+                    origin: "manual".into(),
+                    confidence: 0.0,
+                },
+                volume_key: key.into(),
+                block_size: volume.geometry.cluster_size(),
+                block_count: u64::from(volume.geometry.cluster_count),
+                options: serde_json::json!({}),
+                accept: crate::catalog::Accept::Exact,
+            },
+        )?;
+        Ok(Found::from(opened))
+    }
+
+    /// Opens one stored filesystem scan of the source in `disk`, with its stored results and
+    /// nothing scanned. The source must match its markers: exactly, or probably when `accept`
+    /// says the person acknowledged the changed markers.
+    pub fn open_scan(
+        disk: &crate::disk::RawDisk,
+        scan_id: &str,
+        accept: crate::catalog::Accept,
+    ) -> Result<Arc<Self>> {
+        let catalog = crate::catalog::Catalog::for_user()?;
+        let (scan, _, _) = catalog.open_scan(disk, scan_id, accept)?;
+        anyhow::ensure!(
+            scan.kind == crate::catalog::ScanKind::Filesystem,
+            "This is a raw scan; resume it with resume_raw_scan. Only filesystem scans open as a volume."
+        );
+        let region = crate::disk::DiskRegion {
+            start: scan.start,
+            length: scan.length,
+            format: scan.format.clone(),
+            label: if scan.label.is_empty() {
+                format!("{} scan", scan.format)
+            } else {
+                scan.label.clone()
+            },
+            boot_offset: scan.boot_offset.unwrap_or(scan.start),
+        };
+        let source = disk.interpretation(&region)?;
+        let volume = Volume::open(source)?;
+        anyhow::ensure!(
+            volume.geometry.volume_size <= region.length,
+            "filesystem geometry exceeds selected region; choose a larger region"
+        );
+        let workspace = catalog.workspace_for(&scan, volume.geometry.cluster_size())?;
+        let binding = ScanBinding {
+            scan_id: scan.id,
+            source_id: scan.source_id,
+            created: false,
+        };
+        let whole = region.start == 0 && region.length == disk.length;
+        let session = Self::assemble(
+            &disk.path,
+            volume,
+            workspace,
+            (!whole).then_some(region),
+            Some(binding),
+        )?;
+        if session.interpretation.is_some() {
+            std::fs::write(
+                session.workspace.dir().join("interpretation.json"),
+                serde_json::to_vec_pretty(&session.interpretation)?,
+            )?;
+        }
         Ok(session)
     }
 
@@ -373,6 +532,7 @@ impl Session {
         volume: Volume,
         workspace: Workspace,
         interpretation: Option<crate::disk::DiskRegion>,
+        scan: Option<ScanBinding>,
     ) -> Result<Arc<Self>> {
         let baseline = workspace.check_baseline(&volume.structures)?;
         let check = baseline.clone();
@@ -393,6 +553,7 @@ impl Session {
             .max(u64::from(FIRST_CLUSTER)) as u32;
         let session = Arc::new(Self {
             path: path.to_path_buf(),
+            scan,
             interpretation,
             volume,
             workspace,
@@ -788,6 +949,9 @@ impl Session {
         }
         if let Some(region) = &self.interpretation {
             overview["interpretation"] = serde_json::to_value(region).unwrap_or(Value::Null);
+        }
+        if let Some(scan) = &self.scan {
+            overview["scan"] = serde_json::to_value(scan).unwrap_or(Value::Null);
         }
         overview
     }

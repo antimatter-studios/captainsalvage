@@ -122,7 +122,7 @@ pub fn migrate(catalog: &Catalog) -> Result<MigrationReport> {
         }
         if registered.contains(&name) {
             report.already += 1;
-        } else {
+        } else if holds_a_scan(&entry.path()) {
             register_workspace(catalog, &transaction, &name, &entry.path())?;
             report.workspaces += 1;
         }
@@ -180,6 +180,12 @@ pub fn migrate(catalog: &Catalog) -> Result<MigrationReport> {
         .optional()?
         .map(PathBuf::from);
     Ok(report)
+}
+
+/// A folder that has a map or a record of its volume is a workspace. An empty one, made and
+/// never used, is not worth a source; one that is used later is registered by a later run.
+fn holds_a_scan(folder: &Path) -> bool {
+    folder.join("map.sqlite").exists() || folder.join(VOLUME_FILE).exists()
 }
 
 fn sorted_entries(folder: &Path) -> Vec<std::fs::DirEntry> {

@@ -529,6 +529,21 @@ fn old_workspaces_and_raw_scans_become_scans_that_keep_their_key() {
         ("NTFS", 1_048_576, 2_097_152)
     );
 
+    // A folder made and never used is not a scan, until something is stored in it.
+    std::fs::create_dir(root.0.join("vol-deadbeef")).unwrap();
+    assert!(!migrate(&catalog).unwrap().changed());
+    std::fs::write(
+        root.0.join("vol-deadbeef/volume.json"),
+        r#"{"uuid":null,"name":"Late","bytes":10,"lastOpenedMillis":1}"#,
+    )
+    .unwrap();
+    assert_eq!(migrate(&catalog).unwrap().workspaces, 1);
+    catalog
+        .connection()
+        .execute("DELETE FROM scans WHERE legacy_key = 'vol-deadbeef'", [])
+        .unwrap();
+    std::fs::remove_dir_all(root.0.join("vol-deadbeef")).unwrap();
+
     // Running it again changes nothing.
     let again = migrate(&catalog).unwrap();
     assert!(!again.changed(), "{again:?}");

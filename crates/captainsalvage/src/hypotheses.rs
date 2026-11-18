@@ -326,6 +326,8 @@ impl HypothesisStore {
             return Ok(());
         }
         self.connection
+            .execute("DELETE FROM interpretations WHERE hypothesis_id = ?1", [id])?;
+        self.connection
             .execute("DELETE FROM hypotheses WHERE id = ?1", [id])
             .map(|_| ())
             .context("deleting the hypothesis")

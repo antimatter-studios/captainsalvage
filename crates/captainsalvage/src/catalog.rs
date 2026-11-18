@@ -180,6 +180,27 @@ pub struct Catalog {
     root: PathBuf,
 }
 
+/// Runs `step` again, a little later, while the database says it is busy.
+fn retry_while_busy(mut step: impl FnMut() -> rusqlite::Result<()>) -> Result<()> {
+    let mut tries = 0;
+    loop {
+        match step() {
+            Ok(()) => return Ok(()),
+            Err(rusqlite::Error::SqliteFailure(failure, _))
+                if tries < 100
+                    && matches!(
+                        failure.code,
+                        rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                    ) =>
+            {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 pub(crate) fn identifier() -> Result<String> {
     let mut bytes = [0u8; 8];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
@@ -227,12 +248,16 @@ impl Catalog {
         let backup = migrate::backup_before_first_change(root)?;
         let connection = Connection::open(root.join("raw-scans.sqlite"))?;
         connection.busy_timeout(Duration::from_secs(30))?;
-        connection.execute_batch(
-            "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;",
-        )?;
-        connection.execute_batch(crate::hypotheses::SCHEMA)?;
-        connection.execute_batch(crate::raw_scan::SCHEMA)?;
-        connection.execute_batch(SCHEMA)?;
+        // Two apps starting together can both be creating the database. Changing the journal mode
+        // and creating tables do not wait for each other's lock, so they are tried again.
+        retry_while_busy(|| {
+            connection.execute_batch(
+                "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;",
+            )?;
+            connection.execute_batch(crate::hypotheses::SCHEMA)?;
+            connection.execute_batch(crate::raw_scan::SCHEMA)?;
+            connection.execute_batch(SCHEMA)
+        })?;
         if let Some(backup) = backup {
             connection.execute(
                 "INSERT OR REPLACE INTO catalog_meta (key, value) VALUES ('backup', ?1)",

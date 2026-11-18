@@ -8,6 +8,7 @@ pub mod browse;
 pub mod canvas;
 pub mod carve;
 pub mod catalog;
+pub mod catalog_tools;
 pub mod changes;
 pub mod conflicts;
 pub mod content;

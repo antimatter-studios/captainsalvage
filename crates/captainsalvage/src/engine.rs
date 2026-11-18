@@ -357,6 +357,48 @@ impl Engine {
         Ok(overview)
     }
 
+    /// Opens a stored scan of the open raw source. A filesystem scan becomes the open volume with
+    /// the results it stored, and nothing is scanned. A raw scan loads its findings.
+    fn open_stored_scan(&self, args: &Value) -> Result<Value> {
+        use crate::catalog::{Accept, Catalog, ScanKind};
+        let disk = self.raw_disk(args)?;
+        let scan_id = need_str(args, "scanId")?;
+        let changed = bool_of(args, "acceptChangedMarkers", false);
+        let accept = if changed {
+            Accept::Probable
+        } else {
+            Accept::Exact
+        };
+        let scan = Catalog::for_user()?.scan(scan_id)?;
+        match scan.kind {
+            ScanKind::Filesystem => {
+                let session = Session::open_scan(&disk, scan_id, accept)?;
+                let mut overview = session.overview();
+                overview["filesystem"] = serde_json::to_value(&session.volume.filesystem)?;
+                self.set_session(session);
+                self.emit(
+                    "volume-opened",
+                    json!({"path": disk.path, "interpretation": true}),
+                );
+                Ok(overview)
+            }
+            ScanKind::Raw => {
+                let raw = scan
+                    .raw_scan_id
+                    .as_deref()
+                    .context("this scan has no saved findings to load")?;
+                Ok(serde_json::to_value(
+                    crate::raw_scan::ScanStore::for_user()?.resume(
+                        &disk,
+                        raw,
+                        bool_of(args, "acceptSampledMatch", false),
+                        changed,
+                    )?,
+                )?)
+            }
+        }
+    }
+
     pub fn set_session(&self, session: Arc<Session>) {
         if let Ok(mut slot) = self.session.write() {
             *slot = Some(session);
@@ -447,6 +489,14 @@ impl Engine {
                     need_u64(args, "length")?,
                 )?)?)
             }
+            tool if crate::catalog_tools::TOOLS.contains(&tool) => {
+                let disk = match args.get("diskId") {
+                    Some(_) => Some(self.raw_disk(args)?),
+                    None => None,
+                };
+                crate::catalog_tools::call(tool, disk.as_deref(), args, author == AUTHOR_USER)
+            }
+            "open_stored_scan" => self.open_stored_scan(args),
             tool if crate::range_tools::TOOLS.contains(&tool) => {
                 let disk = self.raw_disk(args)?;
                 crate::range_tools::call(tool, &disk, args)

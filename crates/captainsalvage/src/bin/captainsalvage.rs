@@ -15,6 +15,8 @@ mod filesystem;
 mod hypothesis;
 #[path = "range.rs"]
 mod range;
+#[path = "source.rs"]
+mod source;
 
 const USAGE: &str = "Captain Salvage command line\n\
 \n\
@@ -30,6 +32,11 @@ Commands:\n\
   hypothesis <list|save|update|delete|raise|read-layout> <device-or-image> [options]\n\
       Keep competing guesses about what a byte range holds, as toggleable layers, and read the overlay\n\
       they make. Records stay on this Mac; the source is never written.\n\
+  source <list|identify|scans|open|switch|label|migrate> [device-or-image] [options]\n\
+      Sources, and the scans stored for each: which drive this is, what was scanned under which\n\
+      format, and what each scan stores. A scan is a source, an interpretation, its options and its\n\
+      range; changing any of them makes a new scan and keeps the old one. Nothing is scanned by\n\
+      opening one, and the source is never written.\n\
   range analyze <device-or-image> [--offset BYTES] [--length BYTES] [--step BYTES] [--no-signatures]\n\
       Slide every filesystem driver over a byte range and report what decodes, and how sure it is.\n\
   scan <device-or-image> [--verify-only | --resolve-only]\n\
@@ -54,6 +61,7 @@ fn main() -> Result<()> {
         Some("disk") => disk::run(&arguments[1..]),
         Some("filesystem") => filesystem::run(&arguments[1..]),
         Some("range") => range::run(&arguments[1..]),
+        Some("source") => source::run(&arguments[1..]),
         Some("hypothesis") => hypothesis::run(&arguments[1..]),
         Some("agent") => agent::run(&arguments[1..]),
         Some(command) => bail!("unknown command '{command}'\n\n{USAGE}"),

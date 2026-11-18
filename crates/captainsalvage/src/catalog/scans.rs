@@ -461,6 +461,16 @@ impl Catalog {
     /// scan: it is used where it is, and its guessed format and extent are replaced by what the
     /// device says.
     pub fn open_filesystem(&self, disk: &RawDisk, open: &FilesystemOpen) -> Result<OpenedScan> {
+        // A workspace an older version made since the catalog last looked is registered first,
+        // so it is found and not scanned again.
+        let known: bool = self.connection.query_row(
+            "SELECT count(*) > 0 FROM scans WHERE legacy_key = ?1",
+            [&open.volume_key],
+            |row| row.get(0),
+        )?;
+        if !known && self.root.join(&open.volume_key).is_dir() {
+            super::migrate(self)?;
+        }
         let resolution = self.resolve_source(disk, open.accept, Some(&open.volume_key))?;
         let request = ScanRequest {
             source_id: resolution.source.id.clone(),
