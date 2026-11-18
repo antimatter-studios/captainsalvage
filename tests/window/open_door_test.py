@@ -65,6 +65,7 @@ def database():
 fixture = Path(SCRATCH) / "jigsaw.img"
 if not fixture.exists():
     raise SystemExit("Generate jigsaw.img as described in tests/window/README.md first.")
+jigsaw_before = hashlib.sha256(fixture.read_bytes()).hexdigest()
 rng = random.Random(21)
 # The jigsaw's boot region is made to describe a volume of its own size, as raw_disk_test does.
 payload = bytearray(fixture.read_bytes())
@@ -157,6 +158,17 @@ try:
         sources = connection.execute("SELECT count(*) FROM sources").fetchone()[0]
     check("one scan, one link between the disk and its extent", (scans, links, sources), (1, 1, 2))
     check("the source image was never modified", hashlib.sha256(whole.read_bytes()).hexdigest(), before)
+
+    # An image of one small volume, as it comes (jigsaw.img is under 1 MiB, with a boot sector the
+    # strict analysis would not call a volume): the person chose a file that is a volume, so it
+    # opens its filesystem straight away, with the picker, and not as a whole disk.
+    click("Change disk", ".toolbar")
+    check("the start screen comes back again", wait_for("!!document.querySelector('.start-image input')"), True)
+    open_path(fixture)
+    check("a volume image opens its filesystem straight away", wait_for("!!document.querySelector('.safety-chip')", 90), True)
+    check("it is not a whole disk", probe("!document.querySelector('.interp-whole') && !!document.querySelector('.interp select')"), True)
+    check("the picker says exFAT, detected", probe("/^exFAT \\(detected, \\d+%\\)$/.test(document.querySelector('.interp select option').textContent) && document.querySelector('.interp select').value"), "exFAT")
+    check("the volume image was never modified", hashlib.sha256(fixture.read_bytes()).hexdigest(), jigsaw_before)
 finally:
     finish()
 if not all(passed for _, passed in results):

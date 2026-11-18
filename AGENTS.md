@@ -71,7 +71,9 @@ and installed here under a real number and a real tag, before anything merges. A
 `tests/window/` drives the real app window against small synthetic disk images. Read its
 [README](tests/window/README.md) before running one: it says how to make the images, how the
 harness keeps the test away from your settings and real drives, and what to do when a test
-stalls. Run one window test at a time, never beside a build.
+stalls. Run one window test at a time, never beside a build. CI does not run them, so a pull request
+that changes how a source opens, the start screen or the harness lists which it ran and each pass
+count, and every one of them is run on a release candidate's build (the README says which).
 
 `scripts/rebase-pr.sh <branch>` rebases a pull request onto `main` in `.work/rebase`, keeps both
 sides of conflicts where two branches appended to the same file (`scripts/resolve_appends.py`),

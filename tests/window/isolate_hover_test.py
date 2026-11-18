@@ -1,7 +1,7 @@
 """Window test for #19: a legend click isolates a category, and hovering a file lights its pieces."""
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import SCRATCH, call, check, finish, js, probe, scan_and_reopen, start, wait_for
+from harness import SCRATCH, call, check, finish, js, probe, scan_and_reopen, start, wait_for, investigate
 # Counts how many pixels of the whole-volume strip are fully drawn, and how many are faint.
 PIXELS = "(() => { const c = document.querySelector('.strips canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let solid = 0, faint = 0; for (let i = 3; i < d.length; i += 4) { if (d[i] === 255) solid += 1; else if (d[i] > 0) faint += 1; } return [solid, faint]; })()"
 # How much of the marks layer above the strips is lit.
@@ -9,6 +9,7 @@ MARKS = "(() => { const cs = [...document.querySelectorAll('.strips canvas')]; l
 start(sys.argv[1])
 try:
     scan_and_reopen(os.path.join(SCRATCH, 'jigsaw.img'))
+    investigate()
     time.sleep(2)
     before = probe(PIXELS)
     print('before:', before, flush=True)

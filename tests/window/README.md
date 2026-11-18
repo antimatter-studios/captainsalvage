@@ -65,6 +65,28 @@ note about it, that a disk says once what it needs, that Open on a whole disk an
 each opens exactly its own bytes, and that the three disks fit on the screen at the default
 window size. It saves `picker-start.png` and `picker-start-notices.png` here.
 
+## Which tests to run, and when
+
+CI does not run the window tests (they need a built app and a screen), so nothing else catches a
+change that breaks them. A pull request that changes how a source opens, the start screen, the
+header or `harness.py` must say in its description which of these it ran and the pass count of
+each. **Before a release candidate is built, run all of them, one at a time, on that build:**
+
+| Tests | Needs | Covers |
+|---|---|---|
+| `open_door_test.py`, `device_picker_test.py`, `raw_disk_test.py`, `raw_scan_test.py`, `raw_disk_lanes_test.py`, `raw_disk_crowded_test.py` | `jigsaw.img` for the first three and the lanes test | the one Open, the picker, the saved scans, the start screen tree, raw maps and scans |
+| `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` | the filesystem workspace opened from an image of one volume |
+| `macos_writes_test.py` | `macos.img` | what macOS wrote |
+| `archive_file_test.py` | `arctest.img` | archives |
+| `films_test.py` | `filmtest.img` | films |
+| `mounted_warning_test.py` | `hdiutil` | the mounted warning, on a throwaway image |
+| `browse_probe.py`, `browse_first_probe.py`, `mount_block_probe.py`, `mount_block_race.py` | as above | probes: they print and have no pass count; read their output |
+
+A test that opens an image through `harness.open_image` or `scan_and_reopen` opens **an image of one
+volume**: its first bytes are a recognised volume boot sector, so it opens its filesystem straight
+away, as a person opening a partition image does. `jigsaw.img` is such an image. The harness stops,
+saying why, if an image opens as a whole disk instead; whole disks are driven by `open_door_test.py`.
+
 ## The images
 
 The images and everything else the tests write stay in this folder and are ignored by git.
