@@ -68,7 +68,7 @@ function FileRow({ row, selected, onSelect, showPath, onExport, depth }: { row: 
     <button
       className={selected ? "row row-selected" : "row"}
       onClick={onSelect}
-      onContextMenu={(event) => row.kind === "file" && row.length > 0 && onExport(event, { kind: "file", target: id, name: row.name })}
+      onContextMenu={(event) => row.kind === "file" && (row.length > 0 || (row.inUse && row.verdict === "empty")) && onExport(event, { kind: "file", target: id, name: row.name })}
       title={fromEngine(row.reason)}
       data-depth={depth}
       onMouseEnter={() => announceHover(id)}

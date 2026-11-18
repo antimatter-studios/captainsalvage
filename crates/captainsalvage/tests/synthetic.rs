@@ -5145,6 +5145,31 @@ fn write_the_jigsaw_volume_for_window_tests() {
     verify_window_fixture("jigsaw", "SALVAGE_JIGSAW_IMAGE", build_jigsaw_volume());
 }
 
+/// A volume with a live file that has no bytes, a deleted one, and a file with bytes, for the window
+/// test that exports the empty file. Run with:
+/// SALVAGE_EMPTY_IMAGE=/path/emptyfiles.img cargo test -p captainsalvage --test synthetic write_the_empty
+#[test]
+fn write_the_empty_files_volume_for_window_tests() {
+    let mut builder = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4, 5] {
+        builder.allocate(cluster);
+    }
+    builder.fat(ROOT_CLUSTER, FAT_END);
+    let boot = BootSector::parse(&builder.image).expect("boot");
+    builder.directory(
+        ROOT_CLUSTER,
+        &[
+            bitmap_entry(BITMAP_CLUSTER, u64::from(boot.cluster_count).div_ceil(8)),
+            upcase_entry(4, &[0; 100]),
+            entry_set("notes.txt", false, 5, 11, true, true),
+            entry_set("empty.txt", false, 0, 0, false, true),
+            entry_set("gone-empty.txt", false, 0, 0, false, false),
+        ],
+    );
+    builder.put(5, 0, b"exfat bytes");
+    verify_window_fixture("empty files", "SALVAGE_EMPTY_IMAGE", builder.image);
+}
+
 fn verify_window_fixture(label: &str, variable: &str, image: Vec<u8>) {
     let (_workspace, dir) = temp_workspace(&format!("window-fixture-{label}"));
     let path = dir.join("fixture.img");
