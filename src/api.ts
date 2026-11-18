@@ -315,13 +315,13 @@ export interface Page {
 }
 
 /** One rebuild of the folder tree, made by placing the pieces the scan found. */
-/** Whether the Finder helper is installed, and which of this disk's canvases Finder shows. */
+/** Whether the Finder helper is installed, and which of this disk's diskRebuilds Finder shows. */
 export interface FinderState {
   available: boolean;
   shown: number[];
 }
 
-export interface Canvas {
+export interface DiskRebuild {
   id: number;
   name: string;
   createdAtMillis: number;
@@ -329,7 +329,7 @@ export interface Canvas {
   items: number;
 }
 
-export interface CanvasItem {
+export interface DiskRebuildItem {
   id: number;
   /** "folder" the person made, "piece" placed as a folder, or "merge" joined into its folder. */
   kind: "folder" | "piece" | "merge";
@@ -339,8 +339,8 @@ export interface CanvasItem {
   parentHead: number | null;
 }
 
-/** Where a piece or folder goes: an item of the canvas, and optionally a found folder in it. */
-export interface CanvasPlace {
+/** Where a piece or folder goes: an item of the diskRebuild, and optionally a found folder in it. */
+export interface DiskRebuildPlace {
   item?: number;
   head?: number;
 }
@@ -370,7 +370,7 @@ export interface RebuiltFile {
   copies: Row[];
 }
 
-export interface CanvasListing {
+export interface DiskRebuildListing {
   path: string[];
   folders: RebuiltFolder[];
   files: RebuiltFile[];
@@ -381,7 +381,7 @@ export interface CanvasListing {
 }
 
 /** Where Claude thinks a piece belongs, waiting for the person to accept or dismiss it. */
-export interface CanvasSuggestion {
+export interface DiskRebuildSuggestion {
   id: number;
   head: number;
   placeItem: number | null;

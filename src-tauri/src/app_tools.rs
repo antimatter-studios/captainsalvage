@@ -46,9 +46,9 @@ pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Valu
             let state = app.state::<AppState>();
             let reply = match tool {
                 "finder_status" => finder::status(&state)?,
-                "finder_hide" => finder::hide(&state, canvas(args)?)?,
+                "finder_hide" => finder::hide(&state, disk_rebuild_id(args)?)?,
                 _ => {
-                    let id = canvas(args)?;
+                    let id = disk_rebuild_id(args)?;
                     let listed = state.engine.call(
                         "disk_rebuild_list",
                         &json!({}),
@@ -71,9 +71,8 @@ pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Valu
     }
 }
 
-fn canvas(args: &Value) -> Result<i64> {
+fn disk_rebuild_id(args: &Value) -> Result<i64> {
     args.get("diskRebuild")
-        .or_else(|| args.get("canvas"))
         .and_then(Value::as_i64)
         .context("diskRebuild is needed")
 }

@@ -1,5 +1,9 @@
 # Plan: rebuilt views, layers and the treasure list
 
+> **Historical.** The treasure list this plan describes was removed, and nothing from an old one is
+> imported. Right-click Export copies one file or folder, and a Disk Rebuild is what the plan
+> calls a canvas.
+
 For review before building. It turns the Rebuild canvas into a stack of layers, makes the
 treasure list a selection inside a view, and gives copying a job with checking that can be
 watched. Nothing here writes to the disk being recovered: views live in the app's database,

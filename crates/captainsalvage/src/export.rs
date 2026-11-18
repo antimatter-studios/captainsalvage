@@ -66,7 +66,7 @@ pub struct CopyRequest {
     /// Also copy files with missing clusters, or clusters reused by current files.
     pub include_partial: bool,
     /// Copy this Disk Rebuild's tree, each file at its rebuilt path.
-    pub canvas: Option<i64>,
+    pub disk_rebuild: Option<i64>,
     /// An export: each file goes directly under the destination by its own name, and each
     /// folder as a folder of its own with what it holds, not at its full path on the disk.
     pub direct: bool,
@@ -374,8 +374,8 @@ fn sanitize_segment(segment: &str) -> String {
     trimmed
 }
 
-/// Turns a canvas's folder names into a safe relative path under the destination.
-pub fn canvas_target(folders: &[String], name: &str) -> PathBuf {
+/// Turns a Disk Rebuild's folder names into a safe relative path under the destination.
+pub fn disk_rebuild_target(folders: &[String], name: &str) -> PathBuf {
     let mut target = PathBuf::new();
     for folder in folders {
         target.push(sanitize_segment(folder));
@@ -522,16 +522,16 @@ pub(crate) fn unused_path(path: &Path, id: i64) -> PathBuf {
 }
 
 impl Session {
-    /// The files a request names, and where a canvas puts each of them, by entry id.
+    /// The files a request names, and where a Disk Rebuild puts each of them, by entry id.
     fn copy_rows(&self, request: &CopyRequest) -> Result<(Vec<Row>, HashMap<i64, PathBuf>)> {
         self.with_database(|database| {
             let mut rows = Vec::new();
             let mut targets = HashMap::new();
-            if let Some(canvas) = request.canvas {
-                for file in database.canvas_files(canvas)? {
+            if let Some(disk_rebuild) = request.disk_rebuild {
+                for file in database.disk_rebuild_files(disk_rebuild)? {
                     let Some(id) = file.row.id else { continue };
                     if file.row.kind == "file" && file.row.length > 0 {
-                        targets.insert(id, canvas_target(&file.folders, &file.row.name));
+                        targets.insert(id, disk_rebuild_target(&file.folders, &file.row.name));
                         rows.push(file.row);
                     }
                 }
@@ -842,7 +842,7 @@ impl Session {
             .iter()
             .flat_map(|group| group.folders.clone())
             .collect();
-        request.canvas = groups.iter().find_map(|group| group.canvas);
+        request.disk_rebuild = groups.iter().find_map(|group| group.disk_rebuild);
         let plan = self.copy_plan(&request)?;
         if let Some(reason) = &plan.refused {
             bail!("{reason}");

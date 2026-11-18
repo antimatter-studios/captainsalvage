@@ -554,7 +554,6 @@ impl MapDb {
         connection.execute_batch(SCHEMA)?;
         let database = Self { connection };
         database.add_missing_columns()?;
-        database.import_old_treasure_list()?;
         Ok(database)
     }
 

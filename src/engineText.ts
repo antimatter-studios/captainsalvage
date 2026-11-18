@@ -242,7 +242,7 @@ export const ENGINE_TEXT: string[] = [
   "this 7z's list of files cannot be read",
   "this 7z cannot be opened",
   "this archive has no file number {name}",
-  // Rebuilding the tree on a canvas.
+  // Rebuilding the tree on a diskRebuild.
   "A choice needs the path of a file.",
   "A folder name cannot contain a slash.",
   "A folder needs a name.",
@@ -264,11 +264,11 @@ export const ENGINE_TEXT: string[] = [
   "There are no unused pieces left to put away.",
   "This Disk Rebuild is empty.",
   "the folder at cluster {head} is in a loop",
-  "there is no Disk Rebuild {canvas}",
+  "there is no Disk Rebuild {disk_rebuild}",
   "there is no file called {name} there",
   "there is no folder at cluster {head}",
   "there is no folder called {name} there",
-  "there is no item {item} on Disk Rebuild {canvas}",
+  "there is no item {item} on Disk Rebuild {disk_rebuild}",
   "Only the person using the app changes a Disk Rebuild.",
   "Suggest a placement instead.",
   "head is not a cluster number",
@@ -279,7 +279,7 @@ export const ENGINE_TEXT: string[] = [
   "Move it out first.",
   "A suggestion needs a note saying why.",
   "there is no open suggestion {suggestion}",
-  // Showing a canvas in Finder.
+  // Showing a diskRebuild in Finder.
   "This copy of Captain Salvage was built without its Finder extension.",
   "The media port did not start, so Finder cannot read files.",
   "macOS would not add the Finder location",

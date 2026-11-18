@@ -1,15 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from "react";
-import { call, type Canvas, type CanvasItem, type CopyStatus, type FinderState, type CanvasSuggestion, type CanvasListing, type CanvasPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
+import { call, type DiskRebuild, type DiskRebuildItem, type CopyStatus, type FinderState, type DiskRebuildSuggestion, type DiskRebuildListing, type DiskRebuildPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
-import { CanvasCopy } from "./CanvasCopy";
+import { DiskRebuildCopy } from "./DiskRebuildCopy";
 import { SimilarPieces } from "./SimilarPieces";
 
 /** What a dragged sidebar piece carries: the first cluster of its folder. */
 export const PIECE_TYPE = "application/x-salvage-piece";
-/** What a dragged canvas item carries, to move it. */
+/** What a dragged diskRebuild item carries, to move it. */
 const ITEM_TYPE = "application/x-salvage-item";
 /** What a file dragged from Browse files carries: its entry id. */
 export const ENTRY_TYPE = "application/x-salvage-entry";
@@ -49,8 +49,8 @@ function carriesSomething(event: DragEvent): boolean {
 }
 
 interface Shared {
-  canvas: number;
-  items: Map<number, CanvasItem>;
+  diskRebuild: number;
+  items: Map<number, DiskRebuildItem>;
   revision: number;
   changed: () => void;
   fail: (reason: unknown) => void;
@@ -62,22 +62,22 @@ function folderLabel(folder: RebuiltFolder): string {
 }
 
 /** Where a drop on this folder puts things: in its own item, or in its found folder inside one. */
-function placeOf(folder: RebuiltFolder, around: number | null): CanvasPlace | null {
+function placeOf(folder: RebuiltFolder, around: number | null): DiskRebuildPlace | null {
   if (folder.items.length > 0) return { item: folder.items[0] };
   if (around !== null && folder.heads.length > 0) return { item: around, head: folder.heads[0] };
   return null;
 }
 
 /** Drops a piece or an item onto a place, inside it or merged into it. */
-async function drop(shared: Shared, what: Dragged, place: CanvasPlace | undefined, merge: boolean) {
+async function drop(shared: Shared, what: Dragged, place: DiskRebuildPlace | undefined, merge: boolean) {
   try {
     if (what.piece !== undefined) {
-      await call("disk_rebuild_place", { canvas: shared.canvas, head: what.piece, place: place ?? null, merge });
+      await call("disk_rebuild_place", { diskRebuild: shared.diskRebuild, head: what.piece, place: place ?? null, merge });
     } else if (what.item !== undefined) {
-      await call("disk_rebuild_move", { canvas: shared.canvas, item: what.item, place: place ?? null, merge });
+      await call("disk_rebuild_move", { diskRebuild: shared.diskRebuild, item: what.item, place: place ?? null, merge });
     } else if (what.entry !== undefined) {
       // A single file always joins the folder it lands on, as a layer of one file.
-      await call("disk_rebuild_place_file", { canvas: shared.canvas, entry: what.entry, place: place ?? null });
+      await call("disk_rebuild_place_file", { diskRebuild: shared.diskRebuild, entry: what.entry, place: place ?? null });
     }
     shared.changed();
   } catch (reason) {
@@ -115,7 +115,7 @@ function NameInput({ initial, onDone }: { initial: string; onDone: (name: string
   const [value, setValue] = useState(initial);
   return (
     <form
-      className="canvas-name"
+      className="disk-rebuild-name"
       onSubmit={(event) => {
         event.preventDefault();
         onDone(value.trim() || null);
@@ -162,7 +162,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
     setNaming(null);
     if (!name || !place) return;
     try {
-      await call("disk_rebuild_folder", { canvas: shared.canvas, name, place });
+      await call("disk_rebuild_folder", { diskRebuild: shared.diskRebuild, name, place });
       setOpen(true);
       shared.changed();
     } catch (reason) {
@@ -174,7 +174,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
     setNaming(null);
     if (!item) return;
     try {
-      await call("disk_rebuild_rename_item", { canvas: shared.canvas, item: item.id, name: name ?? (item.kind === "folder" ? label : null) });
+      await call("disk_rebuild_rename_item", { diskRebuild: shared.diskRebuild, item: item.id, name: name ?? (item.kind === "folder" ? label : null) });
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -184,7 +184,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   async function swap(piece: Row) {
     if (!item || piece.head === null) return;
     try {
-      await call("disk_rebuild_swap", { canvas: shared.canvas, item: item.id, head: piece.head });
+      await call("disk_rebuild_swap", { diskRebuild: shared.diskRebuild, item: item.id, head: piece.head });
       setSimilar(false);
       shared.changed();
     } catch (reason) {
@@ -195,7 +195,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   async function remove() {
     if (!item) return;
     try {
-      await call("disk_rebuild_remove", { canvas: shared.canvas, item: item.id });
+      await call("disk_rebuild_remove", { diskRebuild: shared.diskRebuild, item: item.id });
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -206,7 +206,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   return (
     <>
       <div
-        className={holding ? "row-wrap canvas-row canvas-row-holding" : "row-wrap canvas-row"}
+        className={holding ? "row-wrap disk-rebuild-row disk-rebuild-row-holding" : "row-wrap disk-rebuild-row"}
         onDragOver={(event) => {
           if (!place || !carriesSomething(event)) return;
           event.preventDefault();
@@ -221,7 +221,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
         }}
       >
         <button
-          className={`row canvas-folder canvas-origin-${folder.origin}`}
+          className={`row disk-rebuild-folder disk-rebuild-origin-${folder.origin}`}
           style={{ paddingLeft: 6 + depth * INDENT }}
           aria-expanded={open}
           draggable={Boolean(item) && depth > 0}
@@ -250,7 +250,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
         {holding ? (
           <DropChoices onInside={onDrop(false)} onMerge={onDrop(true)} />
         ) : (
-          <span className="canvas-actions">
+          <span className="disk-rebuild-actions">
             {place && (
               <button className="icon-button" title={t("New folder inside")} aria-label={t("New folder inside")} onClick={() => setNaming("new")}>
                 <Icon name="plus" size={13} />
@@ -275,13 +275,13 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
         )}
       </div>
       {naming === "new" && (
-        <div className="canvas-new-folder" style={{ paddingLeft: 26 + (depth + 1) * INDENT }}>
+        <div className="disk-rebuild-new-folder" style={{ paddingLeft: 26 + (depth + 1) * INDENT }}>
           <Icon name="folder" />
           <NameInput initial="" onDone={(name) => void makeFolder(name)} />
         </div>
       )}
       {similar && item?.head != null && (
-        <div className="canvas-similar" style={{ marginLeft: 23 + depth * INDENT }}>
+        <div className="disk-rebuild-similar" style={{ marginLeft: 23 + depth * INDENT }}>
           <SimilarPieces head={item.head} onSwap={(piece) => void swap(piece)} used={new Set([...shared.items.values()].flatMap((found) => (found.head !== null ? [found.head] : [])))} />
         </div>
       )}
@@ -305,7 +305,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
   async function choose(entry: number | null) {
     setChoosing(false);
     try {
-      await call("disk_rebuild_choose", { canvas: shared.canvas, path: [...path, file.name], entry });
+      await call("disk_rebuild_choose", { diskRebuild: shared.diskRebuild, path: [...path, file.name], entry });
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -315,7 +315,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
   const row = file.chosen;
   return (
     <>
-      <div className="row-wrap canvas-row">
+      <div className="row-wrap disk-rebuild-row">
         <button className="row" style={{ paddingLeft: 23 + depth * INDENT }} onClick={() => shared.onEntry(row)} title={fromEngine(row.reason)}>
           <span className="row-icon"><Icon name={fileIcon(file.name)} /></span>
           <span className="row-main">
@@ -326,19 +326,19 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
           <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict: verdictLabel(row.verdict), percent: percent(row.confidence) })} />
         </button>
         {clash && (
-          <button className={file.needsYou ? "canvas-clash canvas-clash-needs-you" : "canvas-clash"} onClick={() => setChoosing(!choosing)} aria-expanded={choosing} title={file.needsYou ? t("These copies differ, and nothing measured tells them apart. Look, and choose one.") : t("Pieces hold more than one copy of this file")}>
+          <button className={file.needsYou ? "disk-rebuild-clash disk-rebuild-clash-needs-you" : "disk-rebuild-clash"} onClick={() => setChoosing(!choosing)} aria-expanded={choosing} title={file.needsYou ? t("These copies differ, and nothing measured tells them apart. Look, and choose one.") : t("Pieces hold more than one copy of this file")}>
             {file.needsYou ? t("{count} copies, choose", { count: count(file.copies.length) }) : t("{count} copies", { count: count(file.copies.length) })}
           </button>
         )}
       </div>
       {choosing && (
-        <div className="canvas-copies" style={{ marginLeft: 23 + depth * INDENT }}>
+        <div className="disk-rebuild-copies" style={{ marginLeft: 23 + depth * INDENT }}>
           {file.copies.map((copy) => {
             const chosen = copy.id === row.id;
             return (
-              <div key={copy.id} className={chosen ? "canvas-copy canvas-copy-chosen" : "canvas-copy"}>
+              <div key={copy.id} className={chosen ? "disk-rebuild-copy disk-rebuild-copy-chosen" : "disk-rebuild-copy"}>
                 <ConfidenceRing value={copy.confidence} tone={verdictTone(copy.verdict)} label={verdictLabel(copy.verdict)} />
-                <span className="canvas-copy-text">
+                <span className="disk-rebuild-copy-text">
                   {verdictLabel(copy.verdict)}, {bytes(copy.length)}{copy.modified ? `, ${copy.modified.replace("T", " ")}` : ""}
                 </span>
                 {chosen ? (
@@ -349,7 +349,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
               </div>
             );
           })}
-          {file.decidedBy && <p className="canvas-decided muted">{DECIDED[file.decidedBy]()}</p>}
+          {file.decidedBy && <p className="disk-rebuild-decided muted">{DECIDED[file.decidedBy]()}</p>}
           {file.byPerson && <button className="link" onClick={() => void choose(null)}>{t("Go back to the best copy")}</button>}
         </div>
       )}
@@ -359,28 +359,28 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
 
 /** The folders and files inside one folder of the rebuilt tree. */
 function FolderContents({ path, depth, around, shared }: { path: string[]; depth: number; around: number | null; shared: Shared }) {
-  const [listing, setListing] = useState<CanvasListing | null>(null);
+  const [listing, setListing] = useState<DiskRebuildListing | null>(null);
   const [limit, setLimit] = useState(FILES_PAGE);
   const key = path.join("\u0000");
   useEffect(() => {
     let current = true;
-    call<CanvasListing>("disk_rebuild_tree", { canvas: shared.canvas, path, limit })
+    call<DiskRebuildListing>("disk_rebuild_tree", { diskRebuild: shared.diskRebuild, path, limit })
       .then((result) => current && setListing(result))
       .catch((reason) => current && shared.fail(reason));
     return () => {
       current = false;
     };
     // The path is compared by its key, as it is a new array on every draw.
-  }, [shared.canvas, key, limit, shared.revision]);
+  }, [shared.diskRebuild, key, limit, shared.revision]);
 
   if (!listing) return <div className="empty" style={{ paddingLeft: 23 + depth * INDENT }}>{t("Loading.")}</div>;
   if (listing.folders.length === 0 && listing.files.length === 0) {
-    return <div className="empty canvas-empty-folder" style={{ paddingLeft: 23 + depth * INDENT }}>{t("Empty. Drop a piece here.")}</div>;
+    return <div className="empty disk-rebuild-empty-folder" style={{ paddingLeft: 23 + depth * INDENT }}>{t("Empty. Drop a piece here.")}</div>;
   }
   return (
     <>
       {listing.clashes > 0 && (
-        <div className={listing.clashesNeedYou > 0 ? "canvas-clash-summary canvas-clash-summary-needs-you" : "canvas-clash-summary"} style={{ paddingLeft: 23 + depth * INDENT }}>
+        <div className={listing.clashesNeedYou > 0 ? "disk-rebuild-clash-summary disk-rebuild-clash-summary-needs-you" : "disk-rebuild-clash-summary"} style={{ paddingLeft: 23 + depth * INDENT }}>
           {listing.clashesNeedYou > 0
             ? t("{picked} clashes picked for you, {needed} need you", { picked: count(listing.clashesPicked), needed: count(listing.clashesNeedYou) })
             : t("{picked} clashes picked for you", { picked: count(listing.clashesPicked) })}
@@ -406,11 +406,11 @@ function foundName(row: Row | null | undefined, head: number): string {
   return row?.name || (row?.nodeKind === "root" ? t("Volume root") : lostFolderName(head));
 }
 
-/** Claude's suggestions for this canvas, each with its reason, for the person to take or leave. */
-function Suggestions({ canvas, suggestions, items, changed, fail }: {
-  canvas: number;
-  suggestions: CanvasSuggestion[];
-  items: Map<number, CanvasItem>;
+/** Claude's suggestions for this diskRebuild, each with its reason, for the person to take or leave. */
+function Suggestions({ diskRebuild, suggestions, items, changed, fail }: {
+  diskRebuild: number;
+  suggestions: DiskRebuildSuggestion[];
+  items: Map<number, DiskRebuildItem>;
   changed: () => void;
   fail: (reason: unknown) => void;
 }) {
@@ -436,7 +436,7 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
     };
   }, [key]);
 
-  const where = (item: CanvasSuggestion): string => {
+  const where = (item: DiskRebuildSuggestion): string => {
     if (item.placeItem === null) return t("as the top of the tree");
     if (item.placeHead !== null) return t("inside {folder}", { folder: foundName(names.get(item.placeHead), item.placeHead) });
     const target = items.get(item.placeItem);
@@ -446,7 +446,7 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
 
   async function act(tool: "disk_rebuild_accept" | "disk_rebuild_dismiss", suggestion: number) {
     try {
-      await call(tool, { canvas, suggestion });
+      await call(tool, { diskRebuild, suggestion });
       changed();
     } catch (reason) {
       fail(reason);
@@ -470,25 +470,25 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
   );
 }
 
-/** The Rebuild tab in the right panel: one canvas and its rebuilt tree, which pieces are dragged
+/** The Rebuild tab in the right panel: one diskRebuild and its rebuilt tree, which pieces are dragged
  * onto from the sidebar while the middle shows what is in them. */
-export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, onEntry, copy, finder, onFinder, mapRevision }: {
-  canvases: Canvas[];
+export function RebuildView({ diskRebuilds, diskRebuild, onDiskRebuild, revision, onChanged, onEntry, copy, finder, onFinder, mapRevision }: {
+  diskRebuilds: DiskRebuild[];
   copy: CopyStatus | null;
   finder: FinderState;
   onFinder: (state: FinderState) => void;
   mapRevision: number;
-  canvas: number | null;
-  onCanvas: (id: number | null) => void;
+  diskRebuild: number | null;
+  onDiskRebuild: (id: number | null) => void;
   revision: number;
   onChanged: () => void;
   onEntry: (row: Row) => void;
 }) {
-  const [items, setItems] = useState<CanvasItem[]>([]);
+  const [items, setItems] = useState<DiskRebuildItem[]>([]);
   const [unused, setUnused] = useState<UnusedPieces | null>(null);
-  const [suggestions, setSuggestions] = useState<CanvasSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<DiskRebuildSuggestion[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [naming, setNaming] = useState<"canvas" | "rename" | "root" | null>(null);
+  const [naming, setNaming] = useState<"diskRebuild" | "rename" | "root" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [holding, setHolding] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -500,16 +500,16 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     setError(null);
     setConfirmDelete(false);
     setCopying(false);
-    if (canvas === null) {
+    if (diskRebuild === null) {
       setItems([]);
       setUnused(null);
       return;
     }
     let current = true;
     Promise.all([
-      call<CanvasItem[]>("disk_rebuild_items", { canvas }),
-      call<UnusedPieces>("disk_rebuild_unused", { canvas, limit: 1 }),
-      call<CanvasSuggestion[]>("disk_rebuild_suggestions", { canvas }),
+      call<DiskRebuildItem[]>("disk_rebuild_items", { diskRebuild }),
+      call<UnusedPieces>("disk_rebuild_unused", { diskRebuild, limit: 1 }),
+      call<DiskRebuildSuggestion[]>("disk_rebuild_suggestions", { diskRebuild }),
     ])
       .then(([found, left, ideas]) => {
         if (!current) return;
@@ -521,42 +521,42 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     return () => {
       current = false;
     };
-  }, [canvas, revision, fail]);
+  }, [diskRebuild, revision, fail]);
 
   const changed = useCallback(() => {
     setError(null);
     onChanged();
   }, [onChanged]);
 
-  async function createCanvas(name: string | null) {
+  async function createDiskRebuild(name: string | null) {
     setNaming(null);
     if (!name) return;
     try {
       const created = await call<{ id: number }>("disk_rebuild_create", { name });
-      onCanvas(created.id);
+      onDiskRebuild(created.id);
       changed();
     } catch (reason) {
       fail(reason);
     }
   }
 
-  async function renameCanvas(name: string | null) {
+  async function renameDiskRebuild(name: string | null) {
     setNaming(null);
-    if (!name || canvas === null) return;
+    if (!name || diskRebuild === null) return;
     try {
-      await call("disk_rebuild_rename", { canvas, name });
+      await call("disk_rebuild_rename", { diskRebuild, name });
       changed();
     } catch (reason) {
       fail(reason);
     }
   }
 
-  async function deleteCanvas() {
-    if (canvas === null) return;
+  async function deleteDiskRebuild() {
+    if (diskRebuild === null) return;
     setConfirmDelete(false);
     try {
-      await call("disk_rebuild_delete", { canvas });
-      onCanvas(canvases.find((other) => other.id !== canvas)?.id ?? null);
+      await call("disk_rebuild_delete", { diskRebuild });
+      onDiskRebuild(diskRebuilds.find((other) => other.id !== diskRebuild)?.id ?? null);
       changed();
     } catch (reason) {
       fail(reason);
@@ -565,9 +565,9 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
 
   async function startWithFolder(name: string | null) {
     setNaming(null);
-    if (!name || canvas === null) return;
+    if (!name || diskRebuild === null) return;
     try {
-      await call("disk_rebuild_folder", { canvas, name });
+      await call("disk_rebuild_folder", { diskRebuild, name });
       changed();
     } catch (reason) {
       fail(reason);
@@ -575,9 +575,9 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   }
 
   async function putRestAway() {
-    if (canvas === null) return;
+    if (diskRebuild === null) return;
     try {
-      await call("disk_rebuild_leftovers", { canvas, name: t("Leftovers") });
+      await call("disk_rebuild_leftovers", { diskRebuild, name: t("Leftovers") });
       changed();
     } catch (reason) {
       fail(reason);
@@ -585,8 +585,8 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   }
 
   const root = items.find((item) => item.parentItem === null);
-  const current = canvases.find((found) => found.id === canvas);
-  const inFinder = canvas !== null && finder.shown.includes(canvas);
+  const current = diskRebuilds.find((found) => found.id === diskRebuild);
+  const inFinder = diskRebuild !== null && finder.shown.includes(diskRebuild);
 
   // Adding it again when it is already there just opens it.
   async function showInFinder() {
@@ -594,7 +594,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     setFinderBusy(true);
     setFinderNote(null);
     try {
-      const shown = await invoke<{ folder: string | null; note?: string }>("finder_show", { canvas: current.id, name: current.name, revision: `${current.updatedAtMillis}-${mapRevision}` });
+      const shown = await invoke<{ folder: string | null; note?: string }>("finder_show", { diskRebuild: current.id, name: current.name, revision: `${current.updatedAtMillis}-${mapRevision}` });
       onFinder({ available: true, shown: [...finder.shown.filter((id) => id !== current.id), current.id] });
       if (!shown.folder) setFinderNote(t("Turn on Captain Salvage in System Settings, General, Login Items & Extensions, File Providers, then try again."));
     } catch (reason) {
@@ -605,37 +605,37 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   }
 
   async function removeFromFinder() {
-    if (canvas === null) return;
+    if (diskRebuild === null) return;
     setFinderBusy(true);
     setFinderNote(null);
     try {
-      await invoke("finder_hide", { canvas });
-      onFinder({ available: true, shown: finder.shown.filter((id) => id !== canvas) });
+      await invoke("finder_hide", { diskRebuild });
+      onFinder({ available: true, shown: finder.shown.filter((id) => id !== diskRebuild) });
     } catch (reason) {
       fail(reason);
     } finally {
       setFinderBusy(false);
     }
   }
-  const shared: Shared | null = canvas === null ? null : { canvas, items: new Map(items.map((item) => [item.id, item])), revision, changed, fail, onEntry };
+  const shared: Shared | null = diskRebuild === null ? null : { diskRebuild, items: new Map(items.map((item) => [item.id, item])), revision, changed, fail, onEntry };
 
   let body: ReactNode;
-  if (canvases.length === 0 || canvas === null) {
+  if (diskRebuilds.length === 0 || diskRebuild === null) {
     body = (
-      <div className="canvas-start">
+      <div className="disk-rebuild-start">
         <h3>{t("Rebuild the folder tree")}</h3>
         <p>{t("Put the lost pieces back together the way you remember them: drag pieces from the sidebar, put them inside one another, merge them, and make up folders the disk lost. Nothing is written to the disk.")}</p>
-        {naming === "canvas" ? (
-          <NameInput initial={t("My rebuild")} onDone={(name) => void createCanvas(name)} />
+        {naming === "diskRebuild" ? (
+          <NameInput initial={t("My rebuild")} onDone={(name) => void createDiskRebuild(name)} />
         ) : (
-          <button className="primary" onClick={() => setNaming("canvas")}>{t("Start a Disk Rebuild")}</button>
+          <button className="primary" onClick={() => setNaming("diskRebuild")}>{t("Start a Disk Rebuild")}</button>
         )}
       </div>
     );
   } else if (!root) {
     body = (
       <div
-        className={holding ? "canvas-drop-first canvas-drop-first-holding" : "canvas-drop-first"}
+        className={holding ? "disk-rebuild-drop-first disk-rebuild-drop-first-holding" : "disk-rebuild-drop-first"}
         onDragOver={(event) => {
           if (!carriesSomething(event)) return;
           event.preventDefault();
@@ -663,7 +663,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   } else if (shared) {
     body = (
       <div
-        className="canvas-tree"
+        className="disk-rebuild-tree"
         onDragOver={(event) => {
           if (carriesSomething(event)) event.preventDefault();
         }}
@@ -682,24 +682,24 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   return (
     <section className="rebuild" aria-label={t("Rebuild")}>
       <div className="rebuild-bar">
-        {canvases.length > 0 && (
-          <select value={canvas ?? ""} onChange={(event) => onCanvas(event.target.value ? Number(event.target.value) : null)} aria-label={t("Disk Rebuild")}>
-            {canvases.map((found) => <option key={found.id} value={found.id}>{found.name}</option>)}
+        {diskRebuilds.length > 0 && (
+          <select value={diskRebuild ?? ""} onChange={(event) => onDiskRebuild(event.target.value ? Number(event.target.value) : null)} aria-label={t("Disk Rebuild")}>
+            {diskRebuilds.map((found) => <option key={found.id} value={found.id}>{found.name}</option>)}
           </select>
         )}
         {naming === "rename" && current ? (
-          <NameInput initial={current.name} onDone={(name) => void renameCanvas(name)} />
+          <NameInput initial={current.name} onDone={(name) => void renameDiskRebuild(name)} />
         ) : (
           current && <button className="link" onClick={() => setNaming("rename")}>{t("Rename")}</button>
         )}
-        {canvases.length > 0 && (naming === "canvas" ? (
-          <NameInput initial={t("Another try")} onDone={(name) => void createCanvas(name)} />
+        {diskRebuilds.length > 0 && (naming === "diskRebuild" ? (
+          <NameInput initial={t("Another try")} onDone={(name) => void createDiskRebuild(name)} />
         ) : (
-          <button className="link" onClick={() => setNaming("canvas")}>{t("New Disk Rebuild")}</button>
+          <button className="link" onClick={() => setNaming("diskRebuild")}>{t("New Disk Rebuild")}</button>
         ))}
         {current && (confirmDelete ? (
           <span className="rebuild-confirm">
-            {t("Delete this Disk Rebuild?")} <button className="link" onClick={() => void deleteCanvas()}>{t("Delete")}</button>{" "}
+            {t("Delete this Disk Rebuild?")} <button className="link" onClick={() => void deleteDiskRebuild()}>{t("Delete")}</button>{" "}
             <button className="link" onClick={() => setConfirmDelete(false)}>{t("Keep it")}</button>
           </span>
         ) : (
@@ -729,9 +729,9 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
       {finderNote && <p className="muted rebuild-error">{finderNote}</p>}
       {error && <p className="warn rebuild-error">{fromEngine(error.replace(/^Error: /, ""))}</p>}
       <div className="rebuild-body">
-        {copying && root && canvas !== null && <CanvasCopy canvas={canvas} copy={copy} revision={revision} onClose={() => setCopying(false)} />}
+        {copying && root && diskRebuild !== null && <DiskRebuildCopy diskRebuild={diskRebuild} copy={copy} revision={revision} onClose={() => setCopying(false)} />}
         {shared && suggestions.length > 0 && (
-          <Suggestions canvas={shared.canvas} suggestions={suggestions} items={shared.items} changed={changed} fail={fail} />
+          <Suggestions diskRebuild={shared.diskRebuild} suggestions={suggestions} items={shared.items} changed={changed} fail={fail} />
         )}
         {body}
       </div>
@@ -741,7 +741,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
 }
 
 /** The top of the tree, always open, and the folder everything else goes into. */
-function RootNode({ root, shared }: { root: CanvasItem; shared: Shared }) {
+function RootNode({ root, shared }: { root: DiskRebuildItem; shared: Shared }) {
   const [rootFolder, setRootFolder] = useState<RebuiltFolder | null>(null);
   useEffect(() => {
     let current = true;
