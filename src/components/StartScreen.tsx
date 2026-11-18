@@ -203,55 +203,131 @@ function lastOpened(known: KnownVolume): string {
   return new Date(known.record.lastOpenedMillis).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" });
 }
 
+/** What is known about a volume seen before, as plain sentences that run on from the line above. */
 function KnownLine({ known }: { known: KnownVolume }) {
   return (
-    <p className="start-known">
+    <>
       {t("Seen before, last opened {date}.", { date: lastOpened(known) })}
       {known.scanned && ` ${t("{bytes} found by name, in {count} files.", { bytes: bytes(known.bytesFound), count: count(known.filesFound) })}`}
       {known.filesPassed + known.filesDamaged > 0 && ` ${t("{passed} tested good, {damaged} damaged.", { passed: count(known.filesPassed), damaged: count(known.filesDamaged) })}`}
-    </p>
+    </>
   );
 }
 
+/** The device name macOS uses for the block device, which is what a command needs. */
+function blockDevice(device: string): string {
+  return device.replace("/dev/rdisk", "/dev/disk");
+}
+
+/** A short name for a device: disk4s1 for /dev/rdisk4s1, or the file name for an image. */
+function shortDevice(device: string): string {
+  return device.startsWith("/dev/") ? device.replace(/^\/dev\/r?/, "") : device.split("/").pop() || device;
+}
+
+type Status = "ready" | "mounted" | "permission" | "raw";
+
+function statusOf(volume: StartupVolume): Status {
+  if (volume.mountPoint) return "mounted";
+  if (!volume.readable) return "permission";
+  return volume.canOpen ? "ready" : "raw";
+}
+
+function statusLabel(status: Status): string {
+  return { ready: t("Ready"), mounted: t("Mounted"), permission: t("Needs permission"), raw: t("Raw bytes only") }[status];
+}
+
+/** One volume on one line: what it is, how it stands, whether to block its mounting, and how to open it. */
 function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: string) => void }) {
-  const block = volume.device.replace("/dev/rdisk", "/dev/disk");
   const title = volume.name || t("Unnamed volume");
-  const ready = volume.canOpen && !volume.mountPoint && volume.readable;
+  const status = statusOf(volume);
   return (
     <li className={volume.canOpen ? "start-volume" : "start-volume start-volume-other"}>
-      <div className="start-volume-head">
-        <div className="start-volume-title">
-          <strong>{title}</strong>
-          <span>{bytes(volume.bytes)}, {volume.format}, {volume.device}</span>
-        </div>
-        {ready && <button className="primary" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
+      <div className="start-volume-title">
+        <strong>{title}</strong>
+        <span>
+          {volume.format}, {bytes(volume.bytes)}, {shortDevice(volume.device)}.{" "}
+          {volume.known ? <KnownLine known={volume.known} /> : volume.canOpen && t("Not seen before.")}
+        </span>
       </div>
-      {volume.known && <KnownLine known={volume.known} />}
-      {volume.uuid && <MountBlockToggle uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
-      {volume.mountPoint && <Command text={`diskutil unmount ${block}`} />}
+      <span className={`start-status start-status-${status}`}>{statusLabel(status)}</span>
+      {volume.uuid && <MountBlockToggle compact uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
+      {status === "ready" && <button className="primary start-open" onClick={() => onOpen(volume.device)}>{volume.known ? t("Open again") : t("Open")}</button>}
     </li>
   );
 }
 
-/** What to say once under the list, however many volumes need it, so no row repeats a sentence. */
-function ListNotes({ volumes, disks }: { volumes: StartupVolume[]; disks: StartupDisk[] }) {
+interface DiskGroup {
+  device: string;
+  /** Null when macOS named volumes on a disk it did not list as a whole. */
+  disk: StartupDisk | null;
+  volumes: StartupVolume[];
+}
+
+/** Every volume sits under the physical disk it is on, and a disk with none is still listed. */
+function diskGroups(disks: StartupDisk[], volumes: StartupVolume[]): DiskGroup[] {
+  const groups: DiskGroup[] = disks.map((disk) => ({ device: disk.device, disk, volumes: volumes.filter((volume) => volume.wholeDisk === disk.device) }));
+  for (const volume of volumes) {
+    if (groups.some((group) => group.device === volume.wholeDisk)) continue;
+    groups.push({ device: volume.wholeDisk, disk: null, volumes: volumes.filter((other) => other.wholeDisk === volume.wholeDisk) });
+  }
+  return groups;
+}
+
+/** What the person has to do about this disk before it opens, said once for the whole disk. */
+function DiskNotices({ group }: { group: DiskGroup }) {
+  const mounted = group.volumes.filter((volume) => volume.mountPoint);
   const unreadable = [...new Set([
-    ...volumes.filter((volume) => !volume.mountPoint && !volume.readable).flatMap((volume) => [volume.device, volume.wholeDisk]),
-    ...disks.filter((disk) => !disk.readable).map((disk) => disk.device),
+    ...group.volumes.filter((volume) => !volume.mountPoint && !volume.readable).flatMap((volume) => [volume.device, volume.wholeDisk]),
+    ...(group.disk && !group.disk.readable ? [group.disk.device] : []),
   ])];
+  if (mounted.length === 0 && unreadable.length === 0) return null;
+  const unmount = mounted.length === 1 ? `diskutil unmount ${blockDevice(mounted[0].device)}` : `diskutil unmountDisk ${blockDevice(group.device)}`;
   return (
-    <div className="start-notes">
-      {volumes.some((volume) => volume.mountPoint) && (
-        <p className="start-caution">{t("Mounted volumes may be written to by macOS. Unmounting stops that, but writes a little itself. A volume has to be unmounted before it can be opened here; the command is under it.")}</p>
+    <div className="start-disk-notices">
+      {mounted.length > 0 && (
+        <div className="start-caution">
+          <p>{t("Mounted, so macOS may write to it. Unmounting stops that, but writes a little itself, and it must be unmounted before it can be opened here.")}</p>
+          <Command text={unmount} />
+        </div>
       )}
-      {volumes.some((volume) => !volume.canOpen) && <p className="start-new">{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats can be inspected as raw bytes.")}</p>}
       {unreadable.length > 0 && (
         <div className="start-needs">
-          <p>{t("Reading these needs your permission. Run this in Terminal. It gives read-only access, and lasts until the disk is reconnected.")}</p>
+          <p>{t("Reading needs your permission. Run this in Terminal: it gives read-only access until the disk is reconnected.")}</p>
           <Command text={`sudo chgrp staff ${unreadable.join(" ")}`} />
         </div>
       )}
     </div>
+  );
+}
+
+/** One physical disk: a short header, its volumes as rows, and what it needs, once. */
+function DiskCard({ group, onOpen, onRaw }: { group: DiskGroup; onOpen: (path: string) => void; onRaw: (path: string) => void }) {
+  const [raw, setRaw] = useState(false);
+  const bytesOnDisk = group.disk?.bytes ?? group.volumes.reduce((total, volume) => total + volume.bytes, 0);
+  return (
+    <li className="start-disk">
+      <div className="start-disk-head">
+        <strong>{group.disk?.name || t("Disk")}</strong>
+        <span>{t("{bytes}, whole disk {device}", { bytes: bytes(bytesOnDisk), device: shortDevice(group.device) })}</span>
+        <button
+          className="start-raw-toggle"
+          aria-expanded={raw}
+          title={t("No filesystem is needed. Choose a whole disk, even when its partition table is damaged or missing, or one partition on it. The map shows exactly the bytes you choose.")}
+          onClick={() => setRaw(!raw)}
+        >
+          {t("Inspect raw…")}
+        </button>
+      </div>
+      {raw && <RawChooser disk={group.disk} volumes={group.volumes} onRaw={onRaw} />}
+      {group.volumes.length > 0 ? (
+        <ul className="start-volumes">
+          {group.volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} />)}
+        </ul>
+      ) : (
+        <p className="start-disk-empty">{t("No volumes found on it. Its partition table may be damaged, but its raw bytes can still be inspected.")}</p>
+      )}
+      <DiskNotices group={group} />
+    </li>
   );
 }
 
@@ -295,6 +371,9 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
   const recognised = report?.volumes.find((volume) => volume.known)?.known ?? report?.elsewhere[0] ?? null;
   const volumes = report?.volumes ?? [];
   const disks = report?.disks ?? [];
+  const groups = useMemo(() => diskGroups(disks, volumes), [disks, volumes]);
+  const elsewhere = report?.elsewhere ?? [];
+  const blockable = volumes.some((volume) => volume.uuid) || elsewhere.some((known) => known.record.uuid);
 
   return (
     <main className="start">
@@ -321,6 +400,9 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
 
         <div className="start-heading">
           <h2>{t("Which disk is damaged?")}</h2>
+          <label className="check start-internal">
+            <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> {t("Show internal disks")}
+          </label>
           <button onClick={() => look(internal)} disabled={looking}>{looking ? t("Looking") : t("Check again")}</button>
         </div>
 
@@ -328,53 +410,42 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
         {failure && <p className="warn">{fromEngine(failure)}</p>}
         {access?.instructions.map((text) => <p key={text} className="instruction">{fromEngine(text)}</p>)}
 
-        {volumes.length > 0 ? (
-          <ul className="start-volumes">
-            {volumes.map((volume) => <VolumeRow key={volume.device} volume={volume} onOpen={onOpen} />)}
-          </ul>
-        ) : (
-          !looking && disks.length === 0 && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
-        )}
-        {report && <ListNotes volumes={volumes} disks={disks} />}
-        {disks.length > 0 && <RawChooser disks={disks} volumes={volumes} onRaw={onRaw} />}
-
-        <label className="check start-internal">
-          <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> {t("Show internal disks")}
-        </label>
-
-        {report && report.elsewhere.length > 0 && (
-          <>
-            <h3>{t("Seen before, not attached")}</h3>
-            <ul className="start-volumes">
-              {report.elsewhere.map((known) => (
-                <li key={`${known.record.uuid}-${known.record.lastOpenedMillis}`} className="start-volume">
-                  <div className="start-volume-title">
-                    <strong>{known.record.name || t("Unnamed volume")}</strong>
-                    <span>{bytes(known.record.bytes)}</span>
-                  </div>
-                  <KnownLine known={known} />
-                  {known.record.uuid && <MountBlockToggle uuid={known.record.uuid} name={known.record.name || t("Unnamed volume")} mounted={false} />}
-                </li>
-              ))}
+        <div className="start-list">
+          {groups.length > 0 ? (
+            <ul className="start-disks">
+              {groups.map((group) => <DiskCard key={group.device} group={group} onOpen={onOpen} onRaw={onRaw} />)}
             </ul>
-          </>
-        )}
+          ) : (
+            !looking && <p className="start-empty">{t("No disks found here. Plug in the damaged disk, then check again.")}</p>
+          )}
 
-        <section className="start-image">
-          <h3>{t("Or open a disk image")}</h3>
-          <p>{t("A raw image of a disk or a partition, or a device by its path. Opening it needs a filesystem this app reads; any image can be inspected as raw bytes without one.")}</p>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              onOpen(path.trim());
-            }}
-          >
-            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label={t("Disk image or device path")} />
-            <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>{t("Choose a file")}</button>
-            <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>{t("Open")}</button>
-          </form>
-          <div className="raw-entry-actions"><button type="button" disabled={!path.trim()} onClick={() => onRaw(path.trim())}>{t("Inspect raw disk or image")}</button></div>
-        </section>
+          {elsewhere.length > 0 && (
+            <>
+              <h3>{t("Seen before, not attached")}</h3>
+              <ul className="start-volumes start-elsewhere">
+                {elsewhere.map((known) => {
+                  const name = known.record.name || t("Unnamed volume");
+                  return (
+                    <li key={`${known.record.uuid}-${known.record.lastOpenedMillis}`} className="start-volume">
+                      <div className="start-volume-title">
+                        <strong>{name}</strong>
+                        <span>{bytes(known.record.bytes)}. <KnownLine known={known} /></span>
+                      </div>
+                      {known.record.uuid && <MountBlockToggle compact uuid={known.record.uuid} name={name} mounted={false} />}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </div>
+
+        {(blockable || volumes.some((volume) => !volume.canOpen)) && (
+          <div className="start-notes">
+            {blockable && <p className="start-block-note">{t("Block mount is to prevent data loss. While Captain Salvage is open, macOS is stopped from mounting a blocked volume, because mounting a damaged volume lets macOS write to it.")}</p>}
+            {volumes.some((volume) => !volume.canOpen) && <p>{t("Filesystem recovery supports exFAT, FAT12/16/32 and NTFS. Other formats can be inspected as raw bytes.")}</p>}
+          </div>
+        )}
 
         {report && volumes.length === 0 && (
           <p className="start-warning">
@@ -382,6 +453,20 @@ export function StartScreen({ imagePath, failure, onOpen, onRaw, onBack, themeSw
           </p>
         )}
 
+        <section className="start-image">
+          <h3>{t("Or open a disk image")}</h3>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onOpen(path.trim());
+            }}
+          >
+            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/path/to/disk.img" spellCheck={false} aria-label={t("Disk image or device path")} title={t("A raw image of a disk or a partition, or a device by its path. Opening it needs a filesystem this app reads; any image can be inspected as raw bytes without one.")} />
+            <button type="button" onClick={() => void invoke<string | null>("choose_disk_image").then((chosen) => chosen && setPath(chosen))}>{t("Choose a file")}</button>
+            <button type="submit" className={path.trim() ? "primary" : undefined} disabled={!path.trim()}>{t("Open")}</button>
+            <span className="raw-entry-actions"><button type="button" disabled={!path.trim()} onClick={() => onRaw(path.trim())}>{t("Inspect raw")}</button></span>
+          </form>
+        </section>
       </section>
     </main>
   );
