@@ -3,6 +3,7 @@ import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "
 import { bytes, count, displayPath, guessedFolderLabel, lostFolderName, percent, verdictLabel } from "../format";
 import { useSimple } from "../mode";
 import { fromEngine, t } from "../i18n";
+import type { ExportHandler } from "./ContextMenu";
 import { startPieceDrag } from "./RebuildView";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 
@@ -44,23 +45,10 @@ interface RowProps {
   canvasPieces: Set<number> | null;
   onEntry: (row: Row) => void;
   onFolder: (row: Row) => void;
-  basket: Set<string>;
-  onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
+  /** Right-clicking a file or a folder offers to export it. */
+  onExport: ExportHandler;
   /** Folders to open so the selection shows, from a selection made outside the tree. */
   reveal?: number[] | null;
-}
-
-function BasketCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange: (add: boolean) => void }) {
-  return (
-    <input
-      className="basket-check"
-      type="checkbox"
-      checked={checked}
-      aria-label={label}
-      title={checked ? t("On the treasure list") : t("Add to the treasure list")}
-      onChange={(event) => onChange(event.target.checked)}
-    />
-  );
 }
 
 /** The window lights up a file's pieces on the map while the pointer rests on its row. */
@@ -70,7 +58,7 @@ function announceHover(id: number | null) {
   window.dispatchEvent(new CustomEvent<number | null>(HOVER_ENTRY_EVENT, { detail: id }));
 }
 
-function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; basket: Set<string>; onBasket: RowProps["onBasket"]; depth?: number }) {
+function FileRow({ row, selected, onSelect, showPath, onExport, depth }: { row: Row; selected: boolean; onSelect: () => void; showPath?: boolean; onExport: ExportHandler; depth?: number }) {
   const simple = useSimple();
   const verdict = verdictLabel(row.verdict);
   const id = row.id as number;
@@ -79,6 +67,7 @@ function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }:
     <button
       className={selected ? "row row-selected" : "row"}
       onClick={onSelect}
+      onContextMenu={(event) => row.kind === "file" && row.length > 0 && onExport(event, { kind: "file", target: id, name: row.name })}
       title={fromEngine(row.reason)}
       data-depth={depth}
       onMouseEnter={() => announceHover(id)}
@@ -92,9 +81,6 @@ function FileRow({ row, selected, onSelect, showPath, basket, onBasket, depth }:
       <span className="row-size">{row.kind === "file" ? bytes(row.length) : ""}</span>
       <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
     </button>
-    {row.kind === "file" && row.length > 0 && (
-      <BasketCheck checked={basket.has(`entry:${id}`)} label={t("Add {name} to the treasure list", { name: row.name })} onChange={(add) => onBasket("entry", id, add)} />
-    )}
     </div>
   );
 }
@@ -151,11 +137,12 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
         data-depth={depth}
         draggable={piece && !used}
         onDragStart={(event) => startPieceDrag(event, head)}
-        title={used ? t("Already on the canvas") : piece ? t("Drag onto the canvas") : row.hint ? t("Contains: {hint}", { hint: row.hint }) : undefined}
+        title={used ? t("Already in the Disk Rebuild") : piece ? t("Drag onto the Disk Rebuild") : row.hint ? t("Contains: {hint}", { hint: row.hint }) : undefined}
         onClick={() => {
           setOpen(!open);
           props.onFolder(row);
         }}
+        onContextMenu={(event) => row.nodeKind !== "root" && props.onExport(event, { kind: "folder", target: head, name })}
       >
         <span className={open ? "disclosure disclosure-open" : "disclosure"}><Icon name="chevronRight" size={11} /></span>
         <span className="row-icon row-icon-folder"><Icon name="folder" /></span>
@@ -174,9 +161,6 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
           <ConfidenceRing value={row.linkConfidence} tone="tone-serious" label={t("Link to its parent folder: confidence {percent}", { percent: percent(row.linkConfidence) })} />
         ) : null}
       </button>
-      {row.nodeKind !== "root" && (
-        <BasketCheck checked={props.basket.has(`folder:${head}`)} label={t("Add {name} to the treasure list", { name })} onChange={(add) => props.onBasket("folder", head, add)} />
-      )}
       </div>
       {open && error && <div className="empty" style={{ paddingLeft: 20 + depth * 14 }}>{fromEngine(error)}</div>}
       {open &&
@@ -185,7 +169,7 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
             <FolderRow key={`f${child.head}`} row={child} depth={depth + 1} props={props} />
           ) : (
             <div key={`e${child.id}`} style={{ paddingLeft: depth * 14 + 17 }}>
-              <FileRow row={child} selected={props.selectedKey === `entry:${child.id}`} onSelect={() => props.onEntry(child)} basket={props.basket} onBasket={props.onBasket} depth={depth + 1} />
+              <FileRow row={child} selected={props.selectedKey === `entry:${child.id}`} onSelect={() => props.onEntry(child)} onExport={props.onExport} depth={depth + 1} />
             </div>
           ),
         )}
@@ -264,7 +248,7 @@ function Nameless({ onChain, selectedKey, revision, classNames, clusterSize }: {
   );
 }
 
-function Broken({ onEntry, selectedKey, revision, basket, onBasket }: { onEntry: (row: Row) => void; selectedKey: string | null; revision: number; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
+function Broken({ onEntry, selectedKey, revision, onExport }: { onEntry: (row: Row) => void; selectedKey: string | null; revision: number; onExport: ExportHandler }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   useEffect(() => {
     let current = true;
@@ -278,7 +262,7 @@ function Broken({ onEntry, selectedKey, revision, basket, onBasket }: { onEntry:
       <p className="hint">{t("Files whose FAT chain ends before their length says it should. Most missing data first.")}</p>
       {rows && rows.length === 0 && <div className="empty">{t("No broken chains found so far.")}</div>}
       {rows?.map((row) => (
-        <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} basket={basket} onBasket={onBasket} />
+        <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} onExport={onExport} />
       ))}
     </>
   );
@@ -315,7 +299,7 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   );
 }
 
-function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, onBasket }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; openKey: string | null; basket: Set<string>; onBasket: RowProps["onBasket"] }) {
+function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, onExport }: { page: Page; onEntry: (row: Row) => void; onFolder: (row: Row) => void; selectedKey: string | null; openKey: string | null; onExport: ExportHandler }) {
   const simple = useSimple();
   if (page.rows.length === 0) return <div className="empty">{t("No names match. The scan may not have reached them yet.")}</div>;
   return (
@@ -327,6 +311,7 @@ function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, 
             className={rowClass(`folder:${row.head ?? row.firstCluster}`, selectedKey, openKey)}
             aria-current={openKey === `folder:${row.head ?? row.firstCluster}` ? "true" : undefined}
             onClick={() => onFolder(row)}
+            onContextMenu={(event) => onExport(event, { kind: "folder", target: (row.head ?? row.firstCluster) as number, name: row.name })}
           >
             <span className="row-icon row-icon-folder"><Icon name="folder" /></span>
             <span className="row-main">
@@ -335,7 +320,7 @@ function SearchResults({ page, onEntry, onFolder, selectedKey, openKey, basket, 
             </span>
           </button>
         ) : (
-          <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} basket={basket} onBasket={onBasket} />
+          <FileRow key={row.id} row={row} showPath selected={selectedKey === `entry:${row.id}`} onSelect={() => onEntry(row)} onExport={onExport} />
         ),
       )}
     </>
@@ -495,12 +480,12 @@ export function Explorer(props: ExplorerProps) {
         }}
       >
         {results ? (
-          <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} openKey={props.openKey} basket={props.basket} onBasket={props.onBasket} />
+          <SearchResults page={results} onEntry={props.onEntry} onFolder={props.onFolder} selectedKey={props.selectedKey} openKey={props.openKey} onExport={props.onExport} />
         ) : (
           <>
             {tab === "folders" && <Folders {...props} reveal={reveal} />}
             {tab === "nameless" && <Nameless onChain={props.onChain} selectedKey={props.selectedKey} revision={props.revision} classNames={props.classNames} clusterSize={props.clusterSize} />}
-            {tab === "broken" && <Broken onEntry={props.onEntry} selectedKey={props.selectedKey} revision={props.revision} basket={props.basket} onBasket={props.onBasket} />}
+            {tab === "broken" && <Broken onEntry={props.onEntry} selectedKey={props.selectedKey} revision={props.revision} onExport={props.onExport} />}
             {tab === "unexplained" && <Unexplained onRegion={props.onRegion} selectedKey={props.selectedKey} revision={props.revision} />}
           </>
         )}

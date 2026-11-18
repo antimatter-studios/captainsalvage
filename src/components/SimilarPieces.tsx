@@ -77,7 +77,7 @@ export function SimilarPieces({ head, onOpen, onSwap, used }: {
             </span>
             {onSwap && (
               used?.has(head)
-                ? <span className="muted">{t("On the canvas")}</span>
+                ? <span className="muted">{t("In the Disk Rebuild")}</span>
                 : <button onClick={() => onSwap(item.piece)}>{t("Swap in")}</button>
             )}
           </div>

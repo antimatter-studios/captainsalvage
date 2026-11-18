@@ -72,8 +72,8 @@ macOS can, though, and that can happen before the app is open. See
   again from the destination. The copy report shows every file copied, complete or partial,
   and can read every copy again later to catch one changed or lost since. It reads only the
   destination.
-- Only the person using the app can start a copy or choose a salvage drive. An AI can
-  plan a copy, but not start one.
+- Only the person using the app can start an export or a Disk Rebuild copy, or choose a
+  salvage drive. An AI can plan one, but not start it.
 - While the app is open, macOS cannot mount a volume the person blocked. See
   [Before you plug the disk in](#before-you-plug-the-disk-in).
 
@@ -474,6 +474,36 @@ cargo build --release -p captainsalvage
 ```
 
 A scan reads the whole partition once, and can stop and resume at any time.
+
+### Copying files out from a terminal
+
+`--call` runs one engine tool as the person using the app, against a scanned volume, and prints
+its answer. The two tools that start a copy wait for it to finish and print its final status.
+
+```sh
+# Find a file, plan its export, then export it.
+./target/release/captainsalvage scan /dev/rdisk4s2 --call search '{"query":"photo.jpg"}'
+./target/release/captainsalvage scan /dev/rdisk4s2 --call export_plan \
+  '{"kind":"file","target":123,"destination":"/Volumes/Recovered/photos"}'
+./target/release/captainsalvage scan /dev/rdisk4s2 --call export_start \
+  '{"kind":"file","target":123,"destination":"/Volumes/Recovered/photos"}'
+```
+
+`export_plan` and `export_start` take `kind` (`file`, or `folder` with its head cluster as
+`target`), `target`, `destination`, and optionally `minConfidence` and `includePartial`. An
+export lands directly under the destination, never over a file that is already there, and each
+copy is checked as it is written.
+
+A Disk Rebuild is built with `disk_rebuild_create`, `disk_rebuild_folder` and
+`disk_rebuild_place` (a found folder under a parent) or `disk_rebuild_place_file`, then
+`disk_rebuild_copy_plan` and `disk_rebuild_copy_start` copy its tree to its rebuilt paths. The
+other `disk_rebuild_*` tools list, move, rename and remove what is in it. Agents over MCP can
+plan with `export_plan` and `disk_rebuild_copy_plan` and suggest placements with
+`disk_rebuild_suggest`; building and copying stay the person's.
+
+The tools that were called `canvas_*` are now `disk_rebuild_*`. The old `basket_*` tools,
+`copy_plan` and `copy_start` are gone: the old names answer with the tool that replaces them,
+for this release only.
 
 To inspect a disk without choosing a filesystem first:
 

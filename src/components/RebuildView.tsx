@@ -72,12 +72,12 @@ function placeOf(folder: RebuiltFolder, around: number | null): CanvasPlace | nu
 async function drop(shared: Shared, what: Dragged, place: CanvasPlace | undefined, merge: boolean) {
   try {
     if (what.piece !== undefined) {
-      await call("canvas_place", { canvas: shared.canvas, head: what.piece, place: place ?? null, merge });
+      await call("disk_rebuild_place", { canvas: shared.canvas, head: what.piece, place: place ?? null, merge });
     } else if (what.item !== undefined) {
-      await call("canvas_move", { canvas: shared.canvas, item: what.item, place: place ?? null, merge });
+      await call("disk_rebuild_move", { canvas: shared.canvas, item: what.item, place: place ?? null, merge });
     } else if (what.entry !== undefined) {
       // A single file always joins the folder it lands on, as a layer of one file.
-      await call("canvas_place_file", { canvas: shared.canvas, entry: what.entry, place: place ?? null });
+      await call("disk_rebuild_place_file", { canvas: shared.canvas, entry: what.entry, place: place ?? null });
     }
     shared.changed();
   } catch (reason) {
@@ -162,7 +162,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
     setNaming(null);
     if (!name || !place) return;
     try {
-      await call("canvas_folder", { canvas: shared.canvas, name, place });
+      await call("disk_rebuild_folder", { canvas: shared.canvas, name, place });
       setOpen(true);
       shared.changed();
     } catch (reason) {
@@ -174,7 +174,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
     setNaming(null);
     if (!item) return;
     try {
-      await call("canvas_rename_item", { canvas: shared.canvas, item: item.id, name: name ?? (item.kind === "folder" ? label : null) });
+      await call("disk_rebuild_rename_item", { canvas: shared.canvas, item: item.id, name: name ?? (item.kind === "folder" ? label : null) });
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -184,7 +184,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   async function swap(piece: Row) {
     if (!item || piece.head === null) return;
     try {
-      await call("canvas_swap", { canvas: shared.canvas, item: item.id, head: piece.head });
+      await call("disk_rebuild_swap", { canvas: shared.canvas, item: item.id, head: piece.head });
       setSimilar(false);
       shared.changed();
     } catch (reason) {
@@ -195,7 +195,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   async function remove() {
     if (!item) return;
     try {
-      await call("canvas_remove", { canvas: shared.canvas, item: item.id });
+      await call("disk_rebuild_remove", { canvas: shared.canvas, item: item.id });
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -267,7 +267,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
               </button>
             )}
             {item && (
-              <button className="icon-button" title={t("Take off the canvas")} aria-label={t("Take off the canvas")} onClick={() => void remove()}>
+              <button className="icon-button" title={t("Take off the Disk Rebuild")} aria-label={t("Take off the Disk Rebuild")} onClick={() => void remove()}>
                 <Icon name="close" size={12} />
               </button>
             )}
@@ -305,7 +305,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
   async function choose(entry: number | null) {
     setChoosing(false);
     try {
-      await call("canvas_choose", { canvas: shared.canvas, path: [...path, file.name], entry });
+      await call("disk_rebuild_choose", { canvas: shared.canvas, path: [...path, file.name], entry });
       shared.changed();
     } catch (reason) {
       shared.fail(reason);
@@ -364,7 +364,7 @@ function FolderContents({ path, depth, around, shared }: { path: string[]; depth
   const key = path.join("\u0000");
   useEffect(() => {
     let current = true;
-    call<CanvasListing>("canvas_tree", { canvas: shared.canvas, path, limit })
+    call<CanvasListing>("disk_rebuild_tree", { canvas: shared.canvas, path, limit })
       .then((result) => current && setListing(result))
       .catch((reason) => current && shared.fail(reason));
     return () => {
@@ -444,7 +444,7 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
     return item.merge ? t("merged with {folder}", { folder: name }) : t("inside {folder}", { folder: name });
   };
 
-  async function act(tool: "canvas_accept" | "canvas_dismiss", suggestion: number) {
+  async function act(tool: "disk_rebuild_accept" | "disk_rebuild_dismiss", suggestion: number) {
     try {
       await call(tool, { canvas, suggestion });
       changed();
@@ -462,8 +462,8 @@ function Suggestions({ canvas, suggestions, items, changed, fail }: {
             <strong>{t("Put {piece} {where}", { piece: foundName(names.get(item.head), item.head), where: where(item) })}</strong>
             <span className="muted">{item.note}</span>
           </div>
-          <button className="primary" onClick={() => void act("canvas_accept", item.id)}>{t("Accept")}</button>
-          <button onClick={() => void act("canvas_dismiss", item.id)}>{t("Dismiss")}</button>
+          <button className="primary" onClick={() => void act("disk_rebuild_accept", item.id)}>{t("Accept")}</button>
+          <button onClick={() => void act("disk_rebuild_dismiss", item.id)}>{t("Dismiss")}</button>
         </div>
       ))}
     </div>
@@ -507,9 +507,9 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     }
     let current = true;
     Promise.all([
-      call<CanvasItem[]>("canvas_items", { canvas }),
-      call<UnusedPieces>("canvas_unused", { canvas, limit: 1 }),
-      call<CanvasSuggestion[]>("canvas_suggestions", { canvas }),
+      call<CanvasItem[]>("disk_rebuild_items", { canvas }),
+      call<UnusedPieces>("disk_rebuild_unused", { canvas, limit: 1 }),
+      call<CanvasSuggestion[]>("disk_rebuild_suggestions", { canvas }),
     ])
       .then(([found, left, ideas]) => {
         if (!current) return;
@@ -532,7 +532,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     setNaming(null);
     if (!name) return;
     try {
-      const created = await call<{ id: number }>("canvas_create", { name });
+      const created = await call<{ id: number }>("disk_rebuild_create", { name });
       onCanvas(created.id);
       changed();
     } catch (reason) {
@@ -544,7 +544,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     setNaming(null);
     if (!name || canvas === null) return;
     try {
-      await call("canvas_rename", { canvas, name });
+      await call("disk_rebuild_rename", { canvas, name });
       changed();
     } catch (reason) {
       fail(reason);
@@ -555,7 +555,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     if (canvas === null) return;
     setConfirmDelete(false);
     try {
-      await call("canvas_delete", { canvas });
+      await call("disk_rebuild_delete", { canvas });
       onCanvas(canvases.find((other) => other.id !== canvas)?.id ?? null);
       changed();
     } catch (reason) {
@@ -567,7 +567,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     setNaming(null);
     if (!name || canvas === null) return;
     try {
-      await call("canvas_folder", { canvas, name });
+      await call("disk_rebuild_folder", { canvas, name });
       changed();
     } catch (reason) {
       fail(reason);
@@ -577,7 +577,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
   async function putRestAway() {
     if (canvas === null) return;
     try {
-      await call("canvas_leftovers", { canvas, name: t("Leftovers") });
+      await call("disk_rebuild_leftovers", { canvas, name: t("Leftovers") });
       changed();
     } catch (reason) {
       fail(reason);
@@ -628,7 +628,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         {naming === "canvas" ? (
           <NameInput initial={t("My rebuild")} onDone={(name) => void createCanvas(name)} />
         ) : (
-          <button className="primary" onClick={() => setNaming("canvas")}>{t("Start a canvas")}</button>
+          <button className="primary" onClick={() => setNaming("canvas")}>{t("Start a Disk Rebuild")}</button>
         )}
       </div>
     );
@@ -683,7 +683,7 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
     <section className="rebuild" aria-label={t("Rebuild")}>
       <div className="rebuild-bar">
         {canvases.length > 0 && (
-          <select value={canvas ?? ""} onChange={(event) => onCanvas(event.target.value ? Number(event.target.value) : null)} aria-label={t("Canvas")}>
+          <select value={canvas ?? ""} onChange={(event) => onCanvas(event.target.value ? Number(event.target.value) : null)} aria-label={t("Disk Rebuild")}>
             {canvases.map((found) => <option key={found.id} value={found.id}>{found.name}</option>)}
           </select>
         )}
@@ -695,11 +695,11 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         {canvases.length > 0 && (naming === "canvas" ? (
           <NameInput initial={t("Another try")} onDone={(name) => void createCanvas(name)} />
         ) : (
-          <button className="link" onClick={() => setNaming("canvas")}>{t("New canvas")}</button>
+          <button className="link" onClick={() => setNaming("canvas")}>{t("New Disk Rebuild")}</button>
         ))}
         {current && (confirmDelete ? (
           <span className="rebuild-confirm">
-            {t("Delete this canvas?")} <button className="link" onClick={() => void deleteCanvas()}>{t("Delete")}</button>{" "}
+            {t("Delete this Disk Rebuild?")} <button className="link" onClick={() => void deleteCanvas()}>{t("Delete")}</button>{" "}
             <button className="link" onClick={() => setConfirmDelete(false)}>{t("Keep it")}</button>
           </span>
         ) : (
@@ -716,14 +716,14 @@ export function RebuildView({ canvases, canvas, onCanvas, revision, onChanged, o
         )}
         {root && finder.available && (inFinder ? (
           <>
-            <button disabled={finderBusy} onClick={() => void showInFinder()} title={t("Open this canvas's folder in Finder")}>{t("Open in Finder")}</button>
+            <button disabled={finderBusy} onClick={() => void showInFinder()} title={t("Open this Disk Rebuild's folder in Finder")}>{t("Open in Finder")}</button>
             <button className="link" disabled={finderBusy} onClick={() => void removeFromFinder()}>{t("Remove from Finder")}</button>
           </>
         ) : (
           <button disabled={finderBusy} onClick={() => void showInFinder()} title={t("Show the rebuilt tree as a folder in Finder, read only, straight from the disk")}>{t("Show in Finder")}</button>
         ))}
         {root && !copying && (
-          <button onClick={() => setCopying(true)} title={t("Copy every file to where this canvas puts it")}>{t("Copy out")}</button>
+          <button onClick={() => setCopying(true)} title={t("Copy every file to where this Disk Rebuild puts it")}>{t("Copy out")}</button>
         )}
       </div>
       {finderNote && <p className="muted rebuild-error">{finderNote}</p>}

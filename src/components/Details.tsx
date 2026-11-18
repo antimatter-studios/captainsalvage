@@ -3,10 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   call,
   type ActivityItem,
-  type BasketItem,
   type ClusterInfo,
-  type CopyPlan,
-  type CopyStatus,
   type Extent,
   type Lens,
   type McpDetails,
@@ -15,14 +12,12 @@ import {
   type Parameters,
   type Row,
   type Status,
-  type VolumeChoice,
   type ResolvePreview,
 } from "../api";
-import { bytes, clock, count, decimal, displayPath, lostFolderName, percent, stamp, verdictLabel } from "../format";
+import { bytes, clock, count, decimal, displayPath, percent, stamp, verdictLabel } from "../format";
 import { useSimple } from "../mode";
 import { fromEngine, t } from "../i18n";
 import { InlinePreview } from "./BrowseView";
-import { CopyReport } from "./CopyReport";
 import { FilesystemDetailsPanel } from "./FilesystemDetails";
 import { NtfsRecordPanel } from "./NtfsRecord";
 import { SimilarPieces } from "./SimilarPieces";
@@ -51,7 +46,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy, onPreview, onInsideZip, previewElsewhere, onEntry }: { onInsideZip: () => void; row: Row; extents: Extent[]; macosWroteOn: string[]; onCluster: (cluster: number) => void; inBasket: boolean; onCopy: () => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
+function EntryDetails({ row, extents, macosWroteOn, onCluster, onPreview, onInsideZip, previewElsewhere, onEntry }: { onInsideZip: () => void; row: Row; extents: Extent[]; macosWroteOn: string[]; onCluster: (cluster: number) => void; onPreview: (row: Row) => void; previewElsewhere: boolean; onEntry: (row: Row) => void }) {
   const simple = useSimple();
   const [copies, setCopies] = useState<Row[]>([]);
   const [report, setReport] = useState<Record<string, any> | null>(null);
@@ -110,8 +105,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, inBasket, onCopy,
       )}
       {row.kind === "file" && row.length > 0 && (
         <div className="detail-actions">
-          <button className="primary" onClick={onCopy}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
-          <button onClick={() => onPreview(row)}>{t("Open large")}</button>
+          <button className="primary" onClick={() => onPreview(row)}>{t("Open large")}</button>
           {isArchiveName(row.name) && <button onClick={onInsideZip}>{t("Look inside")}</button>}
           <button onClick={runTest} disabled={busy !== null}>{busy === "test" ? t("Testing") : t("Test format")}</button>
         </div>
@@ -211,7 +205,7 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
   );
 }
 
-function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket: boolean; onCopy: () => void; onBrowse: (row: Row) => void }) {
+function FolderDetails({ row, onBrowse }: { row: Row; onBrowse: (row: Row) => void }) {
   const simple = useSimple();
   const [similar, setSimilar] = useState(false);
   useEffect(() => setSimilar(false), [row.head]);
@@ -229,8 +223,7 @@ function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket
         {row.hint && <Fact label={t("Contains")}>{row.hint}</Fact>}
       </dl>
       <div className="detail-actions">
-        <button className="primary" onClick={onCopy}>{inBasket ? t("On the treasure list") : t("Add folder to the treasure list")}</button>
-        <button onClick={() => onBrowse(row)}>{t("Browse files")}</button>
+        <button className="primary" onClick={() => onBrowse(row)}>{t("Browse files")}</button>
         {(row.nodeKind === "orphan" || row.nodeKind === "root") && !similar && (
           <button onClick={() => setSimilar(true)}>{t("Find similar pieces")}</button>
         )}
@@ -241,218 +234,6 @@ function FolderDetails({ row, inBasket, onCopy, onBrowse }: { row: Row; inBasket
           <SimilarPieces head={row.head} onOpen={onBrowse} />
         </>
       )}
-    </div>
-  );
-}
-
-function BasketTab({ items, status, floor }: { items: BasketItem[]; status: CopyStatus | null; floor: number }) {
-  const [reportOpen, setReportOpen] = useState(false);
-  const [volumes, setVolumes] = useState<VolumeChoice[] | null>(null);
-  const [destination, setDestination] = useState("");
-  const [minConfidence, setMinConfidence] = useState(Math.max(floor, 0.5));
-  const [includePartial, setIncludePartial] = useState(false);
-  const [plan, setPlan] = useState<CopyPlan | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [salvage, setSalvage] = useState<{ destination: string | null; freeBytes?: number } | null>(null);
-  const [dragged, setDragged] = useState<number | null>(null);
-
-  useEffect(() => {
-    Promise.all([call<VolumeChoice[]>("list_volumes"), call<{ destination: string | null; freeBytes?: number }>("get_salvage_drive")])
-      .then(([found, saved]) => {
-        setVolumes(found);
-        setSalvage(saved);
-        const usable = found.filter((item) => !item.refused && item.path.startsWith("/Volumes/")).sort((a, b) => b.freeBytes - a.freeBytes);
-        const fallback = usable[0] ? `${usable[0].path}/captain-salvage-recovered` : "";
-        setDestination((current) => current || saved.destination || fallback);
-      })
-      .catch((reason) => setError(String(reason)));
-  }, []);
-
-  const signature = items.map((item) => item.id).join(",");
-  const running = status?.state === "running";
-  const options = { destination, minConfidence, includePartial };
-
-  // Exact totals remove overlaps between folders, so they come from the engine.
-  useEffect(() => {
-    setPlan(null);
-    if (!destination.trim() || items.length === 0) return;
-    let current = true;
-    setChecking(true);
-    const timer = setTimeout(() => {
-      call<CopyPlan>("basket_plan", options)
-        .then((value) => {
-          if (current) {
-            setPlan(value);
-            setError(null);
-          }
-        })
-        .catch((reason) => current && setError(String(reason)))
-        .finally(() => current && setChecking(false));
-    }, 350);
-    return () => {
-      current = false;
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature, destination, minConfidence, includePartial]);
-
-  async function rememberSalvageDrive(path: string | null) {
-    setError(null);
-    try {
-      setSalvage(await call<{ destination: string | null; freeBytes?: number }>("set_salvage_drive", path ? { destination: path } : {}));
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
-
-  async function start() {
-    setError(null);
-    try {
-      await call("basket_start", options);
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
-
-  const free = plan?.freeBytes ?? 0;
-  const fraction = plan && free > 0 ? Math.min(plan.bytes / free, 1) : 0;
-  return (
-    <div className="detail">
-      {items.length === 0 ? (
-        <p className="empty">{t("Your treasure list is empty. Tick files and folders in the sidebar, and they appear here in the order they will copy.")}</p>
-      ) : (
-        <ol className="basket-list">
-          {items.map((item, index) => (
-            <li
-              key={item.id}
-              className={dragged === item.id ? "basket-item basket-item-dragged" : "basket-item"}
-              draggable
-              onDragStart={(event) => {
-                setDragged(item.id);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", String(item.id));
-              }}
-              onDragEnd={() => setDragged(null)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                const id = Number(event.dataTransfer.getData("text/plain"));
-                if (id && id !== item.id) void call("basket_move", { id, position: index });
-                setDragged(null);
-              }}
-            >
-              <span className="basket-grip"><Icon name="grip" size={14} /></span>
-              <span className="row-icon">
-                <Icon name={item.kind === "folder" ? "folder" : fileIcon(item.name)} />
-              </span>
-              <span className="row-main">
-                <span className="row-name">{item.name || lostFolderName(item.target)}</span>
-                <span className="row-path">
-                  {item.missing ? t("No longer found") : item.kind === "folder" ? t("{count} files, {bytes} likely good", { count: count(item.files), bytes: bytes(item.likelyGoodBytes) }) : bytes(item.bytes)}
-                </span>
-              </span>
-              <span className="basket-actions">
-                <button className="icon-button" disabled={index === 0} aria-label={t("Move up")} title={t("Copy earlier")} onClick={() => call("basket_move", { id: item.id, position: index - 1 })}><Icon name="chevronUp" size={13} /></button>
-                <button className="icon-button" disabled={index === items.length - 1} aria-label={t("Move down")} title={t("Copy later")} onClick={() => call("basket_move", { id: item.id, position: index + 1 })}><Icon name="chevronDown" size={13} /></button>
-                <button className="icon-button" aria-label={t("Remove from the treasure list")} title={t("Remove from the treasure list")} onClick={() => call("basket_remove", { id: item.id })}><Icon name="close" size={12} /></button>
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
-
-      {status && status.state !== "" && (
-        <div className="test-report copy-progress">
-          <strong>
-            {status.state === "running" ? t("Copying {done} of {total} files", { done: count(status.filesDone + status.filesSkipped), total: count(status.filesTotal) })
-              : status.state === "finished" ? t("Copy finished")
-              : status.state === "stopped" ? t("Copy stopped. Start it again to continue where it stopped.")
-              : t("Copy failed")}
-          </strong>
-          <div className="scan-bar"><div className="scan-fill" style={{ width: `${status.bytesTotal ? Math.min((status.bytesDone / status.bytesTotal) * 100, 100) : 0}%` }} /></div>
-          <div>{t("{done} of {total}", { done: bytes(Math.min(status.bytesDone, status.bytesTotal)), total: bytes(status.bytesTotal) })}</div>
-          {status.current && <div className="muted detail-path">{status.current}</div>}
-          {status.filesSkipped > 0 && <div className="muted">{t("{count} already copied, skipped.", { count: count(status.filesSkipped) })}</div>}
-          {status.filesPartial > 0 && <div>{t("{count} partial. The manifest says what is missing from each.", { count: count(status.filesPartial) })}</div>}
-          {status.badClusters > 0 && <div className="warn">{t("{count} unreadable clusters were filled with zeros.", { count: count(status.badClusters) })}</div>}
-          {status.filesFailed > 0 && <div className="warn">{t("{count} failed.", { count: count(status.filesFailed) })}</div>}
-          {status.error && <div className="warn">{fromEngine(status.error)}</div>}
-          <div className="detail-actions">
-            {running && <button onClick={() => call("copy_stop")}>{t("Stop copying")}</button>}
-            {status.destination && <button onClick={() => setReportOpen(true)}>{t("Open the copy report")}</button>}
-          </div>
-        </div>
-      )}
-      {reportOpen && status?.destination && <CopyReport destination={status.destination} onClose={() => setReportOpen(false)} />}
-
-      {items.length > 0 && (
-        <>
-          {plan && (
-            <div className="basket-total">
-              <div className="basket-total-line">
-                <strong>{t("{count} files, {bytes}", { count: count(plan.files), bytes: bytes(plan.bytes) })}</strong>
-                <span className="muted">{t("{bytes} free", { bytes: bytes(free) })}</span>
-              </div>
-              <div className="scan-bar"><div className={plan.fits ? "scan-fill" : "scan-fill scan-fill-over"} style={{ width: `${fraction * 100}%` }} /></div>
-              {!plan.fits && <div className="warn">{t("This does not fit. Raise the confidence floor, or remove something.")}</div>}
-              {plan.belowFloor > 0 && <div className="muted">{t("{count} files are below the confidence floor.", { count: count(plan.belowFloor) })}</div>}
-              {plan.skippedPartial > 0 && <div className="muted">{t("{count} partial files left out, {bytes}.", { count: count(plan.skippedPartial), bytes: bytes(plan.skippedPartialBytes) })}</div>}
-              {plan.refused && <p className="warn"><strong>{fromEngine(plan.refused)}</strong></p>}
-            </div>
-          )}
-          {checking && !plan && <div className="muted basket-total">{t("Working out the total.")}</div>}
-          <div className="detail-actions">
-            <button className="primary" onClick={start} disabled={!plan || Boolean(plan.refused) || !plan.fits || plan.files === 0 || running}>
-              {plan ? t("Copy {count} files", { count: count(plan.files) }) : t("Copy")}
-            </button>
-            <button onClick={() => call("basket_clear")} disabled={running}>{t("Empty the treasure list")}</button>
-          </div>
-        </>
-      )}
-      {error && <p className="warn">{fromEngine(error)}</p>}
-
-      <h4>{t("Where it goes")}</h4>
-      <p className="muted">{t("Files are written only to this folder, never to the disk being recovered. Nothing already there is overwritten.")}</p>
-      <label className="field">
-        <span>{t("Copy to")}</span>
-        <input value={destination} onChange={(event) => setDestination(event.target.value)} spellCheck={false} placeholder="/Volumes/YourDisk/recovered" />
-      </label>
-      {volumes === null && <p className="muted">{t("Finding disks.")}</p>}
-      <div className="volume-list">
-        {volumes?.map((volume) => (
-          <button
-            key={volume.path}
-            className="link"
-            disabled={Boolean(volume.refused)}
-            title={volume.refused ? fromEngine(volume.refused) : undefined}
-            onClick={() => setDestination(`${volume.path}/captain-salvage-recovered`)}
-          >
-            {volume.path.split("/").pop()} ({volume.refused ? t("not allowed") : t("{bytes} free", { bytes: bytes(volume.freeBytes) })})
-          </button>
-        ))}
-      </div>
-      <div className="salvage">
-        {salvage?.destination ? (
-          <span>
-            {t("Salvage drive:")} <span className="mono">{salvage.destination}</span>.{" "}
-            <button className="link" onClick={() => rememberSalvageDrive(null)}>{t("Forget it")}</button>
-          </span>
-        ) : (
-          <span className="muted">{t("No salvage drive set.")}</span>
-        )}
-        {destination.trim() && destination !== salvage?.destination && (
-          <button className="link" onClick={() => rememberSalvageDrive(destination.trim())}>{t("Use this folder as the salvage drive")}</button>
-        )}
-      </div>
-      <label className="field">
-        <span>{t("Only files with confidence {percent} and up", { percent: percent(minConfidence) })}</span>
-        <input type="range" min={0} max={100} value={Math.round(minConfidence * 100)} onChange={(event) => setMinConfidence(Number(event.target.value) / 100)} />
-      </label>
-      <label className="check">
-        <input type="checkbox" checked={includePartial} onChange={(event) => setIncludePartial(event.target.checked)} />
-        {t("Also copy files with missing or reused clusters")}
-      </label>
     </div>
   );
 }
@@ -779,9 +560,9 @@ function ConnectTab() {
 }
 
 /** The tabs Simple mode keeps. */
-const SIMPLE_TABS: DetailsTab[] = ["selected", "rebuild", "agent", "copy"];
+const SIMPLE_TABS: DetailsTab[] = ["selected", "rebuild", "agent"];
 
-export type DetailsTab = "selected" | "rebuild" | "agent" | "copy" | "workbench" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
+export type DetailsTab = "selected" | "rebuild" | "agent" | "workbench" | "volume" | "hypotheses" | "lens" | "activity" | "connect";
 
 export interface DetailsProps {
   overview: Overview;
@@ -808,8 +589,6 @@ export interface DetailsProps {
   /** Claude is answering, or has answered since the tab was last open. */
   agentActive: boolean;
   floor: number;
-  basket: BasketItem[];
-  onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
   onPreview: (row: Row) => void;
   onInsideZip: () => void;
   onBrowseFolder: (row: Row) => void;
@@ -817,8 +596,7 @@ export interface DetailsProps {
 }
 
 export function Details(props: DetailsProps) {
-  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, floor, basket, onBasket, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild, agent, workbench, agentActive } = props;
-  const inBasket = (kind: string, target: number | null) => basket.some((item) => item.kind === kind && item.target === target);
+  const { overview, status, entry, folder, info, revision, activityRevision, lens, onLens, onCluster, onEntry, onChanged, tabRequest, onPreview, onInsideZip, onBrowseFolder, previewInCenter, onTab, rebuild, agent, workbench, agentActive } = props;
   const [tab, setTab] = useState<DetailsTab>("selected");
   useEffect(() => {
     if (tabRequest) setTab(tabRequest.tab);
@@ -828,7 +606,6 @@ export function Details(props: DetailsProps) {
     ["selected", t("Selected"), "info"],
     ["rebuild", t("Rebuild"), "truck"],
     ["agent", t("Chat with an agent"), "robot"],
-    ["copy", t("Treasure list"), "chest"],
     ["workbench", t("Workbench"), "puzzle"],
     ["hypotheses", t("Hypotheses"), "bulb"],
     ["lens", t("Lens"), "aperture"],
@@ -849,7 +626,6 @@ export function Details(props: DetailsProps) {
         {shownTabs.map(([id, label, icon]) => (
           <button key={id} role="tab" aria-selected={tab === id} aria-label={label} title={label} onClick={() => setTab(id)}>
             <Icon name={icon} size={16} />
-            {id === "copy" && basket.length > 0 && <span className="tab-badge">{basket.length}</span>}
             {id === "agent" && agentActive && tab !== "agent" && <span className="tab-dot" />}
           </button>
         ))}
@@ -867,26 +643,16 @@ export function Details(props: DetailsProps) {
                 extents={entry.extents}
                 macosWroteOn={entry.macosWroteOn}
                 onCluster={onCluster}
-                inBasket={inBasket("entry", entry.row.id)}
                 onPreview={onPreview}
                 onInsideZip={onInsideZip}
                 previewElsewhere={previewInCenter === entry.row.id}
                 onEntry={onEntry}
-                onCopy={() => {
-                  if (entry.row.id !== null) onBasket("entry", entry.row.id, true);
-                  setTab("copy");
-                }}
               />
             )}
             {!entry && folder && (
               <FolderDetails
                 row={folder}
-                inBasket={inBasket("folder", folder.head)}
                 onBrowse={onBrowseFolder}
-                onCopy={() => {
-                  onBasket("folder", folder.head ?? folder.firstCluster, true);
-                  setTab("copy");
-                }}
               />
             )}
             {/* A cluster's own details are for investigating. */}
@@ -894,7 +660,6 @@ export function Details(props: DetailsProps) {
             {!entry && !folder && !info && <p className="empty">{simple ? t("Nothing selected. Click a file to see what is known about it.") : t("Nothing selected. Click the map or a file to see what is known about it.")}</p>}
           </>
         )}
-        {tab === "copy" && <BasketTab items={basket} status={status?.copy ?? null} floor={floor} />}
         {tab === "volume" && <VolumeTab overview={overview} status={status} revision={revision} onChanged={onChanged} />}
         {tab === "hypotheses" && <HypothesesTab revision={revision} onChanged={onChanged} />}
         {tab === "lens" && <LensTab overview={overview} lens={lens} onLens={onLens} revision={revision} onChanged={onChanged} />}

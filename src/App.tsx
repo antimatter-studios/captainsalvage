@@ -4,7 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   call,
-  type BasketItem,
   type Canvas,
   type CanvasItem,
   type FinderState,
@@ -25,6 +24,8 @@ import { useColumnWidths } from "./columns";
 import { BrowseView, type BrowseScope } from "./components/BrowseView";
 import { Chat, type ChatActivity } from "./components/Chat";
 import { ColumnHandle } from "./components/ColumnHandle";
+import { ContextMenu, type ExportItem } from "./components/ContextMenu";
+import { ExportDialog } from "./components/ExportDialog";
 import { Details, type DetailsTab } from "./components/Details";
 import { Explorer, HOVER_ENTRY_EVENT } from "./components/Explorer";
 import { HexView } from "./components/HexView";
@@ -405,7 +406,8 @@ export default function App() {
     };
   }, []);
   const [byteRange, setByteRange] = useState<[number, number] | null>(null);
-  const [basket, setBasket] = useState<BasketItem[]>([]);
+  const [menu, setMenu] = useState<{ x: number; y: number; item: ExportItem } | null>(null);
+  const [exporting, setExporting] = useState<ExportItem | null>(null);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
   const [canvas, setCanvas] = useState<number | null>(rememberedCanvas);
   const [canvasRevision, setCanvasRevision] = useState(0);
@@ -433,22 +435,19 @@ export default function App() {
   // Legends and the overview's bar read their colours while drawing, so redraw them.
   useEffect(() => onThemeChange(() => setThemeTick((tick) => tick + 1)), []);
 
-  const loadBasket = useCallback(() => {
-    call<BasketItem[]>("basket_list").then(setBasket).catch(() => undefined);
+  // Right-clicking a file or a folder offers to export it.
+  const exportMenu = useCallback((event: { preventDefault: () => void; clientX: number; clientY: number }, item: ExportItem) => {
+    event.preventDefault();
+    setMenu({ x: event.clientX, y: event.clientY, item });
   }, []);
-
-  const changeBasket = useCallback((kind: "entry" | "folder", target: number, add: boolean) => {
-    const existing = basket.find((item) => item.kind === kind && item.target === target);
-    if (add && !existing) void call("basket_add", { kind, target });
-    if (!add && existing) void call("basket_remove", { id: existing.id });
-  }, [basket]);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   // The canvases, and which pieces the one showing has used, kept as the person rebuilds.
   const bumpCanvas = useCallback(() => setCanvasRevision((value) => value + 1), []);
   useEffect(() => {
     if (!overview) return;
     let current = true;
-    call<Canvas[]>("canvas_list")
+    call<Canvas[]>("disk_rebuild_list")
       .then((found) => {
         if (!current) return;
         setCanvases(found);
@@ -499,15 +498,13 @@ export default function App() {
       return;
     }
     let current = true;
-    call<CanvasItem[]>("canvas_items", { canvas })
+    call<CanvasItem[]>("disk_rebuild_items", { canvas })
       .then((items) => current && setCanvasUsed(new Set(items.flatMap((item) => (item.head !== null ? [item.head] : [])))))
       .catch(() => current && setCanvasUsed(new Set()));
     return () => {
       current = false;
     };
   }, [canvas, canvasRevision]);
-
-  const basketKeys = useMemo(() => new Set(basket.map((item) => `${item.kind}:${item.target}`)), [basket]);
 
   const open = useCallback(async (path: string, region?: DiskRegion & { diskId: string }) => {
     setFailure(null);
@@ -727,7 +724,6 @@ export default function App() {
   useEffect(() => {
     const stops = [
       listen("salvage-map-changed", bump),
-      listen("salvage-basket-changed", loadBasket),
       listen("salvage-canvas-changed", bumpCanvas),
       listen("salvage-activity", () => setActivityRevision((value) => value + 1)),
       listen<{ kind: string; value?: number; start?: number; end?: number }>("salvage-focus", async ({ payload }) => {
@@ -754,11 +750,7 @@ export default function App() {
     return () => {
       stops.forEach((stop) => stop.then((unlisten) => unlisten()));
     };
-  }, [bump, loadBasket, pickCluster, selectEntry, selectFolder]);
-
-  useEffect(() => {
-    if (overview) loadBasket();
-  }, [overview, revision, loadBasket]);
+  }, [bump, pickCluster, selectEntry, selectFolder]);
 
   useEffect(() => {
     if (cluster === null) return;
@@ -872,8 +864,7 @@ export default function App() {
         onFolder={openFolder}
         onChain={selectChain}
         onRegion={selectRegion}
-        basket={basketKeys}
-        onBasket={changeBasket}
+        onExport={exportMenu}
         classNames={overview.classNames}
         clusterSize={overview.geometry.clusterSize}
         handle={<ColumnHandle label={t("Resize the sidebar")} edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
@@ -918,8 +909,7 @@ export default function App() {
             onScopeClear={() => setBrowseScope(null)}
             standalone={standalone}
             onStandaloneClose={() => setStandalone(null)}
-            basket={basketKeys}
-            onBasket={changeBasket}
+            onExport={exportMenu}
             onSelect={(row) => void noteEntry(row.id)}
             onBytes={showCluster}
             onInsideZip={(row) => void noteEntry(row.id).then(() => setCenter("zip"))}
@@ -961,8 +951,6 @@ export default function App() {
           onChanged={bump}
           tabRequest={tabRequest}
           floor={floor}
-          basket={basket}
-          onBasket={changeBasket}
           onPreview={previewEntry}
           onInsideZip={() => setCenter("zip")}
           onBrowseFolder={browseFolder}
@@ -989,6 +977,8 @@ export default function App() {
       </div>
       </>}
     </div>
+    {menu && <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu} items={[{ label: t("Export"), onChoose: () => setExporting(menu.item) }]} />}
+    {exporting && <ExportDialog item={exporting} copy={status?.copy ?? null} onClose={() => setExporting(null)} />}
     </ModeContext.Provider>
   );
 }

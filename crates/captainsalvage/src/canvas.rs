@@ -264,7 +264,7 @@ impl MapDb {
             .optional()?;
         found
             .map(|_| ())
-            .with_context(|| format!("there is no canvas {canvas}"))
+            .with_context(|| format!("there is no Disk Rebuild {canvas}"))
     }
 
     fn touch_canvas(&self, canvas: i64) -> Result<()> {
@@ -302,7 +302,7 @@ impl MapDb {
         self.canvas_items(canvas)?
             .into_iter()
             .find(|found| found.id == item)
-            .with_context(|| format!("there is no item {item} on canvas {canvas}"))
+            .with_context(|| format!("there is no item {item} on Disk Rebuild {canvas}"))
     }
 
     fn canvas_root(&self, canvas: i64) -> Result<Option<CanvasItem>> {
@@ -337,15 +337,17 @@ impl MapDb {
     fn resolve_place(&self, canvas: i64, place: Place) -> Result<Option<(i64, Option<u32>)>> {
         let item = match place.item {
             Some(item) => self.canvas_item(canvas, item)?,
-            None => match self.canvas_root(canvas)? {
-                Some(root) => root,
-                None => {
-                    if place.head.is_some() {
-                        bail!("A found folder can only be named inside an item of the canvas.");
+            None => {
+                match self.canvas_root(canvas)? {
+                    Some(root) => root,
+                    None => {
+                        if place.head.is_some() {
+                            bail!("A found folder can only be named inside an item of the Disk Rebuild.");
+                        }
+                        return Ok(None);
                     }
-                    return Ok(None);
                 }
-            },
+            }
         };
         if let Some(head) = place.head {
             let Some(own) = item.head else {
@@ -390,7 +392,7 @@ impl MapDb {
             bail!("there is no folder at cluster {head}");
         }
         if self.used_heads(canvas)?.contains(&head) {
-            bail!("That piece is already on this canvas.");
+            bail!("That piece is already in this Disk Rebuild.");
         }
         let resolved = self.resolve_place(canvas, place)?;
         let (kind, parent_item, parent_head) = match resolved {
@@ -470,7 +472,7 @@ impl MapDb {
             bail!("The root cannot move. Put things inside it instead.");
         }
         let Some((target, at)) = self.resolve_place(canvas, place)? else {
-            bail!("The canvas has no root to move it into.");
+            bail!("The Disk Rebuild has no root to move it into.");
         };
         let items = self.canvas_items(canvas)?;
         let parents: HashMap<i64, Option<i64>> = items
@@ -526,7 +528,7 @@ impl MapDb {
             Some(None) => {}
         }
         if self.used_heads(canvas)?.contains(&head) {
-            bail!("That piece is already on this canvas.");
+            bail!("That piece is already in this Disk Rebuild.");
         }
         // Things placed in a found folder of the old piece have nowhere to be in the new one.
         let stranded: i64 = self.connection.query_row(
@@ -710,7 +712,7 @@ impl MapDb {
         };
         let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
             if !path.is_empty() {
-                bail!("This canvas is empty.");
+                bail!("This Disk Rebuild is empty.");
             }
             return Ok(listing);
         };
@@ -843,7 +845,7 @@ impl MapDb {
         self.need_canvas(canvas)?;
         let items = self.canvas_items(canvas)?;
         let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
-            bail!("This canvas is empty.");
+            bail!("This Disk Rebuild is empty.");
         };
         let tree = Tree::new(self, canvas, &items)?;
         let choices = tree.choices()?;
@@ -968,7 +970,7 @@ impl MapDb {
             Some(None) => {}
         }
         if self.used_heads(canvas)?.contains(&head) {
-            bail!("That piece is already on this canvas.");
+            bail!("That piece is already in this Disk Rebuild.");
         }
         // Checked now, so a suggestion that names a place that does not exist is refused at once.
         let resolved = self.resolve_place(canvas, place)?;

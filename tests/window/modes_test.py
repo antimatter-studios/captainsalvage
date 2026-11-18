@@ -12,7 +12,7 @@ try:
     check('it starts in Simple', call('app_settings').get('mode'), 'simple')
     check('the map is hidden', probe("!!document.querySelector('.strips')"), False)
     check('the bytes view is hidden', probe("[...document.querySelectorAll('.center-tabs [role=tab]')].some((b) => b.textContent.trim() === 'Bytes')"), False)
-    check('the details keep what recovery needs', probe(DETAIL_TABS), ['Selected', 'Rebuild', 'Chat with an agent', 'Treasure list'])
+    check('the details keep what recovery needs', probe(DETAIL_TABS), ['Selected', 'Rebuild', 'Chat with an agent'])
     check('the sidebar keeps the folders', probe("[...document.querySelectorAll('.explorer [role=tab]')].map((b) => b.textContent)"), ['Folders'])
     # Open every folder and pick a file, then read the whole window for a cluster number.
     for _ in range(3):

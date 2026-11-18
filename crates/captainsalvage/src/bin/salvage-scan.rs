@@ -1,6 +1,9 @@
 //! Runs or resumes the full scan from the command line.
 //!
-//! Usage: captainsalvage scan <device-or-image> [--verify-only | --resolve-only]
+//! Usage: captainsalvage scan <device-or-image> [--verify-only | --resolve-only | --call <tool> [json]]
+//!
+//! `--call` runs one engine tool as the person. `export_start` copies one file or folder, and
+//! `disk_rebuild_copy_start` copies a Disk Rebuild; both wait for the copy to finish.
 
 use anyhow::{bail, Context, Result};
 use captainsalvage::engine::{Engine, AUTHOR_USER};
@@ -15,6 +18,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(60);
+/// The tools that start a copy, which this waits for before it prints the result.
+const COPY_TOOLS: &[&str] = &["export_start", "disk_rebuild_copy_start"];
 
 /// Runs one engine tool as the user, then waits for any copy it started.
 fn run_tool(device: &str, arguments: &[String]) -> Result<()> {
@@ -24,7 +29,7 @@ fn run_tool(device: &str, arguments: &[String]) -> Result<()> {
     let engine = Engine::new();
     engine.open(device)?;
     let result = engine.call(tool, &args, AUTHOR_USER)?;
-    if tool == "copy_start" || tool == "basket_start" {
+    if COPY_TOOLS.contains(&tool.as_str()) {
         let session = engine.session()?;
         while session.copy_status()?.state == "running" {
             std::thread::sleep(Duration::from_millis(250));
