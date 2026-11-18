@@ -20,6 +20,9 @@ use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+mod rescan;
+pub use rescan::{rescan_changed, FilesystemRescan};
+
 /// Enough to finish a maximum-size entry set (19 slots) that starts in the last
 /// slot of a chunk and continues into the next cluster.
 const LOCK_ATTEMPTS: u32 = 20;
@@ -88,7 +91,7 @@ pub fn read_progress(database: &MapDb, volume: &Volume) -> Result<ScanProgress> 
     })
 }
 
-fn open_map_file(path: &std::path::Path, length: u64) -> Result<File> {
+pub(crate) fn open_map_file(path: &std::path::Path, length: u64) -> Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -100,7 +103,7 @@ fn open_map_file(path: &std::path::Path, length: u64) -> Result<File> {
     Ok(file)
 }
 
-fn is_database_busy(error: &anyhow::Error) -> bool {
+pub(crate) fn is_database_busy(error: &anyhow::Error) -> bool {
     error
         .chain()
         .any(|cause| match cause.downcast_ref::<rusqlite::Error>() {
@@ -144,15 +147,115 @@ fn backfill_text_heads(
     Ok(())
 }
 
-/// Runs or resumes the scan, then rebuilds the tree when the pass completes.
-/// Returns an error if another process already holds the workspace's scan lock.
-pub fn run_scan(
+/// What one chunk of clusters holds.
+struct Chunk {
+    found: Vec<(u32, EntrySet)>,
+    errors: Vec<(u32, String)>,
+    classes: Vec<u8>,
+    entropy: Vec<u8>,
+    text_heads: Vec<u8>,
+    /// Clusters that hold a directory.
+    directories: u64,
+    /// Entry sets found.
+    sets: u64,
+}
+
+/// Reads `count` clusters from `first`, and works out what each is and which entry sets start in
+/// it. A cluster that cannot be read is classed as a read error and costs only itself. None when
+/// the drive has gone: nothing read then says anything about the clusters.
+fn read_chunk(
     volume: &Volume,
-    workspace: &Workspace,
-    options: ScanOptions,
-    stop: &AtomicBool,
-    mut on_progress: impl FnMut(&ScanProgress),
-) -> Result<ScanProgress> {
+    buffer: &mut Vec<u8>,
+    first: u32,
+    count: u32,
+    lookahead_max: u64,
+    last: u32,
+) -> Option<Chunk> {
+    let cluster_size = volume.geometry.cluster_size();
+    let chunk_bytes = u64::from(count) * cluster_size;
+    let offset = volume.cluster_offset(first);
+    let volume_end = volume.cluster_offset(last - 1) + cluster_size;
+    let lookahead = lookahead_max.min(volume_end - (offset + chunk_bytes));
+    buffer.resize((chunk_bytes + lookahead) as usize, 0);
+
+    let mut failed = vec![false; count as usize];
+    let mut chunk_errors: Vec<(u32, String)> = Vec::new();
+    if volume.source().read_exact_at(offset, buffer).is_err() {
+        // Retry one cluster at a time, so one bad spot loses only that cluster.
+        buffer.fill(0);
+        for (index, cluster_failed) in failed.iter_mut().enumerate() {
+            let start = index * cluster_size as usize;
+            let slice = &mut buffer[start..start + cluster_size as usize];
+            if let Err(error) = volume.source().read_exact_at(offset + start as u64, slice) {
+                *cluster_failed = true;
+                chunk_errors.push((first + index as u32, error.to_string()));
+            }
+        }
+    }
+    // Nothing here is a bad spot. Marking these clusters would spoil a good map, and a
+    // later resume could not undo it.
+    if volume.source().is_gone() {
+        return None;
+    }
+
+    let mut found: Vec<(u32, EntrySet)> = Vec::new();
+    let mut class_bytes = vec![0u8; count as usize];
+    let mut entropy_bytes = vec![0u8; count as usize];
+    let mut text_head_bytes = vec![0u8; count as usize];
+    let mut directories = 0;
+    let mut sets_total = 0;
+    for index in 0..count as usize {
+        if failed[index] {
+            class_bytes[index] = CLASS_READ_ERROR;
+            continue;
+        }
+        let cluster = first + index as u32;
+        let start = index * cluster_size as usize;
+        let end = start + cluster_size as usize;
+        let sets = volume.find_sets(
+            &buffer[start..buffer.len().min(end + lookahead_max as usize)],
+            cluster_size as usize,
+        );
+        let holds_directory = sets.iter().any(|set| set.checksum_ok);
+        let (class, scaled) = classify(&buffer[start..end], holds_directory);
+        class_bytes[index] = class;
+        entropy_bytes[index] = scaled;
+        text_head_bytes[index] = text_head_value(&buffer[start..end]);
+        if holds_directory {
+            directories += 1;
+        }
+        sets_total += sets.len() as u64;
+        found.extend(sets.into_iter().map(|mut set| {
+            // A FILE record in a cluster the bitmap calls free is an old copy of the MFT, whatever
+            // its own flag says, so it is recorded as not in use.
+            if let Some(ntfs) = set.ntfs.as_mut() {
+                set.in_use &= volume.is_allocated(cluster);
+                // Records the kernel's ntfs3 driver wrote have no number in their header, so
+                // it is where `$MFT` puts them.
+                if ntfs.record_number.is_none() && ntfs.storage != STORAGE_DAMAGED {
+                    ntfs.record_number = volume
+                        .ntfs
+                        .as_ref()
+                        .and_then(|access| access.record_number_at(cluster, set.offset));
+                }
+            }
+            (cluster, set)
+        }));
+    }
+    Some(Chunk {
+        found,
+        errors: chunk_errors,
+        classes: class_bytes,
+        entropy: entropy_bytes,
+        text_heads: text_head_bytes,
+        directories,
+        sets: sets_total,
+    })
+}
+
+/// Takes the lock that lets one scan at a time work on a workspace, held until the file drops.
+/// Fails when another process holds it.
+fn lock_scan(workspace: &Workspace) -> Result<File> {
     let lock = OpenOptions::new()
         .create(true)
         .write(true)
@@ -164,7 +267,7 @@ pub fn run_scan(
     let mut attempts = 0;
     loop {
         match lock.try_lock() {
-            Ok(()) => break,
+            Ok(()) => return Ok(lock),
             Err(TryLockError::WouldBlock) if attempts < LOCK_ATTEMPTS => {
                 attempts += 1;
                 std::thread::sleep(LOCK_RETRY_WAIT);
@@ -175,6 +278,18 @@ pub fn run_scan(
             Err(TryLockError::Error(error)) => return Err(error.into()),
         }
     }
+}
+
+/// Runs or resumes the scan, then rebuilds the tree when the pass completes.
+/// Returns an error if another process already holds the workspace's scan lock.
+pub fn run_scan(
+    volume: &Volume,
+    workspace: &Workspace,
+    options: ScanOptions,
+    stop: &AtomicBool,
+    mut on_progress: impl FnMut(&ScanProgress),
+) -> Result<ScanProgress> {
+    let _lock = lock_scan(workspace)?;
 
     let mut database = MapDb::open(&workspace.database())?;
     let cluster_count = u64::from(volume.geometry.cluster_count);
@@ -230,74 +345,20 @@ pub fn run_scan(
 
         let count = options.chunk_clusters.min(last - next);
         let chunk_bytes = u64::from(count) * cluster_size;
-        let offset = volume.cluster_offset(next);
-        let volume_end = volume.cluster_offset(last - 1) + cluster_size;
-        let lookahead = lookahead_max.min(volume_end - (offset + chunk_bytes));
-        buffer.resize((chunk_bytes + lookahead) as usize, 0);
-
-        let mut failed = vec![false; count as usize];
-        let mut chunk_errors: Vec<(u32, String)> = Vec::new();
-        if volume.source().read_exact_at(offset, &mut buffer).is_err() {
-            // Retry one cluster at a time, so one bad spot loses only that cluster.
-            buffer.fill(0);
-            for (index, cluster_failed) in failed.iter_mut().enumerate() {
-                let start = index * cluster_size as usize;
-                let slice = &mut buffer[start..start + cluster_size as usize];
-                if let Err(error) = volume.source().read_exact_at(offset + start as u64, slice) {
-                    *cluster_failed = true;
-                    chunk_errors.push((next + index as u32, error.to_string()));
-                }
-            }
-        }
-        // Nothing here is a bad spot. Marking these clusters would spoil a good map, and a
-        // later resume could not undo it.
-        if volume.source().is_gone() {
+        let Some(read) = read_chunk(volume, &mut buffer, next, count, lookahead_max, last) else {
             database.set_state(STATE_STATUS, "paused")?;
             bail!(DISK_GONE);
-        }
-
-        let mut found: Vec<(u32, EntrySet)> = Vec::new();
-        let mut class_bytes = vec![0u8; count as usize];
-        let mut entropy_bytes = vec![0u8; count as usize];
-        let mut text_head_bytes = vec![0u8; count as usize];
-        for index in 0..count as usize {
-            if failed[index] {
-                class_bytes[index] = CLASS_READ_ERROR;
-                continue;
-            }
-            let cluster = next + index as u32;
-            let start = index * cluster_size as usize;
-            let end = start + cluster_size as usize;
-            let sets = volume.find_sets(
-                &buffer[start..buffer.len().min(end + lookahead_max as usize)],
-                cluster_size as usize,
-            );
-            let holds_directory = sets.iter().any(|set| set.checksum_ok);
-            let (class, scaled) = classify(&buffer[start..end], holds_directory);
-            class_bytes[index] = class;
-            entropy_bytes[index] = scaled;
-            text_head_bytes[index] = text_head_value(&buffer[start..end]);
-            if holds_directory {
-                directories += 1;
-            }
-            sets_total += sets.len() as u64;
-            found.extend(sets.into_iter().map(|mut set| {
-                // A FILE record in a cluster the bitmap calls free is an old copy of the MFT, whatever
-                // its own flag says, so it is recorded as not in use.
-                if let Some(ntfs) = set.ntfs.as_mut() {
-                    set.in_use &= volume.is_allocated(cluster);
-                    // Records the kernel's ntfs3 driver wrote have no number in their header, so
-                    // it is where `$MFT` puts them.
-                    if ntfs.record_number.is_none() && ntfs.storage != STORAGE_DAMAGED {
-                        ntfs.record_number = volume
-                            .ntfs
-                            .as_ref()
-                            .and_then(|access| access.record_number_at(cluster, set.offset));
-                    }
-                }
-                (cluster, set)
-            }));
-        }
+        };
+        directories += read.directories;
+        sets_total += read.sets;
+        let Chunk {
+            found,
+            errors: chunk_errors,
+            classes: class_bytes,
+            entropy: entropy_bytes,
+            text_heads: text_head_bytes,
+            ..
+        } = read;
 
         let map_position = u64::from(next - FIRST_CLUSTER);
         classes.write_all_at(&class_bytes, map_position)?;

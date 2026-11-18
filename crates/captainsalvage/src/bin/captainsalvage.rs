@@ -41,6 +41,10 @@ Commands:\n\
       Slide every filesystem driver over a byte range and report what decodes, and how sure it is.\n\
   scan <device-or-image> [--verify-only | --resolve-only]\n\
       Scan a volume or disk image.\n\
+  scan stale-regions --scan ID\n\
+  scan rescan-changed <device-or-image> --scan ID [--radius-bytes BYTES] [--head-bytes BYTES]\n\
+      After a scan was reopened on a probable match (some markers changed), list the areas of its\n\
+      results that may be out of date, and scan them again. Nothing is scanned again unasked.\n\
   agent <list|models|ask> ...\n\
       Ask an installed AI agent about the open volume.\n\
 \n\

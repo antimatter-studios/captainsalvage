@@ -7,6 +7,7 @@ import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
 import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type EvidenceStatus, type RawDiskState, type ScanSnapshot } from "../rawDisk";
 import type { ByteExtent, OpenedSource } from "../openedSource";
 import { Icon } from "./icons";
+import { StaleMark } from "./StaleRegions";
 import { Hypotheses } from "./Hypotheses";
 import { RangeAnalysis } from "./RangeAnalysis";
 import { Strip, type StripSource } from "./Strips";
@@ -302,7 +303,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
         </div>}
         {shown.slice(0, visibleFindings).map((item, index) => <button key={index} className={`row${selected === evidenceKey(item) ? " row-selected" : ""}`} disabled={busy} onClick={() => selectEvidence(item)}>
           <span className="row-icon"><Icon name="search" size={16} /></span>
-          <span className="row-main"><span className="row-name">{item.format} · {fromEngine(item.structure)}</span><span className="row-path">{bytes(item.offset)} · {fromEngine(item.confidence)}</span></span>
+          <span className="row-main"><span className="row-name">{item.format} · {fromEngine(item.structure)}{item.stale && <StaleMark />}</span><span className="row-path">{bytes(item.offset)} · {fromEngine(item.confidence)}</span></span>
         </button>)}
         {visibleFindings < shown.length && <button className="row" onClick={() => setVisibleFindings((current) => current + FINDINGS_PAGE_SIZE)}>
           <span className="row-main">{t("Show more ({count} left)", { count: count(shown.length - visibleFindings) })}</span>

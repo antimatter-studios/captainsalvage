@@ -10,7 +10,11 @@ disk (an MBR, one exFAT partition from 1 MiB) and checks that:
 - a choice with no evidence behind it is refused with a reason, and the picker stays where it was;
 - the saved scans list names its scan and lets the person name it;
 - the same partition opened alone, from a file holding only its bytes, is the same source and the
-  same scan, with the results already there.
+  same scan, with the results already there;
+- after a "mount" overwrites some of that partition's markers, reopening it asks first (a probable
+  match), applies the stored scan only once the person says they read what changed, marks the
+  entries that may be out of date, scans nothing until asked, and then Rescan changed regions reads
+  the marked area again, clears the marks and makes the next open an exact match.
 
 Synthetic images only. It needs jigsaw.img (see README.md) and saves door-whole-disk.png, door-header.png and
 door-saved-scans.png here.
@@ -158,6 +162,63 @@ try:
         sources = connection.execute("SELECT count(*) FROM sources").fetchone()[0]
     check("one scan, one link between the disk and its extent", (scans, links, sources), (1, 1, 2))
     check("the source image was never modified", hashlib.sha256(whole.read_bytes()).hexdigest(), before)
+
+    # A mount wrote past the end of the partition's volume: three of its markers changed. The
+    # volume still opens, and the stored scan is only a probable match for it.
+    with database() as connection:
+        fingerprint = json.loads(connection.execute("SELECT fingerprint FROM sources WHERE length = ?", (len(partition),)).fetchone()[0])
+        scan_id = connection.execute("SELECT id FROM scans WHERE kind = 'filesystem'").fetchone()[0]
+    tail = [sample["offset"] for sample in fingerprint["samples"] if sample["offset"] >= len(volume) + 4096][:3]
+    check("three markers lie past the end of the volume", len(tail), 3)
+    with alone.open("r+b") as stream:
+        for offset in tail:
+            stream.seek(offset)
+            stream.write(rng.randbytes(4096))
+    changed_hash = hashlib.sha256(alone.read_bytes()).hexdigest()
+    click("Change disk", ".toolbar")
+    check("the start screen comes back for the changed partition", wait_for("!!document.querySelector('.start-image input')"), True)
+    open_path(alone)
+    check("a probable match asks before anything stored is applied", wait_for("document.querySelector('.saved-scans')?.textContent.includes('This drive looks like one seen before')", 90), True)
+    check("it is a probable match with the changed markers listed", probe("[document.querySelector('.saved-scans .saved-state')?.textContent, /3 of \\d+ markers changed\\./.test(document.querySelector('.saved-scans').textContent)]"), ["probable", True])
+    check("nothing is opened behind the question", probe("!document.querySelector('.safety-chip')"), True)
+    check("Open waits for the person to say they read what changed", probe("[...document.querySelectorAll('.saved-scans .saved-scan button')].every((button) => button.disabled)"), True)
+    js("document.querySelector('.saved-ack input').click()")
+    check("ticking that they read it allows Open", wait_for("[...document.querySelectorAll('.saved-scans .saved-scan button')].every((button) => !button.disabled)"), True)
+    click("Open", ".saved-scans .saved-scan")
+    check("the stored scan opens with its results", wait_for("!!document.querySelector('.safety-chip')", 90), True)
+    check("the window says how many regions may be out of date", wait_for("document.querySelector('.interp-stale')?.textContent.includes('One region may be out of date.')"), True)
+    check("it offers to scan them again", probe("[...document.querySelectorAll('.interp-stale button')].map((button) => button.textContent)"), ["Rescan changed regions"])
+    check("every file the API lists inside the region says so", {row["stale"] for row in call("browse_files", offset=0, limit=50)["rows"]}, {True})
+    click("Browse files", ".center-tabs")
+    check("entries in the region are marked", wait_for("document.querySelectorAll('.stale-mark').length > 0"), True)
+    check("opening scanned nothing again", call("status")["scan"]["status"], "complete")
+    listed = call("list_stale_regions", scanId=scan_id)
+    check("an agent can read the region and the markers that made it, read only", (listed["stale"]["stale"], len(listed["stale"]["regions"][0]["markers"])), (1, 3))
+    refused = call("rescan_changed_regions", diskId="0", scanId=scan_id)
+    check("an agent cannot scan the regions again: only the person does", "Only the person" in refused.get("error", ""), True)
+    with database() as connection:
+        regions = connection.execute("SELECT cleared_at_millis FROM scan_stale_regions").fetchall()
+    check("the region is still stale after the agent asked", regions, [(None,)])
+
+    click("Rescan changed regions", ".interp-stale")
+    check("the rescan finishes and says the markers were recorded again", wait_for("document.querySelector('.interp-stale')?.textContent.includes('recorded again')", 180), True)
+    check("no file is marked now", wait_for("document.querySelectorAll('.list-row, .tile').length > 0 && document.querySelectorAll('.stale-mark').length === 0"), True)
+    check("the API lists none as stale", [row.get("stale") for row in call("browse_files", offset=0, limit=50)["rows"] if row.get("stale")], [])
+    check("the scan is still complete, and was not made again", (call("status")["scan"]["status"], probe("document.querySelector('.interp-scans').textContent")), ("complete", "Saved scans (1)"))
+    with database() as connection:
+        regions = connection.execute("SELECT cleared_at_millis IS NOT NULL, done_to = end FROM scan_stale_regions").fetchall()
+        history = connection.execute("SELECT count(*) FROM source_marker_history").fetchone()[0]
+        scans = connection.execute("SELECT count(*) FROM scans WHERE kind = 'filesystem'").fetchone()[0]
+    check("the region is cleared and was read to its end", regions, [(1, 1)])
+    check("the markers the source had before are kept", history, 1)
+    check("one scan still", scans, 1)
+    click("Change disk", ".toolbar")
+    check("the start screen comes back after the rescan", wait_for("!!document.querySelector('.start-image input')"), True)
+    open_path(alone)
+    check("the same partition is an exact match again: it opens at once, with no question", wait_for("!!document.querySelector('.safety-chip')", 90), True)
+    check("no dialog was in the way, and nothing is marked", probe("!document.querySelector('.saved-scans') && !document.querySelector('.interp-stale') && document.querySelectorAll('.stale-mark').length === 0"), True)
+    check("the results are still there", probe("document.querySelector('.scan-text')?.textContent"), "Scan complete")
+    check("the app never wrote to the partition image", hashlib.sha256(alone.read_bytes()).hexdigest(), changed_hash)
 
     # An image of one small volume, as it comes (jigsaw.img is under 1 MiB, with a boot sector the
     # strict analysis would not call a volume): the person chose a file that is a volume, so it

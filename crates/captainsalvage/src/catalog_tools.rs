@@ -21,10 +21,12 @@ pub const TOOLS: &[&str] = &[
     "label_scan",
     "label_source",
     "migrate_catalog",
+    "list_stale_regions",
 ];
 
 /// The tools that change what is stored, which only the person using the app runs.
 const PERSON_ONLY: &[&str] = &[
+    "rescan_changed_regions",
     "switch_interpretation",
     "label_scan",
     "label_source",
@@ -107,6 +109,24 @@ pub fn definitions() -> Vec<Definition> {
             description: "Gives a stored source a name, such as the drive's label. Only the person using the app does this.",
             properties: json!({"sourceId": {"type": "string"}, "label": {"type": "string", "description": "At most 128 bytes."}}),
             required: &["sourceId", "label"],
+        },
+        Definition {
+            name: "list_stale_regions",
+            description: "Lists the regions of a scan that may be out of date, and the ones scanned again since. When a source is reopened on a probable match (some markers changed, for example because a mount wrote metadata), what the scan stored near the changed markers is marked stale until it is scanned again: each region has its start and end in the source, the changed marker offsets it came from, how far a rescan has read it, and when it was cleared. Each changed marker's 4 KiB block makes a region of that block with 1 MiB on each side, and a changed marker in the first 32 MiB makes the first 32 MiB stale (the boot sectors, allocation tables and root directory). Also lists the markers the source had before each rescan replaced them. Read only; only the person using the app scans the regions again, with rescan_changed_regions.",
+            properties: json!({"scanId": {"type": "string", "description": "A scan ID from list_scans."}}),
+            required: &["scanId"],
+        },
+        Definition {
+            name: "rescan_changed_regions",
+            description: "Scans the stale regions of a scan again, with the same interpretation and options, replacing what the scan stored there a batch at a time. Never starts by itself: opening a scan only marks the regions. A raw scan replaces its findings in the regions; a filesystem scan reads the clusters in them again, replaces their entries (the ones still there keep their ids) and rebuilds its tree. A region that is not finished stays stale and resumes where it stopped. When every region of the scan is done, the source gets the markers of the drive as it is now, so the next open of it is an exact match, and keeps its earlier markers in its history. The source is only read. Only the person using the app does this; an agent can suggest it.",
+            properties: json!({
+                "diskId": disk_id(),
+                "scanId": {"type": "string", "description": "A scan ID from list_scans, opened on a probable match."},
+                "extent": extent_argument(),
+                "radiusBytes": {"type": "integer", "description": "Widen the regions to this margin on each side of a changed marker's block. Default 1048576 (1 MiB). Regions are never made smaller."},
+                "headBytes": {"type": "integer", "description": "A changed marker before this offset makes everything before it stale. Default 33554432 (32 MiB)."}
+            }),
+            required: &["diskId", "scanId"],
         },
         Definition {
             name: "migrate_catalog",
@@ -240,6 +260,22 @@ pub fn call(tool: &str, disk: Option<&RawDisk>, args: &Value, person: bool) -> R
             "source": catalog.label_source(need_str(args, "sourceId")?, need_str(args, "label")?)?
         })),
         "migrate_catalog" => Ok(serde_json::to_value(migrate(&catalog)?)?),
+        "list_stale_regions" => {
+            let id = need_str(args, "scanId")?;
+            let scan = catalog.scan(id)?;
+            let history: Vec<Value> = catalog
+                .marker_history(&scan.source_id)?
+                .into_iter()
+                .map(|entry| {
+                    json!({
+                        "replacedAtMillis": entry.replaced_at_millis,
+                        "reason": entry.reason,
+                        "markers": entry.markers,
+                    })
+                })
+                .collect();
+            Ok(json!({"scan": scan, "stale": catalog.stale_summary(id)?, "markerHistory": history}))
+        }
         other => bail!("{other} is not a catalog tool"),
     }
 }

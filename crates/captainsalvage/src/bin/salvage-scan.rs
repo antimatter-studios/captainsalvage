@@ -1,6 +1,12 @@
 //! Runs or resumes the full scan from the command line.
 //!
 //! Usage: captainsalvage scan <device-or-image> [--verify-only | --resolve-only | --call <tool> [json]]
+//!        captainsalvage scan stale-regions --scan ID
+//!        captainsalvage scan rescan-changed <device-or-image> --scan ID [options]
+//!
+//! `stale-regions` lists the areas of a scan that may be out of date, because its source was
+//! reopened on a probable match. `rescan-changed` reads them again, as the person asked, and
+//! changes nothing else.
 //!
 //! `--call` runs one engine tool as the person. `export_start` copies one file or folder, and
 //! `disk_rebuild_copy_start` copies a Disk Rebuild; both wait for the copy to finish.
@@ -41,7 +47,77 @@ fn run_tool(device: &str, arguments: &[String]) -> Result<()> {
     Ok(())
 }
 
+pub const STALE_USAGE: &str = "usage: captainsalvage scan stale-regions --scan ID\n\
+       captainsalvage scan rescan-changed <device-or-image> --scan ID [--extent-start BYTES --extent-length BYTES] [--radius-bytes BYTES] [--head-bytes BYTES]\n\
+  stale-regions   the areas of a scan that may be out of date, and the markers the source had before each rescan\n\
+  rescan-changed  scan those areas again with the same interpretation and options, then give the source the\n\
+                  markers of the drive as it is now (the earlier ones are kept). The source is only read.\n\
+  --radius-bytes  margin on each side of a changed marker's block (default 1048576)\n\
+  --head-bytes    a changed marker before this offset makes everything before it stale (default 33554432)";
+
+/// `scan stale-regions` and `scan rescan-changed`: the same tools the window and MCP use, run as
+/// the person, with their answer printed.
+fn stale_command(command: &str, arguments: &[String]) -> Result<()> {
+    let path = arguments.first().filter(|first| !first.starts_with("--"));
+    let mut args = serde_json::json!({});
+    let mut options = arguments[usize::from(path.is_some())..].iter();
+    let number = |options: &mut std::slice::Iter<String>, name: &str| -> Result<u64> {
+        options
+            .next()
+            .with_context(|| format!("{name} needs a value"))?
+            .parse()
+            .with_context(|| format!("{name} needs a whole number"))
+    };
+    while let Some(option) = options.next() {
+        match option.as_str() {
+            "--scan" => {
+                args["scanId"] =
+                    serde_json::json!(options.next().context("--scan needs a scan ID")?)
+            }
+            "--extent-start" => {
+                args["extent"]["start"] = serde_json::json!(number(&mut options, "--extent-start")?)
+            }
+            "--extent-length" => {
+                args["extent"]["length"] =
+                    serde_json::json!(number(&mut options, "--extent-length")?)
+            }
+            "--radius-bytes" => {
+                args["radiusBytes"] = serde_json::json!(number(&mut options, "--radius-bytes")?)
+            }
+            "--head-bytes" => {
+                args["headBytes"] = serde_json::json!(number(&mut options, "--head-bytes")?)
+            }
+            other => bail!("unknown option {other}\n{STALE_USAGE}"),
+        }
+    }
+    if args.get("scanId").is_none() {
+        bail!("{command} needs --scan ID\n{STALE_USAGE}");
+    }
+    let engine = Engine::new();
+    let tool = if command == "stale-regions" {
+        "list_stale_regions"
+    } else {
+        let path =
+            path.with_context(|| format!("{command} needs a device or image\n{STALE_USAGE}"))?;
+        let disk = engine.call(
+            "open_raw_disk",
+            &serde_json::json!({"path": path}),
+            AUTHOR_USER,
+        )?;
+        args["diskId"] = disk["id"].clone();
+        "rescan_changed_regions"
+    };
+    let answer = engine.call(tool, &args, AUTHOR_USER)?;
+    println!("{}", serde_json::to_string(&answer)?);
+    Ok(())
+}
+
 pub fn run(arguments: &[String]) -> Result<()> {
+    if let Some(command @ ("stale-regions" | "rescan-changed")) =
+        arguments.first().map(String::as_str)
+    {
+        return stale_command(command, &arguments[1..]);
+    }
     let device = arguments
         .first()
         .context("usage: captainsalvage scan <device-or-image> [--verify-only | --resolve-only]")?;

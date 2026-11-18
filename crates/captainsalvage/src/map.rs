@@ -545,6 +545,94 @@ pub(crate) fn node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     })
 }
 
+/// Writes a chunk's entries, NTFS records, read errors and state inside `transaction`. With
+/// `replace`, an entry already stored at the same place is updated in place and keeps its id;
+/// without it, the stored one is left as it is.
+fn write_chunk(
+    transaction: &rusqlite::Transaction,
+    found: &[(u32, EntrySet)],
+    errors: &[(u32, String)],
+    state: &[(&str, String)],
+    replace: bool,
+) -> Result<()> {
+    let insert_sql = if replace {
+        "INSERT INTO sets (source_cluster, source_offset, name, in_use, checksum_ok, attributes, \
+         is_dir, first_cluster, length, valid_length, no_fat_chain, created, modified, accessed) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+         ON CONFLICT (source_cluster, source_offset) DO UPDATE SET name = excluded.name, \
+         in_use = excluded.in_use, checksum_ok = excluded.checksum_ok, \
+         attributes = excluded.attributes, is_dir = excluded.is_dir, \
+         first_cluster = excluded.first_cluster, length = excluded.length, \
+         valid_length = excluded.valid_length, no_fat_chain = excluded.no_fat_chain, \
+         created = excluded.created, modified = excluded.modified, accessed = excluded.accessed"
+    } else {
+        "INSERT OR IGNORE INTO sets (source_cluster, source_offset, name, in_use, checksum_ok, attributes, \
+         is_dir, first_cluster, length, valid_length, no_fat_chain, created, modified, accessed) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+    };
+    let mut insert = transaction.prepare_cached(insert_sql)?;
+    let mut record_insert = transaction.prepare_cached(
+        "INSERT OR IGNORE INTO ntfs_records (source_cluster, source_offset, record_number, sequence, \
+         parent_record, parent_sequence, storage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    let mut extent_insert = transaction.prepare_cached(
+        "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    for (cluster, set) in found {
+        let ntfs = set.ntfs.as_ref();
+        insert.execute(params![
+            cluster,
+            set.offset as i64,
+            set.name,
+            set.in_use,
+            set.checksum_ok,
+            set.attributes,
+            set.is_dir,
+            set.first_cluster,
+            set.length as i64,
+            set.valid_length as i64,
+            set.no_fat_chain,
+            set.created,
+            set.modified,
+            set.accessed,
+        ])?;
+        if let Some(entry) = ntfs {
+            record_insert.execute(params![
+                cluster,
+                set.offset as i64,
+                entry.record_number.map(|value| value as i64),
+                i64::from(entry.sequence),
+                entry.parent_record.map(|value| value as i64),
+                entry.parent_sequence.map(i64::from),
+                entry.storage,
+            ])?;
+        }
+        for run in ntfs.map(|entry| entry.runs.as_slice()).unwrap_or_default() {
+            extent_insert.execute(params![
+                cluster,
+                set.offset as i64,
+                run.vcn as i64,
+                run.lcn.map(|value| value as i64),
+                run.count as i64,
+            ])?;
+        }
+    }
+    let mut error_insert = transaction
+        .prepare_cached("INSERT OR REPLACE INTO read_errors (cluster, message) VALUES (?1, ?2)")?;
+    for (cluster, message) in errors {
+        error_insert.execute(params![cluster, message])?;
+    }
+    let mut state_insert = transaction.prepare_cached(
+        "INSERT INTO scan_state (key, value) VALUES (?1, ?2) \
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )?;
+    for (key, value) in state {
+        state_insert.execute(params![key, value])?;
+    }
+    Ok(())
+}
+
 impl MapDb {
     pub fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open(path)?;
@@ -727,73 +815,66 @@ impl MapDb {
         state: &[(&str, String)],
     ) -> Result<()> {
         let transaction = self.connection.transaction()?;
-        {
-            let mut insert = transaction.prepare_cached(
-                "INSERT OR IGNORE INTO sets (source_cluster, source_offset, name, in_use, checksum_ok, attributes, \
-                 is_dir, first_cluster, length, valid_length, no_fat_chain, created, modified, accessed) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        write_chunk(&transaction, found, errors, state, false)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Replaces what the scan stored for clusters `first..end` with what reading them again
+    /// found, atomically: the entries that are no longer there are removed, the ones still there
+    /// keep their ids (what a person decided about them stays attached), and new ones are added.
+    /// Read errors in the range are replaced too, and the totals that depend on them recounted.
+    pub fn replace_chunk(
+        &mut self,
+        first: u32,
+        end: u32,
+        found: &[(u32, EntrySet)],
+        errors: &[(u32, String)],
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let kept: std::collections::HashSet<(u32, u32)> = found
+            .iter()
+            .map(|(cluster, set)| (*cluster, set.offset as u32))
+            .collect();
+        let existing: Vec<(u32, u32)> = {
+            let mut statement = transaction.prepare(
+                "SELECT source_cluster, source_offset FROM sets
+                 WHERE source_cluster >= ?1 AND source_cluster < ?2",
             )?;
-            let mut record_insert = transaction.prepare_cached(
-                "INSERT OR IGNORE INTO ntfs_records (source_cluster, source_offset, record_number, sequence, \
-                 parent_record, parent_sequence, storage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            let rows = statement.query_map(params![first, end], |row| {
+                Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (cluster, offset) in existing.iter().filter(|entry| !kept.contains(entry)) {
+            transaction.execute(
+                "DELETE FROM sets WHERE source_cluster = ?1 AND source_offset = ?2",
+                params![cluster, offset],
             )?;
-            let mut extent_insert = transaction.prepare_cached(
-                "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-            )?;
-            for (cluster, set) in found {
-                let ntfs = set.ntfs.as_ref();
-                insert.execute(params![
-                    cluster,
-                    set.offset as i64,
-                    set.name,
-                    set.in_use,
-                    set.checksum_ok,
-                    set.attributes,
-                    set.is_dir,
-                    set.first_cluster,
-                    set.length as i64,
-                    set.valid_length as i64,
-                    set.no_fat_chain,
-                    set.created,
-                    set.modified,
-                    set.accessed,
-                ])?;
-                if let Some(entry) = ntfs {
-                    record_insert.execute(params![
-                        cluster,
-                        set.offset as i64,
-                        entry.record_number.map(|value| value as i64),
-                        i64::from(entry.sequence),
-                        entry.parent_record.map(|value| value as i64),
-                        entry.parent_sequence.map(i64::from),
-                        entry.storage,
-                    ])?;
-                }
-                for run in ntfs.map(|entry| entry.runs.as_slice()).unwrap_or_default() {
-                    extent_insert.execute(params![
-                        cluster,
-                        set.offset as i64,
-                        run.vcn as i64,
-                        run.lcn.map(|value| value as i64),
-                        run.count as i64,
-                    ])?;
-                }
-            }
-            let mut error_insert = transaction.prepare_cached(
-                "INSERT OR REPLACE INTO read_errors (cluster, message) VALUES (?1, ?2)",
-            )?;
-            for (cluster, message) in errors {
-                error_insert.execute(params![cluster, message])?;
-            }
-            let mut state_insert = transaction.prepare_cached(
-                "INSERT INTO scan_state (key, value) VALUES (?1, ?2) \
-                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            )?;
-            for (key, value) in state {
-                state_insert.execute(params![key, value])?;
-            }
         }
+        transaction.execute(
+            "DELETE FROM ntfs_extents WHERE source_cluster >= ?1 AND source_cluster < ?2",
+            params![first, end],
+        )?;
+        transaction.execute(
+            "DELETE FROM ntfs_records WHERE source_cluster >= ?1 AND source_cluster < ?2",
+            params![first, end],
+        )?;
+        transaction.execute(
+            "DELETE FROM read_errors WHERE cluster >= ?1 AND cluster < ?2",
+            params![first, end],
+        )?;
+        write_chunk(&transaction, found, errors, &[], true)?;
+        transaction.execute(
+            "INSERT INTO scan_state (key, value) VALUES ('sets_found', (SELECT count(*) FROM sets))
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+        transaction.execute(
+            "INSERT INTO scan_state (key, value) VALUES ('read_errors', (SELECT count(*) FROM read_errors))
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
         transaction.commit()?;
         Ok(())
     }

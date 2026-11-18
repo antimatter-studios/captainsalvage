@@ -1172,6 +1172,18 @@ const strings: Record<string, string> = {
   "Opened as raw bytes, because the filesystem could not be applied: {reason}": "Ouvert en octets bruts, car le système de fichiers n'a pas pu être appliqué : {reason}",
   "A stored source is matched by markers, small blocks spread over it. The match is a confidence, not proof that every byte is identical.": "Une source enregistrée est reconnue par des repères, de petits blocs répartis sur elle. La correspondance est un niveau de confiance, pas la preuve que chaque octet est identique.",
   "Show the bytes": "Afficher les octets",
+  "The drive changed near here after this was stored. Scan the changed regions again to check it.": "Le disque a changé près d'ici après l'enregistrement de ceci. Analysez à nouveau les zones modifiées pour le vérifier.",
+  "May be out of date": "Peut être périmé",
+  "One region may be out of date.": "Une zone peut être périmée.",
+  "{count} regions may be out of date.": "{count} zones peuvent être périmées.",
+  "The rescan stopped before it was done. The regions stay marked, and rescanning continues where it stopped.": "La nouvelle analyse s'est arrêtée avant la fin. Les zones restent marquées, et la nouvelle analyse reprend là où elle s'est arrêtée.",
+  "The changed regions were scanned again, and the drive's markers were recorded again, so this drive matches exactly next time.": "Les zones modifiées ont été analysées à nouveau et les repères du disque ont été enregistrés de nouveau, donc ce disque correspondra exactement la prochaine fois.",
+  "The source changed near the markers that no longer match, so what was stored there may be out of date. Nothing is scanned again until you ask.": "La source a changé près des repères qui ne correspondent plus, donc ce qui y était enregistré peut être périmé. Rien n'est analysé à nouveau avant que vous le demandiez.",
+  "Scanning the changed regions again": "Nouvelle analyse des zones modifiées",
+  "Rescan changed regions": "Réanalyser les zones modifiées",
+  "After opening, the regions near the changed markers are marked, and you can scan just those again. Nothing is scanned until you ask.": "Après l'ouverture, les zones proches des repères modifiés sont marquées, et vous pouvez n'analyser à nouveau que celles-là. Rien n'est analysé avant que vous le demandiez.",
+  "Only the person using the app scans the changed regions again.": "Seule la personne qui utilise l'application réanalyse les zones modifiées.",
+  "The rescan was stopped.": "La nouvelle analyse a été arrêtée.",
 };
 
 export default strings;

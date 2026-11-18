@@ -379,7 +379,6 @@ impl Engine {
             }
             if let Some(scan) = scan {
                 catalog.touch_scan(&scan.id)?;
-                opened_scan = Some(catalog.scan(&scan.id)?);
                 if let Some(raw) = scan.raw_scan_id.as_deref() {
                     let mut store = crate::raw_scan::ScanStore::for_user()?;
                     raw_snapshot = serde_json::to_value(store.resume(
@@ -389,6 +388,8 @@ impl Engine {
                         accept == Accept::Probable,
                     )?)?;
                 }
+                // After the scan resumed: on a probable match that marks what may be out of date.
+                opened_scan = Some(catalog.scan(&scan.id)?);
             } else if let (Some(id), None) = (source_id.as_deref(), extent) {
                 if wanted_format.is_some() {
                     let placeholder = catalog.raw_placeholder(id, 0, disk.length)?;
@@ -423,6 +424,10 @@ impl Engine {
             None => self.clear_session(),
         }
 
+        let stale = match &opened_scan {
+            Some(scan) => serde_json::to_value(catalog.stale_summary(&scan.id)?)?,
+            None => Value::Null,
+        };
         let source = match source_id.as_deref() {
             Some(id) => Some(catalog.source(id)?),
             None => None,
@@ -486,6 +491,9 @@ impl Engine {
             "detected": detection.candidates.first(),
             "choices": choices,
             "scan": opened_scan,
+            // The areas of this scan's results that may be out of date, because the source was a
+            // probable match. Nothing is scanned again until the person asks.
+            "stale": stale,
             "created": created,
             "scans": scans,
             "matches": matches_json(&catalog, &others)?,

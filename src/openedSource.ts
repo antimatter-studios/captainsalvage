@@ -1,4 +1,5 @@
 import type { MarkerComparison, MatchState } from "./rawDisk";
+import type { StaleSummary } from "./stale";
 
 /** What the picker offers, in this order. FAT is whichever width the boot sector says. */
 export type ChoiceId = "exFAT" | "FAT" | "NTFS" | "none";
@@ -39,6 +40,8 @@ export interface ScanRecord {
   updatedAtMillis: number;
   openedAtMillis: number;
   migrated: boolean;
+  /** How many areas of its results may be out of date, because the source changed since. */
+  staleRegions?: number;
 }
 
 export interface SourceRecord {
@@ -81,6 +84,8 @@ export interface OpenedSource {
   detected: { format: string; confidence: number } | null;
   choices: InterpretationChoice[];
   scan: ScanRecord | null;
+  /** The areas of this scan's results that may be out of date. Nothing is scanned again until the person asks. */
+  stale?: StaleSummary | null;
   created: boolean;
   scans: ScanRecord[];
   raw: import("./rawDisk").ScanSnapshot | null;
