@@ -388,6 +388,23 @@ What was checked against something that is not this app:
   ntfs3 mount: 150 files in one folder, a sparse file, a fragmented file, non-ASCII names), the
   app lists exactly what ntfs3 and ntfs-3g list, and reads files they deleted through ntfs-3g.
   The two oracles are compared with each other first, and the script fails if they differ.
+- **mkfs.fat, mkfs.exfat and the Linux kernel's vfat and exfat**, in the same VM (from
+  `tests/fat_exfat_oracle.rs` and `validation/fat-oracle.sh`). The formatters make twelve images
+  (FAT12 at 512 and 4096 byte sectors and 60 MiB, FAT16 at 512 and 4096 byte sectors, FAT32 at 512
+  and 4096 byte sectors, exFAT at 512 and 4096 byte sectors (the app refuses the 4096 one with
+  `unsupported sector size 4096`, which the test asserts, #234), and a FAT16, a FAT32 and an exFAT
+  volume at a 1 MiB offset in a disk with a partition table), the kernel fills them through a
+  read-write mount, and the kernel, mtools (FAT) and `fsck` report them. The app lists exactly what
+  the kernel lists, with the same SHA-256 for every file, copies the same bytes, finds the two files
+  written last and deleted, and leaves the image unchanged. Damaged copies (zeroed FAT, cut, looping
+  and cross-linked chains, differing FAT copies, a wrong exFAT checksum) are ones `fsck` rejects, and
+  the app never calls a file live with bytes the kernel did not read, except for cross-linked FAT
+  and exFAT chains, a known fault (#230) noted in the test's header. A second known fault (#231): a FAT file whose long
+  name straddles two clusters of its folder is listed by its 8.3 alias, with the right bytes, and the
+  test accepts that alias and counts it (its non-ASCII characters are shown as replacement
+  characters, #233). A third (#232): an exFAT file whose entry set crosses into a folder cluster that is
+  not the next one on the disk is not listed, and the test lets exactly those files be omitted and
+  counts them.
 - **Windows itself**, in the Windows 11 guest of
   [fs-windows-test-harness](https://github.com/antimatter-studios/fs-windows-test-harness)
   (`chore test:windows-oracle`, from `tests/ntfs_windows.rs` and `validation/windows/`), or on a
@@ -822,14 +839,16 @@ marked until the file is tested again. The source is only read.
 
 ```sh
 cargo test -p captainsalvage
-chore test:oracle     # NTFS against ntfs-3g and the kernel's ntfs3, in the Linux test VM
+chore test:oracle     # NTFS, FAT and exFAT against ntfs-3g, dosfstools, exfatprogs, mtools and the kernel, in the Linux test VM
 chore test:windows-oracle   # NTFS against volumes Windows formatted and filled, in the Windows guest
 ```
 
 `chore test:oracle` needs the sibling checkouts `chore siblings` makes, and boots the shared
 guest of [fs-linux-test-harness](https://github.com/antimatter-studios/fs-linux-test-harness)
 with the `ntfs3` run profile in `run-profiles/`. Nothing is mounted on the Mac. A missing VM, tool
-or kernel driver fails the oracle tests, naming this task; they never skip.
+or kernel driver fails the oracle tests, naming this task; they never skip. The FAT and exFAT
+tests (`tests/fat_exfat_oracle.rs`, `validation/fat-oracle.sh`) list in their header what they
+do not check.
 
 `chore test:windows-oracle` starts the Windows guest of
 [fs-windows-test-harness](https://github.com/antimatter-studios/fs-windows-test-harness) (set up

@@ -47,7 +47,8 @@ rars = { version = "0.12.4", default-features = false, features = ["write"] }
 sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip2", "deflate", "ppmd", "compress", "util"] }
 
 # Tests that need the independent oracles: ntfs-3g's tools and the Linux kernel's ntfs3 driver,
-# which run in the Linux test VM. They fail, never skip, when the oracles cannot run:
+# and dosfstools, exfatprogs, mtools and the kernel's vfat and exfat drivers, which run in the
+# Linux test VM. They fail, never skip, when the oracles cannot run:
 # `chore test:oracle` provides them.
 [features]
 oracle = []
@@ -64,6 +65,10 @@ windows-oracle = []
 
 [[test]]
 name = "ntfs_oracle"
+required-features = ["oracle"]
+
+[[test]]
+name = "fat_exfat_oracle"
 required-features = ["oracle"]
 
 [[test]]

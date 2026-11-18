@@ -137,7 +137,8 @@ hand: keeping both sides can join two functions or two tests together.
 ## Independent oracles
 
 A reader that shares the code it checks proves only that it agrees with itself. NTFS is also
-checked against ntfs-3g's tools and the Linux kernel's ntfs3 driver, in the Linux test VM:
+checked against ntfs-3g's tools and the Linux kernel's ntfs3 driver, and FAT and exFAT against
+mkfs.fat, mkfs.exfat, mtools and the kernel's vfat and exfat drivers, in the Linux test VM:
 `chore test:oracle` (see the README's tests section). The tests behind the `oracle` feature fail,
 never skip, when the VM or a tool is missing, and the failure names that task. When an oracle
 disagrees with the app, write the failing test first, then fix the app, or the driver in a pull
