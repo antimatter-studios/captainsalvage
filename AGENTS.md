@@ -19,6 +19,7 @@ someone using the app, and title it to match.
 - Say why in the description, so the assessment can be checked. Correct the title before
   merging if the work changed, because the squash commit takes its subject from the title.
 - Never set a version by hand. 1.0.0 and other named versions are the owner's decision.
+- **No AI attribution and no co-author trailers**, in commits or in pull request descriptions.
 
 ## Changelog entries are fragments
 
