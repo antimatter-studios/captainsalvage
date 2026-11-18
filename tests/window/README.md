@@ -40,6 +40,12 @@ is no evidence), the saved scans list with its editable names, and that the same
 alone from a file of its bytes is the same source and scan. It needs `jigsaw.img` and saves
 `door-header.png` here.
 
+`title_area_test.py` checks the row across the top of the window: the header icon is the app icon's file, the
+two titles share a size and weight, the left and right halves have the same height and top, both drag the
+window, and a long device name is cut short with its path as a tooltip without pushing Change disk, the
+picker or the controls out of the row, also at the smallest window width. It needs `jigsaw.img` and saves
+`title-area.png`, `title-area-long.png` and `title-area-dark.png` here.
+
 `raw_disk_test.py` derives a throwaway raw image from `jigsaw.img`, with NTFS boot evidence
 and an older exFAT volume beyond a declared partition. It verifies that raw sources use the
 normal workspace and shared graph, that evidence discovery reaches both formats, that byte
