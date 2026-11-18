@@ -188,6 +188,8 @@ try:
     check("the stored scan opens with its results", wait_for("!!document.querySelector('.safety-chip')", 90), True)
     check("the window says how many regions may be out of date", wait_for("document.querySelector('.interp-stale')?.textContent.includes('One region may be out of date.')"), True)
     check("it offers to scan them again", probe("[...document.querySelectorAll('.interp-stale button')].map((button) => button.textContent)"), ["Rescan changed regions"])
+    check("every file the API lists inside the region says so", {row["stale"] for row in call("browse_files", offset=0, limit=50)["rows"]}, {True})
+    click("Browse files", ".center-tabs")
     check("entries in the region are marked", wait_for("document.querySelectorAll('.stale-mark').length > 0"), True)
     check("opening scanned nothing again", call("status")["scan"]["status"], "complete")
     listed = call("list_stale_regions", scanId=scan_id)
@@ -200,7 +202,8 @@ try:
 
     click("Rescan changed regions", ".interp-stale")
     check("the rescan finishes and says the markers were recorded again", wait_for("document.querySelector('.interp-stale')?.textContent.includes('recorded again')", 180), True)
-    check("no entry is marked now", probe("document.querySelectorAll('.stale-mark').length"), 0)
+    check("no file is marked now", wait_for("document.querySelectorAll('.list-row, .tile').length > 0 && document.querySelectorAll('.stale-mark').length === 0"), True)
+    check("the API lists none as stale", [row.get("stale") for row in call("browse_files", offset=0, limit=50)["rows"] if row.get("stale")], [])
     check("the scan is still complete, and was not made again", (call("status")["scan"]["status"], probe("document.querySelector('.interp-scans').textContent")), ("complete", "Saved scans (1)"))
     with database() as connection:
         regions = connection.execute("SELECT cleared_at_millis IS NOT NULL, done_to = end FROM scan_stale_regions").fetchall()

@@ -127,7 +127,7 @@ function Tile({ row, showImage, selected, style, onOpen, onExport }: {
           </span>
         )}
         {!showImage && <span className="tile-icon"><Icon name={fileIcon(row.name)} size={32} /></span>}
-        <span className="tile-name">{row.name}</span>
+        <span className="tile-name">{row.name}{row.stale && <StaleMark />}</span>
         <span className="tile-meta">
           <span>
             {bytes(row.length)}

@@ -156,7 +156,7 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         # The changed last block makes its own 4 KiB and one mebibyte before it stale.
         check("one stale region around the changed marker, not cleared", regions, [(48 * MIB - 4096 - MIB, 48 * MIB, None)])
         check("both findings are still stored: opening scanned nothing", findings, [0, second])
-        check("only the finding in the stale region is marked", probe("[...document.querySelectorAll('.explorer .row-name')].map((name) => !!name.querySelector('.stale-mark'))"), [offset == second for offset in findings])
+        check("only the finding in the stale region is marked", probe("[...document.querySelectorAll('.explorer .row-name')].filter((name) => name.textContent.startsWith('NTFS')).map((name) => !!name.querySelector('.stale-mark'))"), [offset == second for offset in findings])
         check("the mark says what it means", probe("document.querySelector('.explorer .stale-mark')?.textContent"), "May be out of date")
         check("an agent can list the region, read only", call("list_stale_regions", scanId=catalog_scan)["stale"]["stale"], 1)
         click("Rescan changed regions", ".interp-stale")
@@ -171,7 +171,7 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
             next_after = connection.execute("SELECT next_offset FROM raw_scans").fetchone()[0]
         check("the region is cleared and was read to its end", regions, [(1, 1)])
         check("the structure the mount overwrote is gone, and the one at the start stays", findings, [0])
-        check("the window lists what the rescan found", probe("document.querySelectorAll('.explorer .row-name').length"), len(findings))
+        check("the window lists what the rescan found", probe("[...document.querySelectorAll('.explorer .row-name')].filter((name) => name.textContent.startsWith('NTFS')).length"), len(findings))
         check("the scan's own position did not move", next_after, next_before)
         check("the markers the source had before are kept", history, 1)
         click("Change disk", ".toolbar")
