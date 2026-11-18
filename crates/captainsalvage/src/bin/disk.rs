@@ -5,7 +5,7 @@ use std::path::Path;
 
 pub fn run(arguments: &[String]) -> Result<()> {
     let path = arguments.first().context(
-        "usage: captainsalvage disk <device-or-image> [--scan | --list-scans | --resume ID --accept-sampled-match] [--offset BYTES] [--length BYTES]",
+        "usage: captainsalvage disk <device-or-image> [--scan | --list-scans [--show-all] | --resume ID --accept-sampled-match [--accept-changed-markers]] [--offset BYTES] [--length BYTES]",
     )?;
     let mut scan = false;
     let mut start = 0;
@@ -13,6 +13,8 @@ pub fn run(arguments: &[String]) -> Result<()> {
     let mut resume = None;
     let mut list_scans = false;
     let mut accept_sampled_match = false;
+    let mut accept_changed_markers = false;
+    let mut show_all = false;
     let mut range_supplied = false;
     let mut options = arguments[1..].iter();
     while let Some(option) = options.next() {
@@ -23,6 +25,8 @@ pub fn run(arguments: &[String]) -> Result<()> {
                 resume = Some(options.next().context("--resume needs a scan ID")?.as_str())
             }
             "--accept-sampled-match" => accept_sampled_match = true,
+            "--accept-changed-markers" => accept_changed_markers = true,
+            "--show-all" => show_all = true,
             "--offset" => {
                 range_supplied = true;
                 start = options
@@ -54,6 +58,11 @@ pub fn run(arguments: &[String]) -> Result<()> {
         !accept_sampled_match || resume.is_some(),
         "--accept-sampled-match requires --resume"
     );
+    ensure!(
+        !accept_changed_markers || resume.is_some(),
+        "--accept-changed-markers requires --resume"
+    );
+    ensure!(!show_all || list_scans, "--show-all requires --list-scans");
     ensure!(resume.is_none() || accept_sampled_match, "--resume requires --accept-sampled-match; matching samples do not prove every byte is identical");
     let disk = RawDisk::open(Path::new(path))?;
     let length = length.unwrap_or_else(|| disk.length.saturating_sub(start));
@@ -66,12 +75,12 @@ pub fn run(arguments: &[String]) -> Result<()> {
     if list_scans {
         println!(
             "{}",
-            serde_json::to_string(&ScanStore::for_user()?.list(&disk)?)?
+            serde_json::to_string(&ScanStore::for_user()?.list_matching(&disk, show_all)?)?
         );
     } else if scan || resume.is_some() {
         let mut store = ScanStore::for_user()?;
         let saved = match resume {
-            Some(id) => store.resume(&disk, id, accept_sampled_match)?,
+            Some(id) => store.resume(&disk, id, accept_sampled_match, accept_changed_markers)?,
             None => store.create(&disk, start, length)?,
         };
         println!("{}", serde_json::to_string(&saved)?);

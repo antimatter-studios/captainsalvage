@@ -288,6 +288,19 @@ export const ENGINE_TEXT: string[] = [
   "macOS would not remove the Finder location",
   "macOS did not answer when adding the Finder location.",
   "This copy of the app is not signed into its app group.",
+  // What a saved scan's markers say about the source that is open now.
+  "The source has a different size.",
+  "The saved fingerprint was made by a newer version.",
+  "The saved fingerprint has no markers.",
+  "All {total} markers match.",
+  "{changed} of {total} markers changed.",
+  "Every changed marker is within the first 1 MiB, so a mount probably wrote metadata.",
+  "Of the changed markers, {near} are within the first 1 MiB, so a mount probably wrote metadata, and the rest are further into the drive.",
+  "The changed markers are further into the drive, so its data may have changed.",
+  "Of the {total} markers, {unreadable} could not be read.",
+  "No marker matches.",
+  "Only {matched} of {total} markers match, too few to identify this drive.",
+  "Markers used: {total} instead of {wanted}, because the source is small or mostly blank.",
 ];
 
 /** Errors from macOS and filesystem drivers, passed on without app-owned Rust definitions. */

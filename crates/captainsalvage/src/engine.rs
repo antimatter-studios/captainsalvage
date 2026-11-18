@@ -408,7 +408,12 @@ impl Engine {
             "list_raw_scans" => {
                 let disk = self.raw_disk(args)?;
                 Ok(serde_json::to_value(
-                    crate::raw_scan::ScanStore::for_user()?.list(&disk)?,
+                    crate::raw_scan::ScanStore::for_user()?.list_matching(
+                        &disk,
+                        args.get("showAll")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    )?,
                 )?)
             }
             "create_raw_scan" => {
@@ -428,6 +433,9 @@ impl Engine {
                         &disk,
                         need_str(args, "scanId")?,
                         args.get("acceptSampledMatch")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        args.get("acceptChangedMarkers")
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
                     )?,
