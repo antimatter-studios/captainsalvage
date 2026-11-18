@@ -7,9 +7,10 @@
 #       what merged since the last tag, unless you name one, such as 1.0.0.
 #
 #   scripts/create-release --rc [--dry-run] [--build | --install]
-#       Run with the release branch checked out, before its pull request has merged. Tags a
-#       release candidate, vX.Y.Z-rc<N>, so that version can be built and installed here under a
-#       real number and a real tag. See "Release candidates" below.
+#       Run with the release branch checked out, before its pull request has merged. That is
+#       release/vX.Y.Z, or integration/rc-vX.Y.Z, a branch that collects several pull requests
+#       for a candidate. Tags a release candidate, vX.Y.Z-rc<N>, so that version can be built and
+#       installed here under a real number and a real tag. See "Release candidates" below.
 #
 #   scripts/create-release --tag vX.Y.Z [--contents-approved]
 #       After that pull request has merged, tags main and pushes the tag. github-guard checks
@@ -28,6 +29,10 @@
 # must be pushed and checked out with nothing uncommitted, so a candidate is what the pull
 # request holds. A release branch cut before this tooling merged needs it first:
 # scripts/rebase-pr.sh release/vX.Y.Z.
+#   The branch is release/vX.Y.Z, or integration/rc-vX.Y.Z. The integration branch is how several
+# open pull requests are tried together before any of them merges: it holds them, and a candidate
+# is cut from it. Either way VERSION is plain X.Y.Z on the branch, and the head is pushed. Nothing
+# else about a candidate changes: it is the same commit beside the head, the same tag.
 #   A candidate is tagged, not cut: no notes, no squash. It is not a release. No pipeline runs for
 # it, there is no GitHub Release, and no build is ever put on GitHub. --build builds it, and
 # --install builds and installs it for this user, in a temporary worktree at the tag. Without them,
@@ -211,11 +216,11 @@ stage_rc() {
     common_checks
     finish_preflight
     branch="$(git symbolic-ref --quiet --short HEAD || true)"
-    if [[ "$branch" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]] &&
-        [ "$(bash scripts/tag-kind "v${BASH_REMATCH[1]}" 2>/dev/null)" = final ]; then
-        version="${BASH_REMATCH[1]}"
+    if [[ "$branch" =~ ^(release/v|integration/rc-v)([0-9]+\.[0-9]+\.[0-9]+)$ ]] &&
+        [ "$(bash scripts/tag-kind "v${BASH_REMATCH[2]}" 2>/dev/null)" = final ]; then
+        version="${BASH_REMATCH[2]}"
     else
-        FAILURES+=("this is not a release branch, release/vX.Y.Z. Switch to the release's branch first.")
+        FAILURES+=("this is not a release branch, release/vX.Y.Z or integration/rc-vX.Y.Z. Switch to the release's branch first.")
     fi
     finish_preflight
     git fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null ||
