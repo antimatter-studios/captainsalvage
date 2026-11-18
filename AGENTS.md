@@ -45,6 +45,49 @@ pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `
 - Show them the list it prints, verbatim, and wait for their answer before passing
   `--contents-approved`.
 - The tag starts the release pipeline, and the pipeline never creates a tag.
+- A bug that was introduced and fixed within the same unreleased version gets no changelog entry. No
+  release ever had the bug, so the notes would announce a fix for something nobody ran. Drop the
+  fix's fragment, or never write it. The entry for the feature stays, and says how it works now.
+- A release is not cut until its window suite has passed on a release candidate (see the sequence
+  below). The unit and CI checks do not drive the window, so they cannot stand in for it.
+
+### The sequence, start to finish
+
+1. **`npm ci`.** The release writes the license list, and `scripts/licenses.py` reads each package's own
+   license files from `node_modules`. `scripts/create-release` and `release.py prepare` stop, before they
+   change anything, when `node_modules` is missing, and say so. It also needs `cargo`.
+2. **Cut or prepare.** There are two ways to a release branch, and a candidate is cut from either.
+   - *From `main`:* `scripts/create-release` shows the pull requests and entries, stops for the owner's
+     yes, then makes `release/vX.Y.Z` with the fragments gathered into `CHANGELOG.md`, the README's list,
+     every manifest, and the license list (`THIRD-PARTY-LICENSES.md` and the README's table), and opens
+     the pull request. A failure after the branch exists puts the checkout back and deletes the branch.
+   - *From an integration branch:* `integration/rc-vX.Y.Z` collects several open pull requests so they are
+     tried together before any merges. On it, `python3 scripts/release.py prepare X.Y.Z` does what the cut
+     does, in the working tree, and you commit and push it. Its `VERSION` is plain `X.Y.Z`.
+3. **More pull requests join the branch.** `prepare` refuses a version whose section exists. When
+   fragments remain in `changelog.d/` because a pull request joined after `prepare`, run
+   `python3 scripts/release.py prepare --append`. It adds them to the existing section, under the headings
+   they use, and keeps the section's date and the compare links. An entry the section already has, word
+   for word, is not written twice, and the fragment is removed all the same. Use it only on a branch where
+   the version is not released. On `main`, after a release, a fragment is the next release's.
+4. **Read the notes.** `python3 scripts/release.py notes-check` flags words the product has retired
+   (`canvas`, `basket`, `Inspect raw`, `Rebuild Tree`) and the sentence "not part of this change", which
+   promises the opposite of another entry. They may appear only under `### Removed`. The cut refuses while
+   a fragment on `main` has one, and `--allow-vocabulary` is for when it is meant. CI only warns. Fix the
+   wording in the pull request that wrote it, not by hand in the release commit.
+5. **License list.** `prepare` already runs `python3 scripts/licenses.py write`. Run it yourself, then
+   `python3 scripts/licenses.py current`, after anything else that changes a version or a dependency. The
+   README names this app's own crates with their version, so a stale list fails CI at the license check.
+6. **Release candidate.** On the pushed, clean branch, `scripts/create-release --rc` tags `vX.Y.Z-rc<N>`
+   (add `--install` to build and install it). The candidate commit is the version stamp: `VERSION`, the
+   manifests and the lock files say `X.Y.Z-rc<N>`, and nothing else differs.
+7. **Window suite.** Run the suite in `tests/window/` against the installed candidate, one test at a time
+   and never beside a build. Read its README first. A candidate that has not passed it is not released.
+   More commits on the branch make the next candidate, `rc2`, and the suite runs on that one.
+8. **Merge, then tag.** Once the release pull request has merged:
+   `git switch main && git pull --ff-only && scripts/create-release --tag vX.Y.Z`. The tag is made on
+   `main`, starts the pipeline, and then the release's candidate tags are deleted from origin and from here,
+   each with the command that puts it back. Only the owner decides to do any of this.
 
 ### Release candidates, before the release pull request merges
 

@@ -22,4 +22,8 @@ A change no one using the app would notice -- tests, CI, documentation -- needs 
 
 - `scripts/changelog-check.sh` refuses a malformed fragment, and an entry written into
   `CHANGELOG.md` directly.
-- `scripts/changelog-gather.sh VERSION` is the release step, run by `scripts/create-release`.
+- `scripts/changelog-gather.sh VERSION` is the release step, run by `scripts/create-release`. With
+  `--append` it adds the fragments that remain to a section that exists, for a release branch that took
+  more pull requests after its first gather.
+- `scripts/release.py notes-check` reports retired words (canvas, basket, Inspect raw, Rebuild Tree) in the
+  fragments and in the release's section. Only `### Removed` entries may name them.

@@ -46,6 +46,10 @@ jobs:
         run: python3 scripts/check_translations.py
       - name: every file carries the one version in VERSION
         run: python3 scripts/release.py check
+      # Only warns. A fragment or the release's notes that use a retired word are fixed in the pull
+      # request that wrote them, and the cut stage of scripts/create-release is what refuses them.
+      - name: release notes avoid the retired words (warning only)
+        run: python3 scripts/release.py notes-check
       - name: engine text is translated sentence by sentence
         run: bash scripts/test_translations.sh
       - name: type check and build the window
