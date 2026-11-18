@@ -517,6 +517,21 @@ class Vocabulary(unittest.TestCase):
         text = "### Removed\n\n- The canvas and the basket.\n\n### Changed\n\n- A canvas again.\n"
         self.assertEqual(self.words(text), [(7, "canvas")])
 
+    def test_a_rename_may_name_the_old_word(self):
+        for phrase in ("is now called", "are now called", "was renamed", "renamed to", "Is Now Called", "RENAMED TO"):
+            self.assertEqual(self.words(f"### Changed\n\n- **The canvas {phrase} a Disk Rebuild.** Same thing.\n"), [], phrase)
+
+    def test_a_rename_covers_its_own_item_including_wrapped_lines(self):
+        text = "### Changed\n\n- **A thing.** The basket\n  is now called the treasure list, and a canvas too.\n- **Another.** A canvas.\n"
+        self.assertEqual(self.words(text), [(5, "canvas")])
+
+    def test_a_rename_does_not_excuse_the_next_item_or_a_paragraph(self):
+        text = "### Changed\n\n- **X is now called Y.** No old word here.\n- **Z.** The basket is back.\n\nA canvas paragraph.\n"
+        self.assertEqual(self.words(text), [(4, "basket"), (6, "canvas")])
+
+    def test_a_retired_word_outside_removed_or_a_rename_is_a_violation(self):
+        self.assertEqual(self.words("### Added\n\n- **A canvas.** It is called renamed-ish.\n"), [(3, "canvas")])
+
     def test_a_version_heading_ends_the_exemption(self):
         text = "### Removed\n\n- The canvas.\n\n## [0.3.0] — 2026-01-01\n\n- A basket.\n"
         self.assertEqual(self.words(text), [(7, "basket")])

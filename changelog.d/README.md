@@ -26,4 +26,5 @@ A change no one using the app would notice -- tests, CI, documentation -- needs 
   `--append` it adds the fragments that remain to a section that exists, for a release branch that took
   more pull requests after its first gather.
 - `scripts/release.py notes-check` reports retired words (canvas, basket, Inspect raw, Rebuild Tree) in the
-  fragments and in the release's section. Only `### Removed` entries may name them.
+  fragments and in the release's section. Only `### Removed` entries, and entries that say they are a
+  rename ("is now called", "was renamed", "renamed to"), may name them.

@@ -72,7 +72,9 @@ pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `
    the version is not released. On `main`, after a release, a fragment is the next release's.
 4. **Read the notes.** `python3 scripts/release.py notes-check` flags words the product has retired
    (`canvas`, `basket`, `Inspect raw`, `Rebuild Tree`) and the sentence "not part of this change", which
-   promises the opposite of another entry. They may appear only under `### Removed`. The cut refuses while
+   promises the opposite of another entry. They may appear only in a `### Removed` entry, or in an entry
+   that says it is a rename: a list item containing "is now called", "are now called", "was renamed" or
+   "renamed to" (any case), which may name the old word anywhere in that item. The cut refuses while
    a fragment on `main` has one, and `--allow-vocabulary` is for when it is meant. CI only warns. Fix the
    wording in the pull request that wrote it, not by hand in the release commit.
 5. **License list.** `prepare` already runs `python3 scripts/licenses.py write`. Run it yourself, then

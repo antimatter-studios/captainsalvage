@@ -324,6 +324,14 @@ git push -q origin main
 check "Removed may name retired words" "$(run --contents-approved)" 0
 check "a Removed entry cuts the release" "$(git symbolic-ref --short HEAD)" release/v0.2.0
 
+# An entry that says it is a rename may name the old word.
+start
+printf '### Changed\n\n- **"Canvas" is now called "Disk Rebuild".** Same thing.\n' >changelog.d/renamed.md
+git add changelog.d/renamed.md
+git commit -q -m "feat: rename it (#2)"
+git push -q origin main
+check "a rename may name the old word" "$(run --contents-approved)" 0
+
 # A fix raises the patch.
 start
 merged "fix: a repair (#2)" a-repair Fixed

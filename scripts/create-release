@@ -7,7 +7,7 @@
 #       what merged since the last tag, unless you name one, such as 1.0.0. It needs `npm ci` to
 #       have run, because the release writes the license list, which is read from the installed
 #       packages. It refuses while an entry uses a word the product has retired (canvas, basket,
-#       Inspect raw, Rebuild Tree) outside Removed, unless --allow-vocabulary says they are meant.
+#       Inspect raw, Rebuild Tree) outside Removed and renames, unless --allow-vocabulary says they are meant.
 #
 #   scripts/create-release --rc [--dry-run] [--build | --install]
 #       Run with the release branch checked out, before its pull request has merged. That is
@@ -343,11 +343,11 @@ stage_cut() {
     local fragments
     fragments="$(git ls-tree -r --name-only origin/main -- changelog.d | grep -v '^changelog.d/README.md$' | grep '\.md$' || true)"
     [ -n "$fragments" ] || FAILURES+=("changelog.d/ on main has no fragments, so this release would have nothing to say.")
-    # The words the product has retired do not belong in what a release says, except under Removed.
+    # The words the product has retired do not belong in what a release says, except under Removed or in a rename.
     local vocabulary
     if ! vocabulary="$("$PYTHON" scripts/release.py notes-check --fragments origin/main --strict 2>&1)" &&
         [ "$ALLOW_VOCABULARY" = "false" ]; then
-        FAILURES+=("an entry uses a word the product has retired, outside Removed:"$'\n'"$(printf '%s\n' "$vocabulary" | sed 's/^/      /')"$'\n'"    Reword it in a pull request, or run this again with --allow-vocabulary if it is meant.")
+        FAILURES+=("an entry uses a word the product has retired, outside Removed or a rename:"$'\n'"$(printf '%s\n' "$vocabulary" | sed 's/^/      /')"$'\n'"    Reword it in a pull request, or run this again with --allow-vocabulary if it is meant.")
     fi
     finish_preflight
 

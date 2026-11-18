@@ -44,7 +44,8 @@ released, such as an integration branch that has taken more pull requests since 
 cut, `prepare --append` adds the fragments that remain to that section and leaves the rest of it.
 
 `notes-check` looks for the words the product has retired in the notes a release will say, the way a
-person reading them would. They may appear under "Removed" and nowhere else. It only reports, and
+person reading them would. They may appear under "Removed", and in an entry that says it is a rename
+("is now called", "are now called", "was renamed", "renamed to"), and nowhere else. It only reports, and
 `--strict` makes a finding fail, which is what the cut stage of scripts/create-release uses.
 """
 
@@ -82,6 +83,8 @@ RETIRED_VOCABULARY = [
      "another entry says the release has it, so drop the sentence or the entry that it contradicts"),
 ]
 VOCABULARY_EXEMPT = "Removed"
+# An entry that says it is a rename may name the old word, because that is what it reports.
+RENAME_MARKERS = re.compile(r"\b(?:is now called|are now called|was renamed|renamed to)\b", re.IGNORECASE)
 NO_CHANGES = "No pull requests merged yet."
 SECTION_ORDER = ["Added", "Fixed", "Documentation", "Other"]
 SECTION_FOR_TYPE = {"feat": "Added", "fix": "Fixed", "docs": "Documentation"}
@@ -487,18 +490,28 @@ def command_prepare(args):
 
 def vocabulary_findings(text, source, first_line=1):
     """The retired words in some notes, as (source, line, word, advice, text). Notes are `### Heading`
-    sections of entries, and the "Removed" ones may name what is gone."""
+    sections of entries. A retired word may be named in a "Removed" entry, and in an entry that says it is
+    a rename, which is any list item containing one of RENAME_MARKERS, in the lines of that one item."""
     section = None
-    found = []
+    entry = None  # the id of the list item a line belongs to
+    lines = []  # (number, line, section, entry)
+    entry_text = {}
     for number, line in enumerate(text.splitlines(), first_line):
         heading = re.match(r"^###\s+(.+?)\s*$", line)
-        if heading:
-            section = heading[1]
+        if heading or re.match(r"^##\s", line):
+            section = heading[1] if heading else None
+            entry = None
             continue
-        if re.match(r"^##\s", line):
-            section = None
-            continue
-        if section == VOCABULARY_EXEMPT:
+        if line.startswith("- "):
+            entry = number
+        elif line.strip() and not line[0].isspace():
+            entry = None
+        if entry is not None:
+            entry_text[entry] = entry_text.get(entry, "") + line + "\n"
+        lines.append((number, line, section, entry))
+    found = []
+    for number, line, section, entry in lines:
+        if section == VOCABULARY_EXEMPT or (entry is not None and RENAME_MARKERS.search(entry_text[entry])):
             continue
         for pattern, word, advice in RETIRED_VOCABULARY:
             if pattern.search(line):
@@ -546,12 +559,12 @@ def command_notes_check(args):
             found += vocabulary_findings(section[1], "CHANGELOG.md", section[0])
     actions = os.environ.get("GITHUB_ACTIONS") == "true"
     for source, number, word, advice, line in found:
-        message = f'"{word}" outside Removed: {advice}.'
+        message = f'"{word}" outside Removed or a rename: {advice}.'
         print(f"{source}:{number}: {message}\n    {line[:160]}")
         if actions:
             print(f"::warning file={source},line={number}::{message}")
     if found:
-        print(f"notes-check: {len(found)} place(s) use retired words. A note may name one only under Removed.", file=sys.stderr)
+        print(f"notes-check: {len(found)} place(s) use retired words. A note may name one only under Removed, or in an entry that says it is a rename.", file=sys.stderr)
         if args.strict:
             raise SystemExit(1)
     else:
