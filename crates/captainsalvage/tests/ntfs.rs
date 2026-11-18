@@ -916,8 +916,8 @@ fn mcp_reaches_an_ntfs_volume_through_the_branded_tools() {
     // An AI may look and plan, but only the person starts a copy, as for every filesystem.
     let error = engine
         .call(
-            "copy_start",
-            &json!({"destination": "/tmp/nowhere", "entryIds": [id]}),
+            "export_start",
+            &json!({"destination": "/tmp/nowhere", "kind": "file", "target": id}),
             captainsalvage::engine::AUTHOR_CLAUDE,
         )
         .err()

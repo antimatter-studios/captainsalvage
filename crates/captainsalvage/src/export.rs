@@ -65,8 +65,11 @@ pub struct CopyRequest {
     pub min_confidence: f64,
     /// Also copy files with missing clusters, or clusters reused by current files.
     pub include_partial: bool,
-    /// Copy this canvas's rebuilt tree, each file at its rebuilt path.
+    /// Copy this Disk Rebuild's tree, each file at its rebuilt path.
     pub canvas: Option<i64>,
+    /// An export: each file goes directly under the destination by its own name, and each
+    /// folder as a folder of its own with what it holds, not at its full path on the disk.
+    pub direct: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -536,12 +539,34 @@ impl Session {
             for &id in &request.entry_ids {
                 if let Some(row) = database.entry(id)? {
                     if row.kind == "file" && row.length > 0 {
+                        if request.direct {
+                            targets.insert(id, PathBuf::from(sanitize_segment(&row.name)));
+                        }
                         rows.push(row);
                     }
                 }
             }
             for &folder in &request.folders {
-                rows.extend(database.files_under(folder)?);
+                let under = database.files_under(folder)?;
+                if request.direct {
+                    let base = database
+                        .node(folder)?
+                        .and_then(|node| node.path)
+                        .unwrap_or_default();
+                    let leaf = base
+                        .rsplit('/')
+                        .find(|segment| !segment.is_empty())
+                        .unwrap_or("Volume root");
+                    for row in &under {
+                        let Some(id) = row.id else { continue };
+                        let rest = row.path.as_deref().unwrap_or_default();
+                        let rest = rest.strip_prefix(&base).unwrap_or(rest);
+                        targets.entry(id).or_insert_with(|| {
+                            relative_target(&format!("{leaf}{rest}"), &row.name)
+                        });
+                    }
+                }
+                rows.extend(under);
             }
             rows.sort_by_key(|row| row.id);
             rows.dedup_by_key(|row| row.id);

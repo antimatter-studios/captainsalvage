@@ -31,7 +31,7 @@
       <li><a href="#archives">Inside archive</a></li>
       <li><a href="#rebuild">Rebuild: Disk Rebuilds</a></li>
       <li><a href="#agent">Chat with an agent</a></li>
-      <li><a href="#treasure">Treasure list and copying</a></li>
+      <li><a href="#export">Exporting a file or folder</a></li>
       <li><a href="#report">Copy report</a></li>
       <li><a href="#map">Investigate: map strips</a></li>
       <li><a href="#bytes">Bytes</a></li>
@@ -72,8 +72,8 @@
       <li>Review safety checks and run the scan; allow it to finish if practical.</li>
       <li>Stay in <strong>Simple</strong>. Review Overview, then Browse files.</li>
       <li>Preview important files and test their formats. Confidence is not proof of completeness.</li>
-      <li>Add files or folders to the Treasure list and choose a healthy destination.</li>
-      <li>Start copying, open the copy report, check the copies again, and inspect the recovered files.</li>
+      <li>Right-click an important file or folder, choose <strong>Export</strong>, and choose a healthy destination.</li>
+      <li>Start the export, open the copy report, check the copies again, and inspect the recovered files.</li>
     </ol>
   </section>
   <section id="start">
@@ -111,7 +111,7 @@
       <thead><tr><th scope="col">Mode</th><th scope="col">What it shows</th><th scope="col">When to use it</th></tr></thead>
       <tbody>
         <tr><th scope="row">Simple (default)</th><td>Folders, Overview, Browse files,
-          Inside archive; Selected, Rebuild, Chat with an agent, Treasure list.</td><td>Finding,
+          Inside archive; Selected, Rebuild, Chat with an agent.</td><td>Finding,
           previewing, organising, and copying files without the technical map and bytes views.</td></tr>
         <tr><th scope="row">Investigate</th><td>Everything in Simple, plus map strips,
           Bytes, extra sidebar views, Workbench, Hypotheses, Lens, Volume, Activity,
@@ -171,8 +171,8 @@
         A multiplier marks grouped copies.</dd>
       <dt>Icons, List, and Sort</dt><dd>Switch presentation without changing the
         recovery results. Use the sort menu to order the view by the offered fields.</dd>
-      <dt>File and treasure controls</dt><dd>Select a tile or row to open it. Its
-        treasure-list control adds or removes it from the copy queue. A confidence
+      <dt>File controls</dt><dd>Select a tile or row to open it. Right-click it and choose
+        <strong>Export</strong> to copy it out. A confidence
         ring and verdict describe the app's assessment, not a guarantee.</dd>
     </dl>
     <p>A missing thumbnail is not automatically lost data. Some types require opening
@@ -183,8 +183,8 @@
     <figure><a href="../../media/manual/06-preview-selected.png"><img src="../../media/manual/06-preview-selected.png" alt="Large preview of a synthetic image with its Selected details and recovery actions."></a><figcaption>Preview the contents and read the verdict before deciding what to copy. This deliberately tiny 64 × 64 test image is shown at its native size.</figcaption></figure>
     <p><strong>Selected</strong> explains the chosen file, folder, or (in Investigate)
       cluster. It shows the name, path, confidence, reason for the verdict, and facts
-      such as size and timestamps. Folder details offer browsing and adding the folder
-      to the Treasure list. Cluster details identify owners and nearby evidence.</p>
+      such as size and timestamps. Folder details offer browsing the folder. Right-click
+      a folder in the sidebar to export it. Cluster details identify owners and nearby evidence.</p>
     <ul>
       <li><strong>Open large</strong> or the inline preview opens the centre preview.
         Previous/next controls move through the current file results; the back arrow
@@ -192,7 +192,7 @@
       <li><strong>Test format</strong> walks a supported file's structure. Read its
         valid fraction, units, break locations, and notes. An unsupported format is
         not the same as a failed test.</li>
-      <li><strong>Add to the treasure list</strong> queues a copy; it does not begin one.</li>
+      <li>Right-click a file and choose <strong>Export</strong> to copy it out. Exporting asks where it goes first.</li>
       <li><strong>Look inside</strong> opens a supported archive's members.</li>
       <li>Investigate exposes first cluster, pieces, chain layout, current-use and
         shared-cluster counts, checksum state, and links to the relevant bytes.</li>
@@ -245,24 +245,27 @@
       Consider your provider's privacy arrangements before using it on sensitive data.
       Read-only disk access does not mean data stays private from the agent provider.</p>
   </section>
-  <section id="treasure">
-    <h2>11. Treasure list and copying</h2>
-    <figure><a href="../../media/manual/10-treasure-list.png"><img src="../../media/manual/10-treasure-list.png" alt="Treasure list with synthetic files, copy plan, and a temporary destination folder."></a><figcaption>The destination here is a disposable test folder. For real recovery, choose a healthy disk.</figcaption></figure>
+  <section id="export">
+    <h2>11. Exporting a file or folder</h2>
+    <p>There is no list of things to copy. To copy one file or folder out, right-click it in the sidebar
+      or in Browse files and choose <strong>Export</strong>. To copy a whole arranged tree, build a Disk Rebuild
+      and use its copy controls (see Rebuild).</p>
     <ol>
-      <li>Add important files or whole folders from Selected or Browse files.</li>
-      <li>Open <strong>Treasure list</strong>. Drag to prioritise items, or use the up
-        and down buttons. Remove an item to change the queue, not the source.</li>
-      <li>Set <strong>Where it goes</strong> to a folder on another healthy disk.
-        Choose a destination or enter a path. You can remember it as the salvage drive.</li>
-      <li>Choose the confidence threshold and whether partial files should be included.
+      <li>Choose <strong>Export</strong> in the right-click menu of a file or folder.</li>
+      <li>Set <strong>Copy to</strong> to a folder on another healthy disk. Choose a disk or enter a path.
+        You can remember it as the salvage drive.</li>
+      <li>Choose whether files with missing or reused clusters should be included.
         Review the plan's file count, byte count, free space, and any refusal.</li>
-      <li>Start copying only after checking that plan. Watch progress and use
+      <li>Start the export only after checking that plan. Watch the progress and use
         <strong>Stop copying</strong> if necessary. Completed copies remain available.</li>
       <li>Open the copy report and verify the output before relying on it.</li>
     </ol>
-    <p>The app refuses an unsafe source destination and reports insufficient space.
-      Changing thresholds changes what qualifies for the copy; it does not improve
-      the bytes. Emptying the Treasure list clears the queue, not the recovered files.</p>
+    <p>A file lands directly in the folder you chose by its own name, and a folder lands as a folder of
+      its own with what it holds. The app never overwrites a file that is already there, checks each copy
+      as it is written, refuses an unsafe source destination and reports insufficient space.
+      Changing the options changes what qualifies for the copy; it does not improve the bytes.</p>
+    <p>Earlier versions had a treasure list. It is gone: a list that held items became a Disk Rebuild named
+      <strong>Imported treasure list</strong>, which you can keep, change or delete.</p>
   </section>
   <section id="report">
     <h2>12. Copy report</h2>

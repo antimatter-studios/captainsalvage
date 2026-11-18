@@ -3,7 +3,7 @@ errors, failed tool calls shown as errors, and empty panels. Never the real disk
 import json, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import SCRATCH, call, check, finish, js, probe, scan_and_reopen, start, wait_for
-TABS = ['Selected', 'Rebuild', 'Chat with an agent', 'Treasure list', 'Hypotheses', 'Lens', 'Volume', 'Activity', 'Connect']
+TABS = ['Selected', 'Rebuild', 'Chat with an agent', 'Hypotheses', 'Lens', 'Volume', 'Activity', 'Connect']
 CENTRE = ['Overview', 'Browse files', 'Bytes', 'Inside archive']
 INSTALL = """(() => { window.__errors = []; window.addEventListener('error', (e) => window.__errors.push(String(e.message))); window.addEventListener('unhandledrejection', (e) => window.__errors.push('rejected: ' + String(e.reason))); })()"""
 SHOWN_ERRORS = "[...document.querySelectorAll('.error, .detail-error, .bad, [role=alert]')].filter((n) => n.offsetParent !== null).map((n) => n.textContent.trim()).filter(Boolean)"

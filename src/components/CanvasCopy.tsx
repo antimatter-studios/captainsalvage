@@ -34,7 +34,7 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
     let current = true;
     setChecking(true);
     const timer = setTimeout(() => {
-      call<CopyPlan>("canvas_copy_plan", { canvas, destination, includePartial })
+      call<CopyPlan>("disk_rebuild_copy_plan", { canvas, destination, includePartial })
         .then((value) => {
           if (current) {
             setPlan(value);
@@ -53,7 +53,7 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
   async function start() {
     setError(null);
     try {
-      await call("canvas_copy_start", { canvas, destination, includePartial });
+      await call("disk_rebuild_copy_start", { canvas, destination, includePartial });
     } catch (reason) {
       setError(String(reason));
     }
@@ -67,7 +67,7 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
         <strong>{t("Copy the rebuilt tree")}</strong>
         <button className="link" onClick={onClose}>{t("Done")}</button>
       </div>
-      <p className="muted">{t("Each file goes where this canvas puts it, as the copy shown for it, in a folder named after the canvas. Nothing is written to the disk being recovered.")}</p>
+      <p className="muted">{t("Each file goes where this Disk Rebuild puts it, as the copy shown for it, in a folder named after the Disk Rebuild. Nothing is written to the disk being recovered.")}</p>
       <label className="field">
         <span>{t("Copy to")}</span>
         <input value={destination ?? ""} onChange={(event) => setDestination(event.target.value)} spellCheck={false} placeholder="/Volumes/YourDisk/recovered" />
@@ -77,8 +77,8 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
         {t("Also copy files with missing or reused clusters")}
       </label>
       {plan && (
-        <div className="basket-total">
-          <div className="basket-total-line">
+        <div className="copy-total">
+          <div className="copy-total-line">
             <strong>{t("{count} files, {bytes}", { count: count(plan.files), bytes: bytes(plan.bytes) })}</strong>
             {!plan.refused && <span className="muted">{t("{bytes} free", { bytes: bytes(free) })}</span>}
           </div>
@@ -89,7 +89,7 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
           {plan.refused && <p className="warn"><strong>{fromEngine(plan.refused)}</strong></p>}
         </div>
       )}
-      {checking && !plan && <div className="muted basket-total">{t("Working out the total.")}</div>}
+      {checking && !plan && <div className="muted copy-total">{t("Working out the total.")}</div>}
       {copy && copy.state !== "" && plan && copy.destination === plan.destination && (
         <div className="test-report copy-progress">
           <strong>

@@ -50,7 +50,7 @@ pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Valu
                 _ => {
                     let id = canvas(args)?;
                     let listed = state.engine.call(
-                        "canvas_list",
+                        "disk_rebuild_list",
                         &json!({}),
                         captainsalvage::engine::AUTHOR_USER,
                     )?;
@@ -59,7 +59,7 @@ pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Valu
                         .into_iter()
                         .flatten()
                         .find(|item| item["id"].as_i64() == Some(id))
-                        .with_context(|| format!("there is no canvas {id}"))?;
+                        .with_context(|| format!("there is no Disk Rebuild {id}"))?;
                     let name = found["name"].as_str().unwrap_or_default();
                     finder::show(&state, id, name, &found["updatedAtMillis"].to_string())?
                 }
@@ -72,7 +72,8 @@ pub fn app_tool(app: &tauri::AppHandle, tool: &str, args: &Value) -> Result<Valu
 }
 
 fn canvas(args: &Value) -> Result<i64> {
-    args.get("canvas")
+    args.get("diskRebuild")
+        .or_else(|| args.get("canvas"))
         .and_then(Value::as_i64)
-        .context("canvas is needed")
+        .context("diskRebuild is needed")
 }

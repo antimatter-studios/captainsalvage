@@ -16,6 +16,7 @@ import {
 } from "../api";
 import { bytes, count, percent, stamp, verdictLabel } from "../format";
 import { fromEngine, t, useLanguage } from "../i18n";
+import type { ExportHandler } from "./ContextMenu";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 import { startEntryDrag } from "./RebuildView";
 import { isArchiveName } from "./ZipView";
@@ -34,25 +35,16 @@ const MAX_WHOLE_PREVIEW_BYTES = 256 * 1024 * 1024;
 type BrowseLayout = "icons" | "list";
 
 /** One file as a line of the list layout. */
-function ListRow({ row, selected, inBasket, style, onOpen, onBasket }: {
+function ListRow({ row, selected, style, onOpen, onExport }: {
   row: BrowseRow;
   selected: boolean;
-  inBasket: boolean;
   style: CSSProperties;
   onOpen: () => void;
-  onBasket: (add: boolean) => void;
+  onExport: ExportHandler;
 }) {
   const verdict = verdictLabel(row.verdict);
   return (
-    <div className={selected ? "list-row list-row-selected" : "list-row"} style={style}>
-      <input
-        type="checkbox"
-        className="basket-check"
-        checked={inBasket}
-        aria-label={t("Add {name} to the treasure list", { name: row.name })}
-        title={t("Add to the treasure list")}
-        onChange={(event) => onBasket(event.target.checked)}
-      />
+    <div className={selected ? "list-row list-row-selected" : "list-row"} style={style} onContextMenu={(event) => onExport(event, { kind: "file", target: row.id, name: row.name })}>
       <button className="list-row-main" onClick={onOpen} title={row.name} draggable onDragStart={(event) => startEntryDrag(event, row.id)}>
         <Icon name={fileIcon(row.name)} size={15} />
         <span className="list-row-name">{row.name}</span>
@@ -97,14 +89,13 @@ function extensionOf(name: string): string {
   return name.includes(".") ? (name.split(".").pop() ?? "").toLowerCase() : "";
 }
 
-function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
+function Tile({ row, showImage, selected, style, onOpen, onExport }: {
   row: BrowseRow;
   showImage: boolean;
   selected: boolean;
-  inBasket: boolean;
   style: CSSProperties;
   onOpen: () => void;
-  onBasket: (add: boolean) => void;
+  onExport: ExportHandler;
 }) {
   const [failures, setFailures] = useState(0);
   const timer = useRef<number | undefined>(undefined);
@@ -113,7 +104,7 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
   const verdict = verdictLabel(row.verdict);
 
   return (
-    <div className="tile-wrap" style={style}>
+    <div className="tile-wrap" style={style} onContextMenu={(event) => onExport(event, { kind: "file", target: row.id, name: row.name })}>
       <button className={selected ? "tile tile-selected" : "tile"} onClick={onOpen} title={row.name} draggable onDragStart={(event) => startEntryDrag(event, row.id)}>
         {showImage && (
           <span className="tile-image">
@@ -144,14 +135,6 @@ function Tile({ row, showImage, selected, inBasket, style, onOpen, onBasket }: {
           <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict, percent: percent(row.confidence) })} />
         </span>
       </button>
-      <input
-        type="checkbox"
-        className="basket-check tile-check"
-        checked={inBasket}
-        aria-label={t("Add {name} to the treasure list", { name: row.name })}
-        title={t("Add to the treasure list")}
-        onChange={(event) => onBasket(event.target.checked)}
-      />
     </div>
   );
 }
@@ -376,15 +359,13 @@ export function InlinePreview({ id, name, length, complete, onOpen }: {
   return null;
 }
 
-function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket, onBytes, onInside }: {
+function PreviewPane({ row, position, total, onClose, onMove, onBytes, onInside }: {
   onInside: () => void;
   row: BrowseRow;
   position: number | null;
   total: number;
-  inBasket: boolean;
   onClose: () => void;
   onMove: (step: number) => void;
-  onBasket: (add: boolean) => void;
   onBytes: () => void;
 }) {
   useEffect(() => {
@@ -418,7 +399,6 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
         )}
         {isArchiveName(row.name) && <button onClick={onInside}>{t("Look inside")}</button>}
         <button onClick={onBytes}>{t("Show bytes")}</button>
-        <button className="primary" onClick={() => onBasket(!inBasket)}>{inBasket ? t("On the treasure list") : t("Add to the treasure list")}</button>
       </div>
       <PreviewBody row={row} />
       <div className="preview-foot muted">{t("Read live from the disk. Nothing is copied.")}</div>
@@ -426,7 +406,7 @@ function PreviewPane({ row, position, total, inBasket, onClose, onMove, onBasket
   );
 }
 
-export function BrowseView({ floor, revision, scope, onScopeClear, standalone, onStandaloneClose, basket, onBasket, onSelect, onBytes, onInsideZip, onPreviewShown }: {
+export function BrowseView({ floor, revision, scope, onScopeClear, standalone, onStandaloneClose, onExport, onSelect, onBytes, onInsideZip, onPreviewShown }: {
   onInsideZip: (row: BrowseRow) => void;
   floor: number;
   revision: number;
@@ -434,8 +414,7 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
   onScopeClear: () => void;
   standalone: BrowseRow | null;
   onStandaloneClose: () => void;
-  basket: Set<string>;
-  onBasket: (kind: "entry" | "folder", target: number, add: boolean) => void;
+  onExport: ExportHandler;
   onSelect: (row: BrowseRow) => void;
   onBytes: (cluster: number) => void;
   onPreviewShown: (id: number | null) => void;
@@ -611,10 +590,9 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
             key={row.id}
             row={row}
             selected={openIndex === index}
-            inBasket={basket.has(`entry:${row.id}`)}
             style={style}
             onOpen={() => open(index)}
-            onBasket={(add) => onBasket("entry", row.id, add)}
+            onExport={onExport}
           />
         ) : row ? (
           <Tile
@@ -622,16 +600,15 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
             row={row}
             showImage={imageFor(row)}
             selected={openIndex === index}
-            inBasket={basket.has(`entry:${row.id}`)}
             style={style}
             onOpen={() => open(index)}
-            onBasket={(add) => onBasket("entry", row.id, add)}
+            onExport={onExport}
           />
         ) : <div key={`empty-${index}`} className="tile-wrap tile-empty" style={style} />);
       }
     }
     return out;
-  }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, lineGap, listed, rowAt, imageFor, openIndex, basket, open, onBasket, language]);
+  }, [total, scroll.width, firstRow, lastRow, columns, tileWidth, tileHeight, lineGap, listed, rowAt, imageFor, openIndex, open, onExport, language]);
 
   const previewRow = standalone ?? openRow ?? null;
   const previewId = previewRow?.id ?? null;
@@ -695,10 +672,8 @@ export function BrowseView({ floor, revision, scope, onScopeClear, standalone, o
           row={previewRow}
           position={standalone ? null : openIndex}
           total={total ?? 0}
-          inBasket={basket.has(`entry:${previewRow.id}`)}
           onClose={standalone ? onStandaloneClose : closeOpen}
           onMove={standalone ? () => undefined : move}
-          onBasket={(add) => onBasket("entry", previewRow.id, add)}
           onBytes={() => onBytes(previewRow.firstCluster)}
           onInside={() => onInsideZip(previewRow)}
         />

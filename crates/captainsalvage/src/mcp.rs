@@ -39,7 +39,8 @@ overlays or with captainsalvage_log_finding so the user can see and reverse them
 start with captainsalvage_unexplained_runs and captainsalvage_carve_candidates, then check promising candidates with \
 captainsalvage_read_bytes, captainsalvage_test_stream and captainsalvage_inspect_cluster, and log what you confirm. \
 Use captainsalvage_query_map and captainsalvage_run_script when no fixed tool fits. Call captainsalvage_get_selection to \
-see what the user has selected.";
+see what the user has selected. Copying files out is the user's decision: plan it with captainsalvage_export_plan \
+(one file or folder) or captainsalvage_disk_rebuild_copy_plan (a Disk Rebuild), say what it would do, and ask them to start it.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,63 +187,28 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("carve_candidates", "Files found in space nothing on the disk explains: every cluster there that starts like a known file (JPEG, PNG, GIF, PDF, MP3, MP4/MOV, AVI, WAV, zip, 7z, gz, rar, Office, executable), in disk order, with where it ends. The end is read from the file's own structure where the format allows (end_by structure, confidence 0.8); cut short where the structure runs past the space (0.3); or guessed from where similar clusters stop (0.4). Carving assumes the file's clusters follow each other, so a fragmented file comes out partial. Only the page asked for is measured, because it reads the disk. Check a candidate's bytes with read_bytes and test_stream, and its kind with inspect_cluster.", with_page(json!({})), &[]),
         tool("unexplained_runs", "Regions of free space that no entry or FAT chain explains, largest first, with their main content and entropy. Rebuild the map first for current results. These shrink as the scan finds more directories, so treat them as provisional until the scan completes.", with_page(json!({"minClusters": integer("Smallest region to list. Default 64.")})), &[]),
         tool("explain_region", "Samples clusters across a region and reports evidence about what it is: file signatures at the cluster start and at 4 KiB boundaries inside it, NTFS file records with their names, exFAT entries, readable text, and clusters that mix random and plain data (a sign of older data under newer). Record a conclusion with add_overlay kind region_label.", json!({"startCluster": integer("Start."), "endCluster": integer("End, exclusive."), "samples": integer("Clusters to read, 1-256. Default 64.")}), &["startCluster", "endCluster"]),
-        tool("copy_plan", "Works out what copying a selection would do, without writing: file count, size, free space, what falls below the floor, what would be skipped as partial, and whether the destination is refused. Starting a copy is the user's decision in the app's Copy out tab, so recommend a plan and ask them.", json!({"destination": string("Full path of the destination folder. Defaults to the salvage drive."), "entryIds": {"type": "array", "items": {"type": "integer"}}, "folders": {"type": "array", "items": {"type": "integer"}, "description": "Folder head clusters, including everything beneath them."}, "minConfidence": number("0-1 floor."), "includePartial": boolean("Include files with missing or reused clusters.")}), &[]),
-        tool("get_salvage_drive", "The folder the user has chosen to receive recovered files, with its free space, if one is set. Only the user can change it, in the Copy out tab.", json!({}), &[]),
-        tool("canvas_list", "The person's canvases: each is their own rebuild of the folder tree, made by placing the pieces the scan found (top-level found folders) inside one another, merged, or inside folders they made up. Only the person changes a canvas.", json!({}), &[]),
-        tool("canvas_items", "Every item on a canvas: made-up folders, pieces (found folders placed as folders) and merges (found folders whose contents join the folder they are in), with where each sits.", json!({"canvas": integer("Canvas id.")}), &["canvas"]),
-        tool("canvas_tree", "One folder of a canvas's rebuilt tree, by the folder names from its root. Where pieces hold files of the same name, the best copy is chosen and every copy is listed, so clashes show.", with_page(json!({"canvas": integer("Canvas id."), "path": {"type": "array", "items": {"type": "string"}, "description": "Folder names from the root. Empty for the root."}})), &["canvas"]),
-        tool("canvas_clashes", "Every file on a canvas whose copies clash, because pieces laid over one place hold different files of the same name. Each says which copy was picked and what decided it: person, quality (tested or judged good, all clusters there, a valid entry checksum, the size the entry says), date (the newer), or layer (the later drop, when all else ties). needsYou marks copies that differ but measure the same, which the person should look at; those come first. Copies at the same clusters, or tested and found to hold the same bytes, are one copy and never clash.", with_page(json!({"canvas": integer("Canvas id."), "needYou": boolean("Only the clashes the person should look at.")})), &["canvas"]),
-        tool("canvas_suggest", "Suggests where a piece belongs on one of the person's canvases, without placing it: they accept or dismiss it in the Rebuild tab. Use canvas_unused for pieces, canvas_items and canvas_tree for places, and similar_pieces, names, dates and contents for evidence. Put the evidence in note, in a sentence they can judge. Leave place out to suggest the first piece, the top of the tree.", json!({"canvas": integer("Canvas id."), "head": integer("First cluster of an unused top-level found folder."), "place": {"type": "object", "description": "Where it goes: item (a canvas item id) and optionally head (a found folder inside that item's piece).", "properties": {"item": integer("Canvas item id."), "head": integer("Found folder inside that item.")}}, "merge": boolean("Join its contents into that folder rather than placing it as a folder of its own."), "note": string("Why it belongs there, in a sentence the person can judge.")}), &["canvas", "head", "note"]),
-        tool("canvas_suggestions", "Suggestions on a canvas still waiting for the person to accept or dismiss.", json!({"canvas": integer("Canvas id.")}), &["canvas"]),
+        tool("export_plan", "Works out what exporting one file or folder would do, without writing: file count, size, free space, what falls below the floor, what would be skipped as partial, and whether the destination is refused. An export copies it directly to a folder the person chooses, never over an existing file, and checks each copy as it is written. Starting it is the person's decision, from the file's right-click menu in the app, so recommend a plan and ask them.", json!({"kind": string("file or folder."), "target": integer("File entry id, or folder head cluster, including everything beneath it."), "destination": string("Full path of the destination folder. Defaults to the salvage drive."), "minConfidence": number("0-1 floor. Default 0."), "includePartial": boolean("Include files with missing or reused clusters. Default true.")}), &["target"]),
+        tool("get_salvage_drive", "The folder the user has chosen to receive recovered files, with its free space, if one is set. Only the user can change it, in the export window.", json!({}), &[]),
+        tool("disk_rebuild_list", "The person's Disk Rebuilds: each is their own rebuild of the folder tree, made by placing the pieces the scan found (top-level found folders) inside one another, merged, or inside folders they made up. Only the person changes a Disk Rebuild.", json!({}), &[]),
+        tool("disk_rebuild_items", "Every item on a Disk Rebuild: made-up folders, pieces (found folders placed as folders) and merges (found folders whose contents join the folder they are in), with where each sits.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
+        tool("disk_rebuild_tree", "One folder of a Disk Rebuild's rebuilt tree, by the folder names from its root. Where pieces hold files of the same name, the best copy is chosen and every copy is listed, so clashes show.", with_page(json!({"diskRebuild": integer("Disk Rebuild id."), "path": {"type": "array", "items": {"type": "string"}, "description": "Folder names from the root. Empty for the root."}})), &["diskRebuild"]),
+        tool("disk_rebuild_clashes", "Every file on a Disk Rebuild whose copies clash, because pieces laid over one place hold different files of the same name. Each says which copy was picked and what decided it: person, quality (tested or judged good, all clusters there, a valid entry checksum, the size the entry says), date (the newer), or layer (the later drop, when all else ties). needsYou marks copies that differ but measure the same, which the person should look at; those come first. Copies at the same clusters, or tested and found to hold the same bytes, are one copy and never clash.", with_page(json!({"diskRebuild": integer("Disk Rebuild id."), "needYou": boolean("Only the clashes the person should look at.")})), &["diskRebuild"]),
+        tool("disk_rebuild_suggest", "Suggests where a piece belongs on one of the person's Disk Rebuilds, without placing it: they accept or dismiss it in the Rebuild tab. Use disk_rebuild_unused for pieces, disk_rebuild_items and disk_rebuild_tree for places, and similar_pieces, names, dates and contents for evidence. Put the evidence in note, in a sentence they can judge. Leave place out to suggest the first piece, the top of the tree.", json!({"diskRebuild": integer("Disk Rebuild id."), "head": integer("First cluster of an unused top-level found folder."), "place": {"type": "object", "description": "Where it goes: item (a Disk Rebuild item id) and optionally head (a found folder inside that item's piece).", "properties": {"item": integer("Canvas item id."), "head": integer("Found folder inside that item.")}}, "merge": boolean("Join its contents into that folder rather than placing it as a folder of its own."), "note": string("Why it belongs there, in a sentence the person can judge.")}), &["Disk Rebuild", "head", "note"]),
+        tool("disk_rebuild_suggestions", "Suggestions on a Disk Rebuild still waiting for the person to accept or dismiss.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
         tool("copy_report", "What a copy did, file by file, from the manifest at its destination: each file's target, size, whether it was copied complete or partial and why, and what the last check of the copies found (same, changed or missing). Totals cover the whole copy. destination defaults to the last copy's.", with_page(json!({"destination": string("The copy's destination folder."), "filter": string("all, partial, changed, missing or unchecked.")})), &[]),
         tool("copy_check", "Reads every copied file at a destination again, in the background, and compares it with the hash recorded when it was copied, to catch copies changed or lost since. It reads only the destination, never the disk being recovered. Read the results with copy_report.", json!({"destination": string("The copy's destination folder. Defaults to the last copy's.")}), &[]),
-        tool("canvas_copy_plan", "Works out what copying a canvas's rebuilt tree would do, without writing: each file goes to its rebuilt path, in a folder named after the canvas inside the destination, using the chosen copy of each file. Starting it is the person's decision in the Rebuild tab.", json!({"canvas": integer("Canvas id."), "destination": string("Defaults to the salvage drive."), "minConfidence": number("0-1 floor."), "includePartial": boolean("Include files with missing or reused clusters.")}), &["canvas"]),
+        tool("disk_rebuild_copy_plan", "Works out what copying a Disk Rebuild's rebuilt tree would do, without writing: each file goes to its rebuilt path, in a folder named after the Disk Rebuild inside the destination, using the chosen copy of each file. Starting it is the person's decision in the Rebuild tab.", json!({"diskRebuild": integer("Disk Rebuild id."), "destination": string("Defaults to the salvage drive."), "minConfidence": number("0-1 floor."), "includePartial": boolean("Include files with missing or reused clusters.")}), &["diskRebuild"]),
         tool("similar_pieces", "Other pieces (top-level found folders) holding many of the same files as this one, by name and size, most in common first, with how much of each other they cover and the share of each one's bytes likely intact. Near copies often come from backups or moves; the one with better data is the one to place.", json!({"head": integer("First cluster of a top-level found folder."), "limit": integer("Most to list. Default 20.")}), &["head"]),
-        tool("canvas_unused", "Pieces not yet placed on a canvas, largest first, with how many there are in all and how much they hold.", with_page(json!({"canvas": integer("Canvas id.")})), &["canvas"]),
-        tool("basket_list",
-            "The person's treasure list (the basket tools), in copy order, with each item's size.",
-            json!({}),
-            &[],
-        ),
-        tool(
-            "basket_add",
-            "Adds a file or folder to the treasure list, for the user to review. Only the user can start the copy.",
-            json!({"kind": string("entry or folder."), "target": integer("Entry id, or folder head cluster.")}),
-            &["kind", "target"],
-        ),
-        tool(
-            "basket_remove",
-            "Removes an item from the treasure list.",
-            json!({"id": integer("Basket item id.")}),
-            &["id"],
-        ),
-        tool(
-            "basket_move",
-            "Moves a basket item to a new place in the copy order. Position 0 is first.",
-            json!({"id": integer("Basket item id."), "position": integer("New position.")}),
-            &["id", "position"],
-        ),
-        tool(
-            "basket_clear",
-            "Empties the treasure list. This removes nothing from any disk.",
-            json!({}),
-            &[],
-        ),
-        tool(
-            "basket_plan",
-            "Works out what copying the basket would do, without writing: exact file count and size with overlaps removed, and whether it fits.",
-            json!({"destination": string("Defaults to the salvage drive."), "minConfidence": number("0-1 floor."), "includePartial": boolean("Include files with missing or reused clusters.")}),
-            &[],
-        ),
+        tool("disk_rebuild_unused", "Pieces not yet placed on a Disk Rebuild, largest first, with how many there are in all and how much they hold.", with_page(json!({"diskRebuild": integer("Disk Rebuild id.")})), &["diskRebuild"]),
         tool(
             "copy_status", "Progress and results of the current or last copy.", json!({}), &[]),
         tool("list_volumes", "Mounted volumes that could receive a copy, with free space and whether each is refused.", json!({}), &[]),
         tool("start_scan", "Starts or resumes the full scan. Refused if the volume is mounted or another process is scanning.", json!({}), &[]),
         tool("stop_scan", "Pauses the scan after the current chunk. It can resume later.", json!({}), &[]),
         tool(SCREENSHOT_TOOL, "Returns a picture of the app window: the same map, list and bytes the user is looking at. Use it to read the map's overall shape, or to check what they mean.", json!({}), &[]),
-        tool("finder_status", "Whether the Captain Salvage Finder helper is installed, and which canvases of the open disk are shown in Finder.", json!({}), &[]),
-        tool("finder_show", "Shows a canvas in Finder as a read-only folder, and opens it there. Nothing done in Finder reaches the disk.", json!({"canvas": integer("Canvas id.")}), &["canvas"]),
-        tool("finder_hide", "Takes a canvas out of Finder.", json!({"canvas": integer("Canvas id.")}), &["canvas"]),
+        tool("finder_status", "Whether the Captain Salvage Finder helper is installed, and which Disk Rebuilds of the open disk are shown in Finder.", json!({}), &[]),
+        tool("finder_show", "Shows a Disk Rebuild in Finder as a read-only folder, and opens it there. Nothing done in Finder reaches the disk.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
+        tool("finder_hide", "Takes a Disk Rebuild out of Finder.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
         tool("app_settings", "The window's language, appearance and mode.", json!({}), &[]),
         tool("set_mode", "Changes the window's mode: simple shows what recovering files needs, with no cluster numbers; investigate adds the map, bytes, hypotheses and raw tools.", json!({"mode": string("simple or investigate.")}), &["mode"]),
         tool("set_language", "Changes the window's language: en, fr, de or es.", json!({"language": string("en, fr, de or es.")}), &["language"]),

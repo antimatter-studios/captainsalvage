@@ -147,14 +147,6 @@ CREATE TABLE IF NOT EXISTS islands (
     mean_entropy INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS islands_length ON islands (length);
-CREATE TABLE IF NOT EXISTS basket (
-    id INTEGER PRIMARY KEY,
-    kind TEXT NOT NULL,
-    target INTEGER NOT NULL,
-    position INTEGER NOT NULL,
-    added_at_millis INTEGER NOT NULL,
-    UNIQUE (kind, target)
-);
 CREATE TABLE IF NOT EXISTS canvases (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -562,6 +554,7 @@ impl MapDb {
         connection.execute_batch(SCHEMA)?;
         let database = Self { connection };
         database.add_missing_columns()?;
+        database.import_old_treasure_list()?;
         Ok(database)
     }
 

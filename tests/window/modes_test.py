@@ -12,7 +12,7 @@ try:
     check('it starts in Simple', call('app_settings').get('mode'), 'simple')
     check('the map is hidden', probe("!!document.querySelector('.strips')"), False)
     check('the bytes view is hidden', probe("[...document.querySelectorAll('.center-tabs [role=tab]')].some((b) => b.textContent.trim() === 'Bytes')"), False)
-    check('the details keep what recovery needs', probe(DETAIL_TABS), ['Selected', 'Rebuild', 'Chat with an agent', 'Treasure list'])
+    check('the details keep what recovery needs', probe(DETAIL_TABS), ['Selected', 'Rebuild', 'Chat with an agent'])
     check('the sidebar keeps the folders', probe("[...document.querySelectorAll('.explorer [role=tab]')].map((b) => b.textContent)"), ['Folders'])
     # Open every folder and pick a file, then read the whole window for a cluster number.
     for _ in range(3):
@@ -30,7 +30,7 @@ try:
         check(f'no cluster number with {center} showing', found, [])
     js("[...document.querySelectorAll('.mode-switch [role=tab]')].find((b) => b.textContent.trim() === 'Investigate').click()")
     check('Investigate shows the map', wait_for("!!document.querySelector('.strips')", 10), True)
-    check('and every tab', len(probe(DETAIL_TABS)), 10)
+    check('and every tab', len(probe(DETAIL_TABS)), 9)
     check('the choice is kept', call('app_settings').get('mode'), 'investigate')
     check('cluster numbers are back for investigating', bool(CLUSTER_NUMBER.search(probe(TEXT))), True)
     call('set_mode', mode='simple')
