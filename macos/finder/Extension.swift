@@ -1,4 +1,4 @@
-// The File Provider extension that shows a canvas's rebuilt tree in Finder.
+// The File Provider extension that shows a Disk Rebuild's rebuilt tree in Finder.
 //
 // It is read-only. Every folder and file comes from the app's private media port, which reads
 // the disk through the map without writing to it. The port's address and token are left in the
@@ -20,7 +20,7 @@ struct Config: Decodable {
     let base: String
     let token: String
     let serial: String
-    let canvas: Int64
+    let diskRebuild: Int64
     let revision: String
 }
 
@@ -163,7 +163,7 @@ final class Port {
     func list(_ path: [String], _ done: @escaping (Listing?, Error?) -> Void) {
         guard let config = readConfig(domain) else { return done(nil, unreachable()) }
         let named = path.isEmpty ? [] : [URLQueryItem(name: "p", value: hex((try? JSONEncoder().encode(path)) ?? Data()))]
-        guard let url = url("/canvas/\(config.canvas)", named, config) else { return done(nil, unreachable()) }
+        guard let url = url("/disk-rebuild/\(config.diskRebuild)", named, config) else { return done(nil, unreachable()) }
         session.dataTask(with: url) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status == 404 { return done(nil, NSFileProviderError(.noSuchItem)) }
@@ -286,7 +286,7 @@ final class Enumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
-    /// After the canvas changed, lists again every folder Finder has shown, and reports what
+    /// After the Disk Rebuild changed, lists again every folder Finder has shown, and reports what
     /// is there now and what has gone.
     func enumerateChanges(for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {
         guard let config = readConfig(port.domain) else {

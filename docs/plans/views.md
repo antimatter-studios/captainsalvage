@@ -2,29 +2,29 @@
 
 > **Historical.** The treasure list this plan describes was removed, and nothing from an old one is
 > imported. Right-click Export copies one file or folder, and a Disk Rebuild is what the plan
-> calls a canvas.
+> calls a Disk Rebuild.
 
-For review before building. It turns the Rebuild canvas into a stack of layers, makes the
+For review before building. It turns the Disk Rebuild into a stack of layers, makes the
 treasure list a selection inside a view, and gives copying a job with checking that can be
 watched. Nothing here writes to the disk being recovered: views live in the app's database,
 and copies go only to the destination the person chooses.
 
 ## What exists today
 
-- **Canvas** (`canvas.rs`): items are made-up folders, pieces placed as folders, and pieces
+- **Disk Rebuild** (`disk_rebuild.rs`): items are made-up folders, pieces placed as folders, and pieces
   merged into a folder (`ITEM_FOLDER`, `ITEM_PIECE`, `ITEM_MERGE`), each with a parent and a
   position. The tree is worked out from the map each time it is read.
 - **Clashes**: where two pieces hold a file of the same name, the best-quality copy is shown,
-  and `canvas_choices` records a copy the person chose instead.
+  and `disk_rebuild_choices` records a copy the person chose instead.
 - **Treasure list** (`basket`): a flat list of entries and folders, each copied out under its
-  old path. It knows nothing about canvases.
-- **Copy out**: a canvas copies whole to `destination/<canvas name>`. The basket copies on its
+  old path. It knows nothing about Disk Rebuilds.
+- **Copy out**: a Disk Rebuild copies whole to `destination/<Disk Rebuild name>`. The basket copies on its
   own. Both write a manifest, resume, never overwrite, and hash each file as it is read and
   again from the destination.
 
 ## The model
 
-### A view is a canvas, built from layers
+### A view is a Disk Rebuild, built from layers
 
 - **Made-up folders** stay as they are: the skeleton the person remembers, such as `Music`.
 - **A drop is a layer.** Dropping a segment from the left column onto a folder lays its files
@@ -54,7 +54,7 @@ When files clash, the app picks one, in this order:
 - **Clashes are shown where they are.** A folder shows "412 picked for you, 3 need you". The
   three are those the measures cannot separate, but whose bytes differ.
 - **Every file shows its layer**, and the copies below it, and the person can override any pick.
-  That's today's `canvas_choices`, kept.
+  That's today's `disk_rebuild_choices`, kept.
 
 ### The treasure list is a selection inside a view
 
@@ -86,9 +86,9 @@ When files clash, the app picks one, in this order:
 
 | Area | Change |
 |---|---|
-| `canvas_items` | Add a `layer` order per drop, and an item kind for a file or folder from inside a segment |
+| `disk_rebuild_items` | Add a `layer` order per drop, and an item kind for a file or folder from inside a segment |
 | Tree | Merge folders across layers, collect clashes, apply the pick order, skip identical files |
-| Clashes | `canvas_clashes(canvas, folder?)` lists clashes with each copy's measures and the pick |
+| Clashes | `disk_rebuild_clashes(disk_rebuild, folder?)` lists clashes with each copy's measures and the pick |
 | Treasure list | New `treasure` table: (view, path, own_root), replacing `basket`. The old basket moves into the Picks view on first start |
 | Jobs | New `jobs` and `job_files` tables. Copy and verify run as one job, with status per file, so a report survives a restart |
 | MCP | Read: clashes, layers, the treasure list and job reports. Plan a job. Starting and stopping stay the person's |
@@ -108,7 +108,7 @@ When files clash, the app picks one, in this order:
 2. **Single files and folders** from inside a segment, as small layers.
 3. **Treasure list as ticks in views:** the `treasure` table, the Picks view, moving the old
    basket over, own-root per item, the new treasure list tab.
-4. **Jobs:** copy, then verify, then report, with the progress window. Canvas copy-out and
+4. **Jobs:** copy, then verify, then report, with the progress window. Disk Rebuild copy-out and
    the treasure list both use it.
 5. **Agent tools** for all of the above, and the README.
 

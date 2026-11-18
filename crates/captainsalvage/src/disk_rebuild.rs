@@ -207,8 +207,8 @@ impl MapDb {
     pub fn disk_rebuilds(&self) -> Result<Vec<DiskRebuild>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT c.id, c.name, c.created_at_millis, c.updated_at_millis, \
-             (SELECT COUNT(*) FROM canvas_items i WHERE i.canvas = c.id) \
-             FROM canvases c ORDER BY c.updated_at_millis DESC, c.id DESC",
+             (SELECT COUNT(*) FROM disk_rebuild_items i WHERE i.disk_rebuild = c.id) \
+             FROM disk_rebuilds c ORDER BY c.updated_at_millis DESC, c.id DESC",
         )?;
         let rows = statement
             .query_map([], |row| {
@@ -228,7 +228,7 @@ impl MapDb {
         let name = clean_name(name)?;
         let now = now_millis() as i64;
         self.connection.execute(
-            "INSERT INTO canvases (name, created_at_millis, updated_at_millis) VALUES (?1, ?2, ?2)",
+            "INSERT INTO disk_rebuilds (name, created_at_millis, updated_at_millis) VALUES (?1, ?2, ?2)",
             params![name, now],
         )?;
         Ok(self.connection.last_insert_rowid())
@@ -238,7 +238,7 @@ impl MapDb {
         let name = clean_name(name)?;
         self.need_disk_rebuild(disk_rebuild)?;
         self.connection.execute(
-            "UPDATE canvases SET name = ?2, updated_at_millis = ?3 WHERE id = ?1",
+            "UPDATE disk_rebuilds SET name = ?2, updated_at_millis = ?3 WHERE id = ?1",
             params![disk_rebuild, name, now_millis() as i64],
         )?;
         Ok(())
@@ -247,16 +247,19 @@ impl MapDb {
     pub fn disk_rebuild_delete(&self, disk_rebuild: i64) -> Result<()> {
         self.need_disk_rebuild(disk_rebuild)?;
         let transaction = self.connection.unchecked_transaction()?;
-        transaction.execute("DELETE FROM canvas_items WHERE canvas = ?1", [disk_rebuild])?;
         transaction.execute(
-            "DELETE FROM canvas_choices WHERE canvas = ?1",
+            "DELETE FROM disk_rebuild_items WHERE disk_rebuild = ?1",
             [disk_rebuild],
         )?;
         transaction.execute(
-            "DELETE FROM canvas_suggestions WHERE canvas = ?1",
+            "DELETE FROM disk_rebuild_choices WHERE disk_rebuild = ?1",
             [disk_rebuild],
         )?;
-        transaction.execute("DELETE FROM canvases WHERE id = ?1", [disk_rebuild])?;
+        transaction.execute(
+            "DELETE FROM disk_rebuild_suggestions WHERE disk_rebuild = ?1",
+            [disk_rebuild],
+        )?;
+        transaction.execute("DELETE FROM disk_rebuilds WHERE id = ?1", [disk_rebuild])?;
         transaction.commit()?;
         Ok(())
     }
@@ -265,7 +268,7 @@ impl MapDb {
         let found: Option<i64> = self
             .connection
             .query_row(
-                "SELECT id FROM canvases WHERE id = ?1",
+                "SELECT id FROM disk_rebuilds WHERE id = ?1",
                 [disk_rebuild],
                 |row| row.get(0),
             )
@@ -277,7 +280,7 @@ impl MapDb {
 
     fn touch_disk_rebuild(&self, disk_rebuild: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE canvases SET updated_at_millis = ?2 WHERE id = ?1",
+            "UPDATE disk_rebuilds SET updated_at_millis = ?2 WHERE id = ?1",
             params![disk_rebuild, now_millis() as i64],
         )?;
         Ok(())
@@ -287,8 +290,8 @@ impl MapDb {
     pub fn disk_rebuild_items(&self, disk_rebuild: i64) -> Result<Vec<DiskRebuildItem>> {
         self.need_disk_rebuild(disk_rebuild)?;
         let mut statement = self.connection.prepare_cached(
-            "SELECT id, kind, head, name, parent_item, parent_head, entry FROM canvas_items \
-             WHERE canvas = ?1 ORDER BY position, id",
+            "SELECT id, kind, head, name, parent_item, parent_head, entry FROM disk_rebuild_items \
+             WHERE disk_rebuild = ?1 ORDER BY position, id",
         )?;
         let rows = statement
             .query_map([disk_rebuild], |row| {
@@ -370,7 +373,7 @@ impl MapDb {
 
     fn next_position(&self, disk_rebuild: i64) -> Result<i64> {
         Ok(self.connection.query_row(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM canvas_items WHERE canvas = ?1",
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM disk_rebuild_items WHERE disk_rebuild = ?1",
             [disk_rebuild],
             |row| row.get(0),
         )?)
@@ -415,7 +418,7 @@ impl MapDb {
             Some((item, at)) => (if merge { ITEM_MERGE } else { ITEM_PIECE }, Some(item), at),
         };
         self.connection.execute(
-            "INSERT INTO canvas_items (canvas, kind, head, parent_item, parent_head, position, created_at_millis) \
+            "INSERT INTO disk_rebuild_items (disk_rebuild, kind, head, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![disk_rebuild, kind, head, parent_item, parent_head, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
@@ -450,7 +453,7 @@ impl MapDb {
             bail!("A file cannot be the top of the tree. Place a piece or make a folder first.");
         };
         self.connection.execute(
-            "INSERT INTO canvas_items (canvas, kind, entry, parent_item, parent_head, position, created_at_millis) \
+            "INSERT INTO disk_rebuild_items (disk_rebuild, kind, entry, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![disk_rebuild, ITEM_FILE, entry, item, at, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
@@ -469,7 +472,7 @@ impl MapDb {
             Some((item, at)) => (Some(item), at),
         };
         self.connection.execute(
-            "INSERT INTO canvas_items (canvas, kind, name, parent_item, parent_head, position, created_at_millis) \
+            "INSERT INTO disk_rebuild_items (disk_rebuild, kind, name, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![disk_rebuild, ITEM_FOLDER, name, parent_item, parent_head, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
@@ -519,7 +522,7 @@ impl MapDb {
             }
         };
         self.connection.execute(
-            "UPDATE canvas_items SET parent_item = ?2, parent_head = ?3, kind = ?4 WHERE id = ?1",
+            "UPDATE disk_rebuild_items SET parent_item = ?2, parent_head = ?3, kind = ?4 WHERE id = ?1",
             params![item, target, at, kind],
         )?;
         self.touch_disk_rebuild(disk_rebuild)?;
@@ -551,7 +554,7 @@ impl MapDb {
         }
         // Things placed in a found folder of the old piece have nowhere to be in the new one.
         let stranded: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM canvas_items WHERE canvas = ?1 AND parent_item = ?2 AND parent_head IS NOT NULL",
+            "SELECT COUNT(*) FROM disk_rebuild_items WHERE disk_rebuild = ?1 AND parent_item = ?2 AND parent_head IS NOT NULL",
             params![disk_rebuild, item],
             |row| row.get(0),
         )?;
@@ -559,7 +562,7 @@ impl MapDb {
             bail!("Something is placed inside a folder of this piece. Move it out first.");
         }
         self.connection.execute(
-            "UPDATE canvas_items SET head = ?2 WHERE id = ?1",
+            "UPDATE disk_rebuild_items SET head = ?2 WHERE id = ?1",
             params![item, head],
         )?;
         self.touch_disk_rebuild(disk_rebuild)?;
@@ -580,7 +583,7 @@ impl MapDb {
             None => None,
         };
         self.connection.execute(
-            "UPDATE canvas_items SET name = ?2 WHERE id = ?1",
+            "UPDATE disk_rebuild_items SET name = ?2 WHERE id = ?1",
             params![item, name],
         )?;
         self.touch_disk_rebuild(disk_rebuild)?;
@@ -605,7 +608,7 @@ impl MapDb {
         }
         let transaction = self.connection.unchecked_transaction()?;
         for id in &doomed {
-            transaction.execute("DELETE FROM canvas_items WHERE id = ?1", [id])?;
+            transaction.execute("DELETE FROM disk_rebuild_items WHERE id = ?1", [id])?;
         }
         transaction.commit()?;
         self.touch_disk_rebuild(disk_rebuild)?;
@@ -621,7 +624,7 @@ impl MapDb {
     ) -> Result<UnusedPieces> {
         self.need_disk_rebuild(disk_rebuild)?;
         let unused = "FROM nodes WHERE parent IS NULL AND head NOT IN \
-             (SELECT head FROM canvas_items WHERE canvas = ?1 AND head IS NOT NULL)";
+             (SELECT head FROM disk_rebuild_items WHERE disk_rebuild = ?1 AND head IS NOT NULL)";
         let (total, total_files, total_bytes): (i64, i64, i64) = self.connection.query_row(
             &format!("SELECT COUNT(*), COALESCE(SUM(files), 0), COALESCE(SUM(bytes), 0) {unused}"),
             [disk_rebuild],
@@ -676,7 +679,7 @@ impl MapDb {
         let now = now_millis() as i64;
         for (position, head) in (first..).zip(chosen.iter()) {
             transaction.execute(
-                "INSERT INTO canvas_items (canvas, kind, head, parent_item, position, created_at_millis) \
+                "INSERT INTO disk_rebuild_items (disk_rebuild, kind, head, parent_item, position, created_at_millis) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![disk_rebuild, ITEM_PIECE, head, folder, position, now],
             )?;
@@ -710,13 +713,13 @@ impl MapDb {
                     bail!("That entry is not a copy of this file.");
                 }
                 self.connection.execute(
-                    "INSERT OR REPLACE INTO canvas_choices (canvas, path, entry) VALUES (?1, ?2, ?3)",
+                    "INSERT OR REPLACE INTO disk_rebuild_choices (disk_rebuild, path, entry) VALUES (?1, ?2, ?3)",
                     params![disk_rebuild, path_key, entry],
                 )?;
             }
             None => {
                 self.connection.execute(
-                    "DELETE FROM canvas_choices WHERE canvas = ?1 AND path = ?2",
+                    "DELETE FROM disk_rebuild_choices WHERE disk_rebuild = ?1 AND path = ?2",
                     params![disk_rebuild, path_key],
                 )?;
             }
@@ -1016,7 +1019,7 @@ impl MapDb {
             bail!("A suggestion needs a note saying why.");
         }
         self.connection.execute(
-            "INSERT INTO canvas_suggestions (canvas, head, place_item, place_head, merge, note, author, state, created_at_millis) \
+            "INSERT INTO disk_rebuild_suggestions (disk_rebuild, head, place_item, place_head, merge, note, author, state, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8)",
             params![disk_rebuild, head, item, at, merge, note.trim(), author, now_millis() as i64],
         )?;
@@ -1034,8 +1037,8 @@ impl MapDb {
             .map(|item| item.id)
             .collect();
         let mut statement = self.connection.prepare_cached(
-            "SELECT id, head, place_item, place_head, merge, note, author, created_at_millis FROM canvas_suggestions \
-             WHERE canvas = ?1 AND state = 'open' ORDER BY id",
+            "SELECT id, head, place_item, place_head, merge, note, author, created_at_millis FROM disk_rebuild_suggestions \
+             WHERE disk_rebuild = ?1 AND state = 'open' ORDER BY id",
         )?;
         let rows = statement
             .query_map([disk_rebuild], |row| {
@@ -1072,7 +1075,7 @@ impl MapDb {
         };
         let item = self.disk_rebuild_place(disk_rebuild, found.head, place, found.merge)?;
         self.connection.execute(
-            "UPDATE canvas_suggestions SET state = 'accepted' WHERE id = ?1",
+            "UPDATE disk_rebuild_suggestions SET state = 'accepted' WHERE id = ?1",
             [suggestion],
         )?;
         Ok(item)
@@ -1081,7 +1084,7 @@ impl MapDb {
     pub fn disk_rebuild_dismiss(&self, disk_rebuild: i64, suggestion: i64) -> Result<()> {
         self.need_disk_rebuild(disk_rebuild)?;
         let changed = self.connection.execute(
-            "UPDATE canvas_suggestions SET state = 'dismissed' WHERE id = ?1 AND canvas = ?2 AND state = 'open'",
+            "UPDATE disk_rebuild_suggestions SET state = 'dismissed' WHERE id = ?1 AND disk_rebuild = ?2 AND state = 'open'",
             params![suggestion, disk_rebuild],
         )?;
         if changed == 0 {
@@ -1142,10 +1145,9 @@ impl<'a> Tree<'a> {
     }
 
     fn choices(&self) -> Result<HashMap<String, i64>> {
-        let mut statement = self
-            .database
-            .connection
-            .prepare_cached("SELECT path, entry FROM canvas_choices WHERE canvas = ?1")?;
+        let mut statement = self.database.connection.prepare_cached(
+            "SELECT path, entry FROM disk_rebuild_choices WHERE disk_rebuild = ?1",
+        )?;
         let rows = statement
             .query_map([self.disk_rebuild], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<HashMap<String, i64>>>()?;

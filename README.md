@@ -544,7 +544,7 @@ its answer. The two tools that start a copy wait for it to finish and print its 
 export lands directly under the destination, never over a file that is already there, and each
 copy is checked as it is written.
 
-A Disk Rebuild is built with `disk_rebuild_create`, `disk_rebuild_folder` and
+A Disk Rebuild is a virtual file tree built from segments of a scan, overlaid read only. It is built with `disk_rebuild_create`, `disk_rebuild_folder` and
 `disk_rebuild_place` (a found folder under a parent) or `disk_rebuild_place_file`, then
 `disk_rebuild_copy_plan` and `disk_rebuild_copy_start` copy its tree to its rebuilt paths. The
 other `disk_rebuild_*` tools list, move, rename and remove what is in it. Agents over MCP can
@@ -552,7 +552,7 @@ plan with `export_plan` and `disk_rebuild_copy_plan` and suggest placements with
 `disk_rebuild_suggest`; building and copying stay the person's.
 
 The treasure list was removed, and nothing from an old one is imported. Its tools (`basket_*`,
-`copy_plan` and `copy_start`) no longer exist, and neither do the `canvas_*` names that
+`copy_plan` and `copy_start`) no longer exist, and neither do the earlier names that
 `disk_rebuild_*` replaced. A call to one fails as an unknown tool, like any other unknown name.
 
 To inspect a disk without choosing a filesystem first:
@@ -568,6 +568,48 @@ evidence batches with absolute byte offsets, read failures, and a continuation o
 resume a stopped range, pass that offset and the remaining length. MCP exposes the same
 operations as `captainsalvage_open_raw_disk`, `captainsalvage_discover_raw_disk`,
 `captainsalvage_read_raw_disk`, and `captainsalvage_open_disk_region`.
+
+### Names from before Disk Rebuild
+
+A Disk Rebuild used to be stored and passed around under another name. Every place now says
+`disk_rebuild`:
+
+| Where | Before | Now |
+|---|---|---|
+| Map tables | `canvases`, `canvas_items`, `canvas_suggestions`, `canvas_choices` | `disk_rebuilds`, `disk_rebuild_items`, `disk_rebuild_suggestions`, `disk_rebuild_choices` |
+| Their column | `canvas` | `disk_rebuild` |
+| The index | `canvas_items_canvas` | `disk_rebuild_items_disk_rebuild` |
+| Finder helper and the files it leaves for the extension | `canvas`, `canvases` | `diskRebuild`, `diskRebuilds` |
+| Media path the Finder extension reads | `/canvas/<id>` | `/disk-rebuild/<id>` |
+| Window storage key of the chosen Disk Rebuild | `salvage-canvas` | `salvage-disk-rebuild` |
+
+A map database that still has the old names is renamed the first time the app opens it, in
+`crates/captainsalvage/src/disk_rebuild_rename.rs`. This covers every `map.sqlite`: a scan's own
+folder, an old `vol-<serial>` workspace, and the command-line scanner. A new database is made with
+the new names and is never renamed. `raw-scans.sqlite` and the catalog hold no such table.
+
+- **A copy comes first.** Next to the map the app writes `map.sqlite.before-disk-rebuild-rename`
+  (with `-wal` beside it when the log held changes), by an APFS clone where it can, which is
+  instant and takes no space until the two differ, and else a plain copy. An existing copy is never
+  replaced: a later one is `.2`, `.3` and so on. **These copies can be deleted after a while**,
+  once the app has been used on the renamed map without trouble.
+- **One transaction.** `BEGIN IMMEDIATE`, the tables and the column renamed with `ALTER TABLE`, the
+  index remade, `PRAGMA user_version` set to 1, then `PRAGMA quick_check` and only then the commit.
+  A second app opening the file waits, checks again inside the lock, and finds it done. No row is
+  rewritten, so what is stored is what was stored. It is safe to run twice, and when some names
+  were already new.
+- **When it cannot be done** (a read-only file or folder, a lock that does not free, a failed copy,
+  a failed check) nothing changes. The map opens read-only, with temporary views that give it the
+  new names, and `MapDb::read_only_reason` and the standard error say why.
+- **Activity history is left as it was.** Old rows in `activity` keep the tool names and arguments
+  they were written with. Nothing reads them but the Activity list, which shows them as text.
+- **An older build cannot read a renamed map.** v0.3.0 and the release candidates before this one
+  look for the old tables, find none, and make empty ones. Use the copy to go back. When a map that
+  an older build touched is opened again, the empty old tables are dropped; if the older build was
+  used to make something in them, those rows are kept as `unmerged_canvases` and so on, never
+  deleted.
+- **The Finder extension and the app must match.** Both come in one app, so they do. A location
+  left behind by an older build is unreachable until its disk is open again.
 
 ### Sources, interpretations and scans
 

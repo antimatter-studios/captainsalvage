@@ -573,7 +573,7 @@ impl MediaServer {
         let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         match parts.as_slice() {
             ["file", id] => self.serve_file(id.parse()?, headers),
-            ["canvas", disk_rebuild] => {
+            ["disk-rebuild", disk_rebuild] => {
                 let folder = query
                     .split('&')
                     .find_map(|pair| pair.strip_prefix("p="))

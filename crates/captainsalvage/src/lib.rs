@@ -13,6 +13,7 @@ pub mod conflicts;
 pub mod content;
 pub mod disk;
 pub mod disk_rebuild;
+pub mod disk_rebuild_rename;
 pub mod engine;
 pub mod export;
 pub mod exporting;

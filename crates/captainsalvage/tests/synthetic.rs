@@ -5105,7 +5105,7 @@ fn a_disk_rebuild_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     assert_eq!(
         call(&engine, "disk_rebuild_list", json!({}))
             .as_array()
-            .expect("canvases")
+            .expect("disk rebuilds")
             .len(),
         2
     );
@@ -5117,7 +5117,7 @@ fn a_disk_rebuild_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     assert_eq!(
         call(&engine, "disk_rebuild_list", json!({}))
             .as_array()
-            .expect("canvases")
+            .expect("disk rebuilds")
             .len(),
         1
     );
@@ -5576,7 +5576,11 @@ fn finder_reads_a_disk_rebuild_through_the_media_port_and_only_for_the_open_disk
             .collect()
     };
     let get = |query: String| {
-        let (status, body) = local_get(&port, &format!("/canvas/{disk_rebuild}?{query}"), None);
+        let (status, body) = local_get(
+            &port,
+            &format!("/disk-rebuild/{disk_rebuild}?{query}"),
+            None,
+        );
         let value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
         (status, value)
     };

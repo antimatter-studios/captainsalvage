@@ -79,7 +79,7 @@ pub fn finder_show(
 
 pub fn show(state: &AppState, disk_rebuild: i64, name: &str, revision: &str) -> Result<Value> {
     let mut request = port(state)?;
-    request["canvas"] = json!(disk_rebuild);
+    request["diskRebuild"] = json!(disk_rebuild);
     request["name"] = json!(name);
     request["revision"] = json!(revision);
     let reply = run("show", request)?;
@@ -98,7 +98,10 @@ pub fn finder_hide(state: State<'_, AppState>, disk_rebuild: i64) -> Result<Valu
 
 pub fn hide(state: &AppState, disk_rebuild: i64) -> Result<Value> {
     let serial = serial_text(&*state.engine.session()?);
-    run("hide", json!({"serial": serial, "canvas": disk_rebuild}))
+    run(
+        "hide",
+        json!({"serial": serial, "diskRebuild": disk_rebuild}),
+    )
 }
 
 /// Tells this disk's Finder locations about the Disk Rebuilds as they are now. A location whose
@@ -113,7 +116,7 @@ pub fn finder_sync(
     }
     let work = || -> Result<Value> {
         let mut request = port(&state)?;
-        request["canvases"] = disk_rebuilds
+        request["diskRebuilds"] = disk_rebuilds
             .iter()
             .map(
                 |disk_rebuild| json!({"id": disk_rebuild.id, "name": disk_rebuild.name, "revision": disk_rebuild.revision}),
