@@ -27,11 +27,6 @@
 //! damage cannot reach is read exactly as before, nothing is listed that the volume never held, and
 //! a file the app calls live reads with the bytes the oracle read from the undamaged volume.
 //!
-//! A known gap, issue #230: for a cross-linked chain, on FAT and on exFAT, the app calls the file
-//! live and reads another file's bytes. The damaged-volume test does not hold either to that one
-//! rule on this branch; the resolver change of `fix/fat-cross-linked-chain` fixes it for every
-//! format and removes this carve-out.
-//!
 //! A limit, issue #234: the pinned rust-fs-exfat driver refuses an exFAT volume with 4096-byte
 //! sectors when its structures are read. The exFAT image with 4096-byte sectors is made, and the
 //! test asserts that the app refuses it with `unsupported sector size 4096` and shows nothing, so a
@@ -1066,11 +1061,6 @@ fn a_damaged_volume_never_shows_wrong_bytes_as_a_file_that_is_there() {
         let before = file_sha(&image);
         let session = open_image(&case, &image, name);
         scan(&session);
-        // KNOWN GAP, issue #230: when a chain was cross-linked into another file's, the app calls
-        // the file live and reads the other file's bytes, on FAT (seen on synthetic images) and on
-        // exFAT (seen on the oracle's). It is fixed on `fix/fat-cross-linked-chain`; the two files
-        // are still held to every other check.
-        let cross_link_gap = recipe == "chain-crosslinked";
         let touched: Vec<&str> = touched.split(',').collect();
         let any = touched.contains(&"*");
         let mut problems = Vec::new();
@@ -1109,7 +1099,7 @@ fn a_damaged_volume_never_shows_wrong_bytes_as_a_file_that_is_there() {
                                 "{} cannot be reached by the damage, and reads {have:?}, not {want:?}",
                                 item.path
                             ));
-                        } else if item.verdict == "live" && !cross_link_gap {
+                        } else if item.verdict == "live" {
                             problems.push(format!(
                                 "{} is called live and reads {have:?}, not {want:?}",
                                 item.path

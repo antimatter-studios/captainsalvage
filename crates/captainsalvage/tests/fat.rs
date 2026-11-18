@@ -136,6 +136,62 @@ fn fat12_fat16_and_fat32_sessions_scan_browse_and_read_fragmented_files() {
     }
 }
 
+/// Two files in the root whose chains meet: `OTHER.TXT` is cluster 20 and then cluster 9, which is
+/// also the last cluster of `Captain log.txt`.
+fn cross_linked(kind: FilesystemKind) -> Fixture {
+    let mut fixture = Fixture::new(kind);
+    let mut root = long_entry("Captain log.txt", b"CAPTAI~1TXT", 5, 700);
+    root.extend(short_entry(b"ARCHIVE    ", 0x10, 3, 0));
+    root.extend(short_entry(b"OTHER   TXT", 0x20, 20, 1024));
+    root.extend([0; 32]);
+    fixture.put_sector(fixture.root_sector, &root);
+    fixture.fat(20, 9);
+    fixture.put_cluster(20, &[b'O'; 512]);
+    fixture
+}
+
+#[test]
+fn files_whose_chains_were_cross_linked_are_never_called_live_and_other_files_still_are() {
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        let fixture = cross_linked(kind);
+        let session = Session::with_source(
+            Path::new("/test/fat-cross-linked"),
+            Arc::new(MemorySource::new(fixture.image)),
+            workspace(&format!("cross-linked-{kind}")),
+        )
+        .unwrap();
+        scan(&session);
+        let verdicts = |name: &str| -> Vec<String> {
+            let rows = session
+                .query_map(&format!(
+                    "SELECT verdict FROM sets WHERE name = '{name}' AND in_use = 1"
+                ))
+                .unwrap();
+            rows["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["verdict"].as_str().unwrap().to_string())
+                .collect()
+        };
+        for name in ["Captain log.txt", "OTHER.TXT"] {
+            let found = verdicts(name);
+            assert_eq!(found.len(), 1, "{kind}: {name}");
+            assert_ne!(
+                found[0], "live",
+                "{kind}: {name} shares a cluster with another live file, so its bytes are uncertain"
+            );
+        }
+        // The folder and the files that share nothing are as they were.
+        assert_eq!(verdicts("ARCHIVE"), ["folder"], "{kind}");
+        assert_eq!(verdicts("CHILD.TXT"), ["live"], "{kind}");
+    }
+}
+
 #[test]
 fn fat_scans_resume_after_restart_without_duplicating_fixed_roots() {
     for kind in [
