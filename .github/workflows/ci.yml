@@ -3,8 +3,8 @@ name: CI
 # The engine and the window build run on Linux, where minutes cost a tenth of macOS's on a
 # private repository. Only what needs macOS runs there: the app itself, which links macOS
 # frameworks, the Finder extension and the release tools. The job named CI waits for all three,
-# so branch protection keeps one required check. The third job runs the independent NTFS oracles in
-# a Linux VM. Documentation-only changes skip all of it.
+# so branch protection keeps one required check. The third job runs the independent NTFS, FAT and exFAT
+# oracles in a Linux VM. Documentation-only changes skip all of it.
 on:
   pull_request:
     paths-ignore: ["**.md", "media/**", "LICENSE"]
@@ -79,9 +79,10 @@ jobs:
 
   oracle:
     # `chore test:oracle`: the NTFS flows against ntfs-3g's tools and the Linux kernel's ntfs3
-    # driver, in the fs-linux-test-harness VM. Only an x86_64 runner has KVM, and
+    # driver, and the FAT and exFAT flows against mkfs.fat, mkfs.exfat, mtools and the kernel's
+    # vfat and exfat drivers, in the fs-linux-test-harness VM. Only an x86_64 runner has KVM, and
     # ci-setup-linux.sh is the harness's one setup for it, run from the sibling checkout.
-    name: independent NTFS oracles (ntfs-3g and ntfs3, harness VM)
+    name: independent oracles (NTFS, FAT and exFAT, harness VM)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

@@ -4,8 +4,11 @@ chore_min_version: 0.10.0
 # The tasks that need the Linux test VM. Everything else is plain `cargo`, and `scripts/`.
 #
 # `chore test:oracle` checks NTFS against two implementations nobody here wrote: ntfs-3g's own
-# tools and the Linux kernel's ntfs3 driver, in the fs-linux-test-harness guest. Nothing is
-# mounted on this machine. See validation/oracle.sh and crates/captainsalvage/tests/ntfs_oracle.rs.
+# tools and the Linux kernel's ntfs3 driver, in the fs-linux-test-harness guest. It checks FAT12,
+# FAT16, FAT32 and exFAT against mkfs.fat, mkfs.exfat, the kernel's vfat and exfat drivers, mtools
+# and fsck. Nothing is mounted on this machine. See validation/oracle.sh and
+# crates/captainsalvage/tests/ntfs_oracle.rs, and validation/fat-oracle.sh and
+# crates/captainsalvage/tests/fat_exfat_oracle.rs.
 #
 # `chore test:windows-oracle` checks it against Windows itself: Windows formats and fills NTFS
 # volumes in the Windows guest of fs-windows-test-harness, and reports what it wrote. See
@@ -63,14 +66,14 @@ tasks:
           done
 
   test:oracle:
-    desc: "Independent validation: ntfs-3g's tools and the kernel's ntfs3 read what the NTFS flows read, in the Linux test VM"
+    desc: "Independent validation: ntfs-3g, mkfs.fat, mkfs.exfat, mtools and the kernel's ntfs3, vfat and exfat read what the NTFS, FAT and exFAT flows read, in the Linux test VM"
     deps: [siblings]
     # `up` boots the shared guest and applies scripts/vm-setup.sh; the session detaches when cargo
     # ends, however it ends, and leaves the guest up for the next user. A missing VM, tool or
     # driver fails the tests that needed it. Nothing skips.
     cmds:
       - ../fs-linux-test-harness/scripts/vm.sh up
-      - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle
+      - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle --test fat_exfat_oracle
 
   siblings:windows:
     desc: Check out the Windows test harness beside this repository, at its pinned tag
