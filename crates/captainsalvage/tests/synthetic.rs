@@ -4824,10 +4824,10 @@ fn a_disk_rebuild_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
         .as_i64()
         .expect("id");
 
-    // Claude reads Disk Rebuilds, and only the person changes them.
+    // An agent reads Disk Rebuilds and builds them, but accepting a suggestion is the person's.
     let claude = engine.call(
-        "disk_rebuild_place",
-        &json!({"diskRebuild": disk_rebuild, "head": 20}),
+        "disk_rebuild_accept",
+        &json!({"diskRebuild": disk_rebuild, "suggestion": 1}),
         AUTHOR_CLAUDE,
     );
     assert!(format!("{:#}", claude.expect_err("refused")).contains("Only the person"));
@@ -5850,25 +5850,9 @@ fn a_copy_started_under_the_old_manifest_name_keeps_it() {
 /// means something inside the window.
 #[test]
 fn every_engine_tool_the_window_uses_is_listed_over_mcp() {
-    // Writing files, choosing where they go, and arranging a Disk Rebuild stay the person's.
-    const PERSON_ONLY: &[&str] = &[
-        "export_start",
-        "disk_rebuild_choose",
-        "disk_rebuild_copy_start",
-        "disk_rebuild_create",
-        "disk_rebuild_delete",
-        "disk_rebuild_folder",
-        "disk_rebuild_leftovers",
-        "disk_rebuild_move",
-        "disk_rebuild_place",
-        "disk_rebuild_place_file",
-        "disk_rebuild_remove",
-        "disk_rebuild_rename",
-        "disk_rebuild_rename_item",
-        "disk_rebuild_swap",
-        "copy_stop",
-        "set_salvage_drive",
-    ];
+    // Writing files, choosing where they go, and answering what an agent did stay the person's.
+    // Building a Disk Rebuild is open to agents, so those tools must be listed.
+    const PERSON_ONLY: &[&str] = captainsalvage::rebuild_tools::PERSON_ONLY_TOOLS;
     // The window tells the engine what is selected. An agent reads it with get_selection, and
     // moves the window with show_in_app.
     const WINDOW_ONLY: &[&str] = &["set_selection"];
@@ -6152,5 +6136,991 @@ fn a_single_file_can_be_laid_over_a_folder_as_its_own_layer() {
         "the file placed later is on top"
     );
     assert_eq!(top["files"][0]["decidedBy"], "layer");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ---- an agent builds a Disk Rebuild ----
+
+use captainsalvage::disk_rebuild_agent::{AgentConnection, AgentLimits};
+
+fn connection(session: &str) -> AgentConnection {
+    AgentConnection {
+        session: session.to_string(),
+        client: Some("test agent".to_string()),
+    }
+}
+
+/// A tool run by an agent, in a named agent session.
+fn agent_in(
+    engine: &Engine,
+    session: &str,
+    tool: &str,
+    args: serde_json::Value,
+) -> serde_json::Value {
+    engine
+        .call_as_agent(tool, &args, AUTHOR_CLAUDE, &connection(session))
+        .unwrap_or_else(|error| panic!("{tool} failed: {error:#}"))
+}
+
+fn agent_error(engine: &Engine, session: &str, tool: &str, args: serde_json::Value) -> String {
+    match engine.call_as_agent(tool, &args, AUTHOR_CLAUDE, &connection(session)) {
+        Ok(value) => panic!("{tool} should have been refused, and gave {value}"),
+        Err(error) => format!("{error:#}"),
+    }
+}
+
+fn id_of(value: &serde_json::Value) -> i64 {
+    value["id"].as_i64().expect("id")
+}
+
+fn file_named<'a>(listing: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    listing["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| {
+            file["name"]
+                .as_str()
+                .is_some_and(|found| found.eq_ignore_ascii_case(name))
+        })
+        .unwrap_or_else(|| panic!("no file {name} in {listing}"))
+}
+
+fn item_ids(engine: &Engine, disk_rebuild: i64) -> Vec<i64> {
+    call(
+        engine,
+        "disk_rebuild_items",
+        json!({"diskRebuild": disk_rebuild}),
+    )
+    .as_array()
+    .expect("items")
+    .iter()
+    .map(|item| item["id"].as_i64().expect("id"))
+    .collect()
+}
+
+#[test]
+fn an_agent_builds_a_disk_rebuild_through_the_tools_and_it_is_marked() {
+    let (engine, session, dir) = engine_with_image("agent-build", build_jigsaw_volume());
+    let source_before = engine.call("verify_unchanged", &json!({}), AUTHOR_USER);
+
+    let rebuild = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_create",
+        json!({"name": "Agent's try"}),
+    ));
+    let root = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    let photos = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "Photos", "place": {"item": root}}),
+    ));
+    let c_item = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 40, "place": {"item": photos}}),
+    ));
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 30, "place": {"item": root}, "merge": true}),
+    );
+    let b1 = call(&engine, "search", json!({"query": "b1.mp3"}))["rows"][0]["id"]
+        .as_i64()
+        .expect("b1");
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place_file",
+        json!({"diskRebuild": rebuild, "entry": b1, "place": {"item": photos}}),
+    );
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_rename_item",
+        json!({"diskRebuild": rebuild, "item": c_item, "name": "Songs"}),
+    );
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_move",
+        json!({"diskRebuild": rebuild, "item": c_item, "place": {"item": root}}),
+    );
+
+    // The tree reads back, with what the agent made marked.
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert!(names(&top, "folders").contains(&"Photos".to_string()));
+    assert!(names(&top, "folders").contains(&"Songs".to_string()));
+    assert!(
+        top["folders"]
+            .as_array()
+            .expect("folders")
+            .iter()
+            .find(|folder| folder["name"] == "Photos")
+            .expect("Photos")["madeByAgent"]
+            == true
+    );
+    let photos_listing = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": rebuild, "path": ["Photos"]}),
+    );
+    assert_eq!(file_named(&photos_listing, "b1.mp3")["madeByAgent"], true);
+    let items = call(
+        &engine,
+        "disk_rebuild_items",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert!(items
+        .as_array()
+        .expect("items")
+        .iter()
+        .all(|item| item["madeByAgent"] == true));
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert_eq!(list[0]["madeByAgent"], true);
+
+    // What the person adds afterwards is not marked as the agent's.
+    let mine = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "Mine", "place": {"item": root}}),
+    ));
+    let items = call(
+        &engine,
+        "disk_rebuild_items",
+        json!({"diskRebuild": rebuild}),
+    );
+    let flag = |id: i64| {
+        items
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|item| item["id"] == id)
+            .expect("item")["madeByAgent"]
+            .clone()
+    };
+    assert_eq!(flag(root), true);
+    assert_eq!(flag(mine), false);
+
+    // Every change is in the journal and the activity log, as the agent's.
+    let changes = call(&engine, "disk_rebuild_agent_changes", json!({}));
+    assert_eq!(changes["changes"].as_array().expect("changes").len(), 8);
+    assert_eq!(changes["changes"][0]["origin"], "agent");
+    assert_eq!(changes["sessions"][0]["id"], "a");
+    assert_eq!(changes["sessions"][0]["client"], "test agent");
+    let log = call(&engine, "activity", json!({}));
+    assert!(log
+        .as_array()
+        .expect("log")
+        .iter()
+        .any(|item| item["action"] == "disk_rebuild_place" && item["author"] == AUTHOR_CLAUDE));
+
+    // Building a Disk Rebuild never touched the source disk.
+    let source_after = engine.call("verify_unchanged", &json!({}), AUTHOR_USER);
+    assert_eq!(
+        source_before.map(|value| value.to_string()).ok(),
+        source_after.map(|value| value.to_string()).ok()
+    );
+    drop(session);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_agent_reads_what_a_path_resolves_to_and_chooses_a_lower_layer() {
+    let (engine, _session, dir) = engine_with_image("agent-layers", build_jigsaw_volume());
+    let rebuild = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_create",
+        json!({"name": "Layers"}),
+    ));
+    let lower = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    let upper = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 30, "place": {"item": lower}, "merge": true}),
+    ));
+
+    // Two layers hold shared.jpg, and the whole copy of the upper layer wins on quality.
+    let resolved = call(
+        &engine,
+        "disk_rebuild_resolve",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"]}),
+    );
+    assert_eq!(resolved["kind"], "file");
+    assert_eq!(resolved["chosen"]["firstCluster"], 32);
+    assert_eq!(resolved["decidedBy"], "quality");
+    assert!(resolved["why"]
+        .as_str()
+        .expect("why")
+        .contains("measured better"));
+    let copies = resolved["copies"].as_array().expect("copies");
+    assert_eq!(copies.len(), 2);
+    let layer_of = |cluster: u64| {
+        copies
+            .iter()
+            .find(|copy| copy["row"]["firstCluster"] == cluster)
+            .expect("copy")["layer"]["item"]
+            .as_i64()
+            .expect("layer")
+    };
+    assert_eq!(layer_of(32), upper);
+    assert_eq!(layer_of(23), lower);
+
+    // Clashes read back, and what is unplaced is listed.
+    let clashes = call(
+        &engine,
+        "disk_rebuild_clashes",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert_eq!(clashes["total"], 1);
+    assert_eq!(
+        call(
+            &engine,
+            "disk_rebuild_unused",
+            json!({"diskRebuild": rebuild})
+        )["total"],
+        3
+    );
+
+    // The agent picks the lower layer for that path, and the choice is marked as its own.
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_choose",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"], "layer": lower}),
+    );
+    let resolved = call(
+        &engine,
+        "disk_rebuild_resolve",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"]}),
+    );
+    assert_eq!(resolved["chosen"]["firstCluster"], 23);
+    assert_eq!(resolved["decidedBy"], "person");
+    assert_eq!(resolved["madeByAgent"], true);
+    let listing = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert_eq!(file_named(&listing, "shared.jpg")["madeByAgent"], true);
+
+    // A layer that holds no copy of it is refused, and no choice means the best copy again.
+    assert!(agent_error(
+        &engine,
+        "a",
+        "disk_rebuild_choose",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"], "layer": 999_999}),
+    )
+    .contains("layer"));
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_choose",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"]}),
+    );
+    let resolved = call(
+        &engine,
+        "disk_rebuild_resolve",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"]}),
+    );
+    assert_eq!(resolved["chosen"]["firstCluster"], 32);
+
+    // A folder resolves to what it is made of.
+    let folder = call(
+        &engine,
+        "disk_rebuild_resolve",
+        json!({"diskRebuild": rebuild, "path": ["sub"]}),
+    );
+    assert_eq!(folder["kind"], "folder");
+    assert_eq!(folder["folder"]["origin"], "found");
+    assert!(agent_error(
+        &engine,
+        "a",
+        "disk_rebuild_choose",
+        json!({"diskRebuild": rebuild, "path": ["sub"], "layer": lower}),
+    )
+    .contains("folder"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_person_undoes_one_agent_change_then_a_whole_session() {
+    let (engine, _session, dir) = engine_with_image("agent-undo", build_jigsaw_volume());
+    let rebuild = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_create",
+        json!({"name": "Mine"}),
+    ));
+    let root = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    let before = item_ids(&engine, rebuild);
+
+    let folder = id_of(&agent_in(
+        &engine,
+        "one",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "First", "place": {"item": root}}),
+    ));
+    agent_in(
+        &engine,
+        "one",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 40, "place": {"item": folder}}),
+    );
+    agent_in(
+        &engine,
+        "two",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 30, "place": {"item": root}, "merge": true}),
+    );
+
+    // The agent cannot undo, not even its own changes.
+    for tool in [
+        "disk_rebuild_undo",
+        "disk_rebuild_undo_session",
+        "disk_rebuild_restore",
+    ] {
+        assert!(
+            agent_error(&engine, "two", tool, json!({"diskRebuild": rebuild}))
+                .contains("Only the person")
+        );
+    }
+    assert_eq!(item_ids(&engine, rebuild).len(), 4);
+
+    // One step back takes the latest agent change, which was session two's merge.
+    let step = call_as_person(&engine, "disk_rebuild_undo", json!({}));
+    assert_eq!(step["undone"], 1);
+    assert_eq!(item_ids(&engine, rebuild).len(), 3);
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert!(!names(&top, "files").contains(&"b1.mp3".to_string()));
+    // The undone change is no longer marked, and the journal says so.
+    let changes = call(
+        &engine,
+        "disk_rebuild_agent_changes",
+        json!({"includeUndone": true}),
+    );
+    assert_eq!(changes["changes"][0]["undone"], true);
+    assert_eq!(changes["last"]["session"], "one");
+
+    // All of session one at once, newest first. The person's own piece stays.
+    let all = call_as_person(&engine, "disk_rebuild_undo_session", json!({}));
+    assert_eq!(all["undone"], 2);
+    assert_eq!(all["session"], "one");
+    assert_eq!(item_ids(&engine, rebuild), before);
+    let items = call(
+        &engine,
+        "disk_rebuild_items",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert_eq!(items[0]["madeByAgent"], false);
+    // Nothing is left to undo, and asking says so.
+    assert!(engine
+        .call("disk_rebuild_undo", &json!({}), AUTHOR_USER)
+        .is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn undoing_deleting_renaming_and_duplicating_gives_the_disk_rebuild_back() {
+    let (engine, _session, dir) = engine_with_image("agent-undo-kinds", build_jigsaw_volume());
+    let rebuild = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_create",
+        json!({"name": "Mine"}),
+    ));
+    let root = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    call_as_person(
+        &engine,
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 30, "place": {"item": root}, "merge": true}),
+    );
+    let wiped = file_named(
+        &call(
+            &engine,
+            "disk_rebuild_tree",
+            json!({"diskRebuild": rebuild}),
+        ),
+        "shared.jpg",
+    )["copies"]
+        .as_array()
+        .expect("copies")
+        .iter()
+        .find(|copy| copy["firstCluster"] == 23)
+        .expect("wiped")["id"]
+        .as_i64()
+        .expect("id");
+    call_as_person(
+        &engine,
+        "disk_rebuild_choose",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"], "entry": wiped}),
+    );
+
+    // A copy under another name keeps the items and the chosen copy, and is independent.
+    let copy = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_duplicate",
+        json!({"diskRebuild": rebuild, "name": "Copy"}),
+    ));
+    assert_ne!(copy, rebuild);
+    assert_eq!(item_ids(&engine, copy).len(), 2);
+    let resolved = call(
+        &engine,
+        "disk_rebuild_resolve",
+        json!({"diskRebuild": copy, "path": ["shared.jpg"]}),
+    );
+    assert_eq!(resolved["chosen"]["firstCluster"], 23);
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_rename",
+        json!({"diskRebuild": copy, "name": "Renamed"}),
+    );
+    agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_delete",
+        json!({"diskRebuild": rebuild}),
+    );
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert_eq!(list.as_array().expect("list").len(), 1);
+    assert_eq!(list[0]["name"], "Renamed");
+
+    // Undone newest first: the delete comes back with its items and its chosen copy.
+    call_as_person(
+        &engine,
+        "disk_rebuild_undo",
+        json!({"diskRebuild": rebuild}),
+    );
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert_eq!(list.as_array().expect("list").len(), 2);
+    assert_eq!(item_ids(&engine, rebuild).len(), 2);
+    let resolved = call(
+        &engine,
+        "disk_rebuild_resolve",
+        json!({"diskRebuild": rebuild, "path": ["shared.jpg"]}),
+    );
+    assert_eq!(
+        resolved["chosen"]["firstCluster"], 23,
+        "the choice came back"
+    );
+    call_as_person(&engine, "disk_rebuild_undo", json!({"diskRebuild": copy}));
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert!(list
+        .as_array()
+        .expect("list")
+        .iter()
+        .any(|found| found["name"] == "Copy"));
+    call_as_person(&engine, "disk_rebuild_undo", json!({"diskRebuild": copy}));
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert_eq!(
+        list.as_array().expect("list").len(),
+        1,
+        "the copy is gone again"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_undo_refuses_what_the_person_changed_since_instead_of_losing_it() {
+    let (engine, _session, dir) = engine_with_image("agent-undo-conflict", build_jigsaw_volume());
+    let rebuild = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_create",
+        json!({"name": "T"}),
+    ));
+    let root = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "Top"}),
+    ));
+    let made = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "Made", "place": {"item": root}}),
+    ));
+    // The person puts a piece inside the folder the agent made.
+    call_as_person(
+        &engine,
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 40, "place": {"item": made}}),
+    );
+    let error = engine
+        .call("disk_rebuild_undo", &json!({}), AUTHOR_USER)
+        .expect_err("refused");
+    assert!(format!("{error:#}").contains("changed since"), "{error:#}");
+    assert_eq!(item_ids(&engine, rebuild).len(), 3, "nothing was lost");
+    // The person renamed it: that is a change too.
+    call_as_person(
+        &engine,
+        "disk_rebuild_rename_item",
+        json!({"diskRebuild": rebuild, "item": root, "name": "Renamed by me"}),
+    );
+    // Undoing the whole session stops at the first change it cannot take back whole.
+    let error = engine
+        .call("disk_rebuild_undo_session", &json!({}), AUTHOR_USER)
+        .expect_err("refused");
+    assert!(format!("{error:#}").contains("changed since"), "{error:#}");
+    assert_eq!(item_ids(&engine, rebuild).len(), 3, "nothing was lost");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_disk_rebuild_is_restored_to_how_it_was_when_the_agent_began() {
+    let (engine, _session, dir) = engine_with_image("agent-restore", build_jigsaw_volume());
+    let rebuild = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_create",
+        json!({"name": "Mine"}),
+    ));
+    let root = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    let before = item_ids(&engine, rebuild);
+
+    let folder = id_of(&agent_in(
+        &engine,
+        "s",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "X", "place": {"item": root}}),
+    ));
+    agent_in(
+        &engine,
+        "s",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 40, "place": {"item": folder}}),
+    );
+    agent_in(
+        &engine,
+        "s",
+        "disk_rebuild_rename",
+        json!({"diskRebuild": rebuild, "name": "Agent's"}),
+    );
+    // A new Disk Rebuild by the agent in the same session did not exist when it began.
+    let made = id_of(&agent_in(
+        &engine,
+        "s",
+        "disk_rebuild_create",
+        json!({"name": "Made"}),
+    ));
+    agent_in(
+        &engine,
+        "s",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": made, "name": "Z"}),
+    );
+    // Even what the person did after is part of the restore: it is the person's explicit ask.
+    call_as_person(
+        &engine,
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 30, "place": {"item": root}, "merge": true}),
+    );
+
+    let restored = call_as_person(
+        &engine,
+        "disk_rebuild_restore",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert_eq!(restored["session"], "s");
+    assert_eq!(restored["removed"], false);
+    assert_eq!(item_ids(&engine, rebuild), before);
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert!(list
+        .as_array()
+        .expect("list")
+        .iter()
+        .any(|found| found["name"] == "Mine"));
+    let gone = call_as_person(
+        &engine,
+        "disk_rebuild_restore",
+        json!({"diskRebuild": made}),
+    );
+    assert_eq!(gone["removed"], true);
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert_eq!(list.as_array().expect("list").len(), 1);
+    let changes = call(&engine, "disk_rebuild_agent_changes", json!({}));
+    assert!(changes["last"].is_null(), "{changes}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn changes_per_call_and_per_session_are_capped_and_the_error_names_the_limit() {
+    let (engine, _session, dir) = engine_with_image("agent-caps", build_jigsaw_volume());
+    engine.set_agent_limits(AgentLimits {
+        per_call: 4,
+        per_session: 8,
+    });
+    let rebuild = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_create",
+        json!({"name": "Caps"}),
+    ));
+    let root = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    // Putting everything away would change five rows in one call: refused, and nothing changed.
+    // (The folder, and the four pieces left.)
+    let error = agent_error(
+        &engine,
+        "a",
+        "disk_rebuild_leftovers",
+        json!({"diskRebuild": rebuild, "name": "Rest"}),
+    );
+    assert!(error.contains("MAX_CHANGES_PER_CALL"), "{error}");
+    assert!(error.contains("at most 4"), "{error}");
+    assert_eq!(item_ids(&engine, rebuild), vec![root]);
+    // Only the small pieces fit.
+    let name = "Rest";
+    let few = agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_leftovers",
+        json!({"diskRebuild": rebuild, "name": name, "maxFiles": 1}),
+    );
+    assert!(few["pieces"].as_u64().expect("pieces") <= 3);
+
+    // The session has used 1 + 1 + 1 + pieces rows; more of them run it out.
+    let used = call(&engine, "disk_rebuild_agent_changes", json!({}))["sessions"][0]["changesUsed"]
+        .as_u64()
+        .expect("used");
+    assert!(used >= 4);
+    let mut refused = None;
+    for index in 0..6 {
+        match engine.call_as_agent(
+            "disk_rebuild_folder",
+            &json!({"diskRebuild": rebuild, "name": format!("F{index}"), "place": {"item": root}}),
+            AUTHOR_CLAUDE,
+            &connection("a"),
+        ) {
+            Ok(_) => {}
+            Err(error) => {
+                refused = Some(format!("{error:#}"));
+                break;
+            }
+        }
+    }
+    let refused = refused.expect("the session ran out");
+    assert!(refused.contains("MAX_CHANGES_PER_SESSION"), "{refused}");
+    assert!(
+        refused.contains("at most") || refused.contains("may"),
+        "{refused}"
+    );
+    // Undoing gives nothing back, so the agent cannot undo its way past the limit.
+    call_as_person(&engine, "disk_rebuild_undo", json!({}));
+    assert!(agent_error(
+        &engine,
+        "a",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "More", "place": {"item": root}}),
+    )
+    .contains("MAX_CHANGES_PER_SESSION"));
+    // Another agent session has its own allowance.
+    agent_in(
+        &engine,
+        "b",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "From b", "place": {"item": root}}),
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn agent_changes_survive_the_app_restarting() {
+    use captainsalvage::map::MapDb;
+    let (engine, session, dir) = engine_with_image("agent-restart", build_jigsaw_volume());
+    let rebuild = id_of(&agent_in(
+        &engine,
+        "kept",
+        "disk_rebuild_create",
+        json!({"name": "Kept"}),
+    ));
+    let root = id_of(&agent_in(
+        &engine,
+        "kept",
+        "disk_rebuild_place",
+        json!({"diskRebuild": rebuild, "head": 20}),
+    ));
+    agent_in(
+        &engine,
+        "kept",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "Later", "place": {"item": root}}),
+    );
+    let database = session.workspace.database();
+    drop(engine);
+    drop(session);
+
+    // A new process opens the same database: the marks, the journal and the snapshot are there.
+    let reopened = MapDb::open(&database).expect("database");
+    let marks = reopened.agent_marks(rebuild).expect("marks");
+    assert!(marks.rebuild);
+    assert_eq!(marks.items.len(), 2);
+    let changes = reopened
+        .agent_changes(None, None, false, 50, &AgentLimits::default())
+        .expect("changes");
+    assert_eq!(changes.changes.len(), 3);
+    assert_eq!(changes.sessions[0].id, "kept");
+    assert_eq!(changes.sessions[0].changes_used, 3);
+    // And the person can undo the whole session from there.
+    let report = reopened.agent_undo_session(None, None).expect("undo");
+    assert_eq!(report.undone, 3);
+    assert!(reopened.disk_rebuilds().expect("list").is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn no_agent_tool_can_start_a_copy_and_the_person_only_tools_are_refused_first() {
+    use captainsalvage::rebuild_tools::{
+        AGENT_CHANGING_TOOLS, COPY_STARTING_TOOLS, PERSON_ONLY_TOOLS, READING_TOOLS,
+    };
+    let (engine, _session, dir) = engine_with_image("agent-gate", build_jigsaw_volume());
+    let advertised: Vec<String> = tool_definitions()
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("name").to_string())
+        .collect();
+    let listed = |tool: &str| {
+        advertised
+            .iter()
+            .any(|name| name == &format!("captainsalvage_{tool}"))
+    };
+
+    // Every tool that changes or reads a Disk Rebuild for an agent is listed, and nothing else
+    // that starts a copy or undoes an agent is.
+    for tool in AGENT_CHANGING_TOOLS.iter().chain(READING_TOOLS) {
+        assert!(listed(tool), "{tool} is not listed to agents");
+    }
+    for tool in PERSON_ONLY_TOOLS {
+        if *tool != "zip_member_copy" {
+            assert!(!listed(tool), "{tool} must not be listed to agents");
+        }
+    }
+    for tool in COPY_STARTING_TOOLS {
+        assert!(PERSON_ONLY_TOOLS.contains(tool));
+    }
+    // The agent tools never name a destination: nothing they take could start a copy.
+    for definition in tool_definitions() {
+        let name = definition["name"].as_str().expect("name");
+        if AGENT_CHANGING_TOOLS.iter().any(|tool| name.ends_with(tool)) {
+            assert!(
+                definition["inputSchema"]["properties"]
+                    .get("destination")
+                    .is_none(),
+                "{name} takes a destination"
+            );
+        }
+    }
+
+    // The engine refuses every person-only tool from an agent whatever it is given, even
+    // without arguments, so the refusal does not depend on reading them.
+    for tool in PERSON_ONLY_TOOLS {
+        let error = engine
+            .call(tool, &json!({}), AUTHOR_CLAUDE)
+            .expect_err("an agent must not run this");
+        assert!(
+            format!("{error:#}").contains("Only the person"),
+            "{tool}: {error:#}"
+        );
+        let error = engine
+            .call_as_agent(
+                tool,
+                &json!({"diskRebuild": 1, "destination": "/tmp"}),
+                AUTHOR_CLAUDE,
+                &connection("x"),
+            )
+            .expect_err("an agent must not run this");
+        assert!(
+            format!("{error:#}").contains("Only the person"),
+            "{tool}: {error:#}"
+        );
+    }
+
+    // Through the MCP server, with the prefixed name an agent would use.
+    for tool in COPY_STARTING_TOOLS {
+        let reply = captainsalvage::mcp::handle_message(
+            &engine,
+            &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": format!("captainsalvage_{tool}"), "arguments": {"diskRebuild": 1, "target": 1, "destination": "/tmp"}}}),
+        )
+        .expect("reply");
+        assert_eq!(reply["result"]["isError"], true, "{tool}: {reply}");
+        assert!(reply["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text")
+            .contains("Only the person"));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_mcp_connection_is_an_agent_session_and_its_changes_are_kept_under_it() {
+    let (engine, _session, dir) = engine_with_image("agent-mcp-session", build_jigsaw_volume());
+    let hello = |name: &str| {
+        captainsalvage::mcp::handle_in_session(
+            &engine,
+            &json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"clientInfo": {"name": name}}}),
+            None,
+        )
+    };
+    let (_, first) = hello("agent one");
+    let (_, second) = hello("agent two");
+    let (first, second) = (first.expect("session id"), second.expect("session id"));
+    assert_ne!(first, second);
+    let call_in = |session: &str, tool: &str, arguments: serde_json::Value| {
+        let (reply, announced) = captainsalvage::mcp::handle_in_session(
+            &engine,
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": format!("captainsalvage_{tool}"), "arguments": arguments}}),
+            Some(session),
+        );
+        assert!(announced.is_none());
+        let reply = reply.expect("reply");
+        assert!(reply["result"]["isError"].is_null(), "{reply}");
+        serde_json::from_str::<serde_json::Value>(
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .expect("text"),
+        )
+        .expect("json")
+    };
+    id_of(&call_in(
+        &first,
+        "disk_rebuild_create",
+        json!({"name": "One"}),
+    ));
+    let other = id_of(&call_in(
+        &second,
+        "disk_rebuild_create",
+        json!({"name": "Two"}),
+    ));
+    call_in(
+        &second,
+        "disk_rebuild_place",
+        json!({"diskRebuild": other, "head": 20}),
+    );
+    let changes = call_in(&first, "disk_rebuild_agent_changes", json!({}));
+    let sessions = changes["sessions"].as_array().expect("sessions");
+    let client_of = |id: &str| {
+        sessions
+            .iter()
+            .find(|session| session["id"] == id)
+            .expect("session")["client"]
+            .clone()
+    };
+    assert_eq!(client_of(&first), "agent one");
+    assert_eq!(client_of(&second), "agent two");
+    // Undoing one session leaves the other's change.
+    let report = call_as_person(
+        &engine,
+        "disk_rebuild_undo_session",
+        json!({"session": first.clone()}),
+    );
+    assert_eq!(report["undone"], 1);
+    assert_eq!(report["remaining"], 0);
+    let list = call(&engine, "disk_rebuild_list", json!({}));
+    assert_eq!(list.as_array().expect("list").len(), 1);
+    assert_eq!(list[0]["name"], "Two");
+    assert_eq!(item_ids(&engine, other).len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_id_given_out_is_never_given_out_again_so_old_marks_and_snapshots_never_land_on_new_things() {
+    let (engine, _session, dir) = engine_with_image("agent-ids", build_jigsaw_volume());
+    let first = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_create",
+        json!({"name": "Gone"}),
+    ));
+    let root = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": first, "name": "Top"}),
+    ));
+    let made = id_of(&agent_in(
+        &engine,
+        "a",
+        "disk_rebuild_folder",
+        json!({"diskRebuild": first, "name": "Agent's", "place": {"item": root}}),
+    ));
+    // The person takes the agent's folder off and puts one of their own where it was.
+    call_as_person(
+        &engine,
+        "disk_rebuild_remove",
+        json!({"diskRebuild": first, "item": made}),
+    );
+    let mine = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_folder",
+        json!({"diskRebuild": first, "name": "Mine", "place": {"item": root}}),
+    ));
+    assert_ne!(mine, made, "an item id is not given out twice");
+    let items = call(&engine, "disk_rebuild_items", json!({"diskRebuild": first}));
+    let mark = |id: i64| {
+        items
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|item| item["id"] == id)
+            .expect("item")["madeByAgent"]
+            .clone()
+    };
+    assert_eq!(
+        mark(mine),
+        false,
+        "the person's folder is not marked as the agent's"
+    );
+
+    // Same for a Disk Rebuild the person deleted: its number is not reused.
+    call_as_person(
+        &engine,
+        "disk_rebuild_delete",
+        json!({"diskRebuild": first}),
+    );
+    let second = id_of(&call_as_person(
+        &engine,
+        "disk_rebuild_create",
+        json!({"name": "New"}),
+    ));
+    assert_ne!(second, first);
     let _ = std::fs::remove_dir_all(dir);
 }

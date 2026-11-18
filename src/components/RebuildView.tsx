@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from "react";
-import { call, type DiskRebuild, type DiskRebuildItem, type CopyStatus, type FinderState, type DiskRebuildSuggestion, type DiskRebuildListing, type DiskRebuildPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
+import { call, type AgentChanges, type UndoReport, type DiskRebuild, type DiskRebuildItem, type CopyStatus, type FinderState, type DiskRebuildSuggestion, type DiskRebuildListing, type DiskRebuildPlace, type RebuiltFile, type RebuiltFolder, type Row, type UnusedPieces } from "../api";
+import { undoBar } from "../agentChanges";
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
@@ -134,6 +135,16 @@ function NameInput({ initial, onDone }: { initial: string; onDone: (name: string
   );
 }
 
+/** A small mark on what an agent made or changed. */
+function AgentMark() {
+  return (
+    <span className="agent-mark" title={t("Made by the agent")}>
+      <Icon name="sparkle" size={11} />
+      <span>{t("Agent")}</span>
+    </span>
+  );
+}
+
 /** One folder of the rebuilt tree. Its contents load when it is opened. */
 function FolderNode({ folder, path, depth, around, shared, startOpen }: {
   folder: RebuiltFolder;
@@ -242,9 +253,10 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
               <span className="row-name">{label}</span>
             )}
             {(folder.merged || folder.origin === "made") && (
-              <span className="row-path">{folder.merged ? t("Merged from {count} pieces", { count: count(folder.items.length + folder.heads.length) }) : t("Made by you")}</span>
+              <span className="row-path">{folder.merged ? t("Merged from {count} pieces", { count: count(folder.items.length + folder.heads.length) }) : folder.madeByAgent ? t("Made by the agent") : t("Made by you")}</span>
             )}
           </span>
+          {folder.madeByAgent && <AgentMark />}
           <span className="row-size" title={t("{bytes} likely intact", { bytes: bytes(folder.intactBytes) })}>{folder.bytes > 0 ? bytes(folder.bytes) : ""}</span>
         </button>
         {holding ? (
@@ -292,7 +304,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
 
 /** Why a clashing file's copy was picked, in words. */
 const DECIDED: Record<NonNullable<RebuiltFile["decidedBy"]>, () => string> = {
-  person: () => t("You chose this copy."),
+  person: () => t("This copy was chosen on purpose."),
   quality: () => t("Picked because it measured better: tested or judged good, all its clusters there, a valid entry, or the size its entry says."),
   date: () => t("These measure the same, so the newer copy was picked. Look at both if it matters."),
   layer: () => t("These measure the same and have the same date, so the copy from the upper layer, the later drop, was picked. Look at both if it matters."),
@@ -320,8 +332,9 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
           <span className="row-icon"><Icon name={fileIcon(file.name)} /></span>
           <span className="row-main">
             <span className="row-name">{file.name}</span>
-            {file.byPerson && <span className="row-path">{t("The copy you chose")}</span>}
+            {file.byPerson && <span className="row-path">{file.madeByAgent ? t("The copy the agent chose") : t("The copy you chose")}</span>}
           </span>
+          {file.madeByAgent && <AgentMark />}
           <span className="row-size">{bytes(row.length)}</span>
           <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict: verdictLabel(row.verdict), percent: percent(row.confidence) })} />
         </button>
@@ -342,7 +355,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
                   {verdictLabel(copy.verdict)}, {bytes(copy.length)}{copy.modified ? `, ${copy.modified.replace("T", " ")}` : ""}
                 </span>
                 {chosen ? (
-                  <span className="muted">{file.byPerson ? t("Chosen by you") : t("Best copy")}</span>
+                  <span className="muted">{file.byPerson ? (file.madeByAgent ? t("Chosen by the agent") : t("Chosen by you")) : t("Best copy")}</span>
                 ) : (
                   <button className="link" onClick={() => void choose(copy.id)}>{t("Use this copy")}</button>
                 )}
@@ -494,7 +507,29 @@ export function RebuildView({ diskRebuilds, diskRebuild, onDiskRebuild, revision
   const [copying, setCopying] = useState(false);
   const [finderNote, setFinderNote] = useState<string | null>(null);
   const [finderBusy, setFinderBusy] = useState(false);
+  // What agents changed on this scan, and on the Disk Rebuild showing, for the Undo buttons.
+  const [agentScan, setAgentScan] = useState<AgentChanges | null>(null);
+  const [agentHere, setAgentHere] = useState<AgentChanges | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState(false);
   const fail = useCallback((reason: unknown) => setError(String(reason)), []);
+
+  useEffect(() => {
+    let current = true;
+    setConfirmRestore(false);
+    call<AgentChanges>("disk_rebuild_agent_changes", { limit: 1 })
+      .then((found) => current && setAgentScan(found))
+      .catch(() => current && setAgentScan(null));
+    if (diskRebuild === null) {
+      setAgentHere(null);
+    } else {
+      call<AgentChanges>("disk_rebuild_agent_changes", { diskRebuild, limit: 1 })
+        .then((found) => current && setAgentHere(found))
+        .catch(() => current && setAgentHere(null));
+    }
+    return () => {
+      current = false;
+    };
+  }, [diskRebuild, revision]);
 
   useEffect(() => {
     setError(null);
@@ -584,6 +619,30 @@ export function RebuildView({ diskRebuilds, diskRebuild, onDiskRebuild, revision
     }
   }
 
+  // Taking back what an agent did. The person decides; an agent cannot undo.
+  async function undoAgent(tool: "disk_rebuild_undo" | "disk_rebuild_undo_session") {
+    try {
+      const report = await call<UndoReport>(tool, {});
+      if (report.stopped) setError(report.stopped);
+      changed();
+      if (report.stopped) setError(report.stopped);
+    } catch (reason) {
+      fail(reason);
+    }
+  }
+
+  async function restoreBeforeAgent() {
+    if (diskRebuild === null) return;
+    setConfirmRestore(false);
+    try {
+      await call("disk_rebuild_restore", { diskRebuild });
+      changed();
+    } catch (reason) {
+      fail(reason);
+    }
+  }
+
+  const bar = undoBar(agentScan, agentHere);
   const root = items.find((item) => item.parentItem === null);
   const current = diskRebuilds.find((found) => found.id === diskRebuild);
   const inFinder = diskRebuild !== null && finder.shown.includes(diskRebuild);
@@ -652,7 +711,7 @@ export function RebuildView({ diskRebuilds, diskRebuild, onDiskRebuild, revision
         <Icon name="folder" size={28} />
         <p>{t("Drag a piece from the sidebar here. The first piece becomes the top of the tree.")}</p>
         <p className="muted">{t("The sidebar lists the largest pieces first, so start with those.")}</p>
-        <p className="muted">{t("Or ask an agent, in the chat, where the pieces belong. Its suggestions appear here for you to accept or dismiss.")}</p>
+        <p className="muted">{t("Or ask an agent, in the chat, to build it for you: what it makes shows here marked as made by the agent, and you can undo it. If you only ask where something belongs, its suggestions appear here for you to accept or dismiss.")}</p>
         {naming === "root" ? (
           <NameInput initial="" onDone={(name) => void startWithFolder(name)} />
         ) : (
@@ -684,7 +743,7 @@ export function RebuildView({ diskRebuilds, diskRebuild, onDiskRebuild, revision
       <div className="rebuild-bar">
         {diskRebuilds.length > 0 && (
           <select value={diskRebuild ?? ""} onChange={(event) => onDiskRebuild(event.target.value ? Number(event.target.value) : null)} aria-label={t("Disk Rebuild")}>
-            {diskRebuilds.map((found) => <option key={found.id} value={found.id}>{found.name}</option>)}
+            {diskRebuilds.map((found) => <option key={found.id} value={found.id}>{found.madeByAgent ? t("{name}, made by the agent", { name: found.name }) : found.name}</option>)}
           </select>
         )}
         {naming === "rename" && current ? (
@@ -726,6 +785,22 @@ export function RebuildView({ diskRebuilds, diskRebuild, onDiskRebuild, revision
           <button onClick={() => setCopying(true)} title={t("Copy every file to where this Disk Rebuild puts it")}>{t("Copy out")}</button>
         )}
       </div>
+      {bar.show && agentScan?.last && (
+        <div className="agent-bar" role="status">
+          <Icon name="sparkle" size={13} />
+          <span className="agent-bar-text">{t("The agent changed a Disk Rebuild: {what}", { what: fromEngine(agentScan.last.summary) })}</span>
+          <button onClick={() => void undoAgent("disk_rebuild_undo")} title={t("Take back the agent's last change")}>{t("Undo")}</button>
+          <button onClick={() => void undoAgent("disk_rebuild_undo_session")} title={t("Take back every change of the agent's latest session")}>{t("Undo all agent changes")}</button>
+          {bar.canRestore && (confirmRestore ? (
+            <span className="rebuild-confirm">
+              {t("Put this Disk Rebuild back as it was before the agent began? What you changed since is lost too.")} <button className="link" onClick={() => void restoreBeforeAgent()}>{t("Restore")}</button>{" "}
+              <button className="link" onClick={() => setConfirmRestore(false)}>{t("Keep it")}</button>
+            </span>
+          ) : (
+            <button className="link" onClick={() => setConfirmRestore(true)}>{t("Restore to before the agent")}</button>
+          ))}
+        </div>
+      )}
       {finderNote && <p className="muted rebuild-error">{finderNote}</p>}
       {error && <p className="warn rebuild-error">{fromEngine(error.replace(/^Error: /, ""))}</p>}
       <div className="rebuild-body">
@@ -768,6 +843,7 @@ function RootNode({ root, shared }: { root: DiskRebuildItem; shared: Shared }) {
         bytes: found?.bytes ?? 0,
         intactFiles: found?.intactFiles ?? 0,
         intactBytes: found?.intactBytes ?? 0,
+        madeByAgent: root.madeByAgent,
       };
     };
     describe().then((folder) => current && setRootFolder(folder)).catch((reason) => current && shared.fail(reason));

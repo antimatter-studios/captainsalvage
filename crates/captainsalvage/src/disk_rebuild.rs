@@ -29,6 +29,14 @@ pub const ITEM_MERGE: &str = "merge";
 /// One found file, placed on its own: a small layer of one file.
 pub const ITEM_FILE: &str = "file";
 
+/// The id the next item gets: above every id used before, including items since taken off, so an
+/// id never names two things and nothing recorded about an old item (what an agent made, a
+/// snapshot) can end up on a new one. The high-water mark is kept beside the map's other state.
+const NEXT_ITEM_ID: &str = "(SELECT MAX(COALESCE((SELECT MAX(id) FROM disk_rebuild_items), 0), \
+     CAST(COALESCE((SELECT value FROM scan_state WHERE key = 'item_high_water'), '0') AS INTEGER)) + 1)";
+const NEXT_REBUILD_ID: &str = "(SELECT MAX(COALESCE((SELECT MAX(id) FROM disk_rebuilds), 0), \
+     CAST(COALESCE((SELECT value FROM scan_state WHERE key = 'rebuild_high_water'), '0') AS INTEGER)) + 1)";
+
 /// Deeper than any real tree, so a damaged one that loops cannot hang a walk.
 const MAX_DEPTH: usize = 256;
 const MAX_NAME_CHARS: usize = 255;
@@ -41,6 +49,8 @@ pub struct DiskRebuild {
     pub created_at_millis: u64,
     pub updated_at_millis: u64,
     pub items: u64,
+    /// An agent made or renamed it, and the person has not undone that.
+    pub made_by_agent: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -58,6 +68,8 @@ pub struct DiskRebuildItem {
     pub parent_head: Option<u32>,
     /// The found file, for a file placed on its own.
     pub entry: Option<i64>,
+    /// An agent made or changed it, and the person has not undone that.
+    pub made_by_agent: bool,
 }
 
 /// Where something is put: in a Disk Rebuild item, and optionally in a found folder inside it.
@@ -88,6 +100,8 @@ pub struct RebuiltFolder {
     pub bytes: u64,
     pub intact_files: u64,
     pub intact_bytes: u64,
+    /// An agent made or changed one of the items this folder is made of.
+    pub made_by_agent: bool,
 }
 
 /// One file of the rebuilt tree, with every copy of it that the pieces hold.
@@ -105,6 +119,8 @@ pub struct RebuiltFile {
     pub needs_you: bool,
     /// Every distinct copy, best first. More than one is a clash.
     pub copies: Vec<Row>,
+    /// An agent placed this file on its own, or chose its copy.
+    pub made_by_agent: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -210,14 +226,17 @@ impl MapDb {
              (SELECT COUNT(*) FROM disk_rebuild_items i WHERE i.disk_rebuild = c.id) \
              FROM disk_rebuilds c ORDER BY c.updated_at_millis DESC, c.id DESC",
         )?;
+        let by_agent = self.agent_rebuilds()?;
         let rows = statement
             .query_map([], |row| {
+                let id: i64 = row.get(0)?;
                 Ok(DiskRebuild {
-                    id: row.get(0)?,
+                    id,
                     name: row.get(1)?,
                     created_at_millis: row.get::<_, i64>(2)? as u64,
                     updated_at_millis: row.get::<_, i64>(3)? as u64,
                     items: row.get::<_, i64>(4)? as u64,
+                    made_by_agent: by_agent.contains(&id),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -228,10 +247,21 @@ impl MapDb {
         let name = clean_name(name)?;
         let now = now_millis() as i64;
         self.connection.execute(
-            "INSERT INTO disk_rebuilds (name, created_at_millis, updated_at_millis) VALUES (?1, ?2, ?2)",
+            &format!("INSERT INTO disk_rebuilds (id, name, created_at_millis, updated_at_millis) VALUES ({NEXT_REBUILD_ID}, ?1, ?2, ?2)"),
             params![name, now],
         )?;
-        Ok(self.connection.last_insert_rowid())
+        let id = self.connection.last_insert_rowid();
+        self.note_high_water("rebuild_high_water", id)?;
+        Ok(id)
+    }
+
+    /// Keeps the highest id given out, so it is never given out again.
+    fn note_high_water(&self, key: &str, id: i64) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO scan_state (key, value) VALUES (?1, ?2)",
+            params![key, id.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn disk_rebuild_rename(&self, disk_rebuild: i64, name: &str) -> Result<()> {
@@ -246,22 +276,41 @@ impl MapDb {
 
     pub fn disk_rebuild_delete(&self, disk_rebuild: i64) -> Result<()> {
         self.need_disk_rebuild(disk_rebuild)?;
-        let transaction = self.connection.unchecked_transaction()?;
-        transaction.execute(
-            "DELETE FROM disk_rebuild_items WHERE disk_rebuild = ?1",
-            [disk_rebuild],
-        )?;
-        transaction.execute(
-            "DELETE FROM disk_rebuild_choices WHERE disk_rebuild = ?1",
-            [disk_rebuild],
-        )?;
-        transaction.execute(
-            "DELETE FROM disk_rebuild_suggestions WHERE disk_rebuild = ?1",
-            [disk_rebuild],
-        )?;
-        transaction.execute("DELETE FROM disk_rebuilds WHERE id = ?1", [disk_rebuild])?;
-        transaction.commit()?;
-        Ok(())
+        self.atomically(|| {
+            let connection = &self.connection;
+            connection.execute(
+                "DELETE FROM disk_rebuild_items WHERE disk_rebuild = ?1",
+                [disk_rebuild],
+            )?;
+            connection.execute(
+                "DELETE FROM disk_rebuild_choices WHERE disk_rebuild = ?1",
+                [disk_rebuild],
+            )?;
+            connection.execute(
+                "DELETE FROM disk_rebuild_suggestions WHERE disk_rebuild = ?1",
+                [disk_rebuild],
+            )?;
+            connection.execute("DELETE FROM disk_rebuilds WHERE id = ?1", [disk_rebuild])?;
+            Ok(())
+        })
+    }
+
+    /// Runs several writes as one: all of them happen, or none do. Savepoints nest, so a change
+    /// made of smaller changes is still one.
+    pub(crate) fn atomically<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.connection.execute_batch("SAVEPOINT disk_rebuild")?;
+        match work() {
+            Ok(value) => {
+                self.connection.execute_batch("RELEASE disk_rebuild")?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self
+                    .connection
+                    .execute_batch("ROLLBACK TO disk_rebuild; RELEASE disk_rebuild");
+                Err(error)
+            }
+        }
     }
 
     fn need_disk_rebuild(&self, disk_rebuild: i64) -> Result<()> {
@@ -293,16 +342,19 @@ impl MapDb {
             "SELECT id, kind, head, name, parent_item, parent_head, entry FROM disk_rebuild_items \
              WHERE disk_rebuild = ?1 ORDER BY position, id",
         )?;
+        let marks = self.agent_marks(disk_rebuild)?;
         let rows = statement
             .query_map([disk_rebuild], |row| {
+                let id: i64 = row.get(0)?;
                 Ok(DiskRebuildItem {
-                    id: row.get(0)?,
+                    id,
                     kind: row.get(1)?,
                     head: row.get(2)?,
                     name: row.get(3)?,
                     parent_item: row.get(4)?,
                     parent_head: row.get(5)?,
                     entry: row.get(6)?,
+                    made_by_agent: marks.items.contains(&id),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -418,11 +470,12 @@ impl MapDb {
             Some((item, at)) => (if merge { ITEM_MERGE } else { ITEM_PIECE }, Some(item), at),
         };
         self.connection.execute(
-            "INSERT INTO disk_rebuild_items (disk_rebuild, kind, head, parent_item, parent_head, position, created_at_millis) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            &format!("INSERT INTO disk_rebuild_items (id, disk_rebuild, kind, head, parent_item, parent_head, position, created_at_millis) \
+             VALUES ({NEXT_ITEM_ID}, ?1, ?2, ?3, ?4, ?5, ?6, ?7)"),
             params![disk_rebuild, kind, head, parent_item, parent_head, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
+        self.note_high_water("item_high_water", id)?;
         self.touch_disk_rebuild(disk_rebuild)?;
         Ok(id)
     }
@@ -453,11 +506,12 @@ impl MapDb {
             bail!("A file cannot be the top of the tree. Place a piece or make a folder first.");
         };
         self.connection.execute(
-            "INSERT INTO disk_rebuild_items (disk_rebuild, kind, entry, parent_item, parent_head, position, created_at_millis) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            &format!("INSERT INTO disk_rebuild_items (id, disk_rebuild, kind, entry, parent_item, parent_head, position, created_at_millis) \
+             VALUES ({NEXT_ITEM_ID}, ?1, ?2, ?3, ?4, ?5, ?6, ?7)"),
             params![disk_rebuild, ITEM_FILE, entry, item, at, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
+        self.note_high_water("item_high_water", id)?;
         self.touch_disk_rebuild(disk_rebuild)?;
         Ok(id)
     }
@@ -472,11 +526,12 @@ impl MapDb {
             Some((item, at)) => (Some(item), at),
         };
         self.connection.execute(
-            "INSERT INTO disk_rebuild_items (disk_rebuild, kind, name, parent_item, parent_head, position, created_at_millis) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            &format!("INSERT INTO disk_rebuild_items (id, disk_rebuild, kind, name, parent_item, parent_head, position, created_at_millis) \
+             VALUES ({NEXT_ITEM_ID}, ?1, ?2, ?3, ?4, ?5, ?6, ?7)"),
             params![disk_rebuild, ITEM_FOLDER, name, parent_item, parent_head, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
+        self.note_high_water("item_high_water", id)?;
         self.touch_disk_rebuild(disk_rebuild)?;
         Ok(id)
     }
@@ -606,11 +661,13 @@ impl MapDb {
             );
             index += 1;
         }
-        let transaction = self.connection.unchecked_transaction()?;
-        for id in &doomed {
-            transaction.execute("DELETE FROM disk_rebuild_items WHERE id = ?1", [id])?;
-        }
-        transaction.commit()?;
+        self.atomically(|| {
+            for id in &doomed {
+                self.connection
+                    .execute("DELETE FROM disk_rebuild_items WHERE id = ?1", [id])?;
+            }
+            Ok(())
+        })?;
         self.touch_disk_rebuild(disk_rebuild)?;
         Ok(doomed.len() as u64)
     }
@@ -674,17 +731,19 @@ impl MapDb {
                 head: None,
             },
         )?;
-        let transaction = self.connection.unchecked_transaction()?;
         let first = self.next_position(disk_rebuild)?;
         let now = now_millis() as i64;
-        for (position, head) in (first..).zip(chosen.iter()) {
-            transaction.execute(
-                "INSERT INTO disk_rebuild_items (disk_rebuild, kind, head, parent_item, position, created_at_millis) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![disk_rebuild, ITEM_PIECE, head, folder, position, now],
-            )?;
-        }
-        transaction.commit()?;
+        self.atomically(|| {
+            for (position, head) in (first..).zip(chosen.iter()) {
+                self.connection.execute(
+                    &format!("INSERT INTO disk_rebuild_items (id, disk_rebuild, kind, head, parent_item, position, created_at_millis) \
+                     VALUES ({NEXT_ITEM_ID}, ?1, ?2, ?3, ?4, ?5, ?6)"),
+                    params![disk_rebuild, ITEM_PIECE, head, folder, position, now],
+                )?;
+                self.note_high_water("item_high_water", self.connection.last_insert_rowid())?;
+            }
+            Ok(())
+        })?;
         self.touch_disk_rebuild(disk_rebuild)?;
         Ok((folder, chosen.len() as u64))
     }
@@ -774,7 +833,14 @@ impl MapDb {
             .sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
         let choices = tree.choices()?;
         let hashes = tree.hashes(&files)?;
-        let mut rebuilt = rebuild_files(files, path, &choices, &tree.file_layers.borrow(), &hashes);
+        let mut rebuilt = rebuild_files(
+            files,
+            path,
+            &choices,
+            &tree.file_layers.borrow(),
+            &hashes,
+            &tree.agent,
+        );
         rebuilt.sort_by_key(|file| key(&file.name));
         listing.total_files = rebuilt.len() as u64;
         listing.clashes = rebuilt.iter().filter(|file| file.copies.len() > 1).count() as u64;
@@ -805,6 +871,7 @@ fn rebuild_files(
     choices: &HashMap<String, i64>,
     layers: &HashMap<i64, i64>,
     hashes: &HashMap<i64, String>,
+    agent: &AgentView,
 ) -> Vec<RebuiltFile> {
     files
         .into_values()
@@ -840,8 +907,14 @@ fn rebuild_files(
                     }
                 }
             };
+            let made_by_agent = (by_person && agent.choices.contains(&choice_key(&chosen_path)))
+                || chosen
+                    .id
+                    .and_then(|id| layers.get(&id))
+                    .is_some_and(|layer| agent.file_layers.contains(layer));
             // The name is the chosen copy's, since copies can differ in case.
             RebuiltFile {
+                made_by_agent,
                 name: chosen.name.clone(),
                 by_person,
                 decided_by: decided_by.map(str::to_string),
@@ -896,7 +969,7 @@ impl MapDb {
             let (subfolders, files) = tree.contents(&sources)?;
             let hashes = tree.hashes(&files)?;
             let layers = tree.file_layers.borrow().clone();
-            for file in rebuild_files(files, &path, &choices, &layers, &hashes) {
+            for file in rebuild_files(files, &path, &choices, &layers, &hashes, &tree.agent) {
                 visit(&path, &folders, file);
             }
             for group in subfolders.into_values() {
@@ -964,6 +1037,262 @@ impl MapDb {
             total,
             need_you,
         })
+    }
+}
+
+/// The layer a copy of a file came from: the item of the Disk Rebuild that brought it. A later
+/// item is an upper layer.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Layer {
+    pub item: i64,
+    pub kind: String,
+    pub name: Option<String>,
+    pub head: Option<u32>,
+    pub made_by_agent: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedCopy {
+    pub row: Row,
+    pub layer: Option<Layer>,
+    pub chosen: bool,
+}
+
+/// What one path of the rebuilt tree is, and for a file which copy fills it and why.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resolved {
+    pub path: Vec<String>,
+    /// `file` or `folder`.
+    pub kind: String,
+    pub name: String,
+    /// For a file: the copy that fills it.
+    pub chosen: Option<Row>,
+    /// For a file: every distinct copy, best first, with the layer it came from.
+    pub copies: Vec<ResolvedCopy>,
+    pub by_person: bool,
+    pub decided_by: Option<String>,
+    /// In words, what decided which copy won.
+    pub why: Option<String>,
+    pub needs_you: bool,
+    pub made_by_agent: bool,
+    /// For a folder: what it is made of.
+    pub folder: Option<RebuiltFolder>,
+}
+
+/// In words, why the first of two copies of a file won.
+fn explain_pick(first: &Row, second: &Row, decided_by: &str) -> String {
+    match decided_by {
+        "person" => "The copy was chosen on purpose, not picked by the app.".to_string(),
+        "quality" => {
+            let mut reasons = Vec::new();
+            if verdict_rank(&first.verdict) != verdict_rank(&second.verdict) {
+                reasons.push(format!(
+                    "its verdict is better ({} against {})",
+                    first.verdict, second.verdict
+                ));
+            }
+            if whole(first) != whole(second) {
+                reasons.push("all its clusters are there".to_string());
+            }
+            if first.checksum_ok != second.checksum_ok {
+                reasons.push("its entry checksum is valid".to_string());
+            }
+            if (first.valid_length != first.length) != (second.valid_length != second.length) {
+                reasons.push("it has the size its entry says".to_string());
+            }
+            if reasons.is_empty() {
+                reasons.push("its confidence is higher".to_string());
+            }
+            format!("It measured better: {}.", reasons.join(", "))
+        }
+        "date" => "The copies measure the same, so the newer one won. Look at both if it matters."
+            .to_string(),
+        _ => "The copies measure the same and have the same date, so the copy from the upper layer (the later item) won. Look at both if it matters."
+            .to_string(),
+    }
+}
+
+impl MapDb {
+    /// A copy of a Disk Rebuild under a new name: the same items in the same places, and the same
+    /// chosen copies. The two are independent afterwards.
+    pub fn disk_rebuild_duplicate(&self, disk_rebuild: i64, name: &str) -> Result<i64> {
+        let name = clean_name(name)?;
+        let items = self.disk_rebuild_items(disk_rebuild)?;
+        let choices: Vec<(String, i64)> = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT path, entry FROM disk_rebuild_choices WHERE disk_rebuild = ?1")?;
+            let rows = statement
+                .query_map([disk_rebuild], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        self.atomically(|| {
+            let copy = self.disk_rebuild_create(&name)?;
+            let now = now_millis() as i64;
+            let mut renumbered: HashMap<i64, i64> = HashMap::new();
+            for (position, item) in items.iter().enumerate() {
+                self.connection.execute(
+                    &format!("INSERT INTO disk_rebuild_items (id, disk_rebuild, kind, head, name, parent_head, entry, position, created_at_millis) \
+                     VALUES ({NEXT_ITEM_ID}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"),
+                    params![copy, item.kind, item.head, item.name, item.parent_head, item.entry, position as i64, now],
+                )?;
+                let new_id = self.connection.last_insert_rowid();
+                self.note_high_water("item_high_water", new_id)?;
+                renumbered.insert(item.id, new_id);
+            }
+            for item in &items {
+                if let Some(parent) = item.parent_item {
+                    self.connection.execute(
+                        "UPDATE disk_rebuild_items SET parent_item = ?2 WHERE id = ?1",
+                        params![renumbered[&item.id], renumbered.get(&parent)],
+                    )?;
+                }
+            }
+            for (path, entry) in &choices {
+                self.connection.execute(
+                    "INSERT INTO disk_rebuild_choices (disk_rebuild, path, entry) VALUES (?1, ?2, ?3)",
+                    params![copy, path, entry],
+                )?;
+            }
+            Ok(copy)
+        })
+    }
+
+    /// What one path of the rebuilt tree resolves to: for a file, the copy that fills it, every
+    /// copy with the layer it came from, which won and why; for a folder, what it is made of.
+    pub fn disk_rebuild_resolve(&self, disk_rebuild: i64, path: &[String]) -> Result<Resolved> {
+        self.need_disk_rebuild(disk_rebuild)?;
+        let items = self.disk_rebuild_items(disk_rebuild)?;
+        let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
+            bail!("This Disk Rebuild is empty.");
+        };
+        let tree = Tree::new(self, disk_rebuild, &items)?;
+        let Some((name, parents)) = path.split_last() else {
+            let (shown, lost) = tree.item_name(root)?;
+            let group = Group {
+                path_name: String::new(),
+                name: shown.clone(),
+                lost_head: lost,
+                sources: vec![Source::Item(root.id)],
+            };
+            return Ok(Resolved {
+                path: Vec::new(),
+                kind: "folder".into(),
+                name: shown.unwrap_or_default(),
+                chosen: None,
+                copies: Vec::new(),
+                by_person: false,
+                decided_by: None,
+                why: None,
+                needs_you: false,
+                made_by_agent: root.made_by_agent,
+                folder: Some(tree.describe(group)?),
+            });
+        };
+        let sources = tree.sources_at(root.id, parents)?;
+        let (mut folders, mut files) = tree.contents(&sources)?;
+        let wanted = key(name);
+        if let Some(copies) = files.remove(&wanted) {
+            let choices = tree.choices()?;
+            let one = BTreeMap::from([(wanted, copies)]);
+            let hashes = tree.hashes(&one)?;
+            let layers = tree.file_layers.borrow().clone();
+            let file = rebuild_files(one, parents, &choices, &layers, &hashes, &tree.agent)
+                .into_iter()
+                .next()
+                .context("that file has no copy")?;
+            let chosen_id = file.chosen.id;
+            let describe_layer = |row: &Row| {
+                let item = row
+                    .id
+                    .and_then(|id| layers.get(&id))
+                    .and_then(|item| tree.items.get(item))?;
+                Some(Layer {
+                    item: item.id,
+                    kind: item.kind.clone(),
+                    name: item.name.clone(),
+                    head: item.head,
+                    made_by_agent: item.made_by_agent,
+                })
+            };
+            let why = match (&file.decided_by, file.copies.get(1)) {
+                (Some(decided), Some(second)) => {
+                    Some(explain_pick(&file.copies[0], second, decided))
+                }
+                _ => None,
+            };
+            let mut full = parents.to_vec();
+            full.push(file.name.clone());
+            return Ok(Resolved {
+                path: full,
+                kind: "file".into(),
+                name: file.name.clone(),
+                chosen: Some(file.chosen.clone()),
+                copies: file
+                    .copies
+                    .iter()
+                    .map(|copy| ResolvedCopy {
+                        row: copy.clone(),
+                        layer: describe_layer(copy),
+                        chosen: copy.id == chosen_id,
+                    })
+                    .collect(),
+                by_person: file.by_person,
+                decided_by: file.decided_by.clone(),
+                why,
+                needs_you: file.needs_you,
+                made_by_agent: file.made_by_agent,
+                folder: None,
+            });
+        }
+        let group = folders
+            .remove(&wanted)
+            .with_context(|| format!("there is nothing called {name} there"))?;
+        let folder = tree.describe(group)?;
+        let mut full = parents.to_vec();
+        full.push(folder.path_name.clone());
+        Ok(Resolved {
+            path: full,
+            kind: "folder".into(),
+            name: folder
+                .name
+                .clone()
+                .unwrap_or_else(|| folder.path_name.clone()),
+            chosen: None,
+            copies: Vec::new(),
+            by_person: false,
+            decided_by: None,
+            why: None,
+            needs_you: false,
+            made_by_agent: folder.made_by_agent,
+            folder: Some(folder),
+        })
+    }
+
+    /// Picks the copy of a file that came from one layer (an item of the Disk Rebuild), so a lower
+    /// layer can win a path that an upper one would take.
+    pub fn disk_rebuild_choose_layer(
+        &self,
+        disk_rebuild: i64,
+        path: &[String],
+        layer: i64,
+    ) -> Result<()> {
+        let resolved = self.disk_rebuild_resolve(disk_rebuild, path)?;
+        if resolved.kind != "file" {
+            bail!("A layer is chosen for a file. That path is a folder.");
+        }
+        let copy = resolved
+            .copies
+            .iter()
+            .find(|copy| copy.layer.as_ref().is_some_and(|found| found.item == layer))
+            .with_context(|| {
+                format!("no copy of that file comes from layer {layer}, or it is the same copy as a better one")
+            })?;
+        self.disk_rebuild_choose(disk_rebuild, path, copy.row.id)
     }
 }
 
@@ -1121,6 +1450,16 @@ struct Tree<'a> {
     folder_layers: RefCell<HashMap<u32, i64>>,
     /// The same, for each file seen, by entry id.
     file_layers: RefCell<HashMap<i64, i64>>,
+    /// What an agent made, so the tree can say so.
+    agent: AgentView,
+}
+
+/// The parts of a Disk Rebuild an agent made that the rebuilt tree shows: single files it placed,
+/// and the copies it chose.
+#[derive(Default)]
+pub(crate) struct AgentView {
+    file_layers: HashSet<i64>,
+    choices: HashSet<String>,
 }
 
 impl<'a> Tree<'a> {
@@ -1134,7 +1473,17 @@ impl<'a> Tree<'a> {
             };
             inside.entry(place).or_default().push(item.id);
         }
+        let marks = database.agent_marks(disk_rebuild)?;
+        let agent = AgentView {
+            file_layers: items
+                .iter()
+                .filter(|item| item.kind == ITEM_FILE && marks.items.contains(&item.id))
+                .map(|item| item.id)
+                .collect(),
+            choices: marks.choices,
+        };
         Ok(Self {
+            agent,
             database,
             disk_rebuild,
             items: items.iter().map(|item| (item.id, item.clone())).collect(),
@@ -1142,6 +1491,21 @@ impl<'a> Tree<'a> {
             folder_layers: RefCell::new(HashMap::new()),
             file_layers: RefCell::new(HashMap::new()),
         })
+    }
+
+    /// What the folder at the end of a path is made of, found by the names down from the root.
+    fn sources_at(&self, root: i64, path: &[String]) -> Result<Vec<Source>> {
+        let mut sources = vec![Source::Item(root)];
+        for name in path {
+            let (folders, _) = self.contents(&sources)?;
+            let wanted = key(name);
+            sources = folders
+                .into_iter()
+                .find(|(folder_key, _)| *folder_key == wanted)
+                .map(|(_, group)| group.sources)
+                .with_context(|| format!("there is no folder called {name} there"))?;
+        }
+        Ok(sources)
     }
 
     fn choices(&self) -> Result<HashMap<String, i64>> {
@@ -1344,6 +1708,7 @@ impl<'a> Tree<'a> {
             bytes: 0,
             intact_files: 0,
             intact_bytes: 0,
+            made_by_agent: false,
         };
         let mut made = 0;
         let mut placed = 0;
@@ -1352,6 +1717,7 @@ impl<'a> Tree<'a> {
             match source {
                 Source::Item(id) => {
                     folder.items.push(*id);
+                    folder.made_by_agent |= self.items[id].made_by_agent;
                     if self.items[id].kind == ITEM_FOLDER {
                         made += 1;
                     } else {

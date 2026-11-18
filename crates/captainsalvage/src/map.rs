@@ -184,6 +184,42 @@ CREATE TABLE IF NOT EXISTS disk_rebuild_choices (
     entry INTEGER NOT NULL,
     PRIMARY KEY (disk_rebuild, path)
 );
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id TEXT PRIMARY KEY,
+    client TEXT,
+    started_at_millis INTEGER NOT NULL,
+    last_at_millis INTEGER NOT NULL,
+    changes INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS disk_rebuild_changes (
+    id INTEGER PRIMARY KEY,
+    disk_rebuild INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    diff TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    at_millis INTEGER NOT NULL,
+    undone INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS disk_rebuild_changes_rebuild ON disk_rebuild_changes (disk_rebuild, undone);
+CREATE INDEX IF NOT EXISTS disk_rebuild_changes_session ON disk_rebuild_changes (session, undone);
+CREATE TABLE IF NOT EXISTS disk_rebuild_agent_marks (
+    change INTEGER NOT NULL,
+    disk_rebuild INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS disk_rebuild_agent_marks_rebuild ON disk_rebuild_agent_marks (disk_rebuild);
+CREATE TABLE IF NOT EXISTS disk_rebuild_snapshots (
+    disk_rebuild INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    existed INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    journal_before INTEGER NOT NULL,
+    taken_at_millis INTEGER NOT NULL,
+    PRIMARY KEY (disk_rebuild, session)
+);
 CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY,
     at_millis INTEGER NOT NULL,

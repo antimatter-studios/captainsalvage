@@ -329,6 +329,8 @@ export interface DiskRebuild {
   createdAtMillis: number;
   updatedAtMillis: number;
   items: number;
+  /** An agent made or renamed it, and the person has not undone that. */
+  madeByAgent: boolean;
 }
 
 export interface DiskRebuildItem {
@@ -339,6 +341,37 @@ export interface DiskRebuildItem {
   name: string | null;
   parentItem: number | null;
   parentHead: number | null;
+  /** An agent made or changed it, and the person has not undone that. */
+  madeByAgent: boolean;
+}
+
+/** One change an agent made to a Disk Rebuild, kept so the person can undo it. */
+export interface AgentChange {
+  id: number;
+  diskRebuild: number;
+  session: string;
+  tool: string;
+  summary: string;
+  size: number;
+  atMillis: number;
+  undone: boolean;
+  origin: "agent";
+}
+
+export interface AgentChanges {
+  changes: AgentChange[];
+  /** The latest change that can still be undone. */
+  last: AgentChange | null;
+  sessions: { id: string; client: string | null; startedAtMillis: number; lastAtMillis: number; changesUsed: number; activeChanges: number; diskRebuilds: number[] }[];
+  limits: { perCall: number; perSession: number };
+}
+
+export interface UndoReport {
+  undone: number;
+  remaining: number;
+  stopped: string | null;
+  session: string | null;
+  diskRebuilds: number[];
 }
 
 /** Where a piece or folder goes: an item of the diskRebuild, and optionally a found folder in it. */
@@ -359,6 +392,8 @@ export interface RebuiltFolder {
   bytes: number;
   intactFiles: number;
   intactBytes: number;
+  /** An agent made or changed one of the items this folder is made of. */
+  madeByAgent: boolean;
 }
 
 export interface RebuiltFile {
@@ -370,6 +405,8 @@ export interface RebuiltFile {
   /** The copies differ but measure the same, so the person should look. */
   needsYou: boolean;
   copies: Row[];
+  /** An agent placed this file on its own, or chose its copy. */
+  madeByAgent: boolean;
 }
 
 export interface DiskRebuildListing {

@@ -778,6 +778,13 @@ video.inline-preview { max-height: 380px; background: #000; }
 .similar-wait { font-size: 12px; }
 .disk-rebuild-similar { margin: 2px 8px 6px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
 
+/* What an agent made or changed on a Disk Rebuild, and how to take it back. */
+.agent-mark { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; padding: 0 6px; border-radius: 8px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.agent-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 8px 0; padding: 6px 10px; border-radius: 8px; font-size: 12px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border: 0.5px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.agent-bar > svg { flex: none; color: var(--accent); }
+.agent-bar-text { flex: 1; min-width: 12ch; }
+.agent-bar button { flex: none; font-size: 12px; }
+
 /* Claude's suggestions for a Disk Rebuild. */
 .suggestions { margin: 4px 6px 12px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--surface)); border: 0.5px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 .suggestions h4 { margin: 0 0 6px; font-size: 12px; display: flex; align-items: center; gap: 5px; }

@@ -3,6 +3,7 @@
 use crate::browse::BrowseQuery;
 use crate::content::GROUP_NAMES;
 use crate::disk_rebuild::Place;
+use crate::disk_rebuild_agent::{AgentConnection, AgentLimits};
 use crate::export::{list_volumes, CopyRequest};
 use crate::exporting::{ExportOptions, RebuildCopyOptions};
 use crate::map::{from_extents, to_extents, Extent, ResolveParams};
@@ -83,35 +84,37 @@ pub struct Engine {
     media: RwLock<Option<Arc<MediaServer>>>,
     /// Whether file names and contents are kept from agents. Only the person changes it.
     names_hidden: std::sync::atomic::AtomicBool,
+    /// How much an agent may change a Disk Rebuild.
+    agent_limits: RwLock<AgentLimits>,
 }
 
-fn u64_of(args: &Value, key: &str) -> Option<u64> {
+pub(crate) fn u64_of(args: &Value, key: &str) -> Option<u64> {
     args.get(key).and_then(Value::as_u64)
 }
 
-fn need_u64(args: &Value, key: &str) -> Result<u64> {
+pub(crate) fn need_u64(args: &Value, key: &str) -> Result<u64> {
     u64_of(args, key)
         .with_context(|| format!("argument {key} is required and must be a non-negative integer"))
 }
 
-fn need_u32(args: &Value, key: &str) -> Result<u32> {
+pub(crate) fn need_u32(args: &Value, key: &str) -> Result<u32> {
     u32::try_from(need_u64(args, key)?).with_context(|| format!("argument {key} is too large"))
 }
 
-fn need_i64(args: &Value, key: &str) -> Result<i64> {
+pub(crate) fn need_i64(args: &Value, key: &str) -> Result<i64> {
     args.get(key)
         .and_then(Value::as_i64)
         .with_context(|| format!("argument {key} is required and must be an integer"))
 }
 
 /// The Disk Rebuild an argument names: `diskRebuild`.
-fn need_rebuild(args: &Value) -> Result<i64> {
+pub(crate) fn need_rebuild(args: &Value) -> Result<i64> {
     args.get("diskRebuild")
         .and_then(Value::as_i64)
         .context("argument diskRebuild is required and must be an integer")
 }
 
-fn need_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
+pub(crate) fn need_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
     args.get(key)
         .and_then(Value::as_str)
         .with_context(|| format!("argument {key} is required and must be a string"))
@@ -135,7 +138,7 @@ fn join_crossing(join: u64, breaks: &[u64], reached_end: bool) -> &'static str {
     }
 }
 
-fn str_of<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+pub(crate) fn str_of<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
 }
 
@@ -143,7 +146,7 @@ fn f64_of(args: &Value, key: &str, default: f64) -> f64 {
     args.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
 
-fn bool_of(args: &Value, key: &str, default: bool) -> bool {
+pub(crate) fn bool_of(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
@@ -157,7 +160,7 @@ fn extents_of(args: &Value, key: &str) -> Result<Option<Vec<u32>>> {
 }
 
 /// Where a Disk Rebuild tool puts something: `{"item": id, "head": cluster}`, either or both left out.
-fn place_of(args: &Value) -> Result<Place> {
+pub(crate) fn place_of(args: &Value) -> Result<Place> {
     let Some(place) = args.get("place").filter(|place| !place.is_null()) else {
         return Ok(Place::default());
     };
@@ -172,7 +175,7 @@ fn place_of(args: &Value) -> Result<Place> {
     })
 }
 
-fn path_of_names(args: &Value) -> Result<Vec<String>> {
+pub(crate) fn path_of_names(args: &Value) -> Result<Vec<String>> {
     match args.get("path") {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(parts)) => parts
@@ -187,12 +190,18 @@ fn path_of_names(args: &Value) -> Result<Vec<String>> {
     }
 }
 
-/// Changing a Disk Rebuild is the person's to do. Claude reads Disk Rebuilds, and suggests.
-fn only_the_person(author: &str) -> Result<()> {
-    if author != AUTHOR_USER {
-        bail!("Only the person using the app changes a Disk Rebuild. Suggest a placement instead.");
+std::thread_local! {
+    /// The agent connection the call being run on this thread came in through.
+    static AGENT_CONNECTION: std::cell::RefCell<Option<AgentConnection>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Puts the agent connection back to none when a call ends, however it ends.
+struct ConnectionGuard(Option<AgentConnection>);
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        AGENT_CONNECTION.with(|slot| *slot.borrow_mut() = self.0.take());
     }
-    Ok(())
 }
 
 fn parse_hex(text: &str) -> Result<Vec<u8>> {
@@ -247,6 +256,41 @@ impl Engine {
     pub fn set_names_hidden(&self, hidden: bool) {
         self.names_hidden
             .store(hidden, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Sets how much an agent may change at once and in a session. For tests; the app keeps the
+    /// defaults, which are constants in `disk_rebuild_agent`.
+    pub fn set_agent_limits(&self, limits: AgentLimits) {
+        if let Ok(mut slot) = self.agent_limits.write() {
+            *slot = limits;
+        }
+    }
+
+    pub fn agent_limits(&self) -> AgentLimits {
+        self.agent_limits
+            .read()
+            .map(|found| *found)
+            .unwrap_or_default()
+    }
+
+    /// Runs a tool for an agent that came in through a connection, so what it changes is kept
+    /// under that connection's session.
+    pub fn call_as_agent(
+        &self,
+        tool: &str,
+        args: &Value,
+        author: &str,
+        connection: &AgentConnection,
+    ) -> Result<Value> {
+        let previous = AGENT_CONNECTION.with(|slot| slot.replace(Some(connection.clone())));
+        let _restore = ConnectionGuard(previous);
+        self.call(tool, args, author)
+    }
+
+    fn agent_connection() -> AgentConnection {
+        AGENT_CONNECTION
+            .with(|slot| slot.borrow().clone())
+            .unwrap_or_default()
     }
 
     pub fn names_hidden(&self) -> bool {
@@ -452,6 +496,13 @@ impl Engine {
     }
 
     fn dispatch(&self, tool: &str, args: &Value, author: &str) -> Result<Value> {
+        // Starting a copy, and the person's own answers to what an agent did, are refused to every
+        // agent here, before any argument is read.
+        if author != AUTHOR_USER {
+            if let Some(reason) = crate::rebuild_tools::person_only_reason(tool) {
+                bail!("{reason}");
+            }
+        }
         if APP_TOOLS.contains(&tool) {
             return self.app_tool(tool, args);
         }
@@ -1264,115 +1315,75 @@ impl Engine {
                     |database| database.disk_rebuild_unused(disk_rebuild, offset, limit),
                 )?)?)
             }
-            "disk_rebuild_create"
-            | "disk_rebuild_rename"
-            | "disk_rebuild_delete"
-            | "disk_rebuild_place"
-            | "disk_rebuild_place_file"
-            | "disk_rebuild_folder"
-            | "disk_rebuild_move"
-            | "disk_rebuild_rename_item"
-            | "disk_rebuild_remove"
-            | "disk_rebuild_leftovers"
-            | "disk_rebuild_choose"
-            | "disk_rebuild_swap"
-            | "disk_rebuild_accept"
-            | "disk_rebuild_dismiss" => {
-                only_the_person(author)?;
-                let result = session.with_database(|database| -> Result<Value> {
-                    Ok(match tool {
-                        "disk_rebuild_create" => {
-                            json!({"id": database.disk_rebuild_create(need_str(args, "name")?)?})
-                        }
-                        "disk_rebuild_rename" => {
-                            database.disk_rebuild_rename(
-                                need_rebuild(args)?,
-                                need_str(args, "name")?,
-                            )?;
-                            json!({"ok": true})
-                        }
-                        "disk_rebuild_delete" => {
-                            database.disk_rebuild_delete(need_rebuild(args)?)?;
-                            json!({"ok": true})
-                        }
-                        "disk_rebuild_place" => json!({"id": database.disk_rebuild_place(
-                            need_rebuild(args)?,
-                            need_u32(args, "head")?,
-                            place_of(args)?,
-                            bool_of(args, "merge", false),
-                        )?}),
-                        "disk_rebuild_place_file" => json!({"id": database.disk_rebuild_place_file(
-                            need_rebuild(args)?,
-                            need_i64(args, "entry")?,
-                            place_of(args)?,
-                        )?}),
-                        "disk_rebuild_folder" => json!({"id": database.disk_rebuild_folder(
-                            need_rebuild(args)?,
-                            need_str(args, "name")?,
-                            place_of(args)?,
-                        )?}),
-                        "disk_rebuild_move" => {
-                            database.disk_rebuild_move(
-                                need_rebuild(args)?,
-                                need_i64(args, "item")?,
-                                place_of(args)?,
-                                args.get("merge").and_then(Value::as_bool),
-                            )?;
-                            json!({"ok": true})
-                        }
-                        "disk_rebuild_rename_item" => {
-                            database.disk_rebuild_rename_item(
-                                need_rebuild(args)?,
-                                need_i64(args, "item")?,
-                                str_of(args, "name"),
-                            )?;
-                            json!({"ok": true})
-                        }
-                        "disk_rebuild_accept" => json!({"id": database.disk_rebuild_accept(
-                            need_rebuild(args)?,
-                            need_i64(args, "suggestion")?,
-                        )?}),
-                        "disk_rebuild_dismiss" => {
-                            database.disk_rebuild_dismiss(
-                                need_rebuild(args)?,
-                                need_i64(args, "suggestion")?,
-                            )?;
-                            json!({"ok": true})
-                        }
-                        "disk_rebuild_swap" => {
-                            database.disk_rebuild_swap(
-                                need_rebuild(args)?,
-                                need_i64(args, "item")?,
-                                need_u32(args, "head")?,
-                            )?;
-                            json!({"ok": true})
-                        }
-                        "disk_rebuild_remove" => json!({"removed": database.disk_rebuild_remove(
-                            need_rebuild(args)?,
-                            need_i64(args, "item")?,
-                        )?}),
-                        "disk_rebuild_leftovers" => {
-                            let (folder, pieces) = database.disk_rebuild_leftovers(
-                                need_rebuild(args)?,
-                                need_str(args, "name")?,
-                                u64_of(args, "maxFiles"),
-                            )?;
-                            json!({"folder": folder, "pieces": pieces})
-                        }
-                        _ => {
-                            database.disk_rebuild_choose(
-                                need_rebuild(args)?,
-                                &path_of_names(args)?,
-                                args.get("entry").and_then(Value::as_i64),
-                            )?;
-                            json!({"ok": true})
-                        }
-                    })
-                })?;
+            tool if crate::rebuild_tools::changes_a_disk_rebuild(tool) => {
+                let result = if author == AUTHOR_USER {
+                    session.with_database(|database| {
+                        crate::rebuild_tools::apply(database, tool, args).map(|(value, _)| value)
+                    })?
+                } else {
+                    // An agent builds and changes a Disk Rebuild itself: its change is journaled
+                    // under its session, shown as made by the agent, and can be undone.
+                    let connection = Self::agent_connection();
+                    let limits = self.agent_limits();
+                    let summary = crate::rebuild_tools::summarize(tool, args);
+                    let target = crate::rebuild_tools::target_of(tool, args)?;
+                    session.with_database(|database| {
+                        database.agent_change(
+                            &connection,
+                            &limits,
+                            tool,
+                            &summary,
+                            target,
+                            |database| crate::rebuild_tools::apply(database, tool, args),
+                        )
+                    })?
+                };
                 self.emit(
                     "disk-rebuild-changed",
                     json!({"diskRebuild": args.get("diskRebuild")}),
                 );
+                Ok(result)
+            }
+            "disk_rebuild_resolve" => {
+                let path = path_of_names(args)?;
+                Ok(serde_json::to_value(session.with_database(
+                    |database| database.disk_rebuild_resolve(need_rebuild(args)?, &path),
+                )?)?)
+            }
+            "disk_rebuild_agent_changes" => {
+                let limits = self.agent_limits();
+                Ok(serde_json::to_value(session.with_database(
+                    |database| {
+                        database.agent_changes(
+                            args.get("diskRebuild").and_then(Value::as_i64),
+                            str_of(args, "session"),
+                            bool_of(args, "includeUndone", false),
+                            u64_of(args, "limit").unwrap_or(50),
+                            &limits,
+                        )
+                    },
+                )?)?)
+            }
+            "disk_rebuild_undo" | "disk_rebuild_undo_session" | "disk_rebuild_restore" => {
+                // The person's own answer to what an agent did. The gate in dispatch keeps agents out.
+                if author != AUTHOR_USER {
+                    bail!("Only the person using the app undoes agent changes.");
+                }
+                let result = session.with_database(|database| -> Result<Value> {
+                    let disk_rebuild = args.get("diskRebuild").and_then(Value::as_i64);
+                    Ok(match tool {
+                        "disk_rebuild_undo" => {
+                            serde_json::to_value(database.agent_undo_last(disk_rebuild)?)?
+                        }
+                        "disk_rebuild_undo_session" => serde_json::to_value(
+                            database.agent_undo_session(str_of(args, "session"), disk_rebuild)?,
+                        )?,
+                        _ => serde_json::to_value(
+                            database.agent_restore(need_rebuild(args)?, str_of(args, "session"))?,
+                        )?,
+                    })
+                })?;
+                self.emit("disk-rebuild-changed", json!({"diskRebuild": null}));
                 Ok(result)
             }
             "disk_rebuild_copy_plan" => {

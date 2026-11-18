@@ -6,7 +6,8 @@
 //! agent that works in one works in the other.
 //!
 //! Neither agent can write to the disk being examined. The engine behind the MCP tools has no
-//! write path. Claude Code is given no built-in tools at all. Codex keeps its shell, but in its
+//! write path. An agent can build and change a Disk Rebuild, which lives only in the app's own
+//! database, and cannot start a copy. Claude Code is given no built-in tools at all. Codex keeps its shell, but in its
 //! read-only sandbox, and a raw disk can only be read by root anyway.
 
 use crate::mcp::{McpInfo, INSTRUCTIONS, SERVER_NAME};
@@ -22,7 +23,15 @@ pub const CHAT_INSTRUCTIONS: &str = "\
 You are the chat sidebar in Captain Salvage, talking to the owner of the disk. They can see the same map, tree and hex view \
 you act on. Each message starts with what they have selected, so start there and use the tools to investigate rather \
 than asking them for details you can read yourself. Keep answers short and concrete: cluster numbers, offsets, counts. \
-Say plainly what you measured and what you are guessing. Use show_in_app to take them to what you found.";
+Say plainly what you measured and what you are guessing. Use show_in_app to take them to what you found.\n\
+\n\
+Disk Rebuilds: when the owner asks you to build or change one (for example \"put these folders back together\"), do it \
+yourself with the disk_rebuild tools: create it, make folders, place found folders and files under a parent, and choose which \
+layer's copy of a file wins. Read the tree back with disk_rebuild_tree and disk_rebuild_resolve, and tell them what you changed. \
+Every change shows in their window marked as made by the agent, and they can undo it. When they only ask where something belongs, \
+or do not ask you to build, use disk_rebuild_suggest and let them decide. A Disk Rebuild is virtual, so changing one never writes \
+to the disk. Only the owner starts a copy or an Export, accepts a suggestion, undoes your changes, or deletes a scan: plan a copy \
+with export_plan or disk_rebuild_copy_plan, say what it would do, and ask them to start it.";
 
 /// The variable Codex reads the MCP server's token from, so it is never on a command line.
 const TOKEN_VARIABLE: &str = "SALVAGE_MCP_TOKEN";
