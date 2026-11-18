@@ -7,7 +7,9 @@ whose subject is the pull request's title, ending in (#number).
 
     scripts/release.py notes [--from REF] [--to REF]   print pull requests for a range
     scripts/release.py sync                            rebuild the README's list from CHANGELOG.md
-    scripts/release.py prepare [VERSION]               gather the fragments and set the version
+    scripts/release.py prepare [VERSION]               gather the fragments, set the version, write the license list
+    scripts/release.py prepare --append [VERSION]      add the fragments that remain to a section that exists
+    scripts/release.py notes-check [--strict]          flag retired words in the notes a release will say
     scripts/release.py contents [VERSION]              print the next version and what is in it
     scripts/release.py section VERSION                 print a version's CHANGELOG.md section
     scripts/release.py check v0.2.0                    fail unless a tag matches the files
@@ -32,6 +34,19 @@ a version may look like is decided once, by scripts/tag-kind, and this file asks
 
 Unreleased changes are fragments in changelog.d/. A release gathers them into CHANGELOG.md, and
 the README's list is a copy of the newest versions there, so the two cannot disagree.
+
+`prepare` also writes the license list (THIRD-PARTY-LICENSES.md and the README's table), because
+the README names this app's own crates with their version, and a release raises it. That list is read
+from the installed npm packages, so `prepare` refuses, before it changes anything, until `npm ci` has run.
+
+`prepare` refuses a version whose section CHANGELOG.md already has. For a release that is not yet
+released, such as an integration branch that has taken more pull requests since its candidate was
+cut, `prepare --append` adds the fragments that remain to that section and leaves the rest of it.
+
+`notes-check` looks for the words the product has retired in the notes a release will say, the way a
+person reading them would. They may appear under "Removed", and in an entry that says it is a rename
+("is now called", "are now called", "was renamed", "renamed to"), and nowhere else. It only reports, and
+`--strict` makes a finding fail, which is what the cut stage of scripts/create-release uses.
 """
 
 import argparse
@@ -54,6 +69,22 @@ README_VERSIONS = 10
 SCREENSHOTS = ROOT / "media/changelog"
 SCREENSHOT_TABLE = "screenshots.md"
 UNRELEASED = "[Unreleased]"
+FRAGMENTS = "changelog.d"
+LICENSES = "scripts/licenses.py"
+# Words the product no longer uses, and what a note should say instead. A note may use one only
+# under "Removed", where saying what is gone is the point. The last one is not a word: it is an
+# entry that tells the reader the release does not do what another entry says it does.
+RETIRED_VOCABULARY = [
+    (re.compile(r"\bcanvas\w*", re.IGNORECASE), "canvas", 'say "Disk Rebuild"'),
+    (re.compile(r"\bbasket\w*", re.IGNORECASE), "basket", 'say "treasure list"'),
+    (re.compile(r"\binspect raw\b", re.IGNORECASE), "Inspect raw", 'say "Open"'),
+    (re.compile(r"\brebuild tree\b", re.IGNORECASE), "Rebuild Tree", 'say "Disk Rebuild"'),
+    (re.compile(r"\bnot part of this change\b", re.IGNORECASE), "not part of this change",
+     "another entry says the release has it, so drop the sentence or the entry that it contradicts"),
+]
+VOCABULARY_EXEMPT = "Removed"
+# An entry that says it is a rename may name the old word, because that is what it reports.
+RENAME_MARKERS = re.compile(r"\b(?:is now called|are now called|was renamed|renamed to)\b", re.IGNORECASE)
 NO_CHANGES = "No pull requests merged yet."
 SECTION_ORDER = ["Added", "Fixed", "Documentation", "Other"]
 SECTION_FOR_TYPE = {"feat": "Added", "fix": "Fixed", "docs": "Documentation"}
@@ -421,16 +452,123 @@ def command_stamp_rc(args):
     print(f"Every file carries {candidate}.")
 
 
+def require_npm_packages():
+    """The license list is read from the installed npm packages, so it cannot be written without them."""
+    if not (ROOT / "node_modules").is_dir():
+        raise SystemExit("node_modules is not here, and the license list is read from the npm packages in it. "
+                         "Run `npm ci`, then run this again. Nothing was changed.")
+
+
+def write_licenses():
+    """Writes THIRD-PARTY-LICENSES.md and the README's list. The README names this app's own crates with
+    their version, so a release that raises the version leaves the list out of date until this runs."""
+    done = subprocess.run([sys.executable, str(ROOT / LICENSES), "write"], cwd=ROOT)
+    if done.returncode != 0:
+        raise SystemExit(f"{LICENSES} write failed, so the license list is out of date. Fix what it said, then run it again.")
+
+
 def command_prepare(args):
     if args.version:
         version = args.version.removeprefix("v")
+    elif args.append:
+        # The section being added to is the release this branch is making, and VERSION says which.
+        version = base_version(source_version())
     else:
         version, release = current_version()
         if not release:
             raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
-    subprocess.run(["bash", str(ROOT / "scripts/changelog-gather.sh"), version], cwd=ROOT, check=True)
+    # Everything that can be known to fail is checked before the first file changes.
+    require_npm_packages()
+    gather = ["bash", str(ROOT / "scripts/changelog-gather.sh"), *(["--append"] if args.append else []), version]
+    done = subprocess.run(gather, cwd=ROOT)
+    if done.returncode != 0:
+        raise SystemExit(done.returncode)
     write_readme()
     write_versions(version)
+    write_licenses()
+
+
+def vocabulary_findings(text, source, first_line=1):
+    """The retired words in some notes, as (source, line, word, advice, text). Notes are `### Heading`
+    sections of entries. A retired word may be named in a "Removed" entry, and in an entry that says it is
+    a rename, which is any list item containing one of RENAME_MARKERS, in the lines of that one item."""
+    section = None
+    entry = None  # the id of the list item a line belongs to
+    lines = []  # (number, line, section, entry)
+    entry_text = {}
+    for number, line in enumerate(text.splitlines(), first_line):
+        heading = re.match(r"^###\s+(.+?)\s*$", line)
+        if heading or re.match(r"^##\s", line):
+            section = heading[1] if heading else None
+            entry = None
+            continue
+        if line.startswith("- "):
+            entry = number
+        elif line.strip() and not line[0].isspace():
+            entry = None
+        if entry is not None:
+            entry_text[entry] = entry_text.get(entry, "") + line + "\n"
+        lines.append((number, line, section, entry))
+    found = []
+    for number, line, section, entry in lines:
+        if section == VOCABULARY_EXEMPT or (entry is not None and RENAME_MARKERS.search(entry_text[entry])):
+            continue
+        for pattern, word, advice in RETIRED_VOCABULARY:
+            if pattern.search(line):
+                found.append((source, number, word, advice, line.strip()))
+    return found
+
+
+def changelog_section_lines(version):
+    """A version's section of CHANGELOG.md as (the number of its first line, its text), or None."""
+    if not CHANGELOG.exists():
+        return None
+    lines = CHANGELOG.read_text().splitlines()
+    heading = re.compile(rf"^##\s+\[?v?{re.escape(version)}[\]\s]")
+    for start, line in enumerate(lines):
+        if heading.match(line):
+            end = next((n for n in range(start + 1, len(lines)) if re.match(r"^##\s", lines[n])), len(lines))
+            return start + 1, "\n".join(lines[start:end])
+    return None
+
+
+def fragments_in(ref):
+    """The fragments, as (path, text): those committed at a ref, or those in the working tree."""
+    if ref:
+        names = git("ls-tree", "-r", "--name-only", ref, "--", FRAGMENTS).splitlines()
+        return [(name, git("show", f"{ref}:{name}")) for name in names
+                if name.endswith(".md") and not name.endswith("/README.md")]
+    folder = ROOT / FRAGMENTS
+    return [(f"{FRAGMENTS}/{path.name}", path.read_text()) for path in sorted(folder.glob("*.md"))
+            if path.name != "README.md"] if folder.is_dir() else []
+
+
+def command_notes_check(args):
+    """Reports retired words in the notes a release will say: the fragments waiting to be gathered, and,
+    unless --fragments names a ref, the changelog section of the release VERSION names or --version
+    does. A release that is already tagged has said what it said, so its section is left alone unless
+    --version names it. Exits 1 on --strict."""
+    found = []
+    for path, text in fragments_in(args.fragments):
+        found += vocabulary_findings(text, path)
+    if not args.fragments:
+        version = args.version.removeprefix("v") if args.version else base_version(source_version())
+        released = bool(git("tag", "--list", f"v{version}"))
+        section = None if released and not args.version else changelog_section_lines(version)
+        if section:
+            found += vocabulary_findings(section[1], "CHANGELOG.md", section[0])
+    actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    for source, number, word, advice, line in found:
+        message = f'"{word}" outside Removed or a rename: {advice}.'
+        print(f"{source}:{number}: {message}\n    {line[:160]}")
+        if actions:
+            print(f"::warning file={source},line={number}::{message}")
+    if found:
+        print(f"notes-check: {len(found)} place(s) use retired words. A note may name one only under Removed, or in an entry that says it is a rename.", file=sys.stderr)
+        if args.strict:
+            raise SystemExit(1)
+    else:
+        print("notes-check: the notes use none of the retired words.")
 
 
 def command_check(args):
@@ -564,7 +702,14 @@ def main():
     commands.add_parser("sync").set_defaults(run=command_sync)
     prepare = commands.add_parser("prepare")
     prepare.add_argument("version", nargs="?")
+    prepare.add_argument("--append", action="store_true",
+                         help="Add the remaining fragments to the version's existing section.")
     prepare.set_defaults(run=command_prepare)
+    notes_check = commands.add_parser("notes-check")
+    notes_check.add_argument("--version", help="The release whose changelog section is read. Default: VERSION's.")
+    notes_check.add_argument("--fragments", metavar="REF", help="Read the fragments committed at REF, and nothing else.")
+    notes_check.add_argument("--strict", action="store_true", help="Exit 1 when a retired word is found.")
+    notes_check.set_defaults(run=command_notes_check)
     check = commands.add_parser("check")
     check.add_argument("tag", nargs="?", help="A release tag, when checking a release.")
     check.set_defaults(run=command_check)

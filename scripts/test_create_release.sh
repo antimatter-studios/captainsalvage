@@ -35,6 +35,33 @@ EOF
     chmod +x "$BIN/$tool"
 done
 
+# cargo is only asked for by the license list, which the stand-in below writes without it.
+printf '#!/bin/sh\nexit 0\n' >"$BIN/cargo"
+chmod +x "$BIN/cargo"
+
+# A stand-in for scripts/licenses.py, with its two rules that matter here: the README's list names
+# the app's own crate with its version, and `current` fails when the list does not say what VERSION
+# says. A file named licenses.fail makes `write` fail, as it does when cargo or a package is missing.
+cat >"$BASE/licenses.py" <<'EOF'
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+version = (root / "VERSION").read_text().strip()
+notices, readme = root / "THIRD-PARTY-LICENSES.md", root / "README.md"
+start, end = "<!-- dependencies:start -->", "<!-- dependencies:end -->"
+wanted_notices = f"captainsalvage {version}\n"
+text = readme.read_text()
+wanted_readme = text[: text.index(start)] + f"{start}\n| `captainsalvage` | {version} |\n{end}" + text[text.index(end) + len(end):]
+if sys.argv[1] == "write":
+    if (root / "licenses.fail").exists():
+        sys.exit("licenses: stand-in told to fail")
+    notices.write_text(wanted_notices)
+    readme.write_text(wanted_readme)
+elif sys.argv[1] == "current":
+    sys.exit(0 if notices.read_text() == wanted_notices and readme.read_text() == wanted_readme else 1)
+EOF
+
 # A repository with one release, v0.1.0, and an origin to push to.
 start() {
     local where
@@ -49,12 +76,16 @@ start() {
     export GH_LOG="$where/gh.log" BUILD_LOG="$where/build.log"
     mkdir -p scripts changelog.d crates/captainsalvage src-tauri
     cp "$HERE/create-release" "$HERE/release.py" "$HERE/tag-kind" "$HERE/changelog-check.sh" "$HERE/changelog-gather.sh" scripts/
+    cp "$BASE/licenses.py" scripts/licenses.py
+    mkdir -p node_modules
     mkdir -p macos/finder
     printf '#!/bin/sh\nexit 0\n' >macos/finder/package.sh
     chmod +x macos/finder/package.sh
     echo notes >changelog.d/README.md
     printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.0] — 2026-01-01\n\n### Added\n\n- **First.** One.\n' >CHANGELOG.md
-    printf 'Top\n\n<!-- changelog:start -->\n\n### v0.1.0 — 2026-01-01\n\n<!-- changelog:end -->\n\nBottom\n' >README.md
+    # shellcheck disable=SC2016
+    printf 'Top\n\n<!-- changelog:start -->\n\n### v0.1.0 — 2026-01-01\n\n<!-- changelog:end -->\n\n<!-- dependencies:start -->\n| `captainsalvage` | 0.1.0 |\n<!-- dependencies:end -->\n\nBottom\n' >README.md
+    printf 'captainsalvage 0.1.0\n' >THIRD-PARTY-LICENSES.md
     printf '[package]\nversion = "0.1.0"\n' >crates/captainsalvage/Cargo.toml
     printf '[package]\nversion = "0.1.0"\n' >src-tauri/Cargo.toml
     printf '{\n  "version": "0.1.0"\n}\n' >src-tauri/tauri.conf.json
@@ -122,6 +153,11 @@ for file in VERSION crates/captainsalvage/Cargo.toml src-tauri/Cargo.toml src-ta
     check "$file is bumped" "$(grep -c '0\.2\.0' "$file")" 1
 done
 check "nothing left over" "$(git status --porcelain | wc -l | tr -d ' ')" 0
+# #166: the README's license list names the app's crate with its version, so a release must rewrite it.
+check "the license list is current after a release" "$(python3 scripts/licenses.py current; echo $?)" 0
+check "the license list is in the release commit" "$(git show HEAD:THIRD-PARTY-LICENSES.md)" "captainsalvage 0.2.0"
+# shellcheck disable=SC2016
+check "the README's list says the new version" "$(git show HEAD:README.md | grep -c '| `captainsalvage` | 0.2.0 |')" 1
 check "pull request opened" "$(grep -c 'pr create --base main --head release/v0.2.0' "$GH_LOG")" 1
 check "pull request carries the entries" "$(grep -c 'new-thing' "$GH_LOG")" 1
 check "branch pushed" "$(git ls-remote origin release/v0.2.0 | wc -l | tr -d ' ')" 1
@@ -242,6 +278,59 @@ check "a candidate origin keeps is reported, not fatal" "$(git ls-remote origin 
 check "another release's candidate stays" "$(git ls-remote origin 'refs/tags/v0.3.0-rc1' | wc -l | tr -d ' ')" 1
 check "look-alikes stay" "$(git ls-remote origin 'refs/tags/v0.2.0-rc01' 'refs/tags/v0.2.0-rc' | wc -l | tr -d ' ')" 2
 check "the release itself stays" "$(git ls-remote origin 'refs/tags/v0.2.0' | wc -l | tr -d ' ')" 1
+
+# The license list is read from the installed npm packages, so a cut without them stops before it changes anything.
+start
+merged "feat: a new thing (#2)" new-thing
+rmdir node_modules
+check "a cut without node_modules is refused" "$(run --contents-approved)" 1
+check "it says to run npm ci" "$(said 'Run: npm ci')" 1
+check "it made no branch" "$(git branch --list 'release/*' | wc -l | tr -d ' ')" 0
+check "it stayed on main" "$(git symbolic-ref --short HEAD)" main
+check "it kept the fragment" "$([ -e changelog.d/new-thing.md ] && echo kept || echo gone)" kept
+check "even a dry run says so" "$(run --dry-run)" 1
+
+# When the license list cannot be written after the branch exists, the checkout is put back.
+start
+merged "feat: a new thing (#2)" new-thing
+touch licenses.fail
+check "a failing license list fails the cut" "$(run --contents-approved)" 1
+check "it says the release is not made" "$(said 'preparing the release failed')" 1
+check "it is back on main" "$(git symbolic-ref --short HEAD)" main
+check "the release branch is gone" "$(git branch --list 'release/*' | wc -l | tr -d ' ')" 0
+check "the tracked files are as they were" "$(git diff HEAD --stat | wc -l | tr -d ' ')" 0
+check "the fragment is back" "$([ -e changelog.d/new-thing.md ] && echo kept || echo gone)" kept
+check "no pull request was opened" "$(grep -c 'pr create' "$GH_LOG" 2>/dev/null)" 0
+rm licenses.fail
+
+# A retired word outside Removed stops the cut, unless it is allowed. Removed may name what is gone.
+start
+printf '### Changed\n\n- **The canvas is now a Disk Rebuild.** Same thing.\n' >changelog.d/rename.md
+git add changelog.d/rename.md
+git commit -q -m "feat: rename it (#2)"
+git push -q origin main
+check "a retired word is refused" "$(run --contents-approved)" 1
+check "it names the word and the file" "$(said 'changelog.d/rename.md:3: "canvas" outside Removed')" 1
+check "it says how to allow it" "$(said -- '--allow-vocabulary')" 1
+check "it made no branch for it" "$(git branch --list 'release/*' | wc -l | tr -d ' ')" 0
+check "a dry run is refused too" "$(run --dry-run)" 1
+check "allowing the vocabulary lets it through" "$(run --contents-approved --allow-vocabulary)" 0
+check "it cut the release" "$(git symbolic-ref --short HEAD)" release/v0.2.0
+start
+printf '### Removed\n\n- **The canvas and the basket are gone.** Use a Disk Rebuild and the treasure list.\n' >changelog.d/gone.md
+git add changelog.d/gone.md
+git commit -q -m "feat: remove the old names (#2)"
+git push -q origin main
+check "Removed may name retired words" "$(run --contents-approved)" 0
+check "a Removed entry cuts the release" "$(git symbolic-ref --short HEAD)" release/v0.2.0
+
+# An entry that says it is a rename may name the old word.
+start
+printf '### Changed\n\n- **"Canvas" is now called "Disk Rebuild".** Same thing.\n' >changelog.d/renamed.md
+git add changelog.d/renamed.md
+git commit -q -m "feat: rename it (#2)"
+git push -q origin main
+check "a rename may name the old word" "$(run --contents-approved)" 0
 
 # A fix raises the patch.
 start

@@ -5,6 +5,7 @@ import argparse
 import contextlib
 import fnmatch
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -493,6 +494,276 @@ class Install(unittest.TestCase):
         finally:
             subprocess.run = real
         self.assertEqual(self.binary(old), "old")
+
+
+class Vocabulary(unittest.TestCase):
+    """Words the product has retired may only be named under Removed."""
+
+    def words(self, text):
+        return [(number, word) for _, number, word, _, _ in release.vocabulary_findings(text, "x")]
+
+    def test_each_retired_word_is_found_with_its_line(self):
+        text = "### Added\n\n- A canvas.\n- The basket fills.\n- Press Inspect raw.\n- The Rebuild Tree grows.\n- Not part of this change.\n"
+        self.assertEqual(self.words(text), [(3, "canvas"), (4, "basket"), (5, "Inspect raw"), (6, "Rebuild Tree"), (7, "not part of this change")])
+
+    def test_case_and_endings_do_not_hide_a_word(self):
+        text = "### Fixed\n\n- CANVASES, baskets, basket_add and inspect RAW.\n"
+        self.assertEqual({word for _, word in self.words(text)}, {"canvas", "basket", "Inspect raw"})
+
+    def test_a_word_inside_another_word_is_not_one(self):
+        self.assertEqual(self.words("### Added\n\n- A scanvassed text, a rebasketed one, an inspection of raw bytes, rebuild treeish.\n"), [])
+
+    def test_removed_may_name_what_is_gone_and_only_removed(self):
+        text = "### Removed\n\n- The canvas and the basket.\n\n### Changed\n\n- A canvas again.\n"
+        self.assertEqual(self.words(text), [(7, "canvas")])
+
+    def test_a_rename_may_name_the_old_word(self):
+        for phrase in ("is now called", "are now called", "was renamed", "renamed to", "Is Now Called", "RENAMED TO"):
+            self.assertEqual(self.words(f"### Changed\n\n- **The canvas {phrase} a Disk Rebuild.** Same thing.\n"), [], phrase)
+
+    def test_a_rename_covers_its_own_item_including_wrapped_lines(self):
+        text = "### Changed\n\n- **A thing.** The basket\n  is now called the treasure list, and a canvas too.\n- **Another.** A canvas.\n"
+        self.assertEqual(self.words(text), [(5, "canvas")])
+
+    def test_a_rename_does_not_excuse_the_next_item_or_a_paragraph(self):
+        text = "### Changed\n\n- **X is now called Y.** No old word here.\n- **Z.** The basket is back.\n\nA canvas paragraph.\n"
+        self.assertEqual(self.words(text), [(4, "basket"), (6, "canvas")])
+
+    def test_a_retired_word_outside_removed_or_a_rename_is_a_violation(self):
+        self.assertEqual(self.words("### Added\n\n- **A canvas.** It is called renamed-ish.\n"), [(3, "canvas")])
+
+    def test_a_version_heading_ends_the_exemption(self):
+        text = "### Removed\n\n- The canvas.\n\n## [0.3.0] — 2026-01-01\n\n- A basket.\n"
+        self.assertEqual(self.words(text), [(7, "basket")])
+
+    def test_a_notes_line_number_counts_from_where_it_starts(self):
+        found = release.vocabulary_findings("### Added\n\n- A canvas.\n", "CHANGELOG.md", first_line=40)
+        self.assertEqual([number for _, number, _, _, _ in found], [42])
+
+
+class NotesCheck(Project):
+    """`notes-check` reads the fragments, and the changelog section of a release that is not tagged yet."""
+
+    setUp = Project.setUp
+
+    def fragment(self, name, text):
+        folder = self.root / "changelog.d"
+        folder.mkdir(exist_ok=True)
+        (folder / name).write_text(text)
+
+    def run_check(self, **options):
+        args = argparse.Namespace(version=None, fragments=None, strict=False, **options)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                release.command_notes_check(args)
+                code = 0
+            except SystemExit as stop:
+                code = stop.code
+        return code, out.getvalue() + err.getvalue()
+
+    def test_clean_notes_pass(self):
+        self.fragment("a.md", "### Added\n\n- **A thing.** It works.\n")
+        code, said = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertIn("none of the retired words", said)
+
+    def test_it_only_reports_unless_strict(self):
+        self.fragment("a.md", "### Added\n\n- **A canvas.** It works.\n")
+        code, said = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertIn('changelog.d/a.md:3: "canvas" outside Removed', said)
+
+    def test_strict_fails_on_a_finding_and_not_on_clean_notes(self):
+        self.fragment("a.md", "### Added\n\n- **A canvas.** It works.\n")
+        self.assertEqual(self.run_check_strict()[0], 1)
+        self.fragment("a.md", "### Removed\n\n- **The canvas.** It is gone.\n")
+        self.assertEqual(self.run_check_strict()[0], 0)
+
+    def run_check_strict(self):
+        args = argparse.Namespace(version=None, fragments=None, strict=True)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                release.command_notes_check(args)
+                return 0, out.getvalue()
+            except SystemExit as stop:
+                return stop.code, out.getvalue()
+
+    def test_the_section_of_a_release_not_yet_tagged_is_read(self):
+        release.CHANGELOG.write_text(self.CHANGELOG.replace("- New.", "### Added\n\n- A basket."))
+        code, said = self.run_check()
+        self.assertIn('CHANGELOG.md:7: "basket" outside Removed', said)
+
+    def test_a_release_already_tagged_has_said_what_it_said(self):
+        release.CHANGELOG.write_text(self.CHANGELOG.replace("- New.", "### Added\n\n- A basket."))
+        self.commit("first")
+        self.git("tag", "-a", "v0.4.0", "-m", "x")
+        self.assertIn("none of the retired words", self.run_check()[1])
+        self.assertIn("basket", self.run_with_version("0.4.0"))
+
+    def run_with_version(self, version):
+        args = argparse.Namespace(version=version, fragments=None, strict=False)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            release.command_notes_check(args)
+        return out.getvalue()
+
+    def test_fragments_can_be_read_at_a_ref_and_nothing_else_is(self):
+        release.CHANGELOG.write_text(self.CHANGELOG.replace("- New.", "### Added\n\n- A basket."))
+        self.fragment("a.md", "### Added\n\n- **A canvas.** It works.\n")
+        self.commit("first")
+        self.fragment("a.md", "### Added\n\n- **Fine.** It works.\n")
+        args = argparse.Namespace(version=None, fragments="HEAD", strict=False)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            release.command_notes_check(args)
+        self.assertIn('changelog.d/a.md:3: "canvas"', out.getvalue())
+        self.assertNotIn("CHANGELOG.md", out.getvalue())
+
+    def test_the_readme_of_fragments_is_not_notes(self):
+        self.fragment("README.md", "A canvas, in the folder's own notes.\n")
+        self.assertIn("none of the retired words", self.run_check()[1])
+
+
+class Prepare(Project):
+    """`prepare` writes the license list after the version, and `--append` adds to a section that exists."""
+
+    setUp = Project.setUp
+    LICENSE_STAND_IN = (
+        "import sys\nfrom pathlib import Path\n"
+        "root = Path(__file__).resolve().parent.parent\n"
+        "if (root / 'licenses.fail').exists():\n    sys.exit('licenses: told to fail')\n"
+        "(root / 'THIRD-PARTY-LICENSES.md').write_text('captainsalvage ' + (root / 'VERSION').read_text())\n"
+    )
+    APPENDING = (
+        "# Changelog\n\n## [Unreleased]\n\n## [0.4.0] — 2026-02-01\n\n### Added\n\n- **One.** First.\n\n"
+        "### Fixed\n\n- **Two.** Second.\n\n## [0.3.0] — 2026-01-01\n\n- Old.\n\n"
+        "[Unreleased]: https://example.com/compare/v0.4.0...HEAD\n[0.4.0]: https://example.com/compare/v0.3.0...v0.4.0\n"
+    )
+
+    def setUp(self):
+        Project.setUp(self)
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        for name in ("changelog-gather.sh", "changelog-check.sh"):
+            shutil.copy(Path(__file__).resolve().parent / name, scripts / name)
+        (scripts / "licenses.py").write_text(self.LICENSE_STAND_IN)
+        (self.root / "node_modules").mkdir()
+        (self.root / "changelog.d").mkdir()
+        (self.root / "changelog.d/README.md").write_text("notes\n")
+        self.commit("start")
+
+    def fragment(self, name, text):
+        (self.root / "changelog.d" / name).write_text(text)
+
+    def prepare(self, version=None, append=False):
+        with contextlib.redirect_stdout(io.StringIO()):
+            release.command_prepare(argparse.Namespace(version=version, append=append))
+
+    def test_the_license_list_is_written_after_the_version_is_set(self):
+        self.fragment("a.md", "### Added\n\n- **A thing.** Yes.\n")
+        self.prepare("0.5.0")
+        self.assertEqual(release.source_version(), "0.5.0")
+        self.assertEqual((self.root / "THIRD-PARTY-LICENSES.md").read_text(), "captainsalvage 0.5.0\n")
+
+    def test_without_the_npm_packages_it_stops_before_changing_anything(self):
+        self.fragment("a.md", "### Added\n\n- **A thing.** Yes.\n")
+        (self.root / "node_modules").rmdir()
+        before = release.CHANGELOG.read_text()
+        self.assertIn("npm ci", self.refused(self.prepare, "0.5.0"))
+        self.assertEqual(release.CHANGELOG.read_text(), before)
+        self.assertEqual(release.source_version(), "0.4.0")
+        self.assertTrue((self.root / "changelog.d/a.md").exists())
+
+    def test_a_license_list_that_cannot_be_written_is_an_error(self):
+        self.fragment("a.md", "### Added\n\n- **A thing.** Yes.\n")
+        (self.root / "licenses.fail").write_text("")
+        self.assertIn("licenses.py write failed", self.refused(self.prepare, "0.5.0"))
+
+    def test_a_section_that_exists_is_refused_and_append_is_named(self):
+        self.fragment("a.md", "### Added\n\n- **A thing.** Yes.\n")
+        before = release.CHANGELOG.read_text()
+        with self.assertRaises(SystemExit):
+            self.prepare("0.4.0")
+        self.assertEqual(release.CHANGELOG.read_text(), before)
+        self.assertTrue((self.root / "changelog.d/a.md").exists())
+
+    def section(self, version="0.4.0"):
+        return next(body for heading, body in release.read_sections() if heading.startswith(f"[{version}]"))
+
+    def test_append_adds_to_the_section_in_place_and_keeps_the_rest(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        self.fragment("a.md", "### Added\n\n- **Three.** Third.\n\n### Changed\n\n- **Four.** Fourth.\n")
+        self.fragment("b.md", "### Fixed\n\n- **Five.** Fifth,\n  and it goes on.\n\n### Added\n\n- **Six.** Sixth.\n")
+        self.prepare(append=True)
+        self.assertEqual(self.section(), "\n".join([
+            "### Added", "", "- **One.** First.", "", "- **Three.** Third.", "", "- **Six.** Sixth.", "",
+            "### Changed", "", "- **Four.** Fourth.", "",
+            "### Fixed", "", "- **Two.** Second.", "", "- **Five.** Fifth,", "  and it goes on.",
+        ]))
+        text = release.CHANGELOG.read_text()
+        self.assertIn("## [0.4.0] — 2026-02-01", text)
+        self.assertIn("## [0.3.0] — 2026-01-01\n\n- Old.", text)
+        self.assertTrue(text.endswith("[Unreleased]: https://example.com/compare/v0.4.0...HEAD\n[0.4.0]: https://example.com/compare/v0.3.0...v0.4.0\n"))
+        self.assertEqual(text.count("## [0.4.0]"), 1)
+        self.assertEqual(sorted(path.name for path in (self.root / "changelog.d").iterdir()), ["README.md"])
+        self.assertIn("### v0.4.0", release.README.read_text())
+        self.assertEqual((self.root / "THIRD-PARTY-LICENSES.md").read_text(), "captainsalvage 0.4.0\n")
+
+    def test_append_does_not_write_an_entry_the_section_already_has(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        # What a merge brings back: a fragment whose entry was gathered already, beside a new one.
+        self.fragment("a.md", "### Added\n\n- **One.** First.\n\n- **Three.** Third.\n\n### Fixed\n\n- **Two.** Second.\n")
+        self.prepare(append=True)
+        text = release.CHANGELOG.read_text()
+        self.assertEqual(text.count("- **One.** First."), 1)
+        self.assertEqual(text.count("- **Two.** Second."), 1)
+        self.assertEqual(text.count("- **Three.** Third."), 1)
+        self.assertFalse((self.root / "changelog.d/a.md").exists())
+
+    def test_a_fragment_that_only_repeats_the_section_adds_nothing_and_no_empty_heading(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        self.fragment("a.md", "### Security\n\n- **One.** First.\n\n### Added\n\n- **One.** First.\n")
+        self.prepare(append=True)
+        self.assertNotIn("### Security", release.CHANGELOG.read_text())
+        self.assertEqual(release.CHANGELOG.read_text().count("- **One.** First."), 1)
+
+    def test_a_new_heading_lands_in_keep_a_changelog_order(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        self.fragment("a.md", "### Security\n\n- **S.** Safer.\n\n### Removed\n\n- **R.** Gone.\n\n### Tidying\n\n- **T.** Tidier.\n")
+        self.prepare(append=True)
+        headings = [line for line in self.section().splitlines() if line.startswith("### ")]
+        self.assertEqual(headings, ["### Added", "### Removed", "### Fixed", "### Security", "### Tidying"])
+
+    def test_append_twice_does_not_repeat_anything(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        self.fragment("a.md", "### Added\n\n- **Three.** Third.\n")
+        self.prepare(append=True)
+        once = release.CHANGELOG.read_text()
+        with self.assertRaises(SystemExit):
+            self.prepare(append=True)
+        self.assertEqual(release.CHANGELOG.read_text(), once)
+        self.fragment("a.md", "### Added\n\n- **Three.** Third.\n")
+        self.prepare(append=True)
+        self.assertEqual(release.CHANGELOG.read_text(), once)
+
+    def test_append_needs_a_section_to_add_to(self):
+        self.fragment("a.md", "### Added\n\n- **A thing.** Yes.\n")
+        (self.root / "VERSION").write_text("0.9.0\n")
+        before = release.CHANGELOG.read_text()
+        with self.assertRaises(SystemExit):
+            self.prepare(append=True)
+        self.assertEqual(release.CHANGELOG.read_text(), before)
+        self.assertTrue((self.root / "changelog.d/a.md").exists())
+
+    def test_append_takes_the_release_the_version_file_names(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        (self.root / "VERSION").write_text("0.4.0\n")
+        self.fragment("a.md", "### Added\n\n- **Three.** Third.\n")
+        self.prepare(append=True)
+        self.assertIn("**Three.**", self.section("0.4.0"))
+        self.assertEqual(release.source_version(), "0.4.0")
 
 
 if __name__ == "__main__":

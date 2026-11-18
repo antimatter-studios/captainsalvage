@@ -2,9 +2,12 @@
 #
 # Cut a release, in two stages, because main only takes pull requests.
 #
-#   scripts/create-release [VERSION] [--dry-run] [--contents-approved]
+#   scripts/create-release [VERSION] [--dry-run] [--contents-approved] [--allow-vocabulary]
 #       Shows what would go out, then opens the release pull request. The version comes from
-#       what merged since the last tag, unless you name one, such as 1.0.0.
+#       what merged since the last tag, unless you name one, such as 1.0.0. It needs `npm ci` to
+#       have run, because the release writes the license list, which is read from the installed
+#       packages. It refuses while an entry uses a word the product has retired (canvas, basket,
+#       Inspect raw, Rebuild Tree) outside Removed and renames, unless --allow-vocabulary says they are meant.
 #
 #   scripts/create-release --rc [--dry-run] [--build | --install]
 #       Run with the release branch checked out, before its pull request has merged. That is
@@ -53,15 +56,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 PYTHON="${PYTHON:-python3}"
-FILES=(CHANGELOG.md README.md VERSION crates/captainsalvage/Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
-    package.json Cargo.lock package-lock.json)
+FILES=(CHANGELOG.md README.md THIRD-PARTY-LICENSES.md VERSION crates/captainsalvage/Cargo.toml src-tauri/Cargo.toml
+    src-tauri/tauri.conf.json package.json Cargo.lock package-lock.json)
 
-VERSION=""; TAG=""; DRY_RUN=false; APPROVED=false; RC=false; BUILD=false; INSTALL=false
+VERSION=""; TAG=""; DRY_RUN=false; APPROVED=false; RC=false; BUILD=false; INSTALL=false; ALLOW_VOCABULARY=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --tag) TAG="${2:-}"; [ -n "$TAG" ] || { echo "create-release: --tag needs a version" >&2; exit 2; }; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --contents-approved) APPROVED=true; shift ;;
+        --allow-vocabulary) ALLOW_VOCABULARY=true; shift ;;
         --rc) RC=true; shift ;;
         --build) BUILD=true; shift ;;
         --install) INSTALL=true; BUILD=true; shift ;;
@@ -105,7 +109,7 @@ common_checks() {
     [ -z "$(git status --porcelain --untracked-files=no)" ] ||
         FAILURES+=("the working tree has uncommitted changes. Commit or stash them first.")
     git fetch --quiet --tags origin main 2>/dev/null ||
-        FAILURES+=("could not fetch from origin, so what is on main is unknown. Check your connection and SSH keys.")
+        FAILURES+=("could not fetch from origin, so what is on main is unknown. Check your connection and your git credentials.")
     if command -v gh >/dev/null 2>&1; then
         gh auth status >/dev/null 2>&1 || FAILURES+=("gh is not logged in. Run: gh auth login")
     fi
@@ -178,6 +182,7 @@ stage_tag() {
     echo
     "$PYTHON" scripts/release.py section "$version"
     echo
+    "$PYTHON" scripts/release.py notes-check --version "$version" >&2 || true
     echo "Its candidates, retired once the tag is pushed: $(candidates_of "$version")"
     echo
     ask "Tag and publish $tag?"
@@ -272,6 +277,8 @@ stage_rc() {
     echo
     echo "Tagged $tag at $(git rev-parse --short "$commit"), a child of $(git rev-parse --short "$head") that says $rc everywhere."
     echo "$branch still says $version, so what merges is the release. No pipeline runs for a candidate."
+    # Advisory: a candidate is how the notes get read, so the words that contradict the release show here.
+    "$PYTHON" scripts/release.py notes-check --version "$version" >&2 || true
     echo "It is a candidate tag, so it may sit on any commit, and it is retired when v$version is released."
     if [ "$BUILD" = "true" ]; then
         build_rc "$tag"
@@ -306,8 +313,19 @@ build_rc() {
     fi
 }
 
+# Puts the checkout back as it was, after a cut that failed once the release branch had been made. The
+# tree was clean when it began, so nothing but the cut's own changes is discarded.
+abandon_cut() {  # $1 = the branch to go back to, or a commit when it was detached; $2 = the release branch
+    git reset --quiet --hard HEAD
+    if git show-ref --quiet --verify "refs/heads/$1"; then git switch --quiet "$1"; else git switch --quiet --detach "$1"; fi
+    git branch --quiet -D "$2"
+}
+
 stage_cut() {
     common_checks
+    need cargo
+    [ -d "$ROOT/node_modules" ] ||
+        FAILURES+=("node_modules is not here, and the release writes the license list from the npm packages in it. Run: npm ci")
     finish_preflight
     local contents next
     if ! contents="$("$PYTHON" scripts/release.py contents ${VERSION:+"$VERSION"} 2>&1)"; then
@@ -325,6 +343,12 @@ stage_cut() {
     local fragments
     fragments="$(git ls-tree -r --name-only origin/main -- changelog.d | grep -v '^changelog.d/README.md$' | grep '\.md$' || true)"
     [ -n "$fragments" ] || FAILURES+=("changelog.d/ on main has no fragments, so this release would have nothing to say.")
+    # The words the product has retired do not belong in what a release says, except under Removed or in a rename.
+    local vocabulary
+    if ! vocabulary="$("$PYTHON" scripts/release.py notes-check --fragments origin/main --strict 2>&1)" &&
+        [ "$ALLOW_VOCABULARY" = "false" ]; then
+        FAILURES+=("an entry uses a word the product has retired, outside Removed or a rename:"$'\n'"$(printf '%s\n' "$vocabulary" | sed 's/^/      /')"$'\n'"    Reword it in a pull request, or run this again with --allow-vocabulary if it is meant.")
+    fi
     finish_preflight
 
     echo "Release $tag"
@@ -343,8 +367,14 @@ stage_cut() {
     fi
     ask "Open the release pull request for $tag?"
 
+    local previous
+    previous="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
     git switch --quiet -c "$branch" origin/main
-    "$PYTHON" scripts/release.py prepare "$next"
+    if ! "$PYTHON" scripts/release.py prepare "$next"; then
+        abandon_cut "$previous" "$branch"
+        echo "create-release: preparing the release failed, so it is not made: $branch is deleted and this checkout is as it was." >&2
+        exit 1
+    fi
     git add -- "${FILES[@]}"
     git commit --quiet -m "chore(release): $tag"
     git push --quiet -u origin "$branch"
