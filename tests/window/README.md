@@ -54,6 +54,15 @@ evidence and a dense run of findings, and checks the map's bands and lanes, the 
 inspector for a picked band and a picked lane, the magnified second graph and the format filter.
 It needs `jigsaw.img` and saves `raw-lanes.png` here.
 
+`agent_rebuild_test.py` is the Rebuild tab with an agent in it. The agent's side is the MCP tools (it
+creates a Disk Rebuild, places pieces, makes a folder, merges a piece); the person's side is the
+window. It checks that the change shows at once with the Agent mark and the bar naming the last
+change, that the Disk Rebuild is named as made by the agent, that the activity log has it as the
+agent's, that an agent is refused `disk_rebuild_copy_start` and `disk_rebuild_undo`, and that
+Undo, Undo all agent changes (which removes a Disk Rebuild the agent made) and Restore to before the
+agent (after a confirmation, putting the person's own Disk Rebuild back as it was) work. It needs
+`jigsaw.img`.
+
 `device_picker_test.py` gives the start screen a made-up list of disks through
 `SALVAGE_TEST_STARTUP_DISKS` (a JSON file in the shape `startup_disks` returns, honoured only
 while `SALVAGE_TEST_UI` is set), so no real disk is listed. Its "devices" are synthetic images:
@@ -81,7 +90,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | Tests | Needs | Covers |
 |---|---|---|
 | `open_door_test.py`, `device_picker_test.py`, `raw_disk_test.py`, `raw_scan_test.py`, `raw_disk_lanes_test.py`, `raw_disk_crowded_test.py` | `jigsaw.img` for the first three and the lanes test | the one Open, the picker, the saved scans, the start screen tree, raw maps and scans |
-| `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `disk_rebuild_rename_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` | the filesystem workspace opened from an image of one volume |
+| `agent_rebuild_test.py`, `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `disk_rebuild_rename_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` | the filesystem workspace opened from an image of one volume |
 | `macos_writes_test.py` | `macos.img` | what macOS wrote |
 | `archive_file_test.py` | `arctest.img` | archives |
 | `films_test.py` | `filmtest.img` | films |

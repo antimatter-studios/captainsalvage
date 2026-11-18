@@ -49,6 +49,7 @@ const NAME_KEYS: &[&str] = &[
     "destination",
     "manifest",
     "current",
+    "summary",
 ];
 
 /// Columns that hold names or text quoting them, by table.
@@ -63,6 +64,10 @@ const NAME_COLUMNS: &[(&str, &str)] = &[
     ("overlays", "payload"),
     ("overlays", "note"),
     ("disk_rebuild_suggestions", "note"),
+    ("disk_rebuild_changes", "summary"),
+    ("disk_rebuild_changes", "diff"),
+    ("disk_rebuild_snapshots", "state"),
+    ("disk_rebuild_agent_marks", "key"),
 ];
 
 /// The person's last choice, as saved in the app's folder. Agents see names until told not to.

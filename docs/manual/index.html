@@ -225,6 +225,15 @@
       intended tree. Suggestions can help relate similar pieces; review them rather
       than assuming a match proves the original relationship. Removing an item from a Disk Rebuild
       removes that arrangement, not source data.</p>
+    <p>An agent can also build a Disk Rebuild for you: ask it in <strong>Chat with an agent</strong>
+      to assemble the tree you describe. What it makes or changes appears at once with a small
+      <strong>Agent</strong> mark and in the activity log. The bar above the tree offers
+      <strong>Undo</strong> (the agent's last change), <strong>Undo all agent changes</strong>
+      (everything its latest session did) and <strong>Restore to before the agent</strong> (the Disk Rebuild as it was
+      when that session first changed it; anything you changed since is lost too). If you only ask
+      where something belongs, the agent suggests instead and you accept or dismiss each suggestion.
+      A Disk Rebuild is virtual, so an agent building one never writes to the disk. Only you start a copy,
+      accept a suggestion or undo.</p>
     <p>Use the Disk Rebuild copy controls to review and copy the rebuilt tree to a healthy
       destination. Where available, showing a Disk Rebuild in Finder exposes a read-only
       view through the running app. Finder still needs the app and source available;
@@ -240,7 +249,9 @@
     <p>The panel shows the conversation and tool activity; use its stop control to
       interrupt a running request and its reset control when you want a fresh context.
       Agent availability depends on local configuration and authentication. Review
-      proposed changes in Hypotheses and inspect files yourself. Only you start copying.</p>
+      proposed changes in Hypotheses and inspect files yourself. An agent may build and change a Disk
+      Rebuild when you ask it to, and you can undo that in the Rebuild tab. Only you start copying,
+      export a file, accept a suggestion or delete a scan.</p>
     <p class="warning">An agent may read source bytes and filenames using its tools.
       Consider your provider's privacy arrangements before using it on sensitive data.
       Read-only disk access does not mean data stays private from the agent provider.</p>

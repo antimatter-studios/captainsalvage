@@ -5,6 +5,7 @@
 //! browser origins other than the app's own are refused, so a web page cannot
 //! reach the server through the browser.
 
+use crate::disk_rebuild_agent::AgentConnection;
 use crate::engine::{Engine, AUTHOR_CLAUDE};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,8 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub const SERVER_NAME: &str = "captainsalvage";
 const PREFERRED_PORT: u16 = 47821;
@@ -25,6 +27,12 @@ const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 const DEFAULT_VERSION: &str = "2025-06-18";
 const SCREENSHOT_TOOL: &str = "screenshot_app";
 const TOOL_PREFIX: &str = "captainsalvage_";
+const SESSION_HEADER: &str = "Mcp-Session-Id";
+/// A client that does not send its session id back is taken to start a new session after this
+/// long without a call.
+const SESSION_IDLE: Duration = Duration::from_secs(30 * 60);
+const MAX_SESSION_ID_CHARS: usize = 64;
+const MAX_KNOWN_CLIENTS: usize = 64;
 
 pub const INSTRUCTIONS: &str = "\
 Every tool name starts with `captainsalvage_`. Use the full prefixed name when calling a tool. \
@@ -39,8 +47,14 @@ overlays or with captainsalvage_log_finding so the user can see and reverse them
 start with captainsalvage_unexplained_runs and captainsalvage_carve_candidates, then check promising candidates with \
 captainsalvage_read_bytes, captainsalvage_test_stream and captainsalvage_inspect_cluster, and log what you confirm. \
 Use captainsalvage_query_map and captainsalvage_run_script when no fixed tool fits. Call captainsalvage_get_selection to \
-see what the user has selected. Copying files out is the user's decision: plan it with captainsalvage_export_plan \
-(one file or folder) or captainsalvage_disk_rebuild_copy_plan (a Disk Rebuild), say what it would do, and ask them to start it.";
+see what the user has selected. Disk Rebuilds: when the person asks you to build or change one, do it yourself with the captainsalvage_disk_rebuild_* tools \
+(create it, make folders, place found folders and files, choose which layer's copy of a file wins), read the tree back with \
+captainsalvage_disk_rebuild_tree and captainsalvage_disk_rebuild_resolve, and say what you changed. Every change shows in the \
+window marked as made by the agent, and the person can undo it. A Disk Rebuild is virtual: your changes touch only the app's \
+own database, never the disk. When they only asked where something belongs, suggest it with captainsalvage_disk_rebuild_suggest \
+and let them decide. Only the person copies files out, accepts a suggestion, undoes your changes, or deletes a scan: plan a copy with \
+captainsalvage_export_plan (one file or folder) or captainsalvage_disk_rebuild_copy_plan (a Disk Rebuild), say what it would do, \
+and ask them to start it.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -201,11 +215,11 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("explain_region", "Samples clusters across a region and reports evidence about what it is: file signatures at the cluster start and at 4 KiB boundaries inside it, NTFS file records with their names, exFAT entries, readable text, and clusters that mix random and plain data (a sign of older data under newer). Record a conclusion with add_overlay kind region_label.", json!({"startCluster": integer("Start."), "endCluster": integer("End, exclusive."), "samples": integer("Clusters to read, 1-256. Default 64.")}), &["startCluster", "endCluster"]),
         tool("export_plan", "Works out what exporting one file or folder would do, without writing: file count, size, free space, what falls below the floor, what would be skipped as partial, and whether the destination is refused. An export copies it directly to a folder the person chooses, never over an existing file, and checks each copy as it is written. Starting it is the person's decision, from the file's right-click menu in the app, so recommend a plan and ask them.", json!({"kind": string("file or folder."), "target": integer("File entry id, or folder head cluster, including everything beneath it."), "destination": string("Full path of the destination folder. Defaults to the salvage drive."), "minConfidence": number("0-1 floor. Default 0."), "includePartial": boolean("Include files with missing or reused clusters. Default true.")}), &["target"]),
         tool("get_salvage_drive", "The folder the user has chosen to receive recovered files, with its free space, if one is set. Only the user can change it, in the export window.", json!({}), &[]),
-        tool("disk_rebuild_list", "A Disk Rebuild is a virtual file tree built from segments of a scan, overlaid read only. The person's Disk Rebuilds: each is their own rebuild of the folder tree, made by placing the pieces the scan found (top-level found folders) inside one another, merged, or inside folders they made up. Only the person changes a Disk Rebuild.", json!({}), &[]),
-        tool("disk_rebuild_items", "Every item on a Disk Rebuild: made-up folders, pieces (found folders placed as folders) and merges (found folders whose contents join the folder they are in), with where each sits.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
+        tool("disk_rebuild_list", "A Disk Rebuild is a virtual file tree built from segments of a scan, overlaid read only. The Disk Rebuilds of the open scan: each is a rebuild of the folder tree, made by placing the pieces the scan found (top-level found folders) and single found files inside one another, merged, or inside folders made up. The person and agents both build them: madeByAgent marks one an agent made or renamed. To change one, use the other disk_rebuild_* tools, when the person asked you to.", json!({}), &[]),
+        tool("disk_rebuild_items", "Every item on a Disk Rebuild: made-up folders, pieces (found folders placed as folders), merges (found folders whose contents join the folder they are in) and single files, with where each sits. Items are the layers: a later item lies over an earlier one. madeByAgent marks items an agent made or changed.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
         tool("disk_rebuild_tree", "One folder of a Disk Rebuild's rebuilt tree, by the folder names from its root. Where pieces hold files of the same name, the best copy is chosen and every copy is listed, so clashes show.", with_page(json!({"diskRebuild": integer("Disk Rebuild id."), "path": {"type": "array", "items": {"type": "string"}, "description": "Folder names from the root. Empty for the root."}})), &["diskRebuild"]),
         tool("disk_rebuild_clashes", "Every file on a Disk Rebuild whose copies clash, because pieces laid over one place hold different files of the same name. Each says which copy was picked and what decided it: person, quality (tested or judged good, all clusters there, a valid entry checksum, the size the entry says), date (the newer), or layer (the later drop, when all else ties). needsYou marks copies that differ but measure the same, which the person should look at; those come first. Copies at the same clusters, or tested and found to hold the same bytes, are one copy and never clash.", with_page(json!({"diskRebuild": integer("Disk Rebuild id."), "needYou": boolean("Only the clashes the person should look at.")})), &["diskRebuild"]),
-        tool("disk_rebuild_suggest", "Suggests where a piece belongs on one of the person's Disk Rebuilds, without placing it: they accept or dismiss it in the Rebuild tab. Use disk_rebuild_unused for pieces, disk_rebuild_items and disk_rebuild_tree for places, and similar_pieces, names, dates and contents for evidence. Put the evidence in note, in a sentence they can judge. Leave place out to suggest the first piece, the top of the tree.", json!({"diskRebuild": integer("Disk Rebuild id."), "head": integer("First cluster of an unused top-level found folder."), "place": {"type": "object", "description": "Where it goes: item (a Disk Rebuild item id) and optionally head (a found folder inside that item's piece).", "properties": {"item": integer("Disk Rebuild item id."), "head": integer("Found folder inside that item.")}}, "merge": boolean("Join its contents into that folder rather than placing it as a folder of its own."), "note": string("Why it belongs there, in a sentence the person can judge.")}), &["diskRebuild", "head", "note"]),
+        tool("disk_rebuild_suggest", "Suggests where a piece belongs on a Disk Rebuild, without placing it: the person accepts or dismisses it in the Rebuild tab. Use it when they asked where something belongs, or did not ask you to build; when they asked you to build or change the Disk Rebuild, use disk_rebuild_place and the other changing tools instead. Use disk_rebuild_unused for pieces, disk_rebuild_items and disk_rebuild_tree for places, and similar_pieces, names, dates and contents for evidence. Put the evidence in note, in a sentence they can judge. Leave place out to suggest the first piece, the top of the tree.", json!({"diskRebuild": integer("Disk Rebuild id."), "head": integer("First cluster of an unused top-level found folder."), "place": {"type": "object", "description": "Where it goes: item (a Disk Rebuild item id) and optionally head (a found folder inside that item's piece).", "properties": {"item": integer("Disk Rebuild item id."), "head": integer("Found folder inside that item.")}}, "merge": boolean("Join its contents into that folder rather than placing it as a folder of its own."), "note": string("Why it belongs there, in a sentence the person can judge.")}), &["diskRebuild", "head", "note"]),
         tool("disk_rebuild_suggestions", "Suggestions on a Disk Rebuild still waiting for the person to accept or dismiss.", json!({"diskRebuild": integer("Disk Rebuild id.")}), &["diskRebuild"]),
         tool("copy_report", "What a copy did, file by file, from the manifest at its destination: each file's target, size, whether it was copied complete or partial and why, and what the last check of the copies found (same, changed or missing). Totals cover the whole copy. destination defaults to the last copy's.", with_page(json!({"destination": string("The copy's destination folder."), "filter": string("all, partial, changed, missing or unchecked.")})), &[]),
         tool("copy_check", "Reads every copied file at a destination again, in the background, and compares it with the hash recorded when it was copied, to catch copies changed or lost since. It reads only the destination, never the disk being recovered. Read the results with copy_report.", json!({"destination": string("The copy's destination folder. Defaults to the last copy's.")}), &[]),
@@ -230,6 +244,18 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("log_finding", "Posts a conclusion to the app's activity log, so the user can read it later.", json!({"text": string("The finding, and its evidence.")}), &["text"]),
         tool("activity", "Recent tool calls by anyone, newest first.", json!({"afterId": integer("Only items after this id."), "limit": integer("Default 100.")}), &[]),
     ];
+    tools.extend(
+        crate::rebuild_tools::definitions()
+            .into_iter()
+            .map(|definition| {
+                tool(
+                    definition.name,
+                    definition.description,
+                    definition.properties,
+                    definition.required,
+                )
+            }),
+    );
     tools.extend(
         crate::catalog_tools::definitions()
             .into_iter()
@@ -288,8 +314,116 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
+/// The agent sessions the server knows. A session is one agent connection: what the client opens
+/// with `initialize`, and names in the `Mcp-Session-Id` header after. A client that does not send
+/// the header back belongs to the latest session, until it has been quiet for a while.
+#[derive(Default)]
+struct Sessions {
+    latest: Option<(String, Instant)>,
+    clients: Vec<(String, String)>,
+}
+
+static SESSIONS: Mutex<Sessions> = Mutex::new(Sessions {
+    latest: None,
+    clients: Vec::new(),
+});
+
+fn new_session_id() -> String {
+    let mut bytes = [0u8; 8];
+    let filled = fs::File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes));
+    if filled.is_err() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.as_nanos())
+            .unwrap_or_default();
+        bytes = (now as u64).to_le_bytes();
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn usable_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().count() <= MAX_SESSION_ID_CHARS
+        && id
+            .chars()
+            .all(|found| found.is_ascii_alphanumeric() || found == '-' || found == '_')
+}
+
+/// Starts a session for a client that just said hello.
+fn start_session(client: Option<&str>) -> String {
+    let id = new_session_id();
+    if let Ok(mut sessions) = SESSIONS.lock() {
+        sessions.latest = Some((id.clone(), Instant::now()));
+        if let Some(client) = client {
+            if sessions.clients.len() >= MAX_KNOWN_CLIENTS {
+                sessions.clients.remove(0);
+            }
+            sessions
+                .clients
+                .push((id.clone(), client.chars().take(80).collect()));
+        }
+    }
+    id
+}
+
+/// The connection a call belongs to: the session its header names, or the latest one.
+fn connection_for(header: Option<&str>) -> AgentConnection {
+    let Ok(mut sessions) = SESSIONS.lock() else {
+        return AgentConnection::default();
+    };
+    let session = match header.filter(|id| usable_session_id(id)) {
+        Some(id) => id.to_string(),
+        None => match &sessions.latest {
+            Some((id, last)) if last.elapsed() < SESSION_IDLE => id.clone(),
+            _ => {
+                let id = new_session_id();
+                sessions.latest = Some((id.clone(), Instant::now()));
+                id
+            }
+        },
+    };
+    if let Some((id, last)) = &mut sessions.latest {
+        if *id == session {
+            *last = Instant::now();
+        }
+    }
+    let client = sessions
+        .clients
+        .iter()
+        .find(|(id, _)| *id == session)
+        .map(|(_, name)| name.clone());
+    AgentConnection { session, client }
+}
+
 /// Handles one JSON-RPC message. Returns `None` for notifications.
 pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
+    handle_in_session(engine, message, None).0
+}
+
+/// Handles one message for the agent session a header names, or the latest one. Also returns the
+/// session id to tell the client, when the message was `initialize` and so began a session.
+pub fn handle_in_session(
+    engine: &Engine,
+    message: &Value,
+    session_header: Option<&str>,
+) -> (Option<Value>, Option<String>) {
+    let started = (message.get("method").and_then(Value::as_str) == Some("initialize")
+        && message.get("id").is_some())
+    .then(|| {
+        start_session(
+            message
+                .pointer("/params/clientInfo/name")
+                .and_then(Value::as_str),
+        )
+    });
+    let connection = match &started {
+        Some(id) => connection_for(Some(id)),
+        None => connection_for(session_header),
+    };
+    (handle_with(engine, message, &connection), started)
+}
+
+fn handle_with(engine: &Engine, message: &Value, connection: &AgentConnection) -> Option<Value> {
     let id = message.get("id")?;
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -342,7 +476,7 @@ pub fn handle_message(engine: &Engine, message: &Value) -> Option<Value> {
                 };
                 return Some(rpc_result(id, result));
             }
-            let result = match engine.call(tool_name, &args, AUTHOR_CLAUDE) {
+            let result = match engine.call_as_agent(tool_name, &args, AUTHOR_CLAUDE, connection) {
                 Ok(value) => json!({
                     "content": [{"type": "text", "text": serde_json::to_string_pretty(&value).unwrap_or_default()}],
                 }),
@@ -437,23 +571,38 @@ fn serve_one(engine: &Engine, token: &str, mut request: tiny_http::Request) {
     let Ok(message) = serde_json::from_str::<Value>(&body) else {
         return respond_status(request, 400, "body is not valid JSON");
     };
+    let session = header_value(&request, SESSION_HEADER).map(str::to_string);
+    let mut announced = None;
     let reply = match &message {
         Value::Array(batch) => {
             let replies: Vec<Value> = batch
                 .iter()
-                .filter_map(|item| handle_message(engine, item))
+                .filter_map(|item| {
+                    let (reply, started) = handle_in_session(engine, item, session.as_deref());
+                    announced = announced.take().or(started);
+                    reply
+                })
                 .collect();
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        single => handle_message(engine, single),
+        single => {
+            let (reply, started) = handle_in_session(engine, single, session.as_deref());
+            announced = started;
+            reply
+        }
     };
     match reply {
         Some(value) => {
             let content_type = tiny_http::Header::from_bytes("Content-Type", "application/json")
                 .expect("valid header");
-            let _ = request.respond(
-                tiny_http::Response::from_string(value.to_string()).with_header(content_type),
-            );
+            let mut response =
+                tiny_http::Response::from_string(value.to_string()).with_header(content_type);
+            if let Some(id) = announced {
+                if let Ok(header) = tiny_http::Header::from_bytes(SESSION_HEADER, id) {
+                    response = response.with_header(header);
+                }
+            }
+            let _ = request.respond(response);
         }
         None => respond_status(request, 202, ""),
     }

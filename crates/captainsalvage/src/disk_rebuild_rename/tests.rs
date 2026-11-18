@@ -96,11 +96,20 @@ fn old_database(folder: &Folder) -> PathBuf {
     path
 }
 
+/// The agent change journal, which a database from before it gets empty when it is opened.
+const ADDED_AFTER_THE_RENAME: &[&str] = &[
+    "agent_sessions",
+    "disk_rebuild_changes",
+    "disk_rebuild_agent_marks",
+    "disk_rebuild_snapshots",
+];
+
 /// Every row of every table, as text, by the table's current name.
 fn rows(connection: &Connection) -> Vec<(String, Vec<Vec<String>>)> {
     let mut all = Vec::new();
     for table in old_tables(connection) {
-        if table.starts_with("sqlite_") {
+        // Tables made empty by the schema after the rename have no old rows to compare.
+        if table.starts_with("sqlite_") || ADDED_AFTER_THE_RENAME.contains(&table.as_str()) {
             continue;
         }
         let mut statement = connection
@@ -489,4 +498,42 @@ fn a_log_that_holds_changes_is_copied_with_the_database() {
         .query_row("SELECT count(*) FROM canvases", [], |row| row.get(0))
         .unwrap();
     assert_eq!(found, 4);
+}
+
+#[test]
+fn a_renamed_database_also_has_the_agent_change_journal() {
+    let folder = Folder::new();
+    let path = old_database(&folder);
+    let database = MapDb::open(&path).unwrap();
+    for table in ADDED_AFTER_THE_RENAME {
+        let rows: i64 = database
+            .connection
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+    // An agent can change a Disk Rebuild that came through the rename, and the person can undo it.
+    let existing: i64 = database
+        .connection
+        .query_row("SELECT id FROM disk_rebuilds LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let who = crate::disk_rebuild_agent::AgentConnection::default();
+    database
+        .agent_change(
+            &who,
+            &Default::default(),
+            "disk_rebuild_rename",
+            "Renamed",
+            Some(existing),
+            |database| {
+                database.disk_rebuild_rename(existing, "By an agent")?;
+                Ok((serde_json::json!({"ok": true}), existing))
+            },
+        )
+        .unwrap();
+    assert!(database.disk_rebuilds().unwrap()[0].made_by_agent);
+    database.agent_undo_last(None).unwrap();
+    assert!(!database.disk_rebuilds().unwrap()[0].made_by_agent);
 }

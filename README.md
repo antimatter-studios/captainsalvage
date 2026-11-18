@@ -73,7 +73,11 @@ macOS can, though, and that can happen before the app is open. See
   and can read every copy again later to catch one changed or lost since. It reads only the
   destination.
 - Only the person using the app can start an export or a Disk Rebuild copy, or choose a
-  salvage drive. An AI can plan one, but not start it.
+  salvage drive. An AI can plan one, but not start it. The engine refuses every copy-starting
+  tool to an agent before it reads the arguments, and none is listed to agents.
+- An agent may build and change a Disk Rebuild, which is virtual: its tools write only the
+  app's own database, never a source disk. Every change shows in the Rebuild tab marked as made
+  by the agent and can be undone (see [Agents building a Disk Rebuild](#agents-building-a-disk-rebuild)).
 - While the app is open, macOS cannot mount a volume the person blocked. See
   [Before you plug the disk in](#before-you-plug-the-disk-in).
 
@@ -548,8 +552,56 @@ A Disk Rebuild is a virtual file tree built from segments of a scan, overlaid re
 `disk_rebuild_place` (a found folder under a parent) or `disk_rebuild_place_file`, then
 `disk_rebuild_copy_plan` and `disk_rebuild_copy_start` copy its tree to its rebuilt paths. The
 other `disk_rebuild_*` tools list, move, rename and remove what is in it. Agents over MCP can
-plan with `export_plan` and `disk_rebuild_copy_plan` and suggest placements with
-`disk_rebuild_suggest`; building and copying stay the person's.
+build and change a Disk Rebuild with the same tools, plan a copy with `export_plan` and
+`disk_rebuild_copy_plan`, and suggest placements with `disk_rebuild_suggest`; starting a copy
+stays the person's.
+
+#### Agents building a Disk Rebuild
+
+An agent can build a Disk Rebuild for the person: they describe what they want, and the agent
+assembles the virtual file tree. A Disk Rebuild belongs to a scan, so the tools work on the open
+scan.
+
+| Tool | Agents | What it does |
+|---|---|---|
+| `disk_rebuild_list`, `_items`, `_tree`, `_resolve`, `_clashes`, `_unused`, `_suggestions`, `_copy_plan`, `_agent_changes` | read | The Disk Rebuilds of the scan; the items (layers); one folder of the rebuilt tree; what a path resolves to (the copies of a file, the layer each came from, which won and why); every clash; the pieces not yet placed; the plan of a copy (a dry run); what agents changed |
+| `disk_rebuild_create`, `_rename`, `_delete`, `_duplicate` | change | Make, name, delete or copy a Disk Rebuild |
+| `disk_rebuild_folder`, `_rename_item`, `_move`, `_remove` | change | Make, rename, move and remove folders and added items |
+| `disk_rebuild_place` (a found folder), `_place_file` (a found file), `_swap`, `_leftovers` | change | Add a segment under a chosen parent as a layer over what is below it; swap it for a similar one; put every unused piece in one folder |
+| `disk_rebuild_choose` | change | Choose which layer's copy of a file wins a path, by copy (`entry`) or by layer (`layer`); no choice goes back to the best copy |
+| `disk_rebuild_suggest` | change | Suggest a placement without making it |
+| `disk_rebuild_accept`, `_dismiss`, `_undo`, `_undo_session`, `_restore` | person only | Answering a suggestion, and taking back what an agent did |
+| `export_start`, `disk_rebuild_copy_start`, `zip_member_copy`, `copy_stop`, `set_salvage_drive` | person only | Starting or stopping a copy, and choosing where recovered files go |
+
+*Person only* tools are never listed to agents, and the engine refuses them from any agent
+connection before it reads their arguments, so no agent tool can start a copy. A Disk Rebuild is
+virtual: these tools read the source read-only and bounded, and write only the app's database on
+this Mac.
+
+**Visible and reversible.** Every change an agent makes shows in the Rebuild tab straight away
+with a small "Agent" mark on what it made or changed, and in the activity log. The tab shows the
+latest change with **Undo** (one step back), **Undo all agent changes** (every change of the
+latest agent session, newest first) and **Restore to before the agent** (the Disk Rebuild as it
+was when that session first changed it, the person's later changes included). An undo stops at a
+change that something changed since, and says so, so the person's own work is never lost.
+
+**Sessions and snapshots.** An agent session is one agent connection: the MCP session a client
+opens with `initialize` (named by the `Mcp-Session-Id` header it gets back) and, in the window's
+chat, one question to the agent. A client that does not send the header back stays in its latest
+session until it has been quiet for 30 minutes. Each change is stored with its session, as the
+rows it added, removed and altered, and the first change a session makes to a Disk Rebuild also
+keeps a snapshot of it from before. Both are in the scan's own database, so they survive the app
+closing.
+
+**Limits.** One call may change at most 1000 rows (`MAX_CHANGES_PER_CALL`) and one session at most
+10000 (`MAX_CHANGES_PER_SESSION`), both in `disk_rebuild_agent.rs`. A row is an item, a chosen
+copy, or the Disk Rebuild itself. Past a limit the call fails and changes nothing, and the error
+names the limit. Undoing does not give changes back.
+
+**Building or suggesting.** When the person asks an agent to build or change a Disk Rebuild, it
+makes the changes itself. When they only ask where something belongs, it uses
+`disk_rebuild_suggest`, and they accept or dismiss each suggestion in the Rebuild tab, as before.
+The agent's instructions say which applies; every direct change is marked and can be undone.
 
 The treasure list was removed, and nothing from an old one is imported. Its tools (`basket_*`,
 `copy_plan` and `copy_start`) no longer exist, and neither do the earlier names that
@@ -735,7 +787,7 @@ window's **Open** and the command line's `source open` call), `captainsalvage_li
 `_list_scans`, `_open_stored_scan`, `_switch_interpretation`, `_label_scan`, `_label_source` and
 `_migrate_catalog`, with `_list_stale_regions` (read only) and `_rescan_changed_regions`. The listing
 tools are read only. The ones that make a scan, change a name or scan regions again are the person's
-to run, as changing a Disk Rebuild is: an agent that asks is told to suggest it.
+to run: an agent that asks is told to suggest it.
 
 #### Changed regions after a probable match
 
