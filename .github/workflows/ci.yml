@@ -75,6 +75,7 @@ jobs:
         run: |
           cargo clippy -p captainsalvage --all-targets --locked --features test-hooks -- -D warnings
           cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
+          cargo test -p captainsalvage --locked --features test-hooks --lib
 
   oracle:
     # `chore test:oracle`: the NTFS flows against ntfs-3g's tools and the Linux kernel's ntfs3
