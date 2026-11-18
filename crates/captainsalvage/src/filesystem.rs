@@ -96,7 +96,49 @@ const fn capability(feature: &'static str, support: Support, note: &'static str)
     }
 }
 
+/// How a filesystem says which clusters an entry holds. The shared engine asks this instead of
+/// asking which filesystem it has, so a new filesystem answers once, here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Claims {
+    /// A first cluster, followed through a table of links (FAT, exFAT), or contiguously where an
+    /// exFAT entry says so.
+    Chain,
+    /// A run list in the entry's own record (NTFS). There is no table of links to follow, and so
+    /// no chain to lead back to a head.
+    RunList,
+}
+
+impl Claims {
+    /// Whether there are links between clusters to follow, from a cluster to the next or back.
+    pub fn has_links(self) -> bool {
+        self == Self::Chain
+    }
+
+    /// The sentence for a stream whose claim starts outside the volume.
+    pub fn outside_volume(self) -> &'static str {
+        match self {
+            Self::Chain => "First cluster is outside the volume.",
+            Self::RunList => "Its run list names clusters outside the volume.",
+        }
+    }
+
+    /// What is said of a stream that is reachable only as far as the clusters found.
+    pub fn ends_early(self) -> &'static str {
+        match self {
+            Self::Chain => "FAT chain ends early:",
+            Self::RunList => "Its run list ends early:",
+        }
+    }
+}
+
 impl FilesystemKind {
+    pub fn claims(self) -> Claims {
+        match self {
+            Self::Ntfs => Claims::RunList,
+            Self::Exfat | Self::Fat12 | Self::Fat16 | Self::Fat32 => Claims::Chain,
+        }
+    }
+
     /// What the app does for this filesystem, validated on synthetic images.
     pub fn capabilities(self) -> Vec<Capability> {
         use Support::{Limited, Missing, Supported};

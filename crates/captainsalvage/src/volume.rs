@@ -4,7 +4,7 @@ use crate::allocation as primitives;
 use crate::changes::StructureCopy;
 use crate::filesystem::ntfs_salvage;
 use crate::filesystem::{
-    salvage, FilesystemDetails, FilesystemKind, NtfsRun, SalvageEntry, VolumeGeometry,
+    salvage, Claims, FilesystemDetails, FilesystemKind, NtfsRun, SalvageEntry, VolumeGeometry,
 };
 use crate::source::BlockSource;
 use anyhow::{Context, Result};
@@ -122,6 +122,11 @@ impl Volume {
         }
     }
 
+    /// How this volume's entries say which clusters they hold.
+    pub fn claims(&self) -> Claims {
+        self.kind.claims()
+    }
+
     pub fn source(&self) -> &Arc<dyn BlockSource> {
         &self.source
     }
@@ -158,7 +163,7 @@ impl Volume {
 
     /// Non-zero FAT entries count here, including values outside the valid range.
     pub fn allocation_class(&self, cluster: u32) -> u8 {
-        if self.kind == FilesystemKind::Ntfs {
+        if !self.claims().has_links() {
             // There are no links to be left behind by a cleared allocation, only the bitmap.
             return if primitives::is_allocated(&self.bitmap, cluster) {
                 primitives::ALLOC_ALLOCATED
@@ -192,7 +197,7 @@ impl Volume {
     /// chain ends early or the claim runs off the end of the volume.
     pub fn clusters_for(&self, first: u32, length: u64, no_fat_chain: bool) -> StreamClusters {
         // NTFS has no chain to follow: a guess from a first cluster is a contiguous one.
-        let contiguous = no_fat_chain || self.kind == FilesystemKind::Ntfs;
+        let contiguous = no_fat_chain || !self.claims().has_links();
         primitives::clusters_for(&self.geometry, &self.fat, first, length, contiguous)
     }
 
@@ -262,7 +267,7 @@ impl Volume {
 
     /// One FAT entry that points at this cluster, if any.
     pub fn predecessor(&self, cluster: u32) -> Option<u32> {
-        if self.kind == FilesystemKind::Ntfs {
+        if !self.claims().has_links() {
             return None;
         }
         primitives::predecessor(&self.predecessors, cluster)
@@ -270,21 +275,21 @@ impl Volume {
 
     /// Walks the FAT backward from `cluster` to the start of its chain.
     pub fn chain_head(&self, cluster: u32) -> u32 {
-        if self.kind == FilesystemKind::Ntfs {
+        if !self.claims().has_links() {
             return cluster;
         }
         primitives::chain_head(&self.predecessors, cluster)
     }
 
     fn compute_predecessors(&self) -> Vec<u32> {
-        if self.kind == FilesystemKind::Ntfs {
+        if !self.claims().has_links() {
             return Vec::new();
         }
         primitives::compute_predecessors(&self.geometry, &self.fat)
     }
 
     fn compute_stats(&self) -> AllocationStats {
-        if self.kind == FilesystemKind::Ntfs {
+        if !self.claims().has_links() {
             let mut stats = AllocationStats::default();
             for cluster in 2..self.geometry.last_cluster_exclusive() {
                 if primitives::is_allocated(&self.bitmap, cluster) {
@@ -301,7 +306,7 @@ impl Volume {
     /// Splits the FAT into islands: runs that start at an entry nothing points
     /// to, and end where the chain stops or meets a cluster already walked.
     pub fn chain_islands(&self) -> Vec<Island> {
-        if self.kind == FilesystemKind::Ntfs {
+        if !self.claims().has_links() {
             // Chains of links exist only where there is a table of links.
             return Vec::new();
         }
