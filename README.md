@@ -940,7 +940,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.3.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1075,6 +1075,80 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 <!-- changelog:start -->
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
+
+### v0.4.0 — 2026-11-18
+
+**Added**
+
+- **An agent can build a Disk Rebuild for you.** Ask it in the chat to put the pieces back together, and it makes the Disk Rebuild, its folders and its layers itself, then reads the tree back and says which layer's copy of each file wins and why. Everything it makes shows at once in the Rebuild tab with an Agent mark and in the activity log, and you can take it back: **Undo** one step, **Undo all agent changes** of its latest session, or **Restore to before the agent**. The agent only changes the app's own database, never the disk, one call may change at most 1000 rows and a session 10000, and only you can start a copy, accept a suggestion or undo. If you only ask where something belongs, it still suggests.
+
+- **Choose a partition, or the whole disk it belongs to, to inspect.** One chooser on the start screen lists every disk with its partitions. The map then covers exactly the bytes you chose. A disk whose partition table is damaged or missing is still listed, so it can be inspected whole.
+
+- **The raw-disk map shows partitions as bands and findings as lanes.** The top map is one stable view of the bytes: declared partitions are broad background bands, and each filesystem format that was found has its own thin lane. A disk with many findings stays readable, because dense findings are summarised by format and count under the map, and the list can be narrowed to one format.
+- **An inspector explains what you pick.** Click a band or a lane on the map, or an item in the list, and the side panel gives its format, byte range, confidence and status: recognised, needs related metadata, or decodable. The second graph magnifies the selected range, and clicking it shows that place in the main area.
+
+- **FAT12, FAT16 and FAT32 volumes open and scan.** They go through the same filesystem adapter as exFAT, so directories, fragmented files, deleted records, saved baselines, scan resumption and recovery use the same workflow. Volume details are shown without the exFAT-only checksum claims. FAT support is validated with synthetic images.
+- **NTFS records can be inspected and extracted from the command line and MCP.** Surviving FILE records are read without a working boot sector or namespace, and resident and complete uncompressed non-resident streams can be extracted. Damaged fixups and unresolved or unsupported mappings are reported, never silently repaired.
+- **Disks, partitions and images open without a recognised filesystem.** They use the normal workspace and disk graph, working on byte ranges. Declared partitions and overlapping filesystem evidence are separate layers, you can select and label regions, and searching continues after a format is found. FAT, exFAT and NTFS boot evidence is probed, and surviving exFAT backup boot metadata can be used in memory beneath a newer NTFS boot sector without changing the source. The Source bytes tab returns to the underlying source and its findings. The command line and MCP offer the same operations.
+- **Raw discovery scans show throughput and time remaining, and can be resumed.** Each completed batch saves its findings and progress under a stable scan ID. A reopened disk, clone or image can load a matching scan after you acknowledge sampled verification. Mismatches and sources that cannot be verified cannot resume, and regions that were unreadable are retried on a new source. Scans in memory from older builds are lost when those builds close.
+
+- **NTFS volumes open, scan and recover in the normal workspace.** A scan reads every cluster for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found as well as live ones. The folder tree is rebuilt from each record's parent reference. Resident, fragmented, sparse and deleted files are read through the NTFS driver, and can be browsed, previewed, tested, rebuilt, copied and resumed like exFAT files. A saved baseline explains what was written to the volume since, and the volume stays unmounted and unwritten throughout. Volumes made by `mkntfs` and written by the Linux ntfs3 driver or ntfs-3g are read, and what the app lists and reads was checked against both in a Linux VM.
+- **NTFS says what it cannot do.** Compressed files, EFS-encrypted files and files whose data continues in other records are listed with their size and marked unreadable, never filled with zeros. A BitLocker volume is refused by name after one sector is read. Alternate data streams and extra hard-link names are listed in the record details, not copied as files. The window, `captainsalvage filesystem capabilities` and the new `captainsalvage_capabilities` MCP tool report the same table for every filesystem.
+- **A written-over NTFS boot sector can be replaced in memory by its backup.** Choose the copy in the volume's last sector as the boot evidence when you try an NTFS interpretation of a raw disk. The disk's own bytes are never changed.
+- **`captainsalvage_ntfs_entry` shows everything an NTFS record says:** each name and the folder it was linked in, each data stream and whether it is resident, compressed, encrypted or sparse, and any damage found in the record.
+
+- **Analyze a selected range of a raw source.** Choose **Analyze this range** to try every filesystem driver at every start offset of the range and see what decodes: the format, where it starts, how many bytes decode and how sure the app is. It finds structures at odd offsets, and finds FAT directory entries and NTFS MFT records by their shape even when the boot sector and the record signatures are gone. Data that is identified but cannot be placed in a volume is listed as an island, with an offer to search nearby for the missing metadata. For NTFS, the cluster size and where the volume starts are worked out from a surviving `$MFT` record, and the volume is opened read-only with a boot sector rebuilt in memory to check it. The same analysis is `captainsalvage range analyze` on the command line and `captainsalvage_analyze_range` in MCP. Nothing is written to the source.
+
+- **Save what you think a stretch of the disk holds as a hypothesis.** An extent and a format, with a confidence, is kept on this Mac and can be switched on and off, so several guesses over the same bytes compete as layers and the upper one is read. Start and end can be typed or taken from the selection. A hypothesis can come straight from a range analysis finding, and opens as a filesystem with **Try this interpretation**. Nothing is ever written to the disk.
+- **Hypotheses make a virtual layout.** Like a Disk Rebuild, a layout overlays segments of the source at positions of a virtual device, and a virtual partition table is a layout whose segments are partitions. Both are views the app reads through; bytes no segment covers are refused, not shown as zeros. `captainsalvage hypothesis` and the `captainsalvage_*_hypothesis` and `captainsalvage_read_layout` MCP tools do the same as the window.
+
+- **A drive that a mount changed can be trusted again.** When you reopen a drive that is only a probable match (some markers changed, for example because a Mac mount wrote Finder data near the start), the findings, entries and test results near the changed markers are now marked **May be out of date**, and the window says how many regions that is. **Rescan changed regions** reads just those regions again, with the same interpretation, and replaces what was stored there a batch at a time. Only when every region is done does the drive get its new markers (the earlier ones are kept), so the next open of it is an exact match. A rescan that stops, fails or loses the drive leaves the regions marked and continues where it stopped. Nothing is scanned again unless you ask, and the drive is only read. The command line has `captainsalvage scan stale-regions` and `scan rescan-changed`, and the MCP tools are `list_stale_regions` (read only) and `rescan_changed_regions` (only the person using the app).
+
+- **Right-click a file or a folder and choose Export.** It copies that one file or folder to the place you choose, directly and as it is, never over a file that is already there. Each copy is checked as it is written. You see the plan first, then live progress, and the same copy report as before.
+- **The command line and MCP can export too.** `export_plan` plans an export and `export_start` starts it, for the person only, as before. The tools for a Disk Rebuild are now called `disk_rebuild_*`, with `disk_rebuild_copy_plan` and `disk_rebuild_copy_start` to copy one.
+
+- **A scan is the unit of stored work, found again by the drive and how it was read.** Everything a scan stores (its filesystem map, file tests, islands, read errors and Disk Rebuilds, or its raw findings) now belongs to a scan: a source, the interpretation read there (an extent and a format, or none), its options, the scanner version and the range. Opening a drive finds its stored scans by its markers, so a boot sector written over after scanning no longer loses the work, and trying another format or extent makes a new scan and keeps the old one, which opens again without scanning. Per-block entropy and text caches are shared by every scan of a drive. Each scan lists when it was made, how much it covers and how much it stores on this Mac. Scans and workspaces made by earlier versions are registered the first time the app starts, from where they are, so nothing already scanned is scanned again; the database is copied to `backups` first. The command line has `captainsalvage source`, and the MCP tools `list_sources`, `identify_source`, `list_scans` and `open_stored_scan` read the same records.
+
+- **One way to open: Open.** A disk, a partition, a disk image, one extent of a disk and a saved scan all open with the same button. The raw source is always loaded first, and an interpretation is applied to it: the one the last scan of a matching stored source used, otherwise the best detection from the boot evidence, otherwise raw bytes. Opening starts no scan, and what is stored loads at once.
+- **An interpretation picker in the header.** `Filesystem: NTFS (detected, 86%)` lists exFAT, FAT, NTFS and no filesystem. Choosing another makes a new scan and says that the earlier scan stays, and choosing the earlier one again opens it without scanning.
+- **Saved scans on Open.** An exact match opens its latest scan. A probable match is never applied silently: a question lists the stored sources by confidence with their changed markers, and a scan opens only after you say you read what changed. Matches under 60% are hidden until Show all. Each scan lists its interpretation, date, how much it covers, what it stores, and a name you can edit.
+- **A partition and its extent of a whole disk are one source.** Opening a whole disk shows its bands, lanes and extents, each with its own Open. A partition opened alone and the same extent seen from its disk share one interpretation and one set of results, in either order.
+
+- **A drive is recognised by markers, with a confidence.** A saved raw scan used to be offered only if every sampled block matched, so one block rewritten by a mount made a damaged drive look like a different one. A source now has up to 20 markers of 4 KiB, spread over the whole drive and skipping blank blocks, and each is compared on its own. The saved-scans list shows the confidence ("85%: 17 match, 2 changed, 1 unreadable") and where the changed markers are. An exact match loads as before. A probable match (60% or more) loads only after you accept the changed markers, and the scan records that it resumed on a changed source. Weaker matches are hidden unless you choose **Show all**, and a different drive or a different size is never offered. The CLI has `--accept-changed-markers` and `--show-all`, and the MCP tools `acceptChangedMarkers` and `showAll`. Scans saved by earlier versions are still recognised.
+
+**Changed**
+
+- **The start screen says each thing once.** Each volume is one compact row again, as before raw inspection was added, instead of carrying the same two raw-inspection buttons. The notes about mounted volumes, unsupported formats and read permission appear once under the list, with one permission command for every disk that needs it.
+
+- **The map's layer switch is gone.** Source bytes, declared partitions and filesystem evidence used to be three views to switch between; they are now drawn together.
+
+- **The engine package, library and directory are named `captainsalvage`.** The terminal agent tool `salvage-agent` is now `captainsalvage agent`.
+
+- **NTFS volumes can be opened from the start screen.** They were listed but could not be chosen.
+
+- **The treasure list is gone.** There is no list of files to copy any more, no "Add to the treasure list" button or tick box, and no Treasure list tab. A Disk Rebuild is the one way to build what gets copied: drag pieces from the left panel onto a parent in its tree. To copy a single file or folder, right-click it and choose Export.
+- **"Canvas" is now called "Disk Rebuild" everywhere**, in the window, the tool descriptions and the engine's messages. The tools for it are named `disk_rebuild_*`, and the argument that names one is `diskRebuild`.
+
+- **The start screen is a tree.** Each physical disk is a parent row with its own Open, and its partitions are nested under it, each with its filesystem, size, status, Block mount and Open. A disk with no readable partition table is still a parent row.
+
+- **The start screen shows each physical disk once, with its volumes under it.** A disk is one card with its name, size and device, and each volume is one short row with its filesystem, size, state and an Open button. Block mount is an inline checkbox on every row with a single note under the list, and a disk says once what it needs (an unmount, or permission to read) instead of repeating it for every volume. Each disk has its own Open, and the disk image form fits on one line. Three disks and their volumes fit on the screen without scrolling.
+
+- **A proper title area across the top of the window.** The left half shows the app icon and "Captain Salvage" as a title, with the version under it. The right half, the toolbar of an open disk, shows the disk or device name as a title in the same size and weight, with its size, Change disk and the Filesystem picker under it. The two halves have the same height and read as one row, and both still drag the window. A long device name is cut short, with its full path as a tooltip.
+- **The window shows the current app icon.** The icon in the window header, and the Windows tile icons, still showed the old magnifying glass. They are now made from the same artwork as the app icon, and a test fails if any of them differs from it.
+
+**Removed**
+
+- **An old treasure list is dropped, not imported.** Nobody used it, so a list kept by an earlier version does not become a Disk Rebuild, and the app never reads it. A map that still holds the old list's table keeps it, untouched.
+- **The old tool names are gone, with no replies pointing to new ones.** `basket_*`, `copy_plan`, `copy_start` and `canvas_*` do not exist; a call to one fails like any other unknown tool. Use `export_plan` and `export_start` (the person's to start) for one file or folder, and `disk_rebuild_*` for a Disk Rebuild, which is named by the `diskRebuild` argument. The old `canvas` argument is no longer read.
+
+**Fixed**
+
+- **A live file is no longer marked partially overwritten because of its own clusters.** Copying a live file does not count the allocation of its own clusters as damage.
+
+- **A copy now includes files that have no bytes.** A file that is live on the volume but empty, such as `__init__.py`, `.gitkeep` or a lock file, was left out of every copy and Export, and the status did not say so. It is now made at its destination, empty, with its name and date, counted in the plan and the report, and never over a file that is already there. This holds for exFAT, FAT and NTFS. An empty entry that was deleted is still not made into a file.
+
+- **Files with long entry sets are found.** A file whose directory entry carries more than eighteen secondary entries, as one with vendor extensions can, is now listed and recovered instead of being skipped.
+- **Less noise among lost entries.** A candidate entry whose checksum fails and whose reserved bytes are not zero is now treated as noise, not as a damaged file.
 
 ### v0.3.0 — 2026-11-17
 
