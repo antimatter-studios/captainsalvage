@@ -26,7 +26,6 @@ use crate::workspace::{BaselineCheck, Workspace};
 use anyhow::{anyhow, bail, Context, Result};
 use fs_exfat::primitives::{decode_timestamp, FAT_BAD, FAT_END, FIRST_CLUSTER};
 use rusqlite::types::ValueRef;
-use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
@@ -1710,11 +1709,8 @@ impl Session {
 
     /// Runs read-only SQL on the map. With `names_hidden`, name columns read as NULL.
     pub fn query_map_private(&self, sql: &str, names_hidden: bool) -> Result<Value> {
-        let mut connection = Connection::open_with_flags(
-            self.workspace.database(),
-            OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
-        connection.execute_batch("PRAGMA query_only = ON;")?;
+        let mut connection =
+            crate::disk_rebuild_rename::open_read_only(&self.workspace.database())?;
         crate::privacy::guard_connection(&mut connection, names_hidden)?;
         connection.busy_timeout(Duration::from_secs(30))?;
         let mut statement = connection.prepare(sql)?;

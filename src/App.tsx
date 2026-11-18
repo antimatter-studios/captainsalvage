@@ -21,6 +21,7 @@ import {
   type UnexplainedRun,
 } from "./api";
 import { useColumnWidths } from "./columns";
+import { DISK_REBUILD_STORAGE_KEY, rememberedDiskRebuild } from "./rememberedDiskRebuild";
 import { BrowseView, type BrowseScope } from "./components/BrowseView";
 import { Chat, type ChatActivity } from "./components/Chat";
 import { ColumnHandle } from "./components/ColumnHandle";
@@ -62,16 +63,6 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
 type CenterView = "overview" | "browse" | "bytes" | "zip";
-const DISK_REBUILD_STORAGE_KEY = "salvage-disk-rebuild";
-
-function rememberedDiskRebuild(): number | null {
-  try {
-    const saved = Number(localStorage.getItem(DISK_REBUILD_STORAGE_KEY));
-    return Number.isFinite(saved) && saved > 0 ? saved : null;
-  } catch {
-    return null;
-  }
-}
 const DISK_ACCESS_CHECK_MS = 3000;
 
 function asBrowseRow(row: Row): BrowseRow {

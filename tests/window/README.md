@@ -65,6 +65,12 @@ note about it, that a disk says once what it needs, that Open on a whole disk an
 each opens exactly its own bytes, and that the three disks fit on the screen at the default
 window size. It saves `picker-start.png` and `picker-start-notices.png` here.
 
+`disk_rebuild_rename_test.py` scans the jigsaw image, makes a Disk Rebuild, stops the app, turns
+the saved map back into what an older build wrote (the old table, column and index names), and
+starts the app again on the same throwaway home. It checks the map is renamed on open, the copy
+`map.sqlite.before-disk-rebuild-rename` is made and equals the old map, the Disk Rebuild is still
+listed in the Rebuild tab, and every row is where it was. It needs `jigsaw.img`.
+
 ## Which tests to run, and when
 
 CI does not run the window tests (they need a built app and a screen), so nothing else catches a
@@ -75,7 +81,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | Tests | Needs | Covers |
 |---|---|---|
 | `open_door_test.py`, `device_picker_test.py`, `raw_disk_test.py`, `raw_scan_test.py`, `raw_disk_lanes_test.py`, `raw_disk_crowded_test.py` | `jigsaw.img` for the first three and the lanes test | the one Open, the picker, the saved scans, the start screen tree, raw maps and scans |
-| `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` | the filesystem workspace opened from an image of one volume |
+| `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `disk_rebuild_rename_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` | the filesystem workspace opened from an image of one volume |
 | `macos_writes_test.py` | `macos.img` | what macOS wrote |
 | `archive_file_test.py` | `arctest.img` | archives |
 | `films_test.py` | `filmtest.img` | films |

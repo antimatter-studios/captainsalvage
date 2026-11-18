@@ -56,13 +56,13 @@ const NAME_COLUMNS: &[(&str, &str)] = &[
     ("sets", "name"),
     ("sets", "o_name"),
     ("nodes", "name"),
-    ("canvases", "name"),
-    ("canvas_items", "name"),
-    ("canvas_choices", "path"),
+    ("disk_rebuilds", "name"),
+    ("disk_rebuild_items", "name"),
+    ("disk_rebuild_choices", "path"),
     ("activity", "detail"),
     ("overlays", "payload"),
     ("overlays", "note"),
-    ("canvas_suggestions", "note"),
+    ("disk_rebuild_suggestions", "note"),
 ];
 
 /// The person's last choice, as saved in the app's folder. Agents see names until told not to.
@@ -129,9 +129,10 @@ pub fn guard_connection(connection: &mut Connection, names_hidden: bool) -> Resu
         AuthAction::Read {
             table_name,
             column_name,
-        } if NAME_COLUMNS
-            .iter()
-            .any(|(table, column)| *table == table_name && *column == column_name) =>
+        } if NAME_COLUMNS.iter().any(|(table, column)| {
+            *table == crate::disk_rebuild_rename::new_table_name(table_name)
+                && *column == column_name
+        }) =>
         {
             Authorization::Ignore
         }

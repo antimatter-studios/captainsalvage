@@ -1,4 +1,4 @@
-//! The app's own Finder locations, one per canvas shown in Finder.
+//! The app's own Finder locations, one per Disk Rebuild shown in Finder.
 //!
 //! Only the app that contains a File Provider extension may add or remove its locations, and it
 //! must be signed into the app group the extension reads. So this runs in the app itself, which
@@ -8,10 +8,10 @@
 //!
 //! The commands take a JSON request and give a JSON reply:
 //!
-//!   show     {base, token, serial, canvas, name, revision}  adds a location, gives its folder
-//!   hide     {serial, canvas}                                removes it
-//!   sync     {base, token, serial, canvases: [{id, name, revision}]}
-//!            refreshes this disk's locations, removes those whose canvas has gone, and marks
+//!   show     {base, token, serial, diskRebuild, name, revision}  adds a location, gives its folder
+//!   hide     {serial, diskRebuild}                                removes it
+//!   sync     {base, token, serial, diskRebuilds: [{id, name, revision}]}
+//!            refreshes this disk's locations, removes those whose Disk Rebuild has gone, and marks
 //!            other disks' locations as unreachable
 //!   offline  {}                                              marks every location unreachable
 //!   list     {}                                              the locations there are
@@ -40,29 +40,31 @@ const SIGNAL_SECONDS: u64 = 10;
 const FOLDER_TRIES: usize = 20;
 
 #[derive(Deserialize, Default)]
-struct Canvas {
+struct DiskRebuild {
     id: i64,
     revision: String,
 }
 
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct Request {
     base: Option<String>,
     token: Option<String>,
     serial: Option<String>,
-    canvas: Option<i64>,
+    disk_rebuild: Option<i64>,
     name: Option<String>,
     revision: Option<String>,
-    canvases: Option<Vec<Canvas>>,
+    disk_rebuilds: Option<Vec<DiskRebuild>>,
 }
 
-/// What the extension reads to reach the open disk: the media port, and which canvas.
+/// What the extension reads to reach the open disk: the media port, and which Disk Rebuild.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Config<'a> {
     base: &'a str,
     token: &'a str,
     serial: &'a str,
-    canvas: i64,
+    disk_rebuild: i64,
     revision: &'a str,
 }
 
@@ -102,14 +104,17 @@ fn domains_folder() -> Result<PathBuf> {
     Ok(folder)
 }
 
-fn identifier(serial: &str, canvas: i64) -> String {
-    format!("{serial}-{canvas}")
+fn identifier(serial: &str, disk_rebuild: i64) -> String {
+    format!("{serial}-{disk_rebuild}")
 }
 
 fn write(config: &Config) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let path = domains_folder()?.join(format!("{}.json", identifier(config.serial, config.canvas)));
+    let path = domains_folder()?.join(format!(
+        "{}.json",
+        identifier(config.serial, config.disk_rebuild)
+    ));
     // Only this user may read the port's token, from the moment the file exists.
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -254,24 +259,24 @@ pub fn run(command: &str, request: &Value) -> Result<Value> {
     let request: Request = serde_json::from_value(request.clone()).unwrap_or_default();
     match command {
         "show" => {
-            let (Some(base), Some(token), Some(serial), Some(canvas), Some(name)) = (
+            let (Some(base), Some(token), Some(serial), Some(disk_rebuild), Some(name)) = (
                 request.base.as_deref(),
                 request.token.as_deref(),
                 request.serial.as_deref(),
-                request.canvas,
+                request.disk_rebuild,
                 request.name.as_deref(),
             ) else {
-                bail!("show needs base, token, serial, canvas and name.");
+                bail!("show needs base, token, serial, diskRebuild and name.");
             };
             let revision = request.revision.as_deref().unwrap_or("0");
             write(&Config {
                 base,
                 token,
                 serial,
-                canvas,
+                disk_rebuild,
                 revision,
             })?;
-            let id = identifier(serial, canvas);
+            let id = identifier(serial, disk_rebuild);
             add(&id, name)?;
             signal(&id, name);
             Ok(match visible_folder(&id, name) {
@@ -282,10 +287,12 @@ pub fn run(command: &str, request: &Value) -> Result<Value> {
             })
         }
         "hide" => {
-            let (Some(serial), Some(canvas)) = (request.serial.as_deref(), request.canvas) else {
-                bail!("hide needs serial and canvas.");
+            let (Some(serial), Some(disk_rebuild)) =
+                (request.serial.as_deref(), request.disk_rebuild)
+            else {
+                bail!("hide needs serial and diskRebuild.");
             };
-            let id = identifier(serial, canvas);
+            let id = identifier(serial, disk_rebuild);
             if let Some((_, name)) = domains().into_iter().find(|(found, _)| *found == id) {
                 remove(&id, &name)?;
             }
@@ -300,29 +307,31 @@ pub fn run(command: &str, request: &Value) -> Result<Value> {
             ) else {
                 bail!("sync needs base, token and serial.");
             };
-            let canvases = request.canvases.unwrap_or_default();
+            let disk_rebuilds = request.disk_rebuilds.unwrap_or_default();
             let mut shown = Vec::new();
             for (id, name) in domains() {
-                let Some((owner, canvas)) = id.split_once('-') else {
+                let Some((owner, disk_rebuild)) = id.split_once('-') else {
                     continue;
                 };
-                let Ok(canvas) = canvas.parse::<i64>() else {
+                let Ok(disk_rebuild) = disk_rebuild.parse::<i64>() else {
                     continue;
                 };
                 if owner != serial {
-                    // Another disk's canvas: unreachable until that disk is open again.
+                    // Another disk's Disk Rebuild: unreachable until that disk is open again.
                     forget(&id);
                     signal(&id, &name);
-                } else if let Some(found) = canvases.iter().find(|item| item.id == canvas) {
+                } else if let Some(found) =
+                    disk_rebuilds.iter().find(|item| item.id == disk_rebuild)
+                {
                     write(&Config {
                         base,
                         token,
                         serial,
-                        canvas,
+                        disk_rebuild,
                         revision: &found.revision,
                     })?;
                     signal(&id, &name);
-                    shown.push(canvas);
+                    shown.push(disk_rebuild);
                 } else {
                     let _ = remove(&id, &name);
                     forget(&id);
@@ -340,5 +349,32 @@ pub fn run(command: &str, request: &Value) -> Result<Value> {
         _ => Ok(
             json!({"domains": domains().into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>()}),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_helper_reads_and_writes_disk_rebuild_keys() {
+        let request: Request = serde_json::from_value(json!({
+            "serial": "1a2b",
+            "diskRebuild": 7,
+            "diskRebuilds": [{"id": 7, "revision": "r"}],
+        }))
+        .unwrap();
+        assert_eq!(request.disk_rebuild, Some(7));
+        assert_eq!(request.disk_rebuilds.unwrap()[0].id, 7);
+        let config = serde_json::to_value(Config {
+            base: "http://127.0.0.1:1",
+            token: "t",
+            serial: "1a2b",
+            disk_rebuild: 7,
+            revision: "r",
+        })
+        .unwrap();
+        assert_eq!(config["diskRebuild"], 7);
+        assert_eq!(identifier("1a2b", 7), "1a2b-7");
     }
 }

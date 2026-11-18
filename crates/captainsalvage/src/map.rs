@@ -6,6 +6,7 @@
 //! `resolve.rs` holds the logic that infers that structure.
 
 use crate::content::{is_signature_class, CLASS_DIRECTORY, CLASS_FILL, CLASS_NAMES, CLASS_ZEROS};
+use crate::disk_rebuild_rename::{self, Prepared};
 use crate::filesystem::SalvageEntry as EntrySet;
 use crate::resolve::parse_extents_payload;
 use crate::volume::Volume;
@@ -147,15 +148,15 @@ CREATE TABLE IF NOT EXISTS islands (
     mean_entropy INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS islands_length ON islands (length);
-CREATE TABLE IF NOT EXISTS canvases (
+CREATE TABLE IF NOT EXISTS disk_rebuilds (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     created_at_millis INTEGER NOT NULL,
     updated_at_millis INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS canvas_items (
+CREATE TABLE IF NOT EXISTS disk_rebuild_items (
     id INTEGER PRIMARY KEY,
-    canvas INTEGER NOT NULL,
+    disk_rebuild INTEGER NOT NULL,
     kind TEXT NOT NULL,
     head INTEGER,
     name TEXT,
@@ -164,10 +165,10 @@ CREATE TABLE IF NOT EXISTS canvas_items (
     position INTEGER NOT NULL,
     created_at_millis INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS canvas_items_canvas ON canvas_items (canvas, parent_item);
-CREATE TABLE IF NOT EXISTS canvas_suggestions (
+CREATE INDEX IF NOT EXISTS disk_rebuild_items_disk_rebuild ON disk_rebuild_items (disk_rebuild, parent_item);
+CREATE TABLE IF NOT EXISTS disk_rebuild_suggestions (
     id INTEGER PRIMARY KEY,
-    canvas INTEGER NOT NULL,
+    disk_rebuild INTEGER NOT NULL,
     head INTEGER NOT NULL,
     place_item INTEGER,
     place_head INTEGER,
@@ -177,11 +178,11 @@ CREATE TABLE IF NOT EXISTS canvas_suggestions (
     state TEXT NOT NULL,
     created_at_millis INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS canvas_choices (
-    canvas INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS disk_rebuild_choices (
+    disk_rebuild INTEGER NOT NULL,
     path TEXT NOT NULL,
     entry INTEGER NOT NULL,
-    PRIMARY KEY (canvas, path)
+    PRIMARY KEY (disk_rebuild, path)
 );
 CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY,
@@ -196,7 +197,7 @@ CREATE TABLE IF NOT EXISTS activity (
 /// corrections to an entry: raw values from the disk stay untouched beside them,
 /// and every resolve recalculates them.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
-    ("canvas_items", "entry", "INTEGER"),
+    ("disk_rebuild_items", "entry", "INTEGER"),
     ("sets", "o_name", "TEXT"),
     ("sets", "o_first", "INTEGER"),
     ("sets", "o_length", "INTEGER"),
@@ -474,6 +475,9 @@ pub struct Page {
 
 pub struct MapDb {
     pub(crate) connection: Connection,
+    /// Why this map is open read-only: it still has the names from before Disk Rebuild and could
+    /// not be renamed. None for a map that can be written.
+    read_only: Option<String>,
 }
 
 pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_length, length), \
@@ -634,15 +638,40 @@ fn write_chunk(
 }
 
 impl MapDb {
+    /// Opens the map, first renaming a database that still has the names from before Disk Rebuild
+    /// (see `disk_rebuild_rename`). One that cannot be renamed opens read-only and unchanged;
+    /// `read_only_reason` says why.
     pub fn open(path: &Path) -> Result<Self> {
+        if let Prepared::ReadOnly(reason) = disk_rebuild_rename::prepare(path)? {
+            eprintln!("{reason}");
+            return Ok(Self {
+                connection: disk_rebuild_rename::open_read_only(path)?,
+                read_only: Some(reason),
+            });
+        }
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(300))?;
         connection.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
         connection.execute_batch("PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
-        let database = Self { connection };
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version < disk_rebuild_rename::SCHEMA_VERSION {
+            connection.execute_batch(&format!(
+                "PRAGMA user_version = {}",
+                disk_rebuild_rename::SCHEMA_VERSION
+            ))?;
+        }
+        let database = Self {
+            connection,
+            read_only: None,
+        };
         database.add_missing_columns()?;
         Ok(database)
+    }
+
+    /// Why the map was opened read-only, when it was.
+    pub fn read_only_reason(&self) -> Option<&str> {
+        self.read_only.as_deref()
     }
 
     fn add_missing_columns(&self) -> Result<()> {

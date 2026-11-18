@@ -8,6 +8,8 @@
 //! reopened on a probable match. `rescan-changed` reads them again, as the person asked, and
 //! changes nothing else.
 //!
+//! A Disk Rebuild is a virtual file tree built from segments of a scan, overlaid read only.
+//!
 //! `--call` runs one engine tool as the person. `export_start` copies one file or folder, and
 //! `disk_rebuild_copy_start` copies a Disk Rebuild; both wait for the copy to finish.
 
