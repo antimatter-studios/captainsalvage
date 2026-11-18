@@ -349,10 +349,13 @@ pub fn run() {
             captainsalvage::mount::keep_disks_awake();
             let engine = Engine::new();
             let handle = app.handle().clone();
+            #[cfg(feature = "test-hooks")]
             let allow_test_scripts = std::env::var_os("SALVAGE_TEST_UI").is_some();
             engine.set_ui_sink(Arc::new(move |event, payload| {
+                // Script for the window, sent by a test. This exists only in a test-hooks build,
+                // and even there it is inert unless this launch explicitly enabled it.
+                #[cfg(feature = "test-hooks")]
                 if event == "test-eval" {
-                    // Inert unless this launch explicitly enabled it, for testing the window.
                     if let (true, Some(window), Some(code)) = (
                         allow_test_scripts,
                         handle.get_webview_window("main"),
@@ -368,7 +371,9 @@ pub fn run() {
                 Ok(info) => (Some(info), None),
                 Err(error) => (None, Some(format!("{error:#}"))),
             };
-            // Lets a test instance run beside a window the user is working in.
+            // Lets a test instance run beside a window the user is working in. Only a test-hooks
+            // build reads these variables.
+            #[cfg(feature = "test-hooks")]
             if std::env::var_os("SALVAGE_TEST_HIDDEN").is_some() {
                 // Off screen, not hidden: a hidden web view cannot take its own picture.
                 if let Some(window) = app.get_webview_window("main") {
@@ -380,7 +385,9 @@ pub fn run() {
             }
             if let Some(window) = app.get_webview_window("main") {
                 let saved = window_theme(&get_theme());
-                if saved.is_some() && std::env::var_os("SALVAGE_TEST_DARK").is_none() {
+                #[cfg(feature = "test-hooks")]
+                let saved = saved.filter(|_| std::env::var_os("SALVAGE_TEST_DARK").is_none());
+                if saved.is_some() {
                     let _ = window.set_theme(saved);
                 }
             }

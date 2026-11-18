@@ -52,6 +52,11 @@ sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["bzip
 [features]
 oracle = []
 
+# Hooks for driving the window in tests (`tests/window/`). Off in every build that is shipped or
+# installed: without the feature this code is not compiled, so the app has no way to run script
+# in its window, no test environment variables and no refused-copy guard.
+test-hooks = []
+
 # Tests graded by Windows itself: Windows formats and fills NTFS volumes (validation/windows), and
 # the app must read them as Windows listed them. They fail, never skip, when Windows cannot be
 # reached: `chore test:windows-oracle` provides the Windows guest.

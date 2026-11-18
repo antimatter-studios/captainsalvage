@@ -667,7 +667,8 @@ impl Engine {
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 // Only for driving the window in a test: a made-up list of disks, so a test never
-                // shows or opens a real one. Ignored unless the test hook is on.
+                // shows or opens a real one. Only in a test-hooks build, and then only when asked.
+                #[cfg(feature = "test-hooks")]
                 if std::env::var_os("SALVAGE_TEST_UI").is_some() {
                     if let Some(file) = std::env::var_os("SALVAGE_TEST_STARTUP_DISKS") {
                         return Ok(serde_json::from_slice(&std::fs::read(file)?)?);
@@ -738,6 +739,8 @@ impl Engine {
                     .map_err(|_| anyhow!("selection lock poisoned"))? = args.clone();
                 Ok(json!({"ok": true}))
             }
+            // Runs script in the window. Only a test-hooks build has it: no other build can.
+            #[cfg(feature = "test-hooks")]
             "ui_eval" => {
                 self.emit("test-eval", args.clone());
                 Ok(json!({"sent": true}))
@@ -912,7 +915,9 @@ impl Engine {
             }
             "macos_writes" => Ok(json!({"dates": session.macos_writes()?})),
             "mount_history" => Ok(serde_json::to_value(session.mount_history()?)?),
-            // Only for driving the window in a test: never offered, and refused otherwise.
+            // Only for driving the window in a test: never offered, refused unless the test
+            // environment is set, and not compiled into any build but a test-hooks one.
+            #[cfg(feature = "test-hooks")]
             "test_disconnect" => {
                 if std::env::var_os("SALVAGE_TEST_UI").is_none() {
                     bail!("this is only for testing");

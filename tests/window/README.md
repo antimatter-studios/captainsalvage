@@ -9,11 +9,26 @@ to open or capture real files.
 
 ## Running one
 
-Build the app first (`npm run app`, see the README), then pass the binary inside the bundle:
+Build the test copy of the app first, then pass the binary inside its bundle:
 
 ```sh
-python3 tests/window/modes_test.py "target/release/bundle/macos/Captain Salvage.app/Contents/MacOS/captain-salvage"
+scripts/build-test-app.sh
+python3 tests/window/modes_test.py "target/test-hooks/release/bundle/macos/Captain Salvage.app/Contents/MacOS/captain-salvage"
 ```
+
+The tests need hooks that the shipped app does not have: a way to run script in its window
+(`ui_eval`), and the environment variables `SALVAGE_TEST_UI`, `SALVAGE_TEST_HIDDEN`,
+`SALVAGE_TEST_DARK`, `SALVAGE_TEST_COPY_ROOT`, `SALVAGE_TEST_STARTUP_DISKS` and `SALVAGE_AGENT_<ID>`.
+They are compiled in only by the Cargo feature `test-hooks`, which is off in `npm run app`,
+`scripts/release.py build` and the release workflow. `scripts/build-test-app.sh` builds the same
+commit with the feature, into `target/test-hooks`, so it never replaces the app in
+`target/release` or the one you installed. The harness refuses a binary that lacks the hooks.
+
+For a release candidate, run the window tests against a test-hooks build of the same commit as the
+candidate. Then prove the app that ships has none of the hooks, with
+`scripts/check-test-hooks.sh absent "target/release/bundle/macos/Captain Salvage.app"`. The release
+workflow runs that check on its own build, and the same script run with `present` checks the test
+build.
 
 Run one test at a time, and not while a build is running. Several at once, or a test beside a
 release build, slows the machine enough for the tests to time out.
@@ -124,7 +139,7 @@ make and attach their own throwaway disk images with `hdiutil`.
 - **A throwaway home.** The copy runs with `HOME` set to a new folder here, so it never sees
   your settings, workspaces or flagged disks. `SALVAGE_TEST_HOME` names a folder to use instead
   and keeps it afterwards.
-- **Copies stay in the test.** With `SALVAGE_TEST_UI` set, the app lists no `/Volumes` drive as
+- **Copies stay in the test.** In the test-hooks build, with `SALVAGE_TEST_UI` set, the app lists no `/Volumes` drive as
   a place to copy to, and refuses any copy or copy check outside its home, the temp folder or
   `SALVAGE_TEST_COPY_ROOT` (this folder). `copy_guard_test.py` checks this.
 - **Its own identity.** The bundle is copied to `testapp/` under a new bundle id each run, so a

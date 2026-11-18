@@ -91,6 +91,11 @@ pull request. When that has merged, `scripts/create-release --tag vX.Y.Z` tags `
    `main`, starts the pipeline, and then the release's candidate tags are deleted from origin and from here,
    each with the command that puts it back. Only the owner decides to do any of this.
 
+The shipped app has no test hooks: `ui_eval` and the `SALVAGE_TEST_*` variables exist only under the
+Cargo feature `test-hooks`, which `scripts/release.py build` and the release workflow leave off. So a
+release candidate's window suite runs against `scripts/build-test-app.sh` built from the same commit,
+and `scripts/check-test-hooks.sh absent` on the shipped bundle proves it holds none of them.
+
 ### Release candidates, before the release pull request merges
 
 With the release branch `release/vX.Y.Z` checked out, pushed and clean, `scripts/create-release --rc`

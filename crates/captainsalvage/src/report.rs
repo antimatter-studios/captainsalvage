@@ -200,6 +200,7 @@ fn check_one(row: &ManifestRow) -> &'static str {
 /// background. It reads only the destination. Earlier results are replaced.
 pub fn check_copies(destination: &Path) -> Result<()> {
     let destination = destination.to_path_buf();
+    #[cfg(feature = "test-hooks")]
     if let Some(problem) = crate::export::test_copy_problem(&destination) {
         bail!("{problem}");
     }

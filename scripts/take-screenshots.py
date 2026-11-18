@@ -5,8 +5,9 @@ Run this for each new version:
 
     scripts/take-screenshots.py media/changelog/<version>
 
-It starts a second copy of the built app off screen, so a window you are working
-in is left alone. It drives that copy through its test hook and saves PNGs.
+It starts a second copy of the test-hooks build (scripts/build-test-app.sh) off screen, so a
+window you are working in is left alone. It drives that copy through its test hook and saves PNGs.
+The shipped app has no test hook, so this script cannot drive it.
 
 Names on a real disk are private, so the copy blurs them. Always look at each image
 before committing it: bytes and chat answers can still hold names.
@@ -25,7 +26,7 @@ from pathlib import Path
 CONFIG = Path.home() / "Library/Application Support/Captain Salvage"
 BINARY = Path(os.environ.get(
     "SALVAGE_BINARY",
-    Path(__file__).resolve().parent.parent / "target/release/bundle/macos/Captain Salvage.app/Contents/MacOS/captain-salvage",
+    Path(__file__).resolve().parent.parent / "target/test-hooks/release/bundle/macos/Captain Salvage.app/Contents/MacOS/captain-salvage",
 ))
 OUTPUT_WIDTH = "1600"
 HIDE_NAMES = """

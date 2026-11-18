@@ -600,8 +600,9 @@ impl Session {
             filesystem
                 .read_only
                 .then(|| "This destination is read-only.".to_string())
-        })
-        .or_else(|| test_copy_problem(destination));
+        });
+        #[cfg(feature = "test-hooks")]
+        let problem = problem.or_else(|| test_copy_problem(destination));
         Ok((filesystem, problem))
     }
 
@@ -1201,15 +1202,19 @@ impl Session {
     }
 }
 
-/// Set when the app runs under the window tests (`tests/window/harness.py`).
+/// Set when the app runs under the window tests (`tests/window/harness.py`). Like everything
+/// here that reads a test variable, it exists only in a build with the `test-hooks` feature.
+#[cfg(feature = "test-hooks")]
 const TEST_UI: &str = "SALVAGE_TEST_UI";
 /// A folder a test copy of the app may also write recovered files to, besides its HOME and the
 /// temp folder.
+#[cfg(feature = "test-hooks")]
 const TEST_COPY_ROOT: &str = "SALVAGE_TEST_COPY_ROOT";
 
 /// Why a test copy of the app may not write to this folder, if it may not. Under the window
 /// tests, copies stay inside HOME (a throwaway one), the temp folder, or `SALVAGE_TEST_COPY_ROOT`,
 /// so a test that starts a copy can never write to a real drive.
+#[cfg(feature = "test-hooks")]
 pub(crate) fn test_copy_problem(destination: &Path) -> Option<String> {
     std::env::var_os(TEST_UI)?;
     let refused = || {
@@ -1233,6 +1238,7 @@ pub(crate) fn test_copy_problem(destination: &Path) -> Option<String> {
 
 /// Whether a path is inside one of these absolute folders, as written or after resolving the
 /// folder's links (`/tmp` is `/private/tmp`). A path that climbs with `..` is never inside.
+#[cfg(feature = "test-hooks")]
 fn inside_any(path: &Path, roots: &[PathBuf]) -> bool {
     if path
         .components()
@@ -1258,7 +1264,11 @@ pub fn list_volumes(source: Option<&Path>) -> Result<Vec<Value>> {
     let mut candidates = vec![std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")?];
-    if std::env::var_os(TEST_UI).is_none() {
+    #[cfg(feature = "test-hooks")]
+    let list_real_drives = std::env::var_os(TEST_UI).is_none();
+    #[cfg(not(feature = "test-hooks"))]
+    let list_real_drives = true;
+    if list_real_drives {
         for item in fs::read_dir("/Volumes")?.flatten() {
             candidates.push(item.path());
         }
@@ -1312,6 +1322,7 @@ mod tests {
         row.clusters_allocated = 0;
         assert!(!super::is_partial(&row));
     }
+    #[cfg(feature = "test-hooks")]
     #[test]
     fn test_copies_stay_inside_their_folders() {
         let roots = [PathBuf::from("/tmp/fakehome"), PathBuf::from("relative")];

@@ -80,6 +80,10 @@ jobs:
         run: cargo test -p captainsalvage --locked
       - name: build the app
         run: python3 scripts/release.py build
+      # The app that ships has no test hooks. Its window tests run against a test-hooks build of
+      # the same commit, which this build never is.
+      - name: the shipped app holds no test hook
+        run: scripts/check-test-hooks.sh absent "target/release/bundle/macos/Captain Salvage.app"
       - name: package it
         run: |
           label="${GITHUB_REF_NAME#v}"
