@@ -1,114 +1,21 @@
 use crate::disk::{DiscoveryBatch, RawDisk, ReadFailure, DISCOVERY_BATCH_BYTES};
 use crate::filesystem::probe::Evidence;
 use crate::workspace::{now_millis, Workspace};
-use anyhow::{ensure, Context, Result};
-use rusqlite::{params, Connection, TransactionBehavior};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use anyhow::{bail, ensure, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use serde::Serialize;
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
-const FINGERPRINT_VERSION: u32 = 1;
+mod markers;
+use markers::hex;
+pub use markers::{
+    Comparison, Fingerprint, MarkerReader, Sample, Verification, MARKER_BYTES, MARKER_COUNT,
+    MIN_MATCHED_MARKERS, PROBABLE_PERCENT,
+};
+
 const SCANNER_VERSION: u32 = 1;
-const SAMPLE_BYTES: u64 = 4096;
-const SAMPLE_COUNT: u64 = 16;
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Sample {
-    pub offset: u64,
-    pub length: u64,
-    pub sha256: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Fingerprint {
-    pub version: u32,
-    pub length: u64,
-    pub samples: Vec<Sample>,
-    pub sampled_sha256: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum Verification {
-    SampledMatch,
-    Mismatch,
-    Unverifiable,
-    Incompatible,
-}
-
-impl Fingerprint {
-    pub fn read(disk: &RawDisk) -> Self {
-        let length = disk.length.min(SAMPLE_BYTES);
-        let last = disk.length - length;
-        let offsets: BTreeSet<u64> = (0..SAMPLE_COUNT)
-            .map(|index| {
-                if index == SAMPLE_COUNT - 1 {
-                    last
-                } else {
-                    (u128::from(last) * u128::from(index) / u128::from(SAMPLE_COUNT - 1)) as u64
-                        / SAMPLE_BYTES
-                        * SAMPLE_BYTES
-                }
-            })
-            .collect();
-        let samples: Vec<Sample> = offsets
-            .into_iter()
-            .map(|offset| Sample {
-                offset,
-                length,
-                sha256: disk.read(offset, length).ok().map(|data| hash(&data)),
-            })
-            .collect();
-        let sampled_sha256 = samples
-            .iter()
-            .all(|sample| sample.sha256.is_some())
-            .then(|| {
-                let mut digest = Sha256::new();
-                digest.update(b"Captain Salvage sampled disk fingerprint\0");
-                digest.update(FINGERPRINT_VERSION.to_le_bytes());
-                digest.update(disk.length.to_le_bytes());
-                for sample in &samples {
-                    digest.update(sample.offset.to_le_bytes());
-                    digest.update(sample.length.to_le_bytes());
-                    digest.update(sample.sha256.as_ref().unwrap().as_bytes());
-                }
-                hex(&digest.finalize())
-            });
-        Self {
-            version: FINGERPRINT_VERSION,
-            length: disk.length,
-            samples,
-            sampled_sha256,
-        }
-    }
-
-    pub fn verify(&self, current: &Self) -> Verification {
-        if self.version != current.version {
-            Verification::Incompatible
-        } else if self.length != current.length {
-            Verification::Mismatch
-        } else if self.sampled_sha256.is_none() || current.sampled_sha256.is_none() {
-            Verification::Unverifiable
-        } else if self.samples == current.samples && self.sampled_sha256 == current.sampled_sha256 {
-            Verification::SampledMatch
-        } else {
-            Verification::Mismatch
-        }
-    }
-}
-
-fn hash(data: &[u8]) -> String {
-    hex(&Sha256::digest(data))
-}
-
-fn hex(data: &[u8]) -> String {
-    data.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 fn identifier() -> Result<String> {
     let mut bytes = [0u8; 16];
@@ -125,13 +32,39 @@ pub struct ScanSummary {
     pub next_offset: u64,
     pub updated_at_millis: u64,
     pub verification: Verification,
+    /// Which markers match, changed or could not be read, and what that means.
+    pub comparison: Comparison,
+    /// Set when this scan was resumed on a source that had changed.
+    pub changed_source: Option<ChangedSource>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedScans {
+    /// The markers of the source that is open now.
     pub fingerprint: Fingerprint,
     pub scans: Vec<ScanSummary>,
+    /// Saved scans left out because their confidence is below 60 percent. `show_all` lists them.
+    pub hidden: usize,
+}
+
+/// The record that a scan resumed on a source that was only a probable match. Findings near the
+/// changed markers may be stale: nothing here rescans them, it only keeps what is known.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedSource {
+    /// How many times the scan was resumed on a changed source.
+    pub resumes: u32,
+    pub resumed_at_millis: u64,
+    /// The latest comparison.
+    pub confidence_percent: u32,
+    pub matched: usize,
+    pub changed: usize,
+    pub unreadable: usize,
+    pub total: usize,
+    /// Every marker offset that has been seen changed on any of those resumes.
+    pub changed_offsets: Vec<u64>,
+    pub summary: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +76,7 @@ pub struct ScanSnapshot {
     pub next_offset: u64,
     pub findings: Vec<Evidence>,
     pub errors: Vec<ReadFailure>,
+    pub changed_source: Option<ChangedSource>,
 }
 
 #[derive(Serialize)]
@@ -186,41 +120,64 @@ impl ScanStore {
                  scan_id TEXT NOT NULL REFERENCES raw_scans(id), offset INTEGER NOT NULL,
                  length INTEGER NOT NULL, error TEXT NOT NULL, source_token TEXT NOT NULL,
                  PRIMARY KEY(scan_id, offset)
+             );
+             CREATE TABLE IF NOT EXISTS raw_scan_changes (
+                 scan_id TEXT PRIMARY KEY REFERENCES raw_scans(id), resumes INTEGER NOT NULL,
+                 resumed_at_millis INTEGER NOT NULL, confidence_percent INTEGER NOT NULL,
+                 matched INTEGER NOT NULL, changed INTEGER NOT NULL, unreadable INTEGER NOT NULL,
+                 total INTEGER NOT NULL, changed_offsets TEXT NOT NULL, summary TEXT NOT NULL
              );",
         )?;
         Ok(Self { connection })
     }
 
     pub fn list(&self, disk: &RawDisk) -> Result<SavedScans> {
-        let fingerprint = Fingerprint::read(disk);
-        let path = disk.path.to_string_lossy();
+        self.list_matching(disk, false)
+    }
+
+    /// Saved scans of sources with this length, each compared with the open source marker by
+    /// marker. Scans below 60 percent are left out and counted, unless `show_all` is set, which
+    /// lists those above 0 percent. A different source is never listed.
+    pub fn list_matching(&self, disk: &RawDisk, show_all: bool) -> Result<SavedScans> {
+        let mut reader = MarkerReader::new(disk);
+        let fingerprint = Fingerprint::read_with(&mut reader);
         let mut statement = self.connection.prepare(
-            "SELECT id, fingerprint, source_path, scanner_version, scan_start, scan_end,
+            "SELECT id, fingerprint, scanner_version, scan_start, scan_end,
                     next_offset, updated_at_millis FROM raw_scans
-             WHERE source_length = ?1 OR source_path = ?2 ORDER BY updated_at_millis DESC",
+             WHERE source_length = ?1 ORDER BY updated_at_millis DESC",
         )?;
-        let mut rows = statement.query(params![i64::try_from(disk.length)?, path])?;
+        let mut rows = statement.query(params![i64::try_from(disk.length)?])?;
         let mut scans = Vec::new();
+        let mut hidden = 0;
         while let Some(row) = rows.next()? {
             let saved: Fingerprint = serde_json::from_str(&row.get::<_, String>(1)?)?;
-            let verification = if row.get::<_, u32>(3)? != SCANNER_VERSION {
-                Verification::Incompatible
-            } else {
-                saved.verify(&fingerprint)
+            let comparison = saved.compare(&mut reader);
+            let verification = match comparison.state {
+                Verification::Different => continue,
+                _ if row.get::<_, u32>(2)? != SCANNER_VERSION => Verification::Incompatible,
+                state => state,
             };
-            if verification != Verification::SampledMatch && row.get::<_, String>(2)? != path {
+            if verification == Verification::Weak && !show_all {
+                hidden += 1;
                 continue;
             }
+            let id: String = row.get(0)?;
             scans.push(ScanSummary {
-                id: row.get(0)?,
-                scan_start: row.get::<_, i64>(4)? as u64,
-                scan_end: row.get::<_, i64>(5)? as u64,
-                next_offset: row.get::<_, i64>(6)? as u64,
-                updated_at_millis: row.get::<_, i64>(7)? as u64,
+                changed_source: self.changed_source(&id)?,
+                id,
+                scan_start: row.get::<_, i64>(3)? as u64,
+                scan_end: row.get::<_, i64>(4)? as u64,
+                next_offset: row.get::<_, i64>(5)? as u64,
+                updated_at_millis: row.get::<_, i64>(6)? as u64,
                 verification,
+                comparison,
             });
         }
-        Ok(SavedScans { fingerprint, scans })
+        Ok(SavedScans {
+            fingerprint,
+            scans,
+            hidden,
+        })
     }
 
     pub fn create(&mut self, disk: &RawDisk, start: u64, length: u64) -> Result<ScanSnapshot> {
@@ -270,17 +227,15 @@ impl ScanStore {
         disk: &RawDisk,
         id: &str,
         accept_sampled_match: bool,
+        accept_changed_markers: bool,
     ) -> Result<ScanSnapshot> {
         ensure!(accept_sampled_match, "Resuming requires acknowledgement that sampled matches do not prove the entire source is identical.");
         let mut bindings = disk
             .scan_tokens
             .lock()
             .map_err(|_| anyhow::anyhow!("scan lock poisoned"))?;
-        let current = Fingerprint::read(disk);
-        let transaction = self
+        let (fingerprint, scanner_version): (String, u32) = self
             .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (fingerprint, scanner_version): (String, u32) = transaction
             .query_row(
                 "SELECT fingerprint, scanner_version FROM raw_scans WHERE id = ?1",
                 [id],
@@ -292,11 +247,25 @@ impl ScanStore {
             "Saved scan uses an incompatible scanner; start a new scan."
         );
         let saved: Fingerprint = serde_json::from_str(&fingerprint)?;
-        ensure!(
-            saved.verify(&current) == Verification::SampledMatch,
-            "Source fingerprint differs or could not be verified; saved scan was not resumed."
-        );
+        // The markers are read before the database is locked, once each and within a time limit.
+        let comparison = saved.compare(&mut MarkerReader::new(disk));
+        match comparison.state {
+            Verification::Exact => {}
+            Verification::Probable => ensure!(
+                accept_changed_markers,
+                "The source is only a probable match for this saved scan ({}% of markers match). {} Resuming needs explicit acknowledgement of the changed markers.",
+                comparison.confidence_percent,
+                comparison.summary
+            ),
+            _ => bail!(
+                "Source fingerprint differs or could not be verified; saved scan was not resumed. {}",
+                comparison.summary
+            ),
+        }
         let token = identifier()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "UPDATE raw_scans SET next_offset = min(next_offset,
                 coalesce((SELECT min(offset) FROM raw_failures WHERE scan_id = ?1), next_offset)),
@@ -307,6 +276,9 @@ impl ScanStore {
             "UPDATE raw_scans SET attempt_start = next_offset WHERE id = ?1",
             [id],
         )?;
+        if comparison.state == Verification::Probable {
+            record_changed_source(&transaction, id, &comparison)?;
+        }
         transaction.commit()?;
         bindings.insert(id.into(), token);
         self.snapshot(id)
@@ -439,8 +411,77 @@ impl ScanStore {
             next_offset: next as u64,
             findings,
             errors,
+            changed_source: self.changed_source(id)?,
         })
     }
+
+    fn changed_source(&self, id: &str) -> Result<Option<ChangedSource>> {
+        self.connection
+            .query_row(
+                "SELECT resumes, resumed_at_millis, confidence_percent, matched, changed,
+                        unreadable, total, changed_offsets, summary
+                 FROM raw_scan_changes WHERE scan_id = ?1",
+                [id],
+                |row| {
+                    Ok(ChangedSource {
+                        resumes: row.get(0)?,
+                        resumed_at_millis: row.get::<_, i64>(1)? as u64,
+                        confidence_percent: row.get(2)?,
+                        matched: row.get::<_, i64>(3)? as usize,
+                        changed: row.get::<_, i64>(4)? as usize,
+                        unreadable: row.get::<_, i64>(5)? as usize,
+                        total: row.get::<_, i64>(6)? as usize,
+                        changed_offsets: serde_json::from_str(&row.get::<_, String>(7)?)
+                            .unwrap_or_default(),
+                        summary: row.get(8)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+}
+
+/// Keeps what a probable match changed: the offsets of every marker seen changed, joined over
+/// all such resumes, so the regions around them can be rescanned later.
+fn record_changed_source(
+    transaction: &rusqlite::Transaction,
+    id: &str,
+    comparison: &Comparison,
+) -> Result<()> {
+    let earlier: Option<(u32, String)> = transaction
+        .query_row(
+            "SELECT resumes, changed_offsets FROM raw_scan_changes WHERE scan_id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (resumes, mut offsets) = match earlier {
+        Some((resumes, offsets)) => (
+            resumes,
+            serde_json::from_str::<Vec<u64>>(&offsets).unwrap_or_default(),
+        ),
+        None => (0, Vec::new()),
+    };
+    offsets.extend(&comparison.changed_offsets);
+    offsets.sort_unstable();
+    offsets.dedup();
+    transaction.execute(
+        "INSERT OR REPLACE INTO raw_scan_changes VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            id,
+            resumes + 1,
+            now_millis() as i64,
+            comparison.confidence_percent,
+            comparison.matched as i64,
+            comparison.changed as i64,
+            comparison.unreadable as i64,
+            comparison.total as i64,
+            serde_json::to_string(&offsets)?,
+            comparison.summary
+        ],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

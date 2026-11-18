@@ -1,7 +1,8 @@
-"""Verify raw scan ETA, durable checkpoints and sampled clone recognition in an isolated app."""
+"""Verify raw scan ETA, durable checkpoints and marker-based clone recognition in an isolated app."""
 import hashlib
 import json
 import os
+import random
 import shutil
 import sqlite3
 import struct
@@ -38,9 +39,13 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
     header[13] = 8
     struct.pack_into("<Q", header, 40, 48 * 1024 * 1024 // 512)
     header[510:512] = b"\x55\xaa"
+    # Every block holds bytes that tell this drive from another (blank blocks are not markers),
+    # and none repeats a short pattern. Block 0 carries the NTFS boot sector the scan finds.
+    block = random.Random(7).randbytes(4096)
     with source.open("wb") as stream:
-        stream.write(header)
-        stream.truncate(48 * 1024 * 1024)
+        stream.write(header + block[512:])
+        for _ in range(48 * 1024 * 1024 // 4096 - 1):
+            stream.write(block)
     original_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     database = Path(home) / "Library/Application Support/Captain Salvage/raw-scans.sqlite"
     try:
@@ -78,7 +83,9 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         start(sys.argv[1])
         open_raw(clone)
         check("saved scans survive app restart and a different path", wait_for("!![...document.querySelectorAll('.recovery button')].find(button=>button.textContent==='Load saved scan' && !button.disabled)"), True)
-        check("sampled verification limitation is visible", probe("document.querySelector('.recovery').textContent.includes('do not verify every byte')"), True)
+        check("the match is shown as a confidence", probe("document.querySelector('.recovery').textContent.includes('100% match: 20 match, 0 changed, 0 unreadable')"), True)
+        check("the sampled limitation is visible", probe("document.querySelector('.recovery').textContent.includes('not proof that every byte is identical')"), True)
+        check("an exact match loads without a second question", probe("!document.querySelector('.recovery [role=alertdialog]')"), True)
         click("Load saved scan", ".recovery")
         check("loading restores the same stable scan ID", wait_for("document.querySelector('.recovery').textContent.includes(%s)" % json.dumps("Scan " + scan_id + ".")), True)
         check("loading restores findings without rescanning", probe("document.querySelector('.explorer').textContent.includes('NTFS')"), True)
@@ -90,15 +97,33 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         check("resuming does not create another scan", (saved_id, saved_next, count), (scan_id, scan_end, 1))
         click("Change disk", ".toolbar")
         check("return to disk selection", wait_for("!!document.querySelector('.start-image input')"), True)
+        # A mount rewrote the last block: one marker of twenty changed, so the drive is probable.
         with clone.open("r+b") as stream:
             stream.seek(-1, 2)
             stream.write(b"\x01")
         open_raw(clone)
-        check("changed contents at the same path block resume", wait_for("document.querySelector('.recovery').textContent.includes('Source contents differ; resume blocked.')"), True)
-        check("mismatching saved scan cannot be loaded", probe("[...document.querySelectorAll('.recovery button')].find(button=>button.textContent==='Load saved scan')?.disabled"), True)
+        check("a changed block leaves a probable match with its confidence", wait_for("document.querySelector('.recovery').textContent.includes('95% match: 19 match, 1 changed, 0 unreadable')"), True)
+        check("the changed marker is explained", probe("document.querySelector('.recovery').textContent.includes('1 of 20 markers changed.')"), True)
+        click("Load saved scan", ".recovery")
+        check("the window asks before loading a probable match", wait_for("!!document.querySelector('.recovery [role=alertdialog]')"), True)
+        click("Load anyway", ".recovery")
+        check("a probable match loads once acknowledged", wait_for("document.querySelector('.recovery').textContent.includes('resumed on a source that had changed')"), True)
         opened = call("open_raw_disk", path=str(clone))
         refused = call("resume_raw_scan", diskId=opened["id"], scanId=scan_id, acceptSampledMatch=True)
-        check("backend independently refuses a mismatched source", "error" in refused, True)
+        check("backend refuses a probable match without acknowledging the changed markers", "error" in refused, True)
+        accepted = call("resume_raw_scan", diskId=opened["id"], scanId=scan_id, acceptSampledMatch=True, acceptChangedMarkers=True)
+        check("backend resumes a probable match once the changed markers are acknowledged", len(accepted.get("changedSource", {}).get("changedOffsets", [])), 1)
+        click("Change disk", ".toolbar")
+        check("return to disk selection again", wait_for("!!document.querySelector('.start-image input')"), True)
+        # Everything but the first block rewritten: a different drive, which is never offered.
+        with clone.open("r+b") as stream:
+            stream.seek(4096)
+            stream.write(random.Random(8).randbytes(48 * 1024 * 1024 - 4096))
+        open_raw(clone)
+        check("a different drive is not offered, even with Show all", wait_for("!document.querySelector('.recovery').textContent.includes('Saved scans')"), True)
+        opened = call("open_raw_disk", path=str(clone))
+        refused = call("resume_raw_scan", diskId=opened["id"], scanId=scan_id, acceptSampledMatch=True, acceptChangedMarkers=True)
+        check("backend independently refuses a different source", "error" in refused, True)
         check("the original source was never modified", hashlib.sha256(source.read_bytes()).hexdigest(), original_hash)
     finally:
         finish()

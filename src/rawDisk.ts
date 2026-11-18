@@ -35,11 +35,43 @@ export interface DiscoveryBatch {
 
 export interface RawDiskState extends RawDiskOverview {
   scanId: string | null;
+  /** Set when the scan was resumed on a source that had changed. */
+  changedSource?: ChangedSource | null;
   findings: DiskEvidence[];
   errors: DiscoveryBatch["errors"];
   nextOffset: number | null;
   scanEnd: number | null;
   scanStart: number | null;
+}
+
+/** How well a saved scan's markers match the open source. `exact` is all of them, `probable` is 60% or more. */
+export type MatchState = "exact" | "probable" | "weak" | "different" | "incompatible";
+
+export interface MarkerComparison {
+  state: MatchState;
+  total: number;
+  matched: number;
+  changed: number;
+  unreadable: number;
+  /** Matched markers out of all markers, rounded down. */
+  confidencePercent: number;
+  changedOffsets: number[];
+  unreadableOffsets: number[];
+  /** What changed and where, in the engine's English. Show it with `fromEngine`. */
+  summary: string;
+}
+
+/** The record that a scan resumed on a source that was only a probable match. */
+export interface ChangedSource {
+  resumes: number;
+  resumedAtMillis: number;
+  confidencePercent: number;
+  matched: number;
+  changed: number;
+  unreadable: number;
+  total: number;
+  changedOffsets: number[];
+  summary: string;
 }
 
 export interface SavedScanSummary {
@@ -48,12 +80,16 @@ export interface SavedScanSummary {
   scanEnd: number;
   nextOffset: number;
   updatedAtMillis: number;
-  verification: "sampled-match" | "mismatch" | "unverifiable" | "incompatible";
+  verification: MatchState;
+  comparison: MarkerComparison;
+  changedSource: ChangedSource | null;
 }
 
 export interface SavedScans {
-  fingerprint: { sampledSha256: string | null };
+  fingerprint: { sampledSha256: string | null; samples: { offset: number }[]; markersWanted: number };
   scans: SavedScanSummary[];
+  /** Saved scans left out because they match under 60%. Asking for all of them lists these. */
+  hidden: number;
 }
 
 export interface ScanSnapshot {
@@ -63,6 +99,7 @@ export interface ScanSnapshot {
   nextOffset: number;
   findings: DiskEvidence[];
   errors: DiscoveryBatch["errors"];
+  changedSource: ChangedSource | null;
 }
 
 export function scanEstimate(start: number, cursor: number, end: number, elapsedMillis: number): { bytesPerSecond: number; secondsLeft: number } | null {

@@ -26,8 +26,9 @@ workspace without modifying the source. It saves a screenshot to
 `/tmp/captainsalvage-raw-workspace.png` for visual inspection.
 
 `raw_scan_test.py` checks raw-scan speed and ETA, pauses between bounded batches, restarts its
-isolated test app, and resumes the saved scan against a renamed clone. It verifies that a
-changed sample blocks resume in both the window and the backend. Its temporary source images,
+isolated test app, and resumes the saved scan against a renamed clone. It verifies that one changed
+marker leaves a probable match that needs its own acknowledgement, and that a source whose
+markers nearly all changed is not offered, in both the window and the backend. Its temporary source images,
 database and app home never use real disks or the user's application data.
 
 `raw_disk_crowded_test.py` scans a sparse synthetic image holding 1500 NTFS boot sectors and

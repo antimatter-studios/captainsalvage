@@ -43,6 +43,8 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
   const [failure, setFailure] = useState<string | null>(null);
   const [hex, setHex] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedScans | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<ReturnType<typeof scanEstimate>>(null);
   const stop = useRef(false);
   const mounted = useRef(true);
@@ -56,11 +58,11 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     mounted.current = true;
     setVisibleFindings(FINDINGS_PAGE_SIZE);
     setVisibleErrors(FINDINGS_PAGE_SIZE);
-    void call<SavedScans>("list_raw_scans", { diskId: disk.id }).then((result) => {
+    void call<SavedScans>("list_raw_scans", { diskId: disk.id, showAll }).then((result) => {
       if (mounted.current) setSaved(result);
     }).catch((reason) => { if (mounted.current) setFailure(String(reason)); });
     return () => { mounted.current = false; stop.current = true; };
-  }, [disk.id]);
+  }, [disk.id, showAll]);
 
   const busy = running || opening;
   const first = Number(start);
@@ -131,20 +133,21 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
     } finally {
       if (mounted.current) {
         setRunning(false);
-        void call<SavedScans>("list_raw_scans", { diskId: disk.id }).then((result) => {
+        void call<SavedScans>("list_raw_scans", { diskId: disk.id, showAll }).then((result) => {
           if (mounted.current) setSaved(result);
         }).catch((reason) => { if (mounted.current) setFailure(String(reason)); });
       }
     }
   }
 
-  async function loadScan(scanId: string) {
+  async function loadScan(scanId: string, acceptChangedMarkers: boolean) {
     if (running || opening) return;
     setOpening(true);
     setFailure(null);
     setEstimate(null);
+    setConfirming(null);
     try {
-      const result = await call<ScanSnapshot>("resume_raw_scan", { diskId: disk.id, scanId, acceptSampledMatch: true });
+      const result = await call<ScanSnapshot>("resume_raw_scan", { diskId: disk.id, scanId, acceptSampledMatch: true, acceptChangedMarkers });
       if (!mounted.current) return;
       onUpdate({ ...disk, ...result });
       selectRange(result.scanStart, result.scanEnd - result.scanStart);
@@ -334,16 +337,27 @@ export function RawDiskView({ disk, onUpdate, onOpen, onBack, onReturn, center, 
           </div>
           {disk.nextOffset !== null && <p className="recovery-note" role="status">{t("Examined through byte {offset}. No findings is not proof of empty space.", { offset: disk.nextOffset })}</p>}
           {disk.scanId && <p className="recovery-note" title={disk.scanId}>{t("Scan {id}. Each completed batch is saved on this Mac.", { id: disk.scanId })}</p>}
-          {saved && saved.fingerprint.sampledSha256 === null && <p className="warn">{t("Some fingerprint samples could not be read. Progress can be saved, but this source cannot be verified for resume after reopening.")}</p>}
-          {saved && saved.scans.some((scan) => scan.id !== disk.scanId) && <section aria-label={t("Saved scans")}>
+          {saved && saved.fingerprint.samples.length === 0 && <p className="warn">{t("No part of this source could be used to recognise it. Progress can be saved, but a saved scan cannot be matched to this source after reopening.")}</p>}
+          {saved && saved.fingerprint.samples.length > 0 && saved.fingerprint.samples.length < saved.fingerprint.markersWanted && <p className="recovery-note">{t("Only {count} of {wanted} markers could be used, because the source is small, mostly blank or partly unreadable.", { count: saved.fingerprint.samples.length, wanted: saved.fingerprint.markersWanted })}</p>}
+          {disk.changedSource && <p className="warn" role="status">{t("This scan was resumed on a source that had changed, so findings near the changed markers may be out of date.")} {fromEngine(disk.changedSource.summary)}</p>}
+          {saved && (saved.scans.some((scan) => scan.id !== disk.scanId) || saved.hidden > 0 || showAll) && <section aria-label={t("Saved scans")}>
             <h3>{t("Saved scans")}</h3>
-            <p className="recovery-note">{t("Matching samples suggest the same contents, including a clone or image; they do not verify every byte. Loading a saved scan accepts this limitation. Previous unreadable regions will be retried.")}</p>
+            <p className="recovery-note">{t("A saved scan is matched by markers, small blocks spread over the source. The match is a confidence, not proof that every byte is identical. Loading a saved scan accepts this. Previous unreadable regions will be retried.")}</p>
+            <label className="recovery-note"><input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} /> {t("Show all")}</label>
+            {!showAll && saved.hidden > 0 && <p className="recovery-note">{t("{count} saved scans match too little to be listed (under 60%).", { count: saved.hidden })}</p>}
             {saved.scans.filter((scan) => scan.id !== disk.scanId).map((scan) => <div key={scan.id} className="raw-entry-actions">
-              <button disabled={busy || scan.verification !== "sampled-match"} title={scan.id} onClick={() => void loadScan(scan.id)}>{t("Load saved scan")}</button>
+              <button disabled={busy || (scan.verification !== "exact" && scan.verification !== "probable")} title={scan.id} onClick={() => scan.verification === "probable" ? setConfirming(scan.id) : void loadScan(scan.id, false)}>{t("Load saved scan")}</button>
               <span>{bytes(scan.scanStart)}–{bytes(scan.scanEnd)} · {decimal((scan.nextOffset - scan.scanStart) / (scan.scanEnd - scan.scanStart) * 100, 1)}% · {new Date(scan.updatedAtMillis).toLocaleString()}</span>
-              {scan.verification === "mismatch" && <span className="warn">{t("Source contents differ; resume blocked.")}</span>}
-              {scan.verification === "unverifiable" && <span className="warn">{t("Fingerprint could not be verified; resume blocked.")}</span>}
+              <span className={scan.verification === "exact" ? undefined : "warn"}>{t("{percent}% match: {matched} match, {changed} changed, {unreadable} unreadable", { percent: scan.comparison.confidencePercent, matched: scan.comparison.matched, changed: scan.comparison.changed, unreadable: scan.comparison.unreadable })}</span>
+              {scan.verification === "weak" && <span className="warn">{t("Too few markers match to load this scan.")}</span>}
               {scan.verification === "incompatible" && <span className="warn">{t("Scanner version differs; start a new scan.")}</span>}
+              {scan.verification === "probable" && <span className="warn">{fromEngine(scan.comparison.summary)}</span>}
+              {scan.changedSource && <span className="warn">{t("Resumed before on a changed source.")}</span>}
+              {confirming === scan.id && <div className="recovery-note" role="alertdialog">
+                <p>{t("This source is only a probable match for this scan. Loading it records the changed markers, because findings near them may be out of date.")}</p>
+                <button disabled={busy} onClick={() => void loadScan(scan.id, true)}>{t("Load anyway")}</button>
+                <button onClick={() => setConfirming(null)}>{t("Cancel")}</button>
+              </div>}
             </div>)}
           </section>}
           {!simple && <p className="recovery-note">{t("Drag across the source row to select a region, or enter exact byte offsets below.")}</p>}

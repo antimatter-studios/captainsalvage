@@ -24,7 +24,7 @@ Commands:\n\
   filesystem <list|cat|capabilities|ntfs-record|ntfs-stream> <device-or-image> [options]\n\
       Read FAT/exFAT/NTFS files, see what is supported for a filesystem, or inspect and recover\n\
       surviving NTFS records.\n\
-  disk <device-or-image> [--scan | --list-scans | --resume ID --accept-sampled-match]\n\
+  disk <device-or-image> [--scan | --list-scans [--show-all] | --resume ID --accept-sampled-match [--accept-changed-markers]]\n\
       Open raw bytes and save or resume evidence discovery without mounting.\n\
       New scans accept --offset BYTES and --length BYTES. Resume uses its saved range.\n\
   hypothesis <list|save|update|delete|raise|read-layout> <device-or-image> [options]\n\

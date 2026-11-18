@@ -156,25 +156,47 @@ The toolbar shows scan speed and an estimated time remaining after the first bat
 use the current running period, excluding time spent paused, and may change around slow or
 unreadable regions. An interrupted batch is repeated from the last committed checkpoint.
 
-A permanent scan ID identifies the saved analysis; a separate versioned fingerprint records
-capacity and SHA-256 hashes of up to sixteen 4 KiB samples spread across the source. Reopen the
-disk or a matching raw image, then choose **Load saved scan** and **Resume scan**. Device numbers,
-paths and hardware serials are not used as proof of matching contents. Multiple scan IDs can
-analyse different ranges of the same contents. Loading explicitly accepts that matching
-samples do not prove every byte is identical; mismatching, unreadable or incompatible
-fingerprints block resume. A scanner-version mismatch also requires a new scan. Previous read
-failures are retained as source-specific evidence, not attributed to a clone: loading rewinds
-to retry those regions, and successful rereads clear the outstanding failures. Sources with
-unreadable fingerprint samples can still be scanned and saved, but cannot be verified for
-resume after reopening. Scans made by older versions without these checkpoints cannot be
+A permanent scan ID identifies the saved analysis. The source is recognised again by markers,
+not by one hash: a versioned fingerprint of up to twenty 4 KiB blocks spread over the whole
+source (each is 5 percent), each with its own SHA-256. Blank blocks and short repeating patterns
+say nothing about which drive this is, so a nearby block is used instead, and a source that is
+small or mostly blank gets fewer markers and says so. Opening a disk or a matching raw image
+compares each saved marker on its own and reports how many match, how many changed and how many
+could not be read (unreadable markers are not counted as changed). The confidence is the matched
+markers out of all markers: 17 of 20 is 85%. When markers changed the window says where, for
+example "2 of 20 markers changed. Every changed marker is within the first 1 MiB, so a mount
+probably wrote metadata." Device numbers, paths and hardware serials are not used as proof of
+matching contents.
+
+| State | Markers | What happens |
+|---|---|---|
+| exact | all match | The saved scan loads after the usual acknowledgement that a sampled match does not prove every byte is identical. |
+| probable | 60% or more (12 of 20) | Loading needs a second, explicit acknowledgement of the changed markers. The scan records that it resumed on a changed source and the offsets that changed, because findings near them may be out of date. |
+| weak | under 60%, with at least 8 matching markers | Listed only with **Show all**. It never loads. |
+| different | fewer than 8 matching markers, or another length | Never listed and never loads. A different length is a different scope, not a changed drive. |
+
+A saved scan below 60% is hidden by default; **Show all** (`--show-all`, `showAll`) lists the weak
+ones too. At least 8 markers must match before any match is reported, so two drives that share a
+few blocks, or a drive with most markers unreadable, are not mistaken for each other. A source
+with fewer than 8 usable markers needs all of them to match. Markers are read once each, with a
+time limit, and reading stops after five failed reads in a row, so a failing drive is not
+hammered. Fingerprints saved by earlier versions (sixteen samples) are compared marker by marker
+over their own count.
+
+Reopen the disk or a matching raw image, then choose **Load saved scan** and **Resume scan**.
+Multiple scan IDs can analyse different ranges of the same contents. A scanner-version mismatch
+also requires a new scan. Previous read failures are retained as source-specific evidence, not
+attributed to a clone: loading rewinds to retry those regions, and successful rereads clear the
+outstanding failures. Sources with no usable marker can still be scanned and saved, but cannot be
+recognised after reopening. Scans made by older versions without these checkpoints cannot be
 recovered after that older app closes.
 
 The CLI uses the same saved scans:
 
 ```sh
 captainsalvage disk /path/to/disk.img --scan
-captainsalvage disk /path/to/clone.img --list-scans
-captainsalvage disk /path/to/clone.img --resume SCAN_ID --accept-sampled-match
+captainsalvage disk /path/to/clone.img --list-scans [--show-all]
+captainsalvage disk /path/to/clone.img --resume SCAN_ID --accept-sampled-match [--accept-changed-markers]
 ```
 
 New scans may specify `--offset BYTES --length BYTES`; resumed scans always use their saved range.
