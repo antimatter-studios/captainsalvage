@@ -1172,6 +1172,18 @@ const strings: Record<string, string> = {
   "Opened as raw bytes, because the filesystem could not be applied: {reason}": "Abierto como bytes en bruto, porque no se pudo aplicar el sistema de archivos: {reason}",
   "A stored source is matched by markers, small blocks spread over it. The match is a confidence, not proof that every byte is identical.": "Una fuente guardada se reconoce por marcadores, bloques pequeños repartidos por ella. La coincidencia es una confianza, no la prueba de que cada byte sea idéntico.",
   "Show the bytes": "Mostrar los bytes",
+  "The drive changed near here after this was stored. Scan the changed regions again to check it.": "La unidad cambió cerca de aquí después de guardar esto. Vuelva a escanear las regiones cambiadas para comprobarlo.",
+  "May be out of date": "Puede estar desactualizado",
+  "One region may be out of date.": "Una región puede estar desactualizada.",
+  "{count} regions may be out of date.": "{count} regiones pueden estar desactualizadas.",
+  "The rescan stopped before it was done. The regions stay marked, and rescanning continues where it stopped.": "El nuevo escaneo se detuvo antes de terminar. Las regiones siguen marcadas y el nuevo escaneo continúa donde se detuvo.",
+  "The changed regions were scanned again, and the drive's markers were recorded again, so this drive matches exactly next time.": "Las regiones cambiadas se escanearon de nuevo y se volvieron a registrar los marcadores de la unidad, así que la próxima vez coincidirá exactamente.",
+  "The source changed near the markers that no longer match, so what was stored there may be out of date. Nothing is scanned again until you ask.": "La fuente cambió cerca de los marcadores que ya no coinciden, así que lo guardado allí puede estar desactualizado. No se vuelve a escanear nada hasta que usted lo pida.",
+  "Scanning the changed regions again": "Escaneando de nuevo las regiones cambiadas",
+  "Rescan changed regions": "Volver a escanear las regiones cambiadas",
+  "After opening, the regions near the changed markers are marked, and you can scan just those again. Nothing is scanned until you ask.": "Tras abrir, las regiones cercanas a los marcadores cambiados quedan marcadas y puede volver a escanear solo esas. No se escanea nada hasta que usted lo pida.",
+  "Only the person using the app scans the changed regions again.": "Solo la persona que usa la aplicación vuelve a escanear las regiones cambiadas.",
+  "The rescan was stopped.": "Se detuvo el nuevo escaneo.",
 };
 
 export default strings;

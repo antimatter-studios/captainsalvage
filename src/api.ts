@@ -273,6 +273,8 @@ export interface UnexplainedRun {
 
 export interface Row {
   kind: "folder" | "file" | "missing-folder";
+  /** The source changed near this entry since it was stored, and the area has not been scanned again. */
+  stale?: boolean;
   id: number | null;
   head: number | null;
   name: string;
@@ -648,6 +650,8 @@ export interface BrowseRow {
   modified: string | null;
   inUse: boolean;
   copies?: number;
+  /** The source changed near this file since it was stored, and the area has not been scanned again. */
+  stale?: boolean;
 }
 
 export interface BrowsePage {

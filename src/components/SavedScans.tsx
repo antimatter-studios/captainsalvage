@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { call } from "../api";
 import { bytes, decimal } from "../format";
 import { fromEngine, locale, t } from "../i18n";
+import { staleSentence } from "./StaleRegions";
 import { canOpenFrom, scanFraction, shownMatches, type ByteExtent, type ScanListing, type ScanRecord, type SourceMatchRecord } from "../openedSource";
 
 function interpretation(scan: ScanRecord): string {
@@ -34,6 +35,7 @@ function ScanRow({ scan, current, allowed, onOpen }: { scan: ScanRecord; current
         <span>{new Date(scan.updatedAtMillis).toLocaleString(locale())}</span>
         <span>{covered(scan)}</span>
         <span>{t("Stores {size}", { size: bytes(scan.storedBytes) })}</span>
+        {(scan.staleRegions ?? 0) > 0 && <span className="warn">{staleSentence(scan.staleRegions ?? 0)}</span>}
       </div>
       <input
         className="saved-scan-label"
@@ -70,6 +72,7 @@ function MatchBlock({ match, currentScan, onOpen }: { match: SourceMatchRecord; 
           {t("I have read what changed, and want these scans anyway. Results near the changed markers may be out of date.")}
         </label>
       )}
+      {state === "probable" && <p className="muted">{t("After opening, the regions near the changed markers are marked, and you can scan just those again. Nothing is scanned until you ask.")}</p>}
       {state === "weak" && <p className="warn">{t("Too few markers match to open these scans.")}</p>}
       {match.scans.length === 0 ? <p className="muted">{t("No scans are stored for it.")}</p> : (
         <ul className="saved-scans-list">

@@ -303,6 +303,9 @@ export const ENGINE_TEXT: string[] = [
   "No {id} boot evidence was found at the start, and none is saved for it. Select a range on the map and use Analyze this range to look for one.",
   "Only the person using the app switches an interpretation or starts a scan again.",
   "Suggest it to them instead.",
+  // Scanning the changed regions of a scan again.
+  "Only the person using the app scans the changed regions again.",
+  "The rescan was stopped.",
 ];
 
 /** Errors from macOS and filesystem drivers, passed on without app-owned Rust definitions. */

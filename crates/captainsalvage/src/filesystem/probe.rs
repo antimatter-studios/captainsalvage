@@ -12,6 +12,10 @@ pub struct Evidence {
     pub volume_length: Option<u64>,
     pub boot_offset: Option<u64>,
     pub supported: bool,
+    /// The source changed near this finding since it was stored, and the area has not been
+    /// scanned again. Set when a saved scan is loaded, never stored with the finding.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 pub fn inspect(data: &[u8], offset: u64) -> Vec<Evidence> {
@@ -73,6 +77,7 @@ pub fn inspect(data: &[u8], offset: u64) -> Vec<Evidence> {
                 volume_length: None,
                 boot_offset: Some(offset),
                 supported: false,
+                stale: false,
             });
         }
     }
@@ -93,6 +98,7 @@ pub fn inspect(data: &[u8], offset: u64) -> Vec<Evidence> {
                     volume_length: None,
                     boot_offset: None,
                     supported: true,
+                    stale: false,
                 });
             }
         }
@@ -111,5 +117,6 @@ fn boot_evidence(offset: u64, length: u64, format: &str, supported: bool) -> Evi
         volume_length: Some(length),
         boot_offset: Some(offset),
         supported,
+        stale: false,
     }
 }

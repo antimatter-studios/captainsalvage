@@ -1172,6 +1172,18 @@ const strings: Record<string, string> = {
   "Opened as raw bytes, because the filesystem could not be applied: {reason}": "Als Rohbytes geöffnet, weil das Dateisystem nicht angewendet werden konnte: {reason}",
   "A stored source is matched by markers, small blocks spread over it. The match is a confidence, not proof that every byte is identical.": "Eine gespeicherte Quelle wird an Markern erkannt, kleinen Blöcken, die über sie verteilt sind. Die Übereinstimmung ist eine Sicherheit, kein Beweis, dass jedes Byte gleich ist.",
   "Show the bytes": "Bytes anzeigen",
+  "The drive changed near here after this was stored. Scan the changed regions again to check it.": "Das Laufwerk hat sich hier in der Nähe geändert, nachdem dies gespeichert wurde. Scannen Sie die geänderten Bereiche erneut, um es zu prüfen.",
+  "May be out of date": "Möglicherweise veraltet",
+  "One region may be out of date.": "Ein Bereich ist möglicherweise veraltet.",
+  "{count} regions may be out of date.": "{count} Bereiche sind möglicherweise veraltet.",
+  "The rescan stopped before it was done. The regions stay marked, and rescanning continues where it stopped.": "Der erneute Scan wurde vor dem Ende angehalten. Die Bereiche bleiben markiert, und der erneute Scan setzt dort fort, wo er angehalten wurde.",
+  "The changed regions were scanned again, and the drive's markers were recorded again, so this drive matches exactly next time.": "Die geänderten Bereiche wurden erneut gescannt und die Marker des Laufwerks neu erfasst, sodass dieses Laufwerk beim nächsten Mal exakt übereinstimmt.",
+  "The source changed near the markers that no longer match, so what was stored there may be out of date. Nothing is scanned again until you ask.": "Die Quelle hat sich bei den Markern geändert, die nicht mehr übereinstimmen, daher ist dort Gespeichertes möglicherweise veraltet. Es wird nichts erneut gescannt, bevor Sie es verlangen.",
+  "Scanning the changed regions again": "Geänderte Bereiche werden erneut gescannt",
+  "Rescan changed regions": "Geänderte Bereiche erneut scannen",
+  "After opening, the regions near the changed markers are marked, and you can scan just those again. Nothing is scanned until you ask.": "Nach dem Öffnen werden die Bereiche bei den geänderten Markern markiert, und Sie können nur diese erneut scannen. Es wird nichts gescannt, bevor Sie es verlangen.",
+  "Only the person using the app scans the changed regions again.": "Nur die Person, die die App benutzt, scannt die geänderten Bereiche erneut.",
+  "The rescan was stopped.": "Der erneute Scan wurde angehalten.",
 };
 
 export default strings;

@@ -28,6 +28,7 @@
 mod extents;
 mod migrate;
 mod scans;
+pub(crate) mod stale;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +38,7 @@ pub use scans::{
     FilesystemOpen, InterpretationRecord, InterpretationRequest, OpenedScan, ScanKind, ScanRecord,
     ScanRequest,
 };
+pub use stale::{MarkerHistory, StaleRegion, StaleSummary};
 
 use crate::disk::RawDisk;
 use crate::raw_scan::{Comparison, Fingerprint, MarkerReader, Verification};
@@ -99,7 +101,22 @@ CREATE TABLE IF NOT EXISTS source_extents (
     PRIMARY KEY (child_source_id, parent_source_id, ext_start)
 );
 CREATE INDEX IF NOT EXISTS source_extents_parent ON source_extents(parent_source_id);
-CREATE TABLE IF NOT EXISTS catalog_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
+CREATE TABLE IF NOT EXISTS catalog_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_stale_regions (
+    scan_id TEXT NOT NULL REFERENCES scans(id),
+    start INTEGER NOT NULL, end INTEGER NOT NULL,
+    marked_at_millis INTEGER NOT NULL,
+    markers TEXT NOT NULL DEFAULT '[]',
+    done_to INTEGER NOT NULL,
+    cleared_at_millis INTEGER,
+    PRIMARY KEY (scan_id, start, end)
+);
+CREATE TABLE IF NOT EXISTS source_marker_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    fingerprint TEXT NOT NULL, replaced_at_millis INTEGER NOT NULL, reason TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS source_marker_history_source ON source_marker_history(source_id);";
 
 /// How the drive's own hardware may identify it. It identifies the physical drive and not a clone
 /// of it, so it can only add confidence to a marker match, never decide one.

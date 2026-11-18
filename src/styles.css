@@ -899,3 +899,8 @@ video.inline-preview { max-height: 380px; background: #000; }
 .saved-scan-failure { grid-column: 1 / -1; font-size: 12px; }
 .saved-scan-now { text-align: right; }
 .saved-scans-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Results that may be out of date, after a source was reopened on a probable match. */
+.interp-stale { margin-left: 10px; }
+.interp-stale .warn { font-weight: 600; }
+.stale-mark { flex: none; margin-left: 6px; padding: 0 6px; border: 0.5px solid var(--critical); border-radius: 8px; color: var(--critical); font-size: 10.5px; line-height: 16px; white-space: nowrap; }

@@ -1,4 +1,5 @@
-"""Verify raw scan ETA, durable checkpoints and marker-based clone recognition in an isolated app."""
+"""Verify raw scan ETA, durable checkpoints, marker-based clone recognition and the rescan of the
+regions a probable match marks as out of date, in an isolated app. Synthetic images only."""
 import hashlib
 import json
 import os
@@ -12,6 +13,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import SCRATCH, call, check, finish, js, probe, results, start, state, wait_for
+
+
+MIB = 1024 * 1024
 
 
 def click(text, scope=".app"):
@@ -46,6 +50,12 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         stream.write(header + block[512:])
         for _ in range(48 * 1024 * 1024 // 4096 - 1):
             stream.write(block)
+    # A second boot sector in the last mebibyte but one, which a later "mount" overwrites. It is
+    # inside the region a changed last block makes stale, and the one at the start is not.
+    second = 47 * MIB + MIB // 2
+    with source.open("r+b") as stream:
+        stream.seek(second)
+        stream.write(header)
     original_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     database = Path(home) / "Library/Application Support/Captain Salvage/raw-scans.sqlite"
     try:
@@ -123,6 +133,56 @@ with tempfile.TemporaryDirectory(dir=SCRATCH, prefix="fakehome.rawscan.") as hom
         check("backend resumes a probable match once the changed markers are acknowledged", len(accepted.get("changedSource", {}).get("changedOffsets", [])), 1)
         click("Change disk", ".toolbar")
         check("return to disk selection again", wait_for("!!document.querySelector('.start-image input')"), True)
+
+        # A mount also rewrote the structure in the last mebibyte but one, inside the region the
+        # changed last block makes stale. Reopening marks it, and the person decides to scan it again.
+        with clone.open("r+b") as stream:
+            stream.seek(second)
+            stream.write(random.Random(9).randbytes(512))
+        open_raw(clone, wait=False)
+        check("the changed marker asks again", wait_for("document.querySelector('.saved-scans')?.textContent.includes('This drive looks like one seen before')"), True)
+        check("the question says what opening does about the changed area", probe("document.querySelector('.saved-scans').textContent.includes('you can scan just those again')"), True)
+        js("document.querySelector('.saved-ack input').click()")
+        check("ticking that they read it allows Open again", wait_for("[...document.querySelectorAll('.saved-scans .saved-scan button')].every((button) => !button.disabled)"), True)
+        click("Open", ".saved-scans .saved-scan")
+        check("it opens once acknowledged", wait_for("document.querySelector('.recovery')?.textContent.includes('resumed on a source that had changed')"), True)
+        check("the window says how many regions may be out of date", wait_for("document.querySelector('.interp-stale')?.textContent.includes('One region may be out of date.')"), True)
+        check("it offers to scan them again, and nothing else", probe("[...document.querySelectorAll('.interp-stale button')].map((button) => button.textContent)"), ["Rescan changed regions"])
+        with sqlite3.connect(database) as connection:
+            regions = connection.execute("SELECT start, end, cleared_at_millis FROM scan_stale_regions").fetchall()
+            findings = [row[0] for row in connection.execute("SELECT offset FROM raw_findings ORDER BY offset")]
+            next_before = connection.execute("SELECT next_offset FROM raw_scans").fetchone()[0]
+            catalog_scan = connection.execute("SELECT id FROM scans WHERE kind = 'raw'").fetchone()[0]
+        # The changed last block makes its own 4 KiB and one mebibyte before it stale.
+        check("one stale region around the changed marker, not cleared", regions, [(48 * MIB - 4096 - MIB, 48 * MIB, None)])
+        check("both findings are still stored: opening scanned nothing", findings, [0, second])
+        check("only the finding in the stale region is marked", probe("[...document.querySelectorAll('.explorer .row-name')].map((name) => !!name.querySelector('.stale-mark'))"), [offset == second for offset in findings])
+        check("the mark says what it means", probe("document.querySelector('.explorer .stale-mark')?.textContent"), "May be out of date")
+        check("an agent can list the region, read only", call("list_stale_regions", scanId=catalog_scan)["stale"]["stale"], 1)
+        click("Rescan changed regions", ".interp-stale")
+        check("the rescan finishes and says the markers were recorded again", wait_for("document.querySelector('.interp-stale')?.textContent.includes('recorded again')", 120), True)
+        check("no finding is marked now", probe("document.querySelectorAll('.explorer .stale-mark').length"), 0)
+        check("the button and the count are gone", probe("document.querySelectorAll('.interp-stale button').length"), 0)
+        check("the scan no longer says it was resumed on a changed source", probe("!document.querySelector('.recovery').textContent.includes('resumed on a source that had changed')"), True)
+        with sqlite3.connect(database) as connection:
+            regions = connection.execute("SELECT cleared_at_millis IS NOT NULL, done_to = end FROM scan_stale_regions").fetchall()
+            findings = [row[0] for row in connection.execute("SELECT offset FROM raw_findings ORDER BY offset")]
+            history = connection.execute("SELECT count(*) FROM source_marker_history").fetchone()[0]
+            next_after = connection.execute("SELECT next_offset FROM raw_scans").fetchone()[0]
+        check("the region is cleared and was read to its end", regions, [(1, 1)])
+        check("the structure the mount overwrote is gone, and the one at the start stays", findings, [0])
+        check("the window lists what the rescan found", probe("document.querySelectorAll('.explorer .row-name').length"), len(findings))
+        check("the scan's own position did not move", next_after, next_before)
+        check("the markers the source had before are kept", history, 1)
+        click("Change disk", ".toolbar")
+        check("return to disk selection after the rescan", wait_for("!!document.querySelector('.start-image input')"), True)
+        open_raw(clone)
+        check("the same drive is an exact match again: it opens at once, with no question", wait_for("document.querySelector('.recovery')?.textContent.includes(%s)" % json.dumps("Scan " + scan_id + ".")), True)
+        check("no dialog is in the way", probe("!document.querySelector('.saved-scans')"), True)
+        check("nothing is marked, and there is nothing to rescan", probe("!document.querySelector('.interp-stale') && document.querySelectorAll('.stale-mark').length === 0"), True)
+        click("Change disk", ".toolbar")
+        check("return to disk selection once more", wait_for("!!document.querySelector('.start-image input')"), True)
+
         # Everything but the first block rewritten: a different drive, which is never offered.
         with clone.open("r+b") as stream:
             stream.seek(4096)

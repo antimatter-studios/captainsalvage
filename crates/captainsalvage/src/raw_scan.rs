@@ -1,5 +1,7 @@
+use crate::catalog::StaleSummary;
 use crate::disk::{DiscoveryBatch, RawDisk, ReadFailure, DISCOVERY_BATCH_BYTES};
 use crate::filesystem::probe::Evidence;
+use crate::stale::{overlaps_any, Span, StaleOptions};
 use crate::workspace::{now_millis, Workspace};
 use anyhow::{bail, ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -9,11 +11,13 @@ use std::path::Path;
 use std::time::Duration;
 
 mod markers;
+mod rescan;
 use markers::hex;
 pub use markers::{
     Comparison, Fingerprint, MarkerReader, Sample, Verification, MARKER_BYTES, MARKER_COUNT,
     MIN_MATCHED_MARKERS, PROBABLE_PERCENT,
 };
+pub use rescan::{RescanReport, RescanStep};
 
 pub(crate) const SCANNER_VERSION: u32 = 1;
 
@@ -36,6 +40,8 @@ pub struct ScanSummary {
     pub comparison: Comparison,
     /// Set when this scan was resumed on a source that had changed.
     pub changed_source: Option<ChangedSource>,
+    /// How many areas of its findings may be out of date and have not been scanned again.
+    pub stale_regions: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,7 +55,8 @@ pub struct SavedScans {
 }
 
 /// The record that a scan resumed on a source that was only a probable match. Findings near the
-/// changed markers may be stale: nothing here rescans them, it only keeps what is known.
+/// changed markers may be stale: they are marked as such (see `stale`) until rescanned, and
+/// `ScanStore::rescan_changed` reads those regions again.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangedSource {
@@ -77,6 +84,9 @@ pub struct ScanSnapshot {
     pub findings: Vec<Evidence>,
     pub errors: Vec<ReadFailure>,
     pub changed_source: Option<ChangedSource>,
+    /// The areas whose findings may be out of date, and the ones scanned again since. A finding
+    /// inside a stale one has `stale` set.
+    pub stale: StaleSummary,
 }
 
 #[derive(Serialize)]
@@ -180,6 +190,7 @@ impl ScanStore {
             let id: String = row.get(0)?;
             scans.push(ScanSummary {
                 changed_source: self.changed_source(&id)?,
+                stale_regions: self.stale_count_of_raw(&id)?,
                 id,
                 scan_start: row.get::<_, i64>(3)? as u64,
                 scan_end: row.get::<_, i64>(4)? as u64,
@@ -291,6 +302,11 @@ impl ScanStore {
                 "Source fingerprint differs or could not be verified; saved scan was not resumed. {}",
                 comparison.summary
             ),
+        }
+        if comparison.state == Verification::Probable {
+            // What was stored near the changed markers may be out of date. This is done before
+            // the scan is bound, so a failure to mark is not left behind a resumed scan.
+            self.mark_changed(id, &comparison)?;
         }
         let token = identifier()?;
         let transaction = self
@@ -429,11 +445,23 @@ impl ScanStore {
             [id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        let mut findings = Vec::new();
+        let stale = match self.catalog_scan_of(id)? {
+            Some(scan) => crate::catalog::stale::summary(&self.connection, &scan)?,
+            None => StaleSummary::default(),
+        };
+        let stale_spans: Vec<Span> = stale
+            .regions
+            .iter()
+            .filter(|region| region.is_stale())
+            .map(|region| region.span())
+            .collect();
+        let mut findings: Vec<Evidence> = Vec::new();
         let mut statement = self.connection.prepare("SELECT evidence FROM raw_findings WHERE scan_id = ?1 ORDER BY offset, format, structure")?;
         let mut rows = statement.query([id])?;
         while let Some(row) = rows.next()? {
-            findings.push(serde_json::from_str(&row.get::<_, String>(0)?)?);
+            let mut evidence: Evidence = serde_json::from_str(&row.get::<_, String>(0)?)?;
+            evidence.stale = overlaps_any(&stale_spans, evidence.offset, evidence.length);
+            findings.push(evidence);
         }
         let mut statement = self.connection.prepare(
             "SELECT offset, length, error FROM raw_failures
@@ -456,7 +484,45 @@ impl ScanStore {
             findings,
             errors,
             changed_source: self.changed_source(id)?,
+            stale,
         })
+    }
+
+    /// The catalog's scan that holds this saved raw scan, when it is registered.
+    pub(crate) fn catalog_scan_of(&self, raw_scan_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT id FROM scans WHERE raw_scan_id = ?1",
+                [raw_scan_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    fn stale_count_of_raw(&self, raw_scan_id: &str) -> Result<u32> {
+        match self.catalog_scan_of(raw_scan_id)? {
+            Some(scan) => crate::catalog::stale::stale_count(&self.connection, &scan),
+            None => Ok(0),
+        }
+    }
+
+    /// Marks the area around the changed markers stale, for the scans of this scan's source.
+    /// Needs the catalog (the store of the app's own folder): a store opened on another file
+    /// keeps no sources, so there is nothing to mark.
+    fn mark_changed(&self, raw_scan_id: &str, comparison: &Comparison) -> Result<()> {
+        let Some(root) = &self.catalog_root else {
+            return Ok(());
+        };
+        let catalog = crate::catalog::Catalog::open(root)?;
+        if let Some(scan) = catalog.scan_of_raw(raw_scan_id)? {
+            catalog.mark_changed(
+                &scan.source_id,
+                &comparison.changed_offsets,
+                &StaleOptions::default(),
+            )?;
+        }
+        Ok(())
     }
 
     fn changed_source(&self, id: &str) -> Result<Option<ChangedSource>> {

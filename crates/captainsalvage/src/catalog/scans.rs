@@ -5,6 +5,7 @@ use super::{
 };
 use crate::disk::RawDisk;
 use crate::raw_scan::{Comparison, MarkerReader, Verification};
+use crate::stale::StaleOptions;
 use crate::workspace::{now_millis, Workspace};
 use anyhow::{ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -125,6 +126,9 @@ pub struct ScanRecord {
     pub volume_key: Option<String>,
     /// Made from what an older version stored, rather than by this one.
     pub migrated: bool,
+    /// How many areas of its results may be out of date, because the source changed since it was
+    /// scanned and they have not been rescanned.
+    pub stale_regions: u32,
     pub created_at_millis: u64,
     pub updated_at_millis: u64,
     pub opened_at_millis: u64,
@@ -193,6 +197,7 @@ fn scan_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRecord> {
         workspace: row.get(16)?,
         volume_key: row.get(17)?,
         migrated: row.get(18)?,
+        stale_regions: 0,
         created_at_millis: row.get::<_, i64>(20)? as u64,
         updated_at_millis: row.get::<_, i64>(21)? as u64,
         opened_at_millis: row.get::<_, i64>(22)? as u64,
@@ -350,6 +355,7 @@ impl Catalog {
             ScanKind::Filesystem => self.measure_filesystem(scan),
         };
         scan.updated_at_millis = scan.updated_at_millis.max(self.stored_at(scan));
+        scan.stale_regions = super::stale::stale_count(&self.connection, &scan.id).unwrap_or(0);
         scan.covered_end = covered;
         scan.complete = status == "complete";
         scan.status = status;
@@ -476,6 +482,19 @@ impl Catalog {
         }
         let key = (!open.fresh).then_some(open.volume_key.as_str());
         let resolution = self.resolve_source(disk, open.accept, key)?;
+        if let Some(comparison) = resolution
+            .comparison
+            .as_ref()
+            .filter(|comparison| comparison.state == Verification::Probable)
+        {
+            // Stored work was applied on a probable match: what it holds near the changed
+            // markers may be out of date.
+            self.mark_changed(
+                &resolution.source.id,
+                &comparison.changed_offsets,
+                &StaleOptions::default(),
+            )?;
+        }
         let request = ScanRequest {
             source_id: resolution.source.id.clone(),
             kind: ScanKind::Filesystem,
@@ -583,6 +602,14 @@ impl Catalog {
                 "The source does not match this scan, so it was not opened. {}",
                 comparison.summary
             ),
+        }
+        // A probable match: what was stored near the changed markers may be out of date.
+        if comparison.state == Verification::Probable {
+            self.mark_changed(
+                &scan.source_id,
+                &comparison.changed_offsets,
+                &StaleOptions::default(),
+            )?;
         }
         self.touch_scan(scan_id)?;
         self.see(&scan.source_id, &disk.path.to_string_lossy())?;

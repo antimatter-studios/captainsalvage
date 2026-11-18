@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { StaleMark } from "./StaleRegions";
 import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
 import { bytes, count, displayPath, guessedFolderLabel, lostFolderName, percent, verdictLabel } from "../format";
 import { useSimple } from "../mode";
@@ -75,7 +76,7 @@ function FileRow({ row, selected, onSelect, showPath, onExport, depth }: { row: 
     >
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
-        <span className="row-name">{row.name}</span>
+        <span className="row-name">{row.name}{row.stale && <StaleMark />}</span>
         {showPath && row.path !== null && <span className="row-path">{displayPath(row.path, simple)}</span>}
       </span>
       <span className="row-size">{row.kind === "file" ? bytes(row.length) : ""}</span>

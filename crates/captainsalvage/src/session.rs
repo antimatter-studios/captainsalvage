@@ -193,6 +193,9 @@ pub struct ScanBinding {
     pub source_id: String,
     /// A scan was made for this open: nothing was stored for this source and interpretation.
     pub created: bool,
+    /// Where the scan's interpretation starts in its source: the offsets of its stale regions
+    /// are measured from the start of the source, and the volume's own from this.
+    pub start: u64,
 }
 
 pub struct Session {
@@ -209,6 +212,9 @@ pub struct Session {
     /// have changed since.
     structures_from_baseline: bool,
     pub database: Mutex<MapDb>,
+    /// The regions of this scan that may be out of date, and the ones rescanned since: what
+    /// marks rows and test results. Loaded when the scan opens, and again after a rescan.
+    stale: Mutex<Vec<crate::catalog::StaleRegion>>,
     whole_disk: Mutex<Option<Arc<FileSource>>>,
     scan_stop: Arc<AtomicBool>,
     scan_thread: Mutex<Option<JoinHandle<()>>>,
@@ -358,6 +364,7 @@ impl From<crate::catalog::OpenedScan> for Found {
                 scan_id: opened.scan.id,
                 source_id: opened.source.id,
                 created: opened.created,
+                start: opened.scan.start,
             },
             workspace: opened.workspace,
         }
@@ -547,6 +554,7 @@ impl Session {
             scan_id: scan.id,
             source_id: scan.source_id,
             created: false,
+            start: scan.start,
         };
         let whole = region.start == 0 && region.length == disk.length;
         let session = Self::assemble(
@@ -709,6 +717,7 @@ impl Session {
             changes: Mutex::new(None),
             structures_from_baseline,
             database: Mutex::new(database),
+            stale: Mutex::new(Vec::new()),
             whole_disk: Mutex::new(None),
             scan_stop: Arc::new(AtomicBool::new(false)),
             scan_thread: Mutex::new(None),
@@ -726,12 +735,52 @@ impl Session {
             zip: Mutex::new(None),
             macos: Mutex::new(None),
         });
+        if let Err(error) = session.refresh_stale() {
+            eprintln!("could not read which parts of this scan may be out of date: {error:#}");
+        }
         // The baseline check still says the volume changed if this fails; only the detail is lost.
         let current = on_disk.as_ref().unwrap_or(&session.volume.structures);
         if let Err(error) = session.explain_changes(current, &check) {
             eprintln!("could not work out what changed since the baseline: {error:#}");
         }
         Ok(session)
+    }
+
+    /// Reads again which regions of this scan may be out of date. Nothing is stale for a session
+    /// that is not a scan of the catalog.
+    pub fn refresh_stale(&self) -> Result<()> {
+        let regions = match &self.scan {
+            Some(binding) => {
+                crate::catalog::Catalog::for_user()?
+                    .stale_summary(&binding.scan_id)?
+                    .regions
+            }
+            None => Vec::new(),
+        };
+        *self
+            .stale
+            .lock()
+            .map_err(|_| anyhow!("stale lock poisoned"))? = regions;
+        Ok(())
+    }
+
+    /// The regions of this scan that may be out of date, and the ones rescanned since.
+    pub fn stale_regions(&self) -> Vec<crate::catalog::StaleRegion> {
+        self.stale
+            .lock()
+            .map(|regions| regions.clone())
+            .unwrap_or_default()
+    }
+
+    /// Sets `stale` on the rows and test results in `answer` that overlap a stale region.
+    pub fn flag_stale(&self, answer: &mut Value) {
+        let Some(binding) = &self.scan else {
+            return;
+        };
+        let Ok(regions) = self.stale.lock() else {
+            return;
+        };
+        crate::stale_flags::Flagger::new(&regions, &self.volume, binding.start).flag(answer);
     }
 
     fn lock_database(&self) -> Result<std::sync::MutexGuard<'_, MapDb>> {

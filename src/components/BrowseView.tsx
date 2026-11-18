@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { StaleMark } from "./StaleRegions";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   call,
@@ -47,7 +48,7 @@ function ListRow({ row, selected, style, onOpen, onExport }: {
     <div className={selected ? "list-row list-row-selected" : "list-row"} style={style} onContextMenu={(event) => onExport(event, { kind: "file", target: row.id, name: row.name })}>
       <button className="list-row-main" onClick={onOpen} title={row.name} draggable onDragStart={(event) => startEntryDrag(event, row.id)}>
         <Icon name={fileIcon(row.name)} size={15} />
-        <span className="list-row-name">{row.name}</span>
+        <span className="list-row-name">{row.name}{row.stale && <StaleMark />}</span>
         {(row.copies ?? 1) > 1 && <span className="tile-copies" title={t("{count} identical files", { count: count(row.copies ?? 1) })}>×{count(row.copies ?? 1)}</span>}
         <span className="list-row-size">{bytes(row.length)}</span>
         <span className="list-row-date">{row.modified ? stamp(row.modified) : ""}</span>
@@ -387,7 +388,7 @@ function PreviewPane({ row, position, total, onClose, onMove, onBytes, onInside 
         <button className="icon-button" onClick={onClose} aria-label={t("Back to the files")}><Icon name="chevronLeft" /></button>
         <div className="preview-title">
           <strong>{row.name}</strong>
-          <span className="muted">{bytes(row.length)}, {stamp(row.modified)}</span>
+          <span className="muted">{bytes(row.length)}, {stamp(row.modified)}{row.stale && <StaleMark />}</span>
         </div>
         <span className={`verdict-chip ${verdictTone(row.verdict)}`}>{verdict}</span>
         {position !== null && (

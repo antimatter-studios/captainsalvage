@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 mod opening;
+mod rescan;
 
 /// Receives events the app's window should react to.
 pub type UiSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
@@ -420,6 +421,9 @@ impl Engine {
             ))
         } else {
             self.dispatch(tool, args, author).map(|mut answer| {
+                if let Ok(session) = self.session() {
+                    session.flag_stale(&mut answer);
+                }
                 if private {
                     crate::privacy::redact(&mut answer);
                 }
@@ -478,6 +482,7 @@ impl Engine {
                 crate::catalog_tools::call(tool, disk.as_deref(), args, author == AUTHOR_USER)
             }
             "open_stored_scan" => self.open_stored_scan(args),
+            "rescan_changed_regions" => self.rescan_changed_regions(args, author),
             "open_source" => self.open_source(args, author),
             tool if crate::range_tools::TOOLS.contains(&tool) => {
                 let disk = self.raw_disk(args)?;

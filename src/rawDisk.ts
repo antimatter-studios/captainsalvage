@@ -1,3 +1,5 @@
+import type { StaleSummary } from "./stale";
+
 export interface DiskRegion {
   start: number;
   length: number;
@@ -16,6 +18,8 @@ export interface DiskEvidence {
   volumeLength: number | null;
   bootOffset: number | null;
   supported: boolean;
+  /** The source changed near this finding since it was stored, and the area has not been scanned again. */
+  stale?: boolean;
 }
 
 export interface RawDiskOverview {
@@ -37,6 +41,7 @@ export interface RawDiskState extends RawDiskOverview {
   scanId: string | null;
   /** Set when the scan was resumed on a source that had changed. */
   changedSource?: ChangedSource | null;
+  stale?: StaleSummary;
   findings: DiskEvidence[];
   errors: DiscoveryBatch["errors"];
   nextOffset: number | null;
@@ -80,6 +85,8 @@ export interface SavedScanSummary {
   scanEnd: number;
   nextOffset: number;
   updatedAtMillis: number;
+  /** How many areas of its findings may be out of date. */
+  staleRegions?: number;
   verification: MatchState;
   comparison: MarkerComparison;
   changedSource: ChangedSource | null;
@@ -100,6 +107,8 @@ export interface ScanSnapshot {
   findings: DiskEvidence[];
   errors: DiscoveryBatch["errors"];
   changedSource: ChangedSource | null;
+  /** The areas whose findings may be out of date. */
+  stale?: StaleSummary;
 }
 
 export function scanEstimate(start: number, cursor: number, end: number, elapsedMillis: number): { bytesPerSecond: number; secondsLeft: number } | null {

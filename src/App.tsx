@@ -40,6 +40,8 @@ import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
 import { InterpretationPicker } from "./components/InterpretationPicker";
 import { SavedScans } from "./components/SavedScans";
+import { StaleBanner } from "./components/StaleRegions";
+import type { RescanResult } from "./stale";
 import { RawDiskView } from "./components/RawDiskView";
 import { WorkspaceToolbar } from "./components/WorkspaceToolbar";
 import type { RawDiskState } from "./rawDisk";
@@ -586,6 +588,14 @@ export default function App() {
     if (diskNow === null) return;
     void openSource({ diskId: diskNow, ...(extentNow ? { extent: extentNow } : {}), scanId, acceptChangedMarkers });
   }, [diskNow, extentNow, openSource]);
+  /** A rescan of the changed regions finished or stopped: what it stored is read again. */
+  const rescanned = useCallback((result: RescanResult) => {
+    setOpened((current) => current && current.scan?.id === result.scan.id
+      ? { ...current, scan: result.scan, stale: result.stale, scans: current.scans.map((scan) => (scan.id === result.scan.id ? result.scan : scan)) }
+      : current);
+    if (result.raw) setRawDisk((current) => (current ? { ...current, ...result.raw } : current));
+    bump();
+  }, [bump]);
   const openFresh = useCallback(() => {
     if (diskNow === null) return;
     void openSource({ diskId: diskNow, ...(extentNow ? { extent: extentNow } : {}), fresh: true });
@@ -834,7 +844,10 @@ export default function App() {
 
   const showingRaw = rawVisible && rawDisk !== null;
   const picker = opened ? (
-    <InterpretationPicker opened={opened} busy={switching} note={switchNote} onSwitch={(id) => void switchTo(id)} onScans={() => setSaved({ choice: null })} />
+    <>
+      <InterpretationPicker opened={opened} busy={switching} note={switchNote} onSwitch={(id) => void switchTo(id)} onScans={() => setSaved({ choice: null })} />
+      <StaleBanner key={opened.scan?.id ?? "none"} opened={opened} onRescanned={rescanned} />
+    </>
   ) : null;
   if ((!overview && !showingRaw) || choosing) {
     return (

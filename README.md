@@ -199,7 +199,7 @@ matching contents.
 | State | Markers | What happens |
 |---|---|---|
 | exact | all match | The latest saved scan loads when the source is opened. A sampled match does not prove every byte is identical. |
-| probable | 60% or more (12 of 20) | Opening needs an explicit acknowledgement of the changed markers. The scan records that it resumed on a changed source and the offsets that changed, because findings near them may be out of date. |
+| probable | 60% or more (12 of 20) | Opening needs an explicit acknowledgement of the changed markers. The scan records that it resumed on a changed source and the offsets that changed, and the regions around them are marked as possibly out of date until they are scanned again (see below). |
 | weak | under 60%, with at least 8 matching markers | Listed only with **Show all**. It never loads. |
 | different | fewer than 8 matching markers, or another length | Never listed and never loads. A different length is a different scope, not a changed drive. |
 
@@ -583,8 +583,8 @@ A scan is the unit of stored work. It is made of:
 Change any of them and it is a new scan. The earlier scan stays, and opens again without
 scanning. Opening the same combination finds the scan it made, with its results, and starts
 nothing. A scan only runs when nothing is stored for that combination, when the person asks to
-rescan, or (not built yet) when a probable match asks to rescan the regions around the changed
-markers, which the saved scan already records.
+rescan, or when a probable match asks to rescan the regions around the changed markers (see
+[Changed regions](#changed-regions-after-a-probable-match)).
 
 Everything a scan stores belongs to it. A filesystem scan keeps its map (`map.sqlite`: nodes,
 file tests, islands, read errors, overlays and its Disk Rebuilds) in the scan's own folder. A raw
@@ -684,13 +684,46 @@ captainsalvage source open /path/to/disk.img --extent-start BYTES --extent-lengt
 captainsalvage source switch /path/to/disk.img --format NTFS --start 0 --length BYTES
 captainsalvage source label --scan SCAN_ID --label "before the repair"
 captainsalvage source migrate
+captainsalvage scan stale-regions --scan SCAN_ID           # what may be out of date, read only
+captainsalvage scan rescan-changed /path/to/disk.img --scan SCAN_ID [--radius-bytes BYTES] [--head-bytes BYTES]
 ```
 
 MCP and the window offer the same as `captainsalvage_open_source` (the one door, which the
 window's **Open** and the command line's `source open` call), `captainsalvage_list_sources`, `_identify_source`,
 `_list_scans`, `_open_stored_scan`, `_switch_interpretation`, `_label_scan`, `_label_source` and
-`_migrate_catalog`. The listing tools are read only. The ones that make a scan or change a name are
-the person's to run, as changing a Disk Rebuild is: an agent that asks is told to suggest it.
+`_migrate_catalog`, with `_list_stale_regions` (read only) and `_rescan_changed_regions`. The listing
+tools are read only. The ones that make a scan, change a name or scan regions again are the person's
+to run, as changing a Disk Rebuild is: an agent that asks is told to suggest it.
+
+#### Changed regions after a probable match
+
+A probable match means some markers changed, usually because a mount wrote Finder data near the
+start. What a scan stored near a changed marker may then be out of date. When a scan is opened on a
+probable match (after the changed markers were acknowledged), the area around each changed marker is
+marked **stale** for every scan of that source, and the window says "N regions may be out of date".
+Findings, entries and file test results inside a stale region show **May be out of date**
+(`stale: true` in the answer). Nothing is scanned again unless the person presses **Rescan changed
+regions**, runs `captainsalvage scan rescan-changed`, or calls `rescan_changed_regions`. An exact
+match has no stale regions.
+
+A stale region is the changed marker's 4 KiB block with 1 MiB on each side (`radiusBytes`,
+`--radius-bytes`), and, when the changed block lies in the first 32 MiB of the source (`headBytes`,
+`--head-bytes`), all of those first 32 MiB, because the boot sectors, allocation tables, master file
+table and root directory sit there and describe every file. The rule is deliberately wider than the
+change, never narrower: a mount rarely changes exactly one block, and the regions stay small because
+at most 8 of the 20 markers can have changed. Markers that could not be read are unknown, not
+changed, so they make no region. Only what a scan has already read can be out of date.
+
+The rescan reads just the stale regions, with the same interpretation and options, and replaces what
+was stored in them a batch at a time, each batch in one transaction with the note of how far it got:
+a raw scan replaces its findings and read failures; a filesystem scan reads the clusters again,
+replaces their entries (those still there keep their ids, so corrections and Disk Rebuilds stay
+attached) and rebuilds its tree. A rescan that stops, fails or loses the drive leaves the regions
+stale and continues where it stopped. Only when every region of the scan is done does the source get
+the markers of the drive as it is now, with the earlier set kept in its history, so the next open of
+the same drive is an exact match. File test results are not run again by a rescan, so they stay
+marked until the file is tested again. The source is only read.
+
 
 ### Tests
 

@@ -38,6 +38,8 @@ pub mod script;
 pub mod session;
 pub mod similar;
 pub mod source;
+pub mod stale;
+pub mod stale_flags;
 pub mod startup;
 pub mod stream_walk;
 pub mod summaries;
