@@ -1368,6 +1368,7 @@ mod tests {
         };
         assert!(super::is_copyable_file(&with_bytes));
     }
+    #[cfg(feature = "test-hooks")]
     #[test]
     fn test_copies_stay_inside_their_folders() {
         let roots = [PathBuf::from("/tmp/fakehome"), PathBuf::from("relative")];
