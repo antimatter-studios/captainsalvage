@@ -7,4 +7,4 @@
 
 ### Changed
 
-- **The start screen is a tree.** Each physical disk is a parent row with its own Open, and its partitions are nested under it, each with its filesystem, size, status, Block mount and Open. A disk with no readable partition table is still a parent row. The separate raw chooser, Inspect raw and the image form's Inspect raw are gone: Open does it all.
+- **The start screen is a tree.** Each physical disk is a parent row with its own Open, and its partitions are nested under it, each with its filesystem, size, status, Block mount and Open. A disk with no readable partition table is still a parent row.
