@@ -32,6 +32,12 @@ inspection works before filesystem recognition, and that interpretations return 
 workspace without modifying the source. It saves a screenshot to
 `/tmp/captainsalvage-raw-workspace.png` for visual inspection.
 
+`raw_disk_crowded_test.py` scans a sparse image with 1500 NTFS boot sectors and checks that the
+window never stops answering for 400 ms. It measures the longest gap between two turns of a
+message loop in the window, not a timer: a covered window or a locked screen makes the web view
+run timers once a second, so a 20 ms timer reads about 980 ms with nothing wrong (issue #198).
+`tests/raw_disk_crowded_budget_test.mjs` times the same work without a window, and CI runs it.
+
 `raw_scan_test.py` checks raw-scan speed and ETA, pauses between bounded batches, restarts its
 isolated test app, and opens a renamed clone, which loads the saved scan by itself because the
 match is exact. It verifies that one changed marker leaves a probable match that asks first (the
