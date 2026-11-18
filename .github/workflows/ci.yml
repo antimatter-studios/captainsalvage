@@ -57,6 +57,7 @@ jobs:
           tool: cargo-deny@0.20.2
       - name: every library has an allowed license
         run: |
+          python3 scripts/test_licenses.py
           cargo deny --locked check licenses
           python3 scripts/licenses.py check
           python3 scripts/licenses.py current
