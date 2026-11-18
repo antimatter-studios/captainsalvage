@@ -1,14 +1,16 @@
-"""The start screen groups volumes under the physical disk they are on, one compact row each.
+"""The start screen is a tree: each physical disk is a parent row with Open, its partitions nested under it.
 
 The test gives the window a made-up list of disks (SALVAGE_TEST_STARTUP_DISKS), so no real disk is named or opened. Its
 "devices" are small synthetic image files in this folder: a whole disk with no partition table,
 a disk with three partitions, and a card reader with one. It checks that:
 
-- there is one card per physical disk, and each volume is one row inside its disk's card;
+- there is one parent row per physical disk, with its own Open, and each volume is one row nested under its disk;
+- every row has the same one button, Open, and there is no separate raw control;
+- a disk with no readable partition table is still a parent row, with a short note;
 - every volume has an inline "Block mount" checkbox that still sets and clears the block, and the
   list has one note about it, not one per row;
 - a disk says once what it needs (unmounting, read permission), however many volumes need it;
-- raw inspection is one small control per disk, and each scope opens exactly its own bytes;
+- Open on a whole disk opens all its bytes as raw bytes, and Open on a partition opens exactly that partition's bytes;
 - three disks with their volumes fit on the screen at the app's default window size, with the
   image form still in view.
 
@@ -45,18 +47,9 @@ def look(report):
     wait_for("document.querySelector('.start-heading button')?.textContent.trim() === 'Check again' && document.querySelectorAll('.start-volume').length === %d" % (len(report["volumes"]) + len(report["elsewhere"])))
 
 
-def toggle_raw(index):
-    js("document.querySelectorAll('.start-disk')[%d].querySelector('.start-raw-toggle').click()" % index)
-
-
-def choose(index, device):
-    js("(() => {const select = document.querySelectorAll('.start-disk')[%d].querySelector('.start-raw select');"
-       "Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, %s);"
-       "select.dispatchEvent(new Event('change', {bubbles: true}));})()" % (index, json.dumps(device)))
-
-
-def inspect(index):
-    js("[...document.querySelectorAll('.start-disk')[%d].querySelectorAll('.start-raw button')].find((button) => button.textContent === 'Inspect raw bytes')?.click()" % index)
+def click_open(scope, index):
+    """Clicks the Open button of the index-th element matching scope."""
+    js("document.querySelectorAll(%s)[%d].querySelector('.start-open').click()" % (json.dumps(scope), index))
 
 
 def fit():
@@ -73,17 +66,20 @@ try:
     check("the first look finishes", wait_for("document.querySelector('.start-heading button')?.textContent.trim() === 'Check again'"), True)
     check("each volume is one row", wait_for("document.querySelectorAll('.start-disk .start-volume').length === 4"), True)
     check("there is one card for each physical disk", probe("document.querySelectorAll('.start-disk').length"), 3)
-    check("a card's header names the disk, its size and its device", probe("[...document.querySelectorAll('.start-disk-head')].map((head) => head.textContent.replace(/Inspect raw…$/, ''))"),
+    check("a parent row names the disk, its size and its device", probe("[...document.querySelectorAll('.start-disk-head .start-volume-title')].map((head) => head.textContent)"),
           ["UNREADABLE TABLE DRIVE5.2 MB, whole disk picker-whole.img", "STORAGE DEVICE8.4 MB, whole disk picker-second.img", "CARD READER4.2 MB, whole disk picker-reader.img"])
+    check("every parent row has its own Open", probe("[...document.querySelectorAll('.start-disk-head button')].map((button) => button.textContent)"), ["Open", "Open", "Open"])
+    check("a partition is nested under its disk, not beside it", probe("[...document.querySelectorAll('.start-disk')].map((card) => card.querySelectorAll(':scope > .start-volumes > .start-volume').length)"), [0, 3, 1])
+    check("nested rows are indented under the parent", probe("(() => {const card = document.querySelectorAll('.start-disk')[1]; return card.querySelector('.start-volume strong').getBoundingClientRect().left > card.querySelector('.start-disk-head strong').getBoundingClientRect().left + 8;})()"), True)
     check("each volume is under its own disk", probe("[...document.querySelectorAll('.start-disk')].map((card) => [...card.querySelectorAll('.start-volume strong')].map((name) => name.textContent))"),
           [[], ["Holiday", "Backup", "Camera"], ["Dashcam"]])
-    check("a disk with no volume says so, in place of rows", probe("document.querySelectorAll('.start-disk')[0].querySelector('.start-disk-empty')?.textContent.startsWith('No volumes found')"), True)
-    check("a volume seen before says when, in its one line", probe("document.querySelectorAll('.start-volume-title span')[0].textContent.startsWith('ExFAT, 3.1 MB, picker-part-a.img. Seen before, last opened')"), True)
-    check("a volume not seen before says so", probe("document.querySelectorAll('.start-volume-title span')[1].textContent"), "NTFS, 2.1 MB, picker-part-b.img. Not seen before.")
+    check("a disk with no readable partition table is still a parent row, with a short note", probe("document.querySelectorAll('.start-disk')[0].querySelector('.start-disk-empty')?.textContent"),
+          "No partitions found: its partition table may be damaged or missing. Its bytes can still be opened.")
+    check("a volume seen before says when, in its one line", probe("document.querySelectorAll('.start-volumes .start-volume-title span')[0].textContent.startsWith('ExFAT, 3.1 MB, picker-part-a.img. Seen before, last opened')"), True)
+    check("a volume not seen before says so", probe("document.querySelectorAll('.start-volumes .start-volume-title span')[1].textContent"), "NTFS, 2.1 MB, picker-part-b.img. Not seen before.")
     check("each row has one short status", probe("[...document.querySelectorAll('.start-disk .start-status')].map((status) => status.textContent)"), ["Ready", "Ready", "Ready", "Ready"])
-    check("a row's only button is Open", probe("[...document.querySelectorAll('.start-disk .start-volume button')].map((button) => button.textContent)"), ["Open again", "Open", "Open", "Open"])
-    check("raw inspection is one small control for each disk", probe("document.querySelectorAll('.start-disk .start-raw-toggle').length"), 3)
-    check("no chooser is open until it is asked for", probe("document.querySelectorAll('.start-raw').length"), 0)
+    check("a row's only button is Open, the same word as everywhere", probe("[...document.querySelectorAll('.start-disk .start-volume button')].map((button) => button.textContent)"), ["Open", "Open", "Open", "Open"])
+    check("there is no separate raw control", probe("document.querySelectorAll('.start-raw-toggle, .start-raw').length + ([...document.querySelectorAll('button')].filter((button) => /raw/i.test(button.textContent)).length)"), 0)
 
     check("every volume has an inline Block mount checkbox", probe("[...document.querySelectorAll('.start-disk .mount-block-inline')].map((label) => label.textContent)"), ["Block mount"] * 4)
     check("the long per-row label is gone", probe("document.body.textContent.includes('Block mounting while')"), False)
@@ -115,35 +111,23 @@ try:
     check("two mounted volumes on one disk share one unmount command", probe("[...document.querySelectorAll('.start-caution .command code')].map((code) => code.textContent)"), ["diskutil unmountDisk " + second])
     check("no sentence is repeated", probe("(document.body.textContent.match(/Reading needs your permission/g) || []).length"), 2)
     check("each row has one short status again", probe("[...document.querySelectorAll('.start-disk .start-status')].map((status) => status.textContent)"), ["Mounted", "Mounted", "Needs permission", "Needs permission"])
-    check("a volume that is mounted or unreadable has no Open button", probe("document.querySelectorAll('.start-disk .start-open').length"), 0)
+    check("a volume that is mounted or unreadable has no Open button, but its disk does", probe("[document.querySelectorAll('.start-volume .start-open').length, document.querySelectorAll('.start-disk-head .start-open').length]"), [0, 3])
     needing = fit()
     print("the same disks needing an unmount and a permission: %s" % needing, flush=True)
     check("they fit too", needing["content"] <= needing["list"], True)
     screenshot(FOLDER / "picker-start-notices.png")
     look(calm)
 
-    toggle_raw(0)
-    check("the chooser opens under its disk", wait_for("document.querySelectorAll('.start-disk')[0].querySelectorAll('.start-raw').length === 1"), True)
-    check("a disk with no partition offers its whole disk", probe("[...document.querySelectorAll('.start-disk')[0].querySelectorAll('.start-raw option')].map((option) => option.textContent)"), ["Whole disk, 5.2 MB"])
-    toggle_raw(1)
-    check("a disk with partitions lists the whole disk first, then each", probe("[...document.querySelectorAll('.start-disk')[1].querySelectorAll('.start-raw option')].map((option) => option.textContent)"),
-          ["Whole disk, 8.4 MB", "Holiday, ExFAT, 3.1 MB", "Backup, NTFS, 2.1 MB", "Camera, FAT32, 1.0 MB"])
-    toggle_raw(0)
-    check("the chooser closes again", wait_for("document.querySelectorAll('.start-disk')[0].querySelectorAll('.start-raw').length === 0"), True)
-    toggle_raw(0)
-    check("a whole disk with no partition table is chosen", wait_for("document.querySelector('.start-raw-scope')?.textContent.includes('all 5.2 MB of the disk')"), True)
-    inspect(0)
-    check("the whole disk opens", wait_for("!!document.querySelector('.app .explorer')"), True)
+    click_open(".start-disk-head", 0)
+    check("Open on a whole disk with no partition table opens", wait_for("!!document.querySelector('.app .explorer')"), True)
+    check("it is a whole disk: raw bytes, with no filesystem applied", probe("document.querySelector('.interp-whole')?.textContent"), "Whole disk: raw bytes. Open one of its extents to read it as a filesystem.")
     check("the map covers the whole disk", probe("[...document.querySelectorAll('.side input')][1].value"), str(5 * MIB))
 
     js("[...document.querySelectorAll('.toolbar button')].find((button) => button.textContent === 'Change disk')?.click()")
     check("the start screen comes back", wait_for("document.querySelectorAll('.start-disk').length === 3"), True)
-    toggle_raw(1)
-    check("the chooser is there again", wait_for("!!document.querySelector('.start-raw select')"), True)
-    choose(1, part_b)
-    check("a partition is chosen", wait_for("document.querySelector('.start-raw-scope')?.textContent.includes('only this partition, 2.1 MB')"), True)
-    inspect(1)
-    check("the partition opens", wait_for("!!document.querySelector('.app .explorer')"), True)
+    click_open(".start-disk:nth-child(2) .start-volume", 1)
+    check("Open on a partition opens", wait_for("!!document.querySelector('.app .explorer')"), True)
+    check("an image with no filesystem opens as raw bytes", probe("document.querySelector('.interp-whole') !== null && !document.querySelector('.safety-chip')"), True)
     check("the map covers only that partition", probe("[...document.querySelectorAll('.side input')][1].value"), str(2 * MIB))
     js("[...document.querySelectorAll('.mode-switch button')].find((button) => button.textContent.trim() === 'Investigate')?.click()")
     check("the graph's last mark is the partition's end", wait_for("!!document.querySelector('.ruler span:last-child')"), True)

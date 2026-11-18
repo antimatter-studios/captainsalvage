@@ -330,6 +330,21 @@ pub fn list_disks(device: Option<&str>) -> Result<String> {
 /// How sure a boot sector that reads and checks out makes the format of the device it is on.
 const BOOT_CONFIDENCE: f64 = 0.9;
 
+/// What reading an extent of a source as a filesystem takes. Offsets are relative to the extent.
+#[derive(Clone, Debug)]
+pub struct Reading {
+    /// exFAT, FAT12, FAT16, FAT32 or NTFS. It must match the boot metadata found.
+    pub format: String,
+    pub start: u64,
+    pub length: u64,
+    /// Where boot evidence is, when it is not at `start`.
+    pub boot_offset: Option<u64>,
+    /// `analysis` when boot evidence or a range analysis found it, `manual` when the person chose.
+    pub origin: String,
+    pub confidence: f64,
+    pub label: String,
+}
+
 /// A scan found or made for a session, and the files it keeps.
 struct Found {
     workspace: Workspace,
@@ -392,6 +407,7 @@ impl Session {
                 block_count: u64::from(volume.geometry.cluster_count),
                 options: serde_json::json!({}),
                 accept: crate::catalog::Accept::Exact,
+                fresh: false,
             },
         )?;
         Ok(Found::from(opened))
@@ -468,6 +484,7 @@ impl Session {
                 block_count: u64::from(volume.geometry.cluster_count),
                 options: serde_json::json!({}),
                 accept: crate::catalog::Accept::Exact,
+                fresh: false,
             },
         )?;
         Ok(Found::from(opened))
@@ -481,14 +498,35 @@ impl Session {
         scan_id: &str,
         accept: crate::catalog::Accept,
     ) -> Result<Arc<Self>> {
+        Self::open_scan_in(disk, None, scan_id, accept)
+    }
+
+    /// Like [`Session::open_scan`], for a scan of an extent of `disk` that is a source of its own
+    /// (`extent` is where it sits in `disk`). The scan's offsets are relative to that extent, and
+    /// the markers it is checked against are the extent's, so it opens the same whether the
+    /// partition was opened alone or from its whole disk.
+    pub fn open_scan_in(
+        disk: &crate::disk::RawDisk,
+        extent: Option<(u64, u64)>,
+        scan_id: &str,
+        accept: crate::catalog::Accept,
+    ) -> Result<Arc<Self>> {
+        let (base, extent_length) = extent.unwrap_or((0, disk.length));
+        let owned;
+        let view: &crate::disk::RawDisk = if extent.is_some() {
+            owned = disk.extent(base, extent_length)?;
+            &owned
+        } else {
+            disk
+        };
         let catalog = crate::catalog::Catalog::for_user()?;
-        let (scan, _, _) = catalog.open_scan(disk, scan_id, accept)?;
+        let (scan, _, _) = catalog.open_scan(view, scan_id, accept)?;
         anyhow::ensure!(
             scan.kind == crate::catalog::ScanKind::Filesystem,
             "This is a raw scan; resume it with resume_raw_scan. Only filesystem scans open as a volume."
         );
         let region = crate::disk::DiskRegion {
-            start: scan.start,
+            start: base + scan.start,
             length: scan.length,
             format: scan.format.clone(),
             label: if scan.label.is_empty() {
@@ -496,7 +534,7 @@ impl Session {
             } else {
                 scan.label.clone()
             },
-            boot_offset: scan.boot_offset.unwrap_or(scan.start),
+            boot_offset: base + scan.boot_offset.unwrap_or(scan.start),
         };
         let source = disk.interpretation(&region)?;
         let volume = Volume::open(source)?;
@@ -523,6 +561,116 @@ impl Session {
                 session.workspace.dir().join("interpretation.json"),
                 serde_json::to_vec_pretty(&session.interpretation)?,
             )?;
+        }
+        Ok(session)
+    }
+
+    /// Opens an extent of `disk` (or all of it) as the filesystem `reading` says, finding the
+    /// scan stored for that source, interpretation and options, or making it when none is. It
+    /// starts nothing: a scan runs when the person starts it. `rescan` is a new scan of what was
+    /// scanned before, the earlier one kept. `parent` is the stored source that `disk` is, when
+    /// `extent` is one of its partitions, which links the extent to it.
+    pub fn open_reading(
+        disk: &crate::disk::RawDisk,
+        extent: Option<(u64, u64)>,
+        reading: &Reading,
+        accept: crate::catalog::Accept,
+        rescan: bool,
+        parent: Option<&str>,
+        fresh: bool,
+    ) -> Result<Arc<Self>> {
+        use sha2::Digest;
+        let (base, extent_length) = extent.unwrap_or((0, disk.length));
+        let owned;
+        let view: &crate::disk::RawDisk = if extent.is_some() {
+            owned = disk.extent(base, extent_length)?;
+            &owned
+        } else {
+            disk
+        };
+        let region = crate::disk::DiskRegion {
+            start: base + reading.start,
+            length: reading.length,
+            format: reading.format.clone(),
+            label: reading.label.clone(),
+            boot_offset: base + reading.boot_offset.unwrap_or(reading.start),
+        };
+        let source = disk.interpretation(&region)?;
+        let volume = Volume::open(source)?;
+        anyhow::ensure!(
+            volume.geometry.volume_size <= region.length,
+            "filesystem geometry exceeds selected region; choose a larger region"
+        );
+        let fills_the_extent =
+            reading.start == 0 && reading.length == extent_length && reading.boot_offset.is_none();
+        let key = if fills_the_extent {
+            volume.workspace_name()
+        } else {
+            let path_hash: String = sha2::Sha256::digest(disk.path.as_os_str().as_encoded_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            format!(
+                "{}/region-{}-{:x}-{:x}-{:x}",
+                volume.workspace_name(),
+                &path_hash[..16],
+                region.start,
+                region.length,
+                region.boot_offset
+            )
+        };
+        let found = (|| -> Result<Found> {
+            let catalog = crate::catalog::Catalog::for_user()?;
+            let opened = catalog.open_filesystem(
+                view,
+                &crate::catalog::FilesystemOpen {
+                    interpretation: crate::catalog::InterpretationRequest {
+                        format: volume.kind.to_string(),
+                        start: reading.start,
+                        length: reading.length,
+                        boot_offset: reading.boot_offset,
+                        origin: reading.origin.clone(),
+                        confidence: reading.confidence,
+                    },
+                    volume_key: key.clone(),
+                    block_size: volume.geometry.cluster_size(),
+                    block_count: u64::from(volume.geometry.cluster_count),
+                    options: if rescan {
+                        serde_json::json!({"rescan": crate::workspace::now_millis()})
+                    } else {
+                        serde_json::json!({})
+                    },
+                    accept,
+                    fresh,
+                },
+            )?;
+            if let (Some(parent), Some(_)) = (parent, extent) {
+                catalog.link_extent(parent, &opened.source.id, base, extent_length)?;
+            }
+            Ok(Found::from(opened))
+        })();
+        let (workspace, scan) = match found {
+            Ok(opened) => (opened.workspace, Some(opened.binding)),
+            Err(error) => {
+                eprintln!("could not find this interpretation's scan in the catalog: {error:#}");
+                (Workspace::at(Workspace::root()?.join(&key))?, None)
+            }
+        };
+        let whole = region.start == 0 && region.length == disk.length;
+        let session = Self::assemble(
+            &disk.path,
+            volume,
+            workspace,
+            (!whole).then_some(region),
+            scan,
+        )?;
+        if session.interpretation.is_some() {
+            std::fs::write(
+                session.workspace.dir().join("interpretation.json"),
+                serde_json::to_vec_pretty(&session.interpretation)?,
+            )?;
+        } else {
+            crate::startup::remember_volume(&session.workspace, &disk.path);
         }
         Ok(session)
     }

@@ -40,7 +40,19 @@ pub struct Definition {
 }
 
 fn disk_id() -> Value {
-    json!({"type": "string", "description": "ID from open_raw_disk."})
+    json!({"type": "string", "description": "ID from open_raw_disk or open_source."})
+}
+
+fn extent_argument() -> Value {
+    json!({"type": "object", "description": "Compare this extent of the open source (a partition of a whole disk) as a source of its own, instead of the whole of it.", "properties": {"start": {"type": "integer"}, "length": {"type": "integer"}}, "required": ["start", "length"]})
+}
+
+/// The open source, or the extent of it the arguments name, as a source of its own.
+fn view_of(disk: &RawDisk, args: &Value) -> Result<RawDisk> {
+    match args.get("extent").filter(|value| !value.is_null()) {
+        Some(extent) => disk.extent(need_u64(extent, "start")?, need_u64(extent, "length")?),
+        None => RawDisk::with_source(&disk.path, disk.source.clone(), disk.length),
+    }
 }
 
 pub fn definitions() -> Vec<Definition> {
@@ -54,13 +66,13 @@ pub fn definitions() -> Vec<Definition> {
         Definition {
             name: "identify_source",
             description: "Compares the open raw source with the stored sources of the same length, marker by marker, and says which it is: exact (all markers match), probable (60% or more, the rest changed or unreadable, with the changed offsets), weak (listed only with showAll) or different (never listed). Nothing stored is applied by this, and a match is sampled, not proof that every byte matches. Reads at most 20 blocks of 4 KiB, within a time limit. Read only.",
-            properties: json!({"diskId": disk_id(), "showAll": {"type": "boolean", "description": "Also list weak matches, below 60% but above 0%."}}),
+            properties: json!({"diskId": disk_id(), "extent": extent_argument(), "showAll": {"type": "boolean", "description": "Also list weak matches, below 60% but above 0%."}}),
             required: &["diskId"],
         },
         Definition {
             name: "list_scans",
             description: "Lists the scans stored for a source, newest work of the interpretation last used first. A scan is a source, an interpretation (an extent of the source and the format read there, or none for raw bytes), its options, the scanner version and the range it covers; changing any of them makes a new scan, and the earlier ones stay. Each shows its interpretation and where it came from (analysis or manual), what range it covers and how far it has read, its status, when it was made and last opened, its name, and how many bytes it stores on this Mac. Give sourceId for one source, or diskId to list the scans of every stored source the open raw source matches (showAll adds weak matches). Opening a scan reads what is stored and starts no scan. Read only.",
-            properties: json!({"sourceId": {"type": "string", "description": "A source ID from list_sources."}, "diskId": disk_id(), "showAll": {"type": "boolean", "description": "With diskId, also list weak matches."}}),
+            properties: json!({"sourceId": {"type": "string", "description": "A source ID from list_sources."}, "diskId": disk_id(), "extent": extent_argument(), "showAll": {"type": "boolean", "description": "With diskId, also list weak matches."}}),
             required: &[],
         },
         Definition {
@@ -144,14 +156,18 @@ pub fn call(tool: &str, disk: Option<&RawDisk>, args: &Value, person: bool) -> R
     let catalog = Catalog::for_user()?;
     match tool {
         "list_sources" => Ok(json!({"sources": catalog.sources()?})),
-        "identify_source" => Ok(serde_json::to_value(
-            catalog.identify(need_disk()?, flag(args, "showAll"))?,
-        )?),
+        "identify_source" => {
+            let view = view_of(need_disk()?, args)?;
+            Ok(serde_json::to_value(
+                catalog.identify(&view, flag(args, "showAll"))?,
+            )?)
+        }
         "list_scans" => {
             if let Some(id) = args.get("sourceId").and_then(Value::as_str) {
                 return Ok(listing(&catalog.source(id)?, catalog.scans(id)?));
             }
-            let identified = catalog.identify(need_disk()?, flag(args, "showAll"))?;
+            let view = view_of(need_disk()?, args)?;
+            let identified = catalog.identify(&view, flag(args, "showAll"))?;
             let mut matches = Vec::new();
             for found in &identified.matches {
                 let scans = catalog.scans(&found.source.id)?;

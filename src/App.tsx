@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   call,
   type Canvas,
@@ -38,9 +38,12 @@ import { MountedWarning } from "./components/MountedWarning";
 import { WrittenWarning } from "./components/WrittenWarning";
 import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
+import { InterpretationPicker } from "./components/InterpretationPicker";
+import { SavedScans } from "./components/SavedScans";
 import { RawDiskView } from "./components/RawDiskView";
 import { WorkspaceToolbar } from "./components/WorkspaceToolbar";
-import type { DiskRegion, RawDiskOverview, RawDiskState } from "./rawDisk";
+import type { RawDiskState } from "./rawDisk";
+import type { ByteExtent, ChoiceId, NeedsChoice, OpenResult, OpenedSource } from "./openedSource";
 import { isArchiveName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
 import { bytes, count, decimal, duration, lostFolderName } from "./format";
@@ -68,12 +71,6 @@ function rememberedCanvas(): number | null {
   }
 }
 const DISK_ACCESS_CHECK_MS = 3000;
-
-async function readSourceBytes(path: string): Promise<RawDiskState> {
-  const disk = await call<RawDiskOverview>("open_raw_disk", { path });
-  if (!Number.isSafeInteger(disk.length)) throw new Error("Source is too large for exact byte offsets in the window. Use the command line.");
-  return { ...disk, scanId: null, findings: [], errors: [], nextOffset: null, scanEnd: null, scanStart: null };
-}
 
 function asBrowseRow(row: Row): BrowseRow {
   return { ...row, id: row.id as number };
@@ -294,7 +291,7 @@ function ModeSwitch({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) => void
   );
 }
 
-function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void; mode: Mode; onMode: (mode: Mode) => void }) {
+function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode, picker }: { onChangeDisk: () => void; status: Status | null; overview: Overview; onChanged: () => void; mode: Mode; onMode: (mode: Mode) => void; picker: ReactNode }) {
   const scan = status?.scan;
   const fraction = scan ? scan.clustersScanned / scan.totalClusters : 0;
   const running = Boolean(status && (status.scanInThisApp || status.scanHeldElsewhere));
@@ -315,8 +312,7 @@ function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode }: { 
     <WorkspaceToolbar
       path={overview.device}
       length={overview.geometry.volumeBytes}
-      label={overview.interpretation?.label}
-      description={overview.interpretation && <span title={`${overview.device}: ${overview.interpretation.start} + ${overview.interpretation.length}`}>{t("{format} interpretation at byte {offset}", { format: overview.interpretation.format, offset: overview.interpretation.start })}</span>}
+      description={picker}
       progress={{ text: scanText, fraction, title: scan ? t("{clusters} directory clusters and {entries} entries found so far", { clusters: count(scan.directoryClusters), entries: count(scan.setsFound) }) : undefined, error: status?.scanError }}
       onChangeDisk={onChangeDisk}
     >
@@ -363,6 +359,10 @@ export default function App() {
   const [choosing, setChoosing] = useState(false);
   const [rawDisk, setRawDisk] = useState<RawDiskState | null>(null);
   const [rawVisible, setRawVisible] = useState(false);
+  const [opened, setOpened] = useState<OpenedSource | null>(null);
+  const [saved, setSaved] = useState<{ choice: NeedsChoice | null } | null>(null);
+  const [switchNote, setSwitchNote] = useState<{ text: string; warn: boolean } | null>(null);
+  const [switching, setSwitching] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [layer, setLayer] = useState<Layer>("ownership");
@@ -506,16 +506,22 @@ export default function App() {
     };
   }, [canvas, canvasRevision]);
 
-  const open = useCallback(async (path: string, region?: DiskRegion & { diskId: string }) => {
-    setFailure(null);
-    setStartPath(path);
-    try {
-      const result = region
-        ? await call<Overview>("open_disk_region", region)
-        : await call<Overview>("open_volume", { path });
-      setOverview(result);
-      setView([2, result.geometry.clusterCount + 2]);
-      setChoosing(false);
+  /** Applies what `open_source` answered: the raw source is always there, and the interpretation
+   * decides whether the filesystem workspace or the byte map is what shows first. */
+  const adopt = useCallback((result: OpenedSource, how: "open" | "switch" | "extent") => {
+    if (!Number.isSafeInteger(result.disk.length)) throw new Error("Source is too large for exact byte offsets in the window. Use the command line.");
+    setRawDisk((current) => {
+      const base: RawDiskState = current && current.id === result.disk.id ? current
+        : { ...result.disk, scanId: null, findings: [], errors: [], nextOffset: null, scanEnd: null, scanStart: null };
+      return result.raw ? { ...base, ...result.raw } : base;
+    });
+    setOpened(result);
+    setSaved(null);
+    setChoosing(false);
+    setCenter("overview");
+    if (result.overview) {
+      setOverview(result.overview);
+      setView([2, result.overview.geometry.clusterCount + 2]);
       setRawVisible(false);
       setEntry(null);
       setFolder(null);
@@ -524,38 +530,70 @@ export default function App() {
       setStandalone(null);
       setBrowseScope(null);
       setCluster(null);
-      setCenter("overview");
       bump();
-    } catch (reason) {
-      if (region) {
-        setFailure(String(reason));
-        throw reason;
-      }
-      try {
-        setRawDisk(await readSourceBytes(path));
-        setRawVisible(true);
-        setChoosing(false);
-        setCenter("overview");
-        changeMode("investigate");
-      } catch (rawReason) {
-        setFailure(String(rawReason));
-      }
+    } else {
+      setOverview(null);
+      setRawVisible(true);
+      changeMode("investigate");
+    }
+    if (how === "switch") {
+      const name = result.interpretation?.format;
+      setSwitchNote({
+        text: !name
+          ? t("Showing the raw bytes. Your earlier scans stay.")
+          : result.created
+            ? t("Started a new {format} scan. Your earlier scan stays, and choosing it again opens it without scanning.", { format: name })
+            : t("Opened your earlier {format} scan. Nothing was scanned.", { format: name }),
+        warn: false,
+      });
+    } else {
+      setSwitchNote(result.openError ? { text: t("Opened as raw bytes, because the filesystem could not be applied: {reason}", { reason: fromEngine(result.openError) }), warn: true } : null);
     }
   }, [changeMode]);
 
-  const openRaw = useCallback(async (path: string) => {
+  /** The one way to open anything: a device, a partition, an image, an extent of a disk, a stored scan. */
+  const openSource = useCallback(async (args: Record<string, unknown>, how: "open" | "switch" | "extent" = "open") => {
     setFailure(null);
-    setStartPath(path);
+    if (typeof args.path === "string") setStartPath(args.path);
     try {
-      setRawDisk(await readSourceBytes(path));
-      setRawVisible(true);
-      setChoosing(false);
-      setCenter("overview");
-      changeMode("investigate");
+      const result = await call<OpenResult>("open_source", args);
+      if (result.needsChoice) {
+        // The start screen stays, with the question over it: nothing is opened until they choose.
+        setSaved({ choice: result });
+        return;
+      }
+      adopt(result, how);
     } catch (reason) {
-      setFailure(String(reason));
+      if (how === "switch") setSwitchNote({ text: fromEngine(String(reason)), warn: true });
+      else setFailure(String(reason));
+      if (how === "extent") throw reason;
     }
-  }, [changeMode]);
+  }, [adopt]);
+
+  const open = useCallback((path: string) => openSource({ path }), [openSource]);
+
+  // A question before opening is about the drive being opened, not the one that is still open.
+  const asking = saved?.choice ?? null;
+  const diskNow = asking ? asking.disk.id : opened?.disk.id ?? null;
+  const extentNow: ByteExtent | null = asking ? asking.extent : opened?.extent ?? null;
+  const switchTo = useCallback(async (id: ChoiceId) => {
+    if (!opened) return;
+    setSwitching(true);
+    await openSource({ diskId: opened.disk.id, ...(opened.extent ? { extent: opened.extent } : {}), format: id }, "switch");
+    setSwitching(false);
+  }, [opened, openSource]);
+  const openScan = useCallback((scanId: string, acceptChangedMarkers: boolean) => {
+    if (diskNow === null) return;
+    void openSource({ diskId: diskNow, ...(extentNow ? { extent: extentNow } : {}), scanId, acceptChangedMarkers });
+  }, [diskNow, extentNow, openSource]);
+  const openFresh = useCallback(() => {
+    if (diskNow === null) return;
+    void openSource({ diskId: diskNow, ...(extentNow ? { extent: extentNow } : {}), fresh: true });
+  }, [diskNow, extentNow, openSource]);
+  const openExtent = useCallback((extent: ByteExtent, reading?: { format: string; bootOffset?: number }) => {
+    if (!rawDisk) return Promise.reject(new Error("No source is open."));
+    return openSource({ diskId: rawDisk.id, extent, ...(reading ? { format: reading.format, ...(reading.bootOffset ? { bootOffset: reading.bootOffset } : {}) } : {}) }, "extent");
+  }, [rawDisk, openSource]);
 
   useEffect(() => {
     invoke<string | null>("last_device")
@@ -795,6 +833,9 @@ export default function App() {
   }, [simple, center]);
 
   const showingRaw = rawVisible && rawDisk !== null;
+  const picker = opened ? (
+    <InterpretationPicker opened={opened} busy={switching} note={switchNote} onSwitch={(id) => void switchTo(id)} onScans={() => setSaved({ choice: null })} />
+  ) : null;
   if ((!overview && !showingRaw) || choosing) {
     return (
       <>
@@ -803,10 +844,10 @@ export default function App() {
         imagePath={startPath ?? ""}
         failure={failure}
         onOpen={(path) => void open(path)}
-        onRaw={(path) => void openRaw(path)}
         onBack={overview || showingRaw ? () => setChoosing(false) : undefined}
         themeSwitch={<><LanguageSwitch /><ThemeSwitch /></>}
       />
+      {saved?.choice && <SavedScans choice diskId={saved.choice.disk.id} extent={saved.choice.extent} currentScan={null} onOpen={openScan} onFresh={openFresh} onClose={() => setSaved(null)} />}
       </>
     );
   }
@@ -825,8 +866,8 @@ export default function App() {
       <div className="sidebar-drag" data-tauri-drag-region>
         <SidebarBrand onHome={() => setCenter("overview")} />
       </div>
-      {showingRaw && rawDisk ? <RawDiskView key={rawDisk.id} disk={rawDisk} onUpdate={setRawDisk}
-        onOpen={(region) => open(rawDisk.path, { ...region, diskId: rawDisk.id })}
+      {showingRaw && rawDisk ? <RawDiskView key={rawDisk.id} disk={rawDisk} onUpdate={setRawDisk} opened={opened} picker={picker}
+        onOpen={openExtent}
         onBack={() => setChoosing(true)}
         onReturn={overview?.device === rawDisk.path ? () => { setRawVisible(false); setCenter("overview"); } : undefined}
         center={center === "bytes" ? "bytes" : "overview"} onCenter={setCenter}
@@ -834,7 +875,7 @@ export default function App() {
         leftHandle={<ColumnHandle label={t("Resize the sidebar")} edge="left-panel" onWidth={columns.setLeft} onReset={columns.resetLeft} />}
         rightHandle={<ColumnHandle label={t("Resize the details panel")} edge="right-panel" onWidth={columns.setRight} onReset={columns.resetRight} />}
       /> : overview && <>
-      <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} mode={mode} onMode={changeMode} />
+      <Toolbar status={status} overview={overview} onChanged={bump} onChangeDisk={() => setChoosing(true)} mode={mode} onMode={changeMode} picker={picker} />
       {!simple && <Strips
         layer={layer}
         onLayer={(next) => {
@@ -877,10 +918,7 @@ export default function App() {
             <button role="tab" aria-selected={center === "browse"} onClick={() => setCenter("browse")}>{t("Browse files")}</button>
             {!simple && <button role="tab" aria-selected={center === "bytes"} disabled={cluster === null} onClick={() => setCenter("bytes")}>{t("Bytes")}</button>}
             <button role="tab" aria-selected={center === "zip"} disabled={!zipEntry} onClick={() => setCenter("zip")}>{t("Inside archive")}</button>
-            <button role="tab" aria-selected={false} onClick={() => {
-              if (rawDisk?.path === overview.device) { setRawVisible(true); setCenter("overview"); changeMode("investigate"); }
-              else void openRaw(overview.device);
-            }}>{t("Source bytes")}</button>
+            <button role="tab" aria-selected={false} disabled={!rawDisk} onClick={() => { setRawVisible(true); setCenter("overview"); changeMode("investigate"); }}>{t("Source bytes")}</button>
           </div>
         </div>
         {center === "zip" && zipEntry?.id != null && <ZipView id={zipEntry.id} name={zipEntry.name} onBack={() => setCenter("browse")} />}
@@ -977,6 +1015,7 @@ export default function App() {
       </div>
       </>}
     </div>
+    {saved && !saved.choice && opened && <SavedScans choice={false} diskId={opened.disk.id} extent={opened.extent} currentScan={opened.scan?.id ?? null} onOpen={openScan} onClose={() => setSaved(null)} />}
     {menu && <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu} items={[{ label: t("Export"), onChoose: () => setExporting(menu.item) }]} />}
     {exporting && <ExportDialog item={exporting} copy={status?.copy ?? null} onClose={() => setExporting(null)} />}
     </ModeContext.Provider>

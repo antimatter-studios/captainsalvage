@@ -14,6 +14,8 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
+mod opening;
+
 /// Receives events the app's window should react to.
 pub type UiSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
@@ -71,6 +73,8 @@ const DEFAULT_MIN_RUN_CLUSTERS: u64 = 64;
 pub struct Engine {
     session: RwLock<Option<Arc<Session>>>,
     raw_disk: RwLock<Option<Arc<crate::disk::RawDisk>>>,
+    /// The stored source of the whole disk that is open, as (raw source ID, source ID).
+    source_of_disk: RwLock<Option<(String, String)>>,
     selection: Mutex<Value>,
     sink: RwLock<Option<UiSink>>,
     screenshot: RwLock<Option<ScreenshotHook>>,
@@ -497,6 +501,7 @@ impl Engine {
                 crate::catalog_tools::call(tool, disk.as_deref(), args, author == AUTHOR_USER)
             }
             "open_stored_scan" => self.open_stored_scan(args),
+            "open_source" => self.open_source(args, author),
             tool if crate::range_tools::TOOLS.contains(&tool) => {
                 let disk = self.raw_disk(args)?;
                 crate::range_tools::call(tool, &disk, args)

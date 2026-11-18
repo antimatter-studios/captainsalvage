@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { call } from "../api";
 import { bytes, count, percent } from "../format";
 import { fromEngine, t } from "../i18n";
-import { SOURCE_FORMATS, competition, extentFromEnds, type DiskRegion, type Hypothesis, type HypothesisList } from "../rawDisk";
+import { SOURCE_FORMATS, competition, extentFromEnds, type Hypothesis, type HypothesisList } from "../rawDisk";
+import type { ByteExtent } from "../openedSource";
 
 /**
  * The hypotheses saved for this source: an extent and a format, with a confidence. They overlap
@@ -19,7 +20,7 @@ export function Hypotheses({ diskId, sourceLength, selectionStart, selectionLeng
   /** Changes when something outside saved a hypothesis, so the list is read again. */
   refresh: number;
   onSelect: (start: number, length: number) => void;
-  onOpen: (region: DiskRegion) => Promise<void>;
+  onOpen: (extent: ByteExtent, reading: { format: string; bootOffset?: number }) => Promise<void>;
 }) {
   const [list, setList] = useState<HypothesisList | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -87,7 +88,7 @@ export function Hypotheses({ diskId, sourceLength, selectionStart, selectionLeng
           <button disabled={busy || !changed(item)} onClick={() => { const extent = typed(item); if (extent) void run("update_hypothesis", { id: item.id, ...extent }); }}>{t("Apply start and end")}</button>
           <button disabled={busy || !selectionValid} onClick={() => void run("update_hypothesis", { id: item.id, start: selectionStart, length: selectionLength })}>{t("Use the selection")}</button>
           <button disabled={busy} onClick={() => onSelect(item.start, item.length)}>{t("Select")}</button>
-          <button disabled={busy} onClick={() => void onOpen({ start: item.start, length: item.length, format: item.format, label: item.label, bootOffset: item.bootOffset ?? item.start }).catch((reason) => setFailure(String(reason)))}>{t("Try this interpretation")}</button>
+          <button disabled={busy} onClick={() => void onOpen({ start: item.start, length: item.length }, { format: item.format, bootOffset: item.bootOffset === null ? undefined : item.bootOffset - item.start }).catch((reason) => setFailure(String(reason)))}>{t("Open")}</button>
           <button disabled={busy} onClick={() => void run("raise_hypothesis", { id: item.id })}>{t("Put on top")}</button>
           <button disabled={busy} onClick={() => void run("delete_hypothesis", { id: item.id })}>{t("Forget")}</button>
         </div>

@@ -2543,6 +2543,19 @@ fn the_start_screen_reads_what_diskutil_says() {
     assert_eq!(volume.format, "ExFAT");
     assert!(volume.external && volume.can_open);
     assert_eq!(volume.mount_point, None);
+    // A volume of an APFS container is grouped under the physical disk its store is on.
+    assert_eq!(volume.physical_disk, None);
+    let apfs_volume = format!(
+        "{}   APFS Physical Store:       disk5s1\n",
+        SAMPLE_DISK_INFO.replace("ExFAT", "APFS")
+    );
+    assert_eq!(
+        parse_volume(&apfs_volume)
+            .expect("volume")
+            .physical_disk
+            .as_deref(),
+        Some("/dev/rdisk5")
+    );
 
     let mounted = SAMPLE_DISK_INFO.replace(
         "Mounted:                   No",

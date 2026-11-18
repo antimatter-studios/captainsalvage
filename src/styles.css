@@ -663,17 +663,14 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-disks, .start-volumes { list-style: none; margin: 0; padding: 0; }
 .start-disks { display: grid; gap: 10px; }
 .start-disk { padding: 8px 12px 6px; border: 0.5px solid var(--line-strong); border-radius: 10px; }
-.start-disk-head { display: flex; align-items: baseline; gap: 10px; }
-.start-disk-head strong { font-size: 14px; }
-.start-disk-head span { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.start-raw-toggle { flex: none; align-self: center; padding: 1px 9px; font-size: 12px; }
-.start-disk-empty { margin: 6px 0 4px; color: var(--ink-2); font-size: 12px; }
-.start-raw { margin: 6px 0 2px; padding: 6px 8px; border-radius: 7px; background: var(--hover); }
-.start-raw-choose { display: flex; gap: 8px; }
-.start-raw-choose select { flex: 1; min-width: 0; }
-.start-raw .start-raw-scope { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+/* A disk is the top of a tree: its own row with Open, and its partitions nested under it. */
+.start-disk-head { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; column-gap: 12px; }
+.start-disk-head .start-volume-title strong { font-size: 14.5px; }
+.start-disk-head .start-open { justify-self: end; }
+.start-disk-empty { margin: 4px 0 4px 14px; padding-left: 10px; border-left: 1px solid var(--line-strong); color: var(--ink-2); font-size: 12px; }
 .start-volume { display: grid; grid-template-columns: minmax(0, 1fr) 112px 108px 88px; align-items: center; column-gap: 12px; row-gap: 2px; padding: 6px 0; border-top: 0.5px solid var(--line); }
-.start-disk .start-volumes { margin-top: 5px; }
+.start-disk .start-volumes { margin: 4px 0 0 14px; padding-left: 10px; border-left: 1px solid var(--line-strong); }
+.start-disk .start-volume:first-child { border-top: 0; }
 .start-elsewhere .start-volume { grid-template-columns: minmax(0, 1fr) 108px; }
 .start-volume-other { color: var(--muted); }
 .start-volume-title { grid-column: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -700,7 +697,6 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-image { flex: none; margin: 6px 0 0; padding-top: 2px; border-top: 0.5px solid var(--line-strong); }
 .start-image form { display: flex; gap: 8px; align-items: center; }
 .start-image input { flex: 1; min-width: 0; }
-.start-image .raw-entry-actions { margin: 0; }
 .command { display: flex; align-items: center; gap: 10px; margin-top: 5px; padding: 6px 6px 6px 10px; border-radius: 7px; background: var(--hover); }
 .command code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 .command button { flex: none; font-size: 12px; padding: 2px 9px; }
@@ -873,3 +869,33 @@ video.inline-preview { max-height: 380px; background: #000; }
 .context-menu-item { text-align: left; background: none; box-shadow: none; padding: 6px 10px; border-radius: 6px; color: var(--ink); }
 .context-menu-item:hover, .context-menu-item:focus-visible { background: var(--hover); filter: none; }
 .export-dialog { width: min(560px, calc(100vw - 48px)); overflow: auto; }
+
+/* The interpretation picker, in the header of an opened source. */
+.interp { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; pointer-events: auto; font-size: 11px; color: var(--muted); }
+.interp-pick { display: inline-flex; align-items: center; gap: 6px; }
+.interp-pick select { font-size: 12px; max-width: 280px; }
+.interp-whole { color: var(--ink-2); }
+.interp-scans { font-size: 11px; }
+.interp-note { flex-basis: 100%; max-width: 70ch; }
+.row-with-open { display: flex; align-items: center; gap: 4px; }
+.row-with-open .row { flex: 1; min-width: 0; }
+.row-open { flex: none; font-size: 11px; padding: 1px 8px; }
+
+/* The scans stored for a source, over the window. */
+.saved-scans-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 35%, transparent); }
+.saved-scans { width: min(760px, calc(100vw - 48px)); max-height: calc(100vh - 80px); overflow: auto; display: flex; flex-direction: column; gap: 8px; background: var(--surface); border-radius: 12px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3); padding: 16px 18px; }
+.saved-scans h2 { margin: 0; font-size: 17px; }
+.saved-scans p { margin: 0; font-size: 12.5px; }
+.saved-source { border: 0.5px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.saved-source header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.saved-state { font-size: 11px; font-weight: 650; padding: 0 7px; border-radius: 8px; background: var(--hover); color: var(--chart-caution); }
+.saved-state-exact { color: var(--good); }
+.saved-scans-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.saved-scan { display: grid; grid-template-columns: minmax(0, 1fr) 180px 70px; align-items: center; gap: 4px 10px; padding-top: 6px; border-top: 0.5px solid var(--line); }
+.saved-scan:first-child { border-top: 0; padding-top: 0; }
+.saved-scan-facts { display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 12px; color: var(--muted); }
+.saved-scan-facts strong { color: var(--ink); font-size: 13px; }
+.saved-scan-label { min-width: 0; }
+.saved-scan-failure { grid-column: 1 / -1; font-size: 12px; }
+.saved-scan-now { text-align: right; }
+.saved-scans-actions { display: flex; justify-content: flex-end; gap: 8px; }

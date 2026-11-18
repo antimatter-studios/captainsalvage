@@ -18,16 +18,20 @@
 //! raw-scans.sqlite                    the catalog, saved raw scans and hypotheses
 //! sources/<source>/blocks/<grid>/     caches that depend only on the source's bytes
 //! sources/<source>/scans/<scan>/      one scan's map and everything derived from its format
+//! source_extents                      (parent source, extent) -> child source: a partition opened
+//!                                     alone and the same extent of its disk are one source
 //! vol-<serial>/                       a workspace from before the catalog: registered as a
 //!                                     scan, and used where it is, never moved or changed
 //! backups/                            copies made before the catalog first changed the database
 //! ```
 
+mod extents;
 mod migrate;
 mod scans;
 #[cfg(test)]
 mod tests;
 
+pub use extents::{LinkedExtent, ParentLink};
 pub use migrate::{migrate, MigrationReport};
 pub use scans::{
     FilesystemOpen, InterpretationRecord, InterpretationRequest, OpenedScan, ScanKind, ScanRecord,
@@ -87,6 +91,14 @@ CREATE TABLE IF NOT EXISTS source_blocks (
     source_id TEXT NOT NULL REFERENCES sources(id), grid TEXT NOT NULL, dir TEXT NOT NULL,
     PRIMARY KEY(source_id, grid)
 );
+CREATE TABLE IF NOT EXISTS source_extents (
+    child_source_id TEXT NOT NULL REFERENCES sources(id),
+    parent_source_id TEXT NOT NULL REFERENCES sources(id),
+    ext_start INTEGER NOT NULL, ext_length INTEGER NOT NULL,
+    created_at_millis INTEGER NOT NULL,
+    PRIMARY KEY (child_source_id, parent_source_id, ext_start)
+);
+CREATE INDEX IF NOT EXISTS source_extents_parent ON source_extents(parent_source_id);
 CREATE TABLE IF NOT EXISTS catalog_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
 
 /// How the drive's own hardware may identify it. It identifies the physical drive and not a clone

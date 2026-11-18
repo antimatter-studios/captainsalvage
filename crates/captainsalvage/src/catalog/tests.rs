@@ -69,6 +69,7 @@ fn open_as(format: &str, key: &str, accept: Accept) -> FilesystemOpen {
         block_count: 1000,
         options: json!({}),
         accept,
+        fresh: false,
     }
 }
 

@@ -18,6 +18,13 @@ python3 tests/window/modes_test.py "target/release/bundle/macos/Captain Salvage.
 Run one test at a time, and not while a build is running. Several at once, or a test beside a
 release build, slows the machine enough for the tests to time out.
 
+`open_door_test.py` is the one door. It opens a synthetic whole disk (an MBR and one exFAT
+partition) and checks the whole-disk scope, Open on its partition, the interpretation picker (the
+detected filesystem marked, a new scan on a change with the earlier one kept, a reason when there
+is no evidence), the saved scans list with its editable names, and that the same partition opened
+alone from a file of its bytes is the same source and scan. It needs `jigsaw.img` and saves
+`door-header.png` here.
+
 `raw_disk_test.py` derives a throwaway raw image from `jigsaw.img`, with NTFS boot evidence
 and an older exFAT volume beyond a declared partition. It verifies that raw sources use the
 normal workspace and shared graph, that evidence discovery reaches both formats, that byte
@@ -26,9 +33,10 @@ workspace without modifying the source. It saves a screenshot to
 `/tmp/captainsalvage-raw-workspace.png` for visual inspection.
 
 `raw_scan_test.py` checks raw-scan speed and ETA, pauses between bounded batches, restarts its
-isolated test app, and resumes the saved scan against a renamed clone. It verifies that one changed
-marker leaves a probable match that needs its own acknowledgement, and that a source whose
-markers nearly all changed is not offered, in both the window and the backend. Its temporary source images,
+isolated test app, and opens a renamed clone, which loads the saved scan by itself because the
+match is exact. It verifies that one changed marker leaves a probable match that asks first (the
+saved scans question) and needs its own acknowledgement, and that a source whose markers nearly
+all changed is never offered, in both the window and the backend. Its temporary source images,
 database and app home never use real disks or the user's application data.
 
 `raw_disk_crowded_test.py` scans a sparse synthetic image holding 1500 NTFS boot sectors and
@@ -44,10 +52,11 @@ It needs `jigsaw.img` and saves `raw-lanes.png` here.
 `SALVAGE_TEST_STARTUP_DISKS` (a JSON file in the shape `startup_disks` returns, honoured only
 while `SALVAGE_TEST_UI` is set), so no real disk is listed. Its "devices" are synthetic images:
 a whole disk with no partition table, a disk with three partitions and a card reader with one.
-It checks that each physical disk is one card with its volumes as rows, that every volume has an
-inline "Block mount" checkbox that sets and clears the block, that the list has one note about it,
-that a disk says once what it needs, that raw inspection is one small control per disk and each
-scope opens exactly its own bytes, and that the three disks fit on the screen at the default
+It checks that the start screen is a tree (each physical disk a parent row with its own Open and its
+volumes nested under it, each row with the same one Open button and no raw control), that every
+volume has an inline "Block mount" checkbox that sets and clears the block, that the list has one
+note about it, that a disk says once what it needs, that Open on a whole disk and on a partition
+each opens exactly its own bytes, and that the three disks fit on the screen at the default
 window size. It saves `picker-start.png` and `picker-start-notices.png` here.
 
 ## The images

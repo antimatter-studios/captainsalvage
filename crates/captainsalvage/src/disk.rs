@@ -233,6 +233,14 @@ impl RawDisk {
         })
     }
 
+    /// `start..start + length` of this source, as a source of its own. Its markers are taken from
+    /// the extent's own bytes, so a partition opened alone and the same extent seen from its disk
+    /// are recognised as one.
+    pub fn extent(&self, start: u64, length: u64) -> Result<RawDisk> {
+        let region = RegionSource::new(self.source.clone(), self.length, start, length)?;
+        Self::with_source(&self.path, Arc::new(region), length)
+    }
+
     pub fn overview(&self) -> DiskOverview {
         let mut warnings = Vec::new();
         let partitions = self.partitions(&mut warnings).unwrap_or_else(|error| {

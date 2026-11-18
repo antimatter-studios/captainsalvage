@@ -7,8 +7,10 @@ pub const USAGE: &str = "usage: captainsalvage source <list|identify|scans|open|
   identify <device-or-image> [--show-all]   which stored source the device is, marker by marker\n\
   scans <device-or-image> [--show-all]      the stored scans of the sources the device matches\n\
   scans --source ID                         the stored scans of one source\n\
-  open <device-or-image> --scan ID [--accept-changed-markers] [--accept-sampled-match]\n\
-                                            open a stored scan, with its results, and start nothing\n\
+  open <device-or-image> [--scan ID] [--format FORMAT] [--rescan] [--fresh] [--show-all] [--accept-changed-markers] [--extent-start BYTES --extent-length BYTES]\n\
+                                            the one way to open: finds the stored source and its last scan,\n\
+                                            or applies the best detection, and starts nothing. A probable match\n\
+                                            is listed and not applied until --accept-changed-markers\n\
   switch <device-or-image> --format FORMAT --start BYTES --length BYTES [--boot-offset BYTES] [--options JSON] [--accept-changed-markers]\n\
                                             make the scan for another format, extent or options; earlier scans stay\n\
   label --scan ID --label TEXT              name a scan\n\
@@ -34,7 +36,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         "list" => "list_sources",
         "identify" => "identify_source",
         "scans" => "list_scans",
-        "open" => "open_stored_scan",
+        "open" => "open_source",
         "switch" => "switch_interpretation",
         "label" => "label",
         "migrate" => "migrate_catalog",
@@ -49,6 +51,13 @@ pub fn run(arguments: &[String]) -> Result<()> {
             "--show-all" => args["showAll"] = json!(true),
             "--accept-changed-markers" => args["acceptChangedMarkers"] = json!(true),
             "--accept-sampled-match" => args["acceptSampledMatch"] = json!(true),
+            "--rescan" => args["rescan"] = json!(true),
+            "--fresh" => args["fresh"] = json!(true),
+            "--extent-start" | "--extent-length" => {
+                let key = &name["--extent-".len()..];
+                let number = whole(value(&mut options, name)?, name)?;
+                args["extent"][key] = json!(number);
+            }
             "--scan" => args["scanId"] = json!(value(&mut options, name)?),
             "--source" => args["sourceId"] = json!(value(&mut options, name)?),
             "--label" => args["label"] = json!(value(&mut options, name)?),
@@ -78,10 +87,12 @@ pub fn run(arguments: &[String]) -> Result<()> {
         tool
     };
     let engine = Engine::new();
-    let needs_disk = matches!(
-        tool,
-        "identify_source" | "open_stored_scan" | "switch_interpretation"
-    ) || (tool == "list_scans" && args.get("sourceId").is_none());
+    if tool == "open_source" {
+        args["path"] =
+            json!(path.with_context(|| format!("{command} needs a device or image\n{USAGE}"))?);
+    }
+    let needs_disk = matches!(tool, "identify_source" | "switch_interpretation")
+        || (tool == "list_scans" && args.get("sourceId").is_none());
     if needs_disk {
         let path = path.with_context(|| format!("{command} needs a device or image\n{USAGE}"))?;
         let disk = engine.call("open_raw_disk", &json!({"path": path}), AUTHOR_USER)?;

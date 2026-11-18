@@ -299,6 +299,10 @@ export const ENGINE_TEXT: string[] = [
   "No marker matches.",
   "Only {matched} of {total} markers match, too few to identify this drive.",
   "Markers used: {total} instead of {wanted}, because the source is small or mostly blank.",
+  // Opening a source.
+  "No {id} boot evidence was found at the start, and none is saved for it. Select a range on the map and use Analyze this range to look for one.",
+  "Only the person using the app switches an interpretation or starts a scan again.",
+  "Suggest it to them instead.",
 ];
 
 /** Errors from macOS and filesystem drivers, passed on without app-owned Rust definitions. */

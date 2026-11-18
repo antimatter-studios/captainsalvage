@@ -125,14 +125,42 @@ Use the value `disksleep` had before if it was not 10. If you added an `/etc/fst
 the volume with an earlier version, remove it with
 `sudo sed -i '' '/^UUID=YOUR-VOLUME-UUID /d' /etc/fstab`.
 
-## Investigating raw disks and overlapping filesystems
+## One way to open: Open
 
-Opening raw bytes does not require a recognised filesystem. The normal **Open** action opens
-unrecognised sources in the byte-based graph. To inspect bytes beneath a recognised filesystem,
-use **Source bytes**, **Inspect raw…** on a disk of the start screen (the whole disk or one of its
-partitions), or **Inspect raw** beside the disk image field. The
-source stays read-only, but macOS and other programs may still write to a mounted disk;
-the safety precautions above still apply.
+A disk, a partition, a disk image and a saved scan all open the same way, with one button called
+**Open**. The raw source is always loaded first (the byte map is the **Source bytes** tab), with an
+interpretation applied to it: the one the last scan of a matching stored source used, otherwise the best
+detection from the boot evidence (exFAT, FAT or NTFS, with a confidence), otherwise none, which is
+raw bytes only. Opening starts no scan. What is stored loads at once, and a scan runs when you
+start it. The source stays read-only, but macOS and other programs may still write to a mounted
+disk; the safety precautions above still apply.
+
+The start screen is a tree. Each physical disk is a parent row with its own **Open**, and its
+partitions and volumes sit under it, each with its detected filesystem, size, one status, an
+inline **Block mount** checkbox and **Open**. A disk whose partition table cannot be read is still
+a parent row, with a short note, so its bytes can be opened. What a disk needs (it is mounted, or
+reading needs permission) is said once, on its parent row.
+
+**The scope decides which tools show, not how the source opens.** A *partition* (a source that
+starts with a volume, a device macOS names as a partition, or one extent of a disk) is narrowed to
+one extent, and the filesystem is the first thing shown. A *whole disk* has the layer between bytes
+and filesystems: partition bands and evidence lanes on the map, the list of extents with a format
+each (hypotheses), **Analyze this range**, and an **Open** for each extent. Opening an extent opens
+it as a source of its own, linked to the disk by (parent source, extent): the same partition opened
+alone, or seen from its whole disk, is one source with one interpretation and one set of results.
+
+**The interpretation picker** is in the header of an opened partition: `Filesystem: NTFS (detected,
+86%)`, listing exFAT, FAT, NTFS and *No filesystem (raw bytes)*. Choosing another makes a new scan
+and keeps the earlier one, and the header says so. Choosing the earlier one again opens it without
+scanning. A choice with no boot evidence behind it is refused with a reason. **Saved scans** in the
+header lists what is stored for the source, each with its interpretation, date, how much it covers,
+what it stores, and a name you can edit.
+
+**When a drive matches a stored source**, an exact match opens its latest scan for the last-used
+interpretation and starts nothing. A probable match is never applied silently: a question lists the
+stored sources by confidence, the changed markers, and their scans, and a scan opens only once you
+say you read what changed. Matches under 60% are hidden until **Show all**. **Open as a new source**
+applies nothing stored.
 
 Raw sources open in the normal workspace, with the same toolbar, sidebar, overview, and
 selection inspector. In **Investigate** mode, the existing disk graph works in byte offsets,
@@ -143,11 +171,11 @@ evidence** examines that entire range in bounded, pausable batches, including by
 declared partitions. Finding NTFS does not stop the search for older exFAT or FAT structures.
 Unreadable ranges are reported separately; unrecognised bytes are never assumed to be empty.
 
-Select evidence or label a region with a suspected format, then **Try this interpretation**.
+Select evidence or label a region with a suspected format, then **Open** it.
 FAT12/16/32 and exFAT interpretations use the existing scan, browse and recovery workflow,
 with reads bounded to that region. The label, extent, and boot-metadata selection are saved
 with that interpretation's separate recovery workspace, not in the source's partition table.
-The **Source bytes** tab returns from an interpreted filesystem to the whole source and its
+The **Source bytes** tab returns from an opened filesystem to the whole source and its
 discovery findings, without opening a different interface.
 
 Each completed discovery batch saves its findings and checkpoint atomically in
@@ -170,12 +198,12 @@ matching contents.
 
 | State | Markers | What happens |
 |---|---|---|
-| exact | all match | The saved scan loads after the usual acknowledgement that a sampled match does not prove every byte is identical. |
-| probable | 60% or more (12 of 20) | Loading needs a second, explicit acknowledgement of the changed markers. The scan records that it resumed on a changed source and the offsets that changed, because findings near them may be out of date. |
+| exact | all match | The latest saved scan loads when the source is opened. A sampled match does not prove every byte is identical. |
+| probable | 60% or more (12 of 20) | Opening needs an explicit acknowledgement of the changed markers. The scan records that it resumed on a changed source and the offsets that changed, because findings near them may be out of date. |
 | weak | under 60%, with at least 8 matching markers | Listed only with **Show all**. It never loads. |
 | different | fewer than 8 matching markers, or another length | Never listed and never loads. A different length is a different scope, not a changed drive. |
 
-A saved scan below 60% is hidden by default; **Show all** (`--show-all`, `showAll`) lists the weak
+A saved source below 60% is hidden by default; **Show all** (`--show-all`, `showAll`) lists the weak
 ones too. At least 8 markers must match before any match is reported, so two drives that share a
 few blocks, or a drive with most markers unreadable, are not mistaken for each other. A source
 with fewer than 8 usable markers needs all of them to match. Markers are read once each, with a
@@ -183,7 +211,7 @@ time limit, and reading stops after five failed reads in a row, so a failing dri
 hammered. Fingerprints saved by earlier versions (sixteen samples) are compared marker by marker
 over their own count.
 
-Reopen the disk or a matching raw image, then choose **Load saved scan** and **Resume scan**.
+Reopen the disk or a matching raw image: its latest scan loads by itself (a probable match asks first), then choose **Resume scan**.
 Multiple scan IDs can analyse different ranges of the same contents. A scanner-version mismatch
 also requires a new scan. Previous read failures are retained as source-specific evidence, not
 attributed to a clone: loading rewinds to retry those regions, and successful rereads clear the
@@ -276,8 +304,8 @@ confidence, or save the current selection. The right panel lists them under **Hy
 
 - **Hypotheses overlap and compete.** Each is a layer with an on/off switch. Where enabled
   extents overlap, the highest layer is the one read; the list says which layer is on top of how
-  many others. Switching a layer off, or putting another on top, deletes nothing. **Try this
-  interpretation** opens a hypothesis as a filesystem through the same read-only path as any
+  many others. Switching a layer off, or putting another on top, deletes nothing. **Open**
+  opens a hypothesis as a filesystem through the same read-only path as any
   interpretation.
 - **Start and end are yours to set.** Type them, or drag across the map and choose **Use the
   selection**. A moved extent drops boot evidence that no longer lies inside it.
@@ -305,7 +333,7 @@ MCP offers the same operations as `captainsalvage_save_hypothesis`, `_update_hyp
 `_read_layout`. Limits: a hypothesis is a claim and carries no proof, and its confidence is only
 what its finding or its author gave it. A layout is read through the app's tools; it is not
 mounted, and no other program sees it. A hypothesis with a virtual position other than its own
-start can be read in the layout, but **Try this interpretation** opens the extent where it lies in
+start can be read in the layout, but **Open** opens the extent where it lies in
 the source. Layouts of several unrelated filesystems are not merged into one filesystem.
 
 ## NTFS volumes
@@ -572,6 +600,7 @@ database that already held saved raw scans and hypotheses, so a foreign key can 
 | `hypotheses` | unchanged. An interpretation **is** a saved hypothesis: its `id` is the foreign key, and `origin` and `confidence` are the ones the hypothesis already had |
 | `interpretations` | ties a hypothesis to its source (`hypothesis_id`, `source_id`), says whether it `listed` as a layer of the source's hypotheses (one made by opening is kept for its scans and is not listed) and whether it is `verified` (a migration only guessed it) |
 | `scans` | `id`, `source_id`, `interpretation_id`, `kind` (`raw` or `filesystem`), the interpretation as it was when the scan was made (`format`, `ext_start`, `ext_length`, `boot_offset`, `origin`, `confidence`), `options` (canonical JSON), `scanner_version`, `range_start`, `range_end`, `raw_scan_id`, `data_dir`, `volume_key`, `legacy_key`, `label`, `stored_bytes`, times |
+| `source_extents` | (parent source, extent) → child source: a partition opened alone and the same extent of its disk are one source. The child's markers are taken from the extent's own bytes, so each side finds the other |
 | `source_blocks` | where a source keeps the caches shared by its scans, per block grid |
 | `catalog_meta` | the migration marker and the path of the backup |
 
@@ -648,13 +677,17 @@ captainsalvage source list
 captainsalvage source identify /path/to/disk.img [--show-all]
 captainsalvage source scans /path/to/disk.img            # the stored scans of the sources it matches
 captainsalvage source scans --source SOURCE_ID
+captainsalvage source open /path/to/disk.img            # the one door: finds the stored scan, or applies the detection
 captainsalvage source open /path/to/disk.img --scan SCAN_ID [--accept-changed-markers]
+captainsalvage source open /path/to/disk.img --format NTFS   # another interpretation: a new scan, the old one stays
+captainsalvage source open /path/to/disk.img --extent-start BYTES --extent-length BYTES   # one extent of a disk
 captainsalvage source switch /path/to/disk.img --format NTFS --start 0 --length BYTES
 captainsalvage source label --scan SCAN_ID --label "before the repair"
 captainsalvage source migrate
 ```
 
-MCP and the window offer the same as `captainsalvage_list_sources`, `_identify_source`,
+MCP and the window offer the same as `captainsalvage_open_source` (the one door, which the
+window's **Open** and the command line's `source open` call), `captainsalvage_list_sources`, `_identify_source`,
 `_list_scans`, `_open_stored_scan`, `_switch_interpretation`, `_label_scan`, `_label_source` and
 `_migrate_catalog`. The listing tools are read only. The ones that make a scan or change a name are
 the person's to run, as changing a Disk Rebuild is: an agent that asks is told to suggest it.
