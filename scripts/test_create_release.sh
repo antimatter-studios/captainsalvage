@@ -351,9 +351,38 @@ merged "feat: a new thing (#2)" new-thing
 run 1.0.0 --contents-approved >/dev/null
 check "a named version" "$(git symbolic-ref --short HEAD)" release/v1.0.0
 
-# Nothing that needs releasing.
+# Every merged pull request is released: one that is not a feature or a fix is a patch, and says
+# what it was under Documentation or Maintenance, because it writes no fragment.
 start
 merged "docs: some words (#2)"
+check "a documentation change is a dry run" "$(run --dry-run)" 0
+check "it is a patch" "$(said 'Release v0.1.1')" 1
+check "it lists the pull request" "$(said 'Some words')" 1
+run --contents-approved >/dev/null
+check "a documentation change is a patch release" "$(git symbolic-ref --short HEAD)" release/v0.1.1
+check "its notes have a Documentation section" "$(git show HEAD:CHANGELOG.md | grep -c '^### Documentation')" 1
+
+start
+merged "test: an oracle for the reader (#2)"
+merged "chore: tidy the scripts (#3)"
+run --contents-approved >/dev/null
+check "tests and chores are a patch release" "$(git symbolic-ref --short HEAD)" release/v0.1.1
+check "its notes have a Maintenance section" "$(git show HEAD:CHANGELOG.md | grep -c '^### Maintenance')" 1
+check "it says the test" "$(git show HEAD:CHANGELOG.md | grep -c 'An oracle for the reader')" 1
+check "it says the chore" "$(git show HEAD:CHANGELOG.md | grep -c 'Tidy the scripts')" 1
+check "no maintenance file is left" "$([ -e changelog.d/maintenance.md ] && echo left || echo gone)" gone
+
+# A feature beats them, and keeps its fragment's entry beside the maintenance.
+start
+merged "test: a check (#2)"
+merged "feat: a new thing (#3)" new-thing
+run --contents-approved >/dev/null
+check "a feature beats a test" "$(git symbolic-ref --short HEAD)" release/v0.2.0
+
+# Nothing that needs releasing: a commit that came from no pull request.
+start
+git commit -q --allow-empty -m "chore: pushed straight to main"
+git push -q origin main
 check "nothing to release is refused" "$(run --contents-approved)" 1
 check "it says why" "$(said 'Nothing to release')" 1
 

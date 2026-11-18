@@ -3,8 +3,9 @@
 #
 # The fragment's heading comes from the branch, and the version comes from the pull request's
 # type, so a `feat:` on a `fix/` branch would say one thing in the changelog and another in the
-# version. Types with no effect on a release are not checked, so a `docs:` or `test:` commit can
-# sit on any branch. Install with scripts/install-hooks.sh.
+# version. Only `feat` and `fix` write a fragment and differ in what they raise (the minor and the
+# patch), so only they are checked: every other type raises the patch, and a `docs:` or `test:`
+# commit can sit on any branch. Install with scripts/install-hooks.sh.
 set -u
 
 branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || exit 0

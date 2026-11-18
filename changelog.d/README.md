@@ -18,7 +18,10 @@ using an agent for the wording. Install it with `scripts/install-hooks.sh`. If y
 yourself, the hook leaves it alone. Check the wording before opening a pull request, because
 the hook only saw the branch's first commit.
 
-A change no one using the app would notice -- tests, CI, documentation -- needs no fragment.
+A change no one using the app would notice -- tests, CI, documentation, refactoring -- needs no
+fragment. It is still released, as a patch: `scripts/release.py prepare` lists its pull request from
+git, under `### Documentation` (docs) or `### Maintenance` (everything else), in the release's section,
+so a release of only such changes is not empty.
 
 - `scripts/changelog-check.sh` refuses a malformed fragment, and an entry written into
   `CHANGELOG.md` directly.

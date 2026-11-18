@@ -1392,12 +1392,13 @@ and are not signed yet, so macOS asks you to approve the app the first time.
 
 | Merged | Version |
 |---|---|
-| A new feature (`feat:`) | The minor number goes up: 0.1.0 to 0.2.0 |
-| A fix (`fix:`) | The patch number goes up: 0.2.0 to 0.2.1 |
-| Anything else (`docs:`, `test:`, `chore:`) | No change |
+| A new feature (`feat:`) | The minor number goes up and the patch resets: 0.1.3 to 0.2.0 |
+| Anything else (`fix:`, `docs:`, `test:`, `chore:`, `ci:`, `refactor:`) | The patch number goes up: 0.2.0 to 0.2.1 |
 
-Several merges take the largest of these, once. Whoever opens a pull request, person or agent,
-assesses whether it fixes something broken or adds something new, and titles it to match.
+Every merged pull request is released, as a tag with its notes and no app build. Pull requests
+other than features and fixes are listed in the notes under Documentation or Maintenance. Several
+merges take the largest of these, once. Only the owner names 1.0.0 or any other version. Whoever opens a pull request, person or agent,
+assesses whether it adds something new (`feat:`) or not, and titles it to match.
 [AGENTS.md](AGENTS.md) has the rule.
 
 Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one per pull request.
