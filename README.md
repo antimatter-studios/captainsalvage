@@ -398,12 +398,9 @@ What was checked against something that is not this app:
   the kernel lists, with the same SHA-256 for every file, copies the same bytes, finds the two files
   written last and deleted, and leaves the image unchanged. Damaged copies (zeroed FAT, cut, looping
   and cross-linked chains, differing FAT copies, a wrong exFAT checksum) are ones `fsck` rejects, and
-  the app never calls a file live with bytes the kernel did not read. One known fault (#231): a FAT file whose long
-  name straddles two clusters of its folder is listed by its 8.3 alias, with the right bytes, and the
-  test accepts that alias and counts it (its non-ASCII characters are shown as replacement
-  characters, #233). A third (#232): an exFAT file whose entry set crosses into a folder cluster that is
-  not the next one on the disk is not listed, and the test lets exactly those files be omitted and
-  counts them.
+  the app never calls a file live with bytes the kernel did not read. One known fault (#232): an exFAT
+  file whose entry set crosses into a folder cluster that is not the next one on the disk is not
+  listed, and the test lets exactly those files be omitted and counts them.
 - **Windows itself**, in the Windows 11 guest of
   [fs-windows-test-harness](https://github.com/antimatter-studios/fs-windows-test-harness)
   (`chore test:windows-oracle`, from `tests/ntfs_windows.rs` and `validation/windows/`), or on a

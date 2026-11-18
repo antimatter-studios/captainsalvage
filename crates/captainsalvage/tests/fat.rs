@@ -192,6 +192,73 @@ fn files_whose_chains_were_cross_linked_are_never_called_live_and_other_files_st
     }
 }
 
+/// A folder of two clusters whose second cluster is `second`: `.`, `..` and six files with long
+/// names of four entries each, so the fourth file's long name ends one cluster and its short entry
+/// starts the next (512-byte clusters hold sixteen entries).
+fn folder_across_clusters(kind: FilesystemKind, second: usize) -> Fixture {
+    let mut fixture = Fixture::new(kind);
+    fixture.fat(3, second as u32);
+    fixture.fat(second as u32, u32::MAX);
+    let mut folder = Vec::new();
+    folder.extend(short_entry(b".          ", 0x10, 3, 0));
+    folder.extend(short_entry(b"..         ", 0x10, 0, 0));
+    for number in 0..6u16 {
+        let name = format!("entry file with a long name {number:04}.txt");
+        let mut short = *b"ENTRYF~1TXT";
+        short[7] = b'1' + number as u8;
+        folder.extend(long_entry(&name, &short, 40 + number, 5));
+    }
+    fixture.put_cluster(3, &folder[..512]);
+    fixture.put_cluster(second, &folder[512..]);
+    fixture
+}
+
+#[test]
+fn a_long_name_that_continues_into_the_next_folder_cluster_is_listed_by_its_long_name() {
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        // The next cluster of the folder is the one beside it, and one far away from it.
+        for (second, chunk) in [(4, 1024), (30, 1024), (4, 3), (30, 3)] {
+            let fixture = folder_across_clusters(kind, second);
+            let session = Session::with_source(
+                Path::new("/test/fat-long-names"),
+                Arc::new(MemorySource::new(fixture.image)),
+                workspace(&format!("long-names-{kind}-{second}-{chunk}")),
+            )
+            .unwrap();
+            run_scan(
+                &session.volume,
+                &session.workspace,
+                ScanOptions {
+                    chunk_clusters: chunk,
+                },
+                &AtomicBool::new(false),
+                |_| {},
+            )
+            .unwrap();
+            let rows = session
+                .query_map("SELECT name FROM sets WHERE in_use = 1 AND first_cluster >= 40 AND first_cluster < 46 ORDER BY first_cluster")
+                .unwrap();
+            let names: Vec<&str> = rows["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["name"].as_str().unwrap())
+                .collect();
+            let wanted: Vec<String> = (0..6)
+                .map(|number| format!("entry file with a long name {number:04}.txt"))
+                .collect();
+            assert_eq!(
+                names, wanted,
+                "{kind}, folder continues at {second}, chunk {chunk}"
+            );
+        }
+    }
+}
+
 #[test]
 fn fat_scans_resume_after_restart_without_duplicating_fixed_roots() {
     for kind in [
