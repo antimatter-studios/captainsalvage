@@ -1,11 +1,12 @@
 """Window test for #19: the legend lists only what the map shows, and keeps read errors."""
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import SCRATCH, check, finish, js, probe, scan_and_reopen, start, wait_for
+from harness import SCRATCH, check, finish, js, probe, scan_and_reopen, start, wait_for, investigate
 FULL_CONTENT = ['Compressed or media data', 'Text', 'Audio start', 'Image start', 'Video start', 'Document or archive start', 'Binary', 'exFAT directory', 'Empty', 'Not scanned yet', 'Read error']
 start(sys.argv[1])
 try:
     scan_and_reopen(os.path.join(SCRATCH, 'jigsaw.img'))
+    investigate()
     js("[...document.querySelectorAll('.strips [role=tab]')].find((b) => b.textContent.trim() === 'Content').click()")
     time.sleep(3)
     shown = probe("[...document.querySelectorAll('.strips .legend .legend-item')].map((i) => i.textContent.trim())")

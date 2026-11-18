@@ -1,10 +1,11 @@
 """Window test for #17: a lost folder shows a guessed label from its files, and keeps its cluster."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import SCRATCH, check, finish, probe, scan_and_reopen, start, wait_for
+from harness import SCRATCH, check, finish, probe, scan_and_reopen, start, wait_for, investigate
 start(sys.argv[1])
 try:
     scan_and_reopen(os.path.join(SCRATCH, 'jigsaw.img'))
+    investigate()
     wait_for("document.querySelectorAll('.explorer-rows .row').length > 1", 20)
     guessed = probe("[...document.querySelectorAll('.explorer-rows .row-name-guessed')].map((n) => n.textContent)")
     print('guessed labels:', guessed, flush=True)

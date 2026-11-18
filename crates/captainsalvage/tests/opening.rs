@@ -446,7 +446,16 @@ fn a_probable_match_is_listed_and_never_applied_without_the_persons_say() {
         "probable-changed",
         &changed_at(original.clone(), &first["fingerprint"], &[3, 4, 5]),
     );
-    let known = Catalog::for_user().unwrap().sources().unwrap().len();
+    // Other tests share the catalog, so only sources last seen at this path count.
+    let here = |path: &std::path::Path| {
+        Catalog::for_user()
+            .unwrap()
+            .sources()
+            .unwrap()
+            .iter()
+            .filter(|source| source.last_path == path.to_string_lossy())
+            .count()
+    };
     let choice = call(&engine, "open_source", json!({"path": changed.0}));
     assert_eq!(choice["needsChoice"], true, "{choice}");
     assert!(choice["overview"].is_null());
@@ -456,11 +465,7 @@ fn a_probable_match_is_listed_and_never_applied_without_the_persons_say() {
     assert_eq!(matches[0]["id"], source.as_str());
     assert!(matches[0]["comparison"]["changed"].as_u64().unwrap() >= 1);
     assert_eq!(matches[0]["scans"][0]["id"], scan.as_str());
-    assert_eq!(
-        Catalog::for_user().unwrap().sources().unwrap().len(),
-        known,
-        "nothing was made by asking"
-    );
+    assert_eq!(here(&changed.0), 0, "nothing was made by asking");
 
     // Opening its scan without acknowledging the changed markers is refused.
     let disk = choice["disk"]["id"].as_str().unwrap();
@@ -575,4 +580,54 @@ fn the_command_line_opens_through_the_same_door() {
     ]);
     assert_eq!(again["created"], false);
     assert_eq!(again["scan"]["id"], extent["scan"]["id"]);
+}
+
+/// A small volume image, like the window tests' jigsaw: its boot sector is there and the volume
+/// opens, but it is under 1 MiB, which the strict range analysis does not call a volume. The
+/// boot region is made to describe a volume of the image's own size, as a real small image does.
+fn small_volume(seed: u32) -> Vec<u8> {
+    let mut data = exfat(seed);
+    data.truncate(835_584);
+    data[72..80].copy_from_slice(&(835_584u64 / 512).to_le_bytes());
+    let sector = fixtures::SECTOR;
+    fixtures::seal_boot(&mut data[..sector * 12], sector);
+    let main = data[..sector * 12].to_vec();
+    data[sector * 12..sector * 24].copy_from_slice(&main);
+    data
+}
+
+#[test]
+fn an_image_of_a_small_volume_opens_its_filesystem_straight_away() {
+    let image = ImageFile::new("small-volume", &small_volume(10));
+    let engine = Engine::default();
+    let disk = call(&engine, "open_raw_disk", json!({"path": image.0}));
+    let report = call(
+        &engine,
+        "analyze_range",
+        json!({"diskId": disk["id"], "offset": 0, "length": 835_584, "step": 512}),
+    );
+    assert!(
+        !report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["status"] == "volume" && finding["volumeStart"] == 0),
+        "the strict analysis must not call it a volume, or this test says nothing"
+    );
+    let opened = call(&engine, "open_source", json!({"path": image.0}));
+    assert_eq!(
+        opened["scope"], "partition",
+        "a file that starts with a volume is a partition"
+    );
+    assert_eq!(opened["interpretation"]["format"], "exFAT");
+    assert!(opened["overview"].is_object());
+    assert!(opened["openError"].is_null());
+    assert_eq!(opened["choices"][0]["detected"], true);
+    // And a source that does not start with a volume is still a whole disk.
+    let (data, _) = disk_with(&exfat(11), 110);
+    let whole = ImageFile::new("whole-with-table", &data);
+    assert_eq!(
+        call(&engine, "open_source", json!({"path": whole.0}))["scope"],
+        "disk"
+    );
 }

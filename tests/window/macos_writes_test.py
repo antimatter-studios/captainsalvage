@@ -1,10 +1,11 @@
 """Window test for #48: macOS's writes can be shown on the map, and a file they touched says so."""
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import SCRATCH, call, check, finish, js, probe, scan_and_reopen, start, wait_for
+from harness import SCRATCH, call, check, finish, js, probe, scan_and_reopen, start, wait_for, investigate
 start(sys.argv[1])
 try:
     scan_and_reopen(os.path.join(SCRATCH, 'macos.img'))
+    investigate()
     check('the overview lists the dates', wait_for("(document.querySelector('.recovery')?.innerText || '').includes('2026-11-04')", 30), True)
     LABEL = "[...document.querySelectorAll('.strips span')].map((n) => n.textContent).find((text) => text.startsWith('Magnified, '))"
     before = probe(LABEL)

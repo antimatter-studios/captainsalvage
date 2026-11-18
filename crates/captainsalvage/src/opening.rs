@@ -93,12 +93,69 @@ pub fn detect(view: &RawDisk) -> Result<Detection> {
             origin: "boot".into(),
         });
     }
+    lenient_boot(view, &mut detection);
     detection.candidates.sort_by(|a, b| {
         b.confidence
             .partial_cmp(&a.confidence)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     Ok(detection)
+}
+
+/// How sure a boot sector that reads and opens makes the format of the source it starts.
+const BOOT_CONFIDENCE: f64 = 0.9;
+
+/// A source whose first sector is a volume's boot sector is that volume, even when the strict
+/// range analysis does not call it one (a damaged image whose boot checksum or length is wrong
+/// still opens, as it always did). The same open the window would make is tried, so a candidate is
+/// only offered when it opens. Whatever starts with a recognised boot sector is a partition.
+fn lenient_boot(view: &RawDisk, detection: &mut Detection) {
+    let mut boot = [0u8; 512];
+    if view.source.read_exact_at(0, &mut boot).is_err() {
+        return;
+    }
+    // A first sector that names a volume but cannot be opened is still a partition, unless the same
+    // sector holds a partition table: then it is a disk whose first sector is part boot sector.
+    let has_table = || !view.overview().partitions.is_empty();
+    if &boot[3..11] == crate::filesystem::BITLOCKER_OEM_ID {
+        detection.volume_at_start = !has_table();
+        return;
+    }
+    let Ok(kind) = crate::filesystem::FilesystemKind::detect_boot_sector(&boot) else {
+        return;
+    };
+    let format = kind.to_string();
+    if detection
+        .candidates
+        .iter()
+        .any(|candidate| candidate.format == format)
+    {
+        return;
+    }
+    let region = crate::disk::DiskRegion {
+        start: 0,
+        length: view.length,
+        format: format.clone(),
+        label: String::new(),
+        boot_offset: 0,
+    };
+    let opens = view
+        .interpretation(&region)
+        .ok()
+        .is_some_and(|source| crate::volume::Volume::open(source).is_ok());
+    if opens || !has_table() {
+        detection.volume_at_start = true;
+    }
+    if opens {
+        detection.candidates.push(Candidate {
+            format,
+            start: 0,
+            length: view.length,
+            boot_offset: None,
+            confidence: BOOT_CONFIDENCE,
+            origin: "boot".into(),
+        });
+    }
 }
 
 /// One entry of the picker.

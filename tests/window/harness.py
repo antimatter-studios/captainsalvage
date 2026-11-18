@@ -107,11 +107,20 @@ def start(binary, seconds=600):
 
 
 def open_image(path):
+    """Opens an image of one volume, as a person does with Open, and waits for its filesystem.
+
+    A file whose first bytes are a recognised volume opens its filesystem straight away. One that
+    is not (a whole disk, with a partition table) opens as raw bytes with extents to Open, and
+    these tests do not drive that: it is open_door_test.py's. It stops with that said, not after
+    the long wait for a filesystem that is not coming.
+    """
     js("(() => {const i=document.querySelector('.start-image input');"
        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,%s);"
        "i.dispatchEvent(new Event('input',{bubbles:true}));setTimeout(()=>i.form.requestSubmit(),300);})()" % json.dumps(path))
-    if not wait_for("!!document.querySelector('.safety-chip')"):
+    if not wait_for("!!document.querySelector('.safety-chip') || !!document.querySelector('.interp-whole') || !!document.querySelector('.saved-scans')"):
         raise SystemExit('the image never opened in the window')
+    if not maybe("!!document.querySelector('.safety-chip')"):
+        raise SystemExit('the image opened, but not as a filesystem: it is a whole disk or has no volume at its start, so these tests cannot drive it')
 
 
 def scan_and_reopen(path):
@@ -127,6 +136,14 @@ def scan_and_reopen(path):
         raise SystemExit('the start screen never came back')
     open_image(path)
     time.sleep(2)
+
+
+def investigate():
+    """Switches the window to Investigate, which shows the map and the cluster names. The window
+    starts in Simple, which hides them, so a test about the map or those names calls this first."""
+    js("[...document.querySelectorAll('.mode-switch button')].find((b) => b.textContent.trim() === 'Investigate')?.click()")
+    if not wait_for("!!document.querySelector('.strips .strip canvas')"):
+        raise SystemExit('Investigate never showed the map')
 
 
 def finish():
