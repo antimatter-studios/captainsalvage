@@ -1555,7 +1555,7 @@ impl Engine {
         if !session.volume.valid_cluster(start) {
             bail!("cluster {start} is outside the volume");
         }
-        if session.volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+        if !session.volume.claims().has_links() {
             bail!("NTFS keeps no chain of links between clusters. Use entry to see the runs a file's record names.");
         }
         let limit = u64_of(args, "max")

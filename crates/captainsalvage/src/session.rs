@@ -1411,7 +1411,7 @@ impl Session {
     }
 
     pub fn fat_meaning(&self, value: u32) -> String {
-        if self.volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+        if !self.volume.claims().has_links() {
             return "NTFS keeps no table of links; a file's run list names its clusters"
                 .to_string();
         }

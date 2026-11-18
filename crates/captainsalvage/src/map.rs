@@ -1313,7 +1313,7 @@ impl MapDb {
     /// the middle of another file's chain. So every cluster on the way back to the head is a
     /// possible first cluster.
     pub fn owners(&self, volume: &Volume, cluster: u32) -> Result<Vec<Row>> {
-        if volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+        if !volume.claims().has_links() {
             return self.ntfs_owners(volume, cluster);
         }
         let lookback = (OWNER_LOOKBACK_BYTES / volume.geometry.cluster_size()) as u32;

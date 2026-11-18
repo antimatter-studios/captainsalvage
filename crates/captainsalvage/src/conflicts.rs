@@ -110,7 +110,7 @@ impl Session {
                 let lookback = (LOOKBACK_BYTES / volume.geometry.cluster_size()) as u32;
                 let mut candidates: Vec<(Row, Option<u32>)> = Vec::new();
                 let read = |row: &rusqlite::Row<'_>| Ok((file_row(row)?, row.get::<_, Option<u32>>(FILE_NODE_INDEX)?));
-                if volume.kind == crate::filesystem::FilesystemKind::Ntfs {
+                if !volume.claims().has_links() {
                     // Another record claims these clusters when one of its runs covers any of them.
                     let overlapping = format!(
                         "SELECT {FILE_COLUMNS}, node FROM sets WHERE COALESCE(o_ok, checksum_ok) = 1 AND length > 0 \

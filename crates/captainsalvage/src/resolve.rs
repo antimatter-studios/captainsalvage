@@ -9,7 +9,7 @@ use crate::content::{
     content_match, expected_class, text_head_match, ContentMatch, CLASS_DIRECTORY, CLASS_NAMES,
     CLASS_TEXT, CLASS_ZEROS,
 };
-use crate::filesystem::{FilesystemKind, NtfsRun, STORAGE_DAMAGED, STORAGE_RESIDENT, STORAGE_RUNS};
+use crate::filesystem::{NtfsRun, STORAGE_DAMAGED, STORAGE_RESIDENT, STORAGE_RUNS};
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
     OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
@@ -768,20 +768,12 @@ impl Context<'_> {
             ));
         }
         let (verdict, code) = if found == 0 {
-            sentences.push(if self.volume.kind == FilesystemKind::Ntfs {
-                "Its run list names clusters outside the volume.".to_string()
-            } else {
-                "First cluster is outside the volume.".to_string()
-            });
+            sentences.push(self.volume.claims().outside_volume().to_string());
             (VERDICT_PARTIAL, CODE_OUTSIDE_VOLUME)
         } else if found < stream.needed {
             sentences.push(format!(
                 "{} {found} of {} clusters reachable.",
-                if self.volume.kind == FilesystemKind::Ntfs {
-                    "Its run list ends early:"
-                } else {
-                    "FAT chain ends early:"
-                },
+                self.volume.claims().ends_early(),
                 stream.needed
             ));
             (VERDICT_PARTIAL, CODE_CHAIN_BROKEN)
@@ -919,7 +911,7 @@ impl MapDb {
             .map(|set| set.source_cluster)
             .collect();
 
-        let ntfs = volume.kind == FilesystemKind::Ntfs;
+        let ntfs = !volume.claims().has_links();
         // A damaged folder entry still counts if it points at a real directory.
         // Trustworthy entries rank first, so they win any disagreement. An NTFS folder is
         // its own FILE record: it has no clusters of entries to look into.
@@ -1516,7 +1508,7 @@ impl MapDb {
     }
 
     fn load_sets(&self, volume: &Volume) -> Result<Vec<LoadedSet>> {
-        let ntfs = volume.kind == FilesystemKind::Ntfs;
+        let ntfs = !volume.claims().has_links();
         let mut runs: HashMap<(i64, i64), Vec<NtfsRun>> = HashMap::new();
         if ntfs {
             let mut statement = self.connection.prepare(
