@@ -9,7 +9,7 @@ the app keeps there are saved first and put back at the end.
 import json, os, signal, subprocess, sys, tempfile, time, urllib.request
 
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
-STORAGE_KEYS = ('lens-column-widths', 'lens-canvas')
+STORAGE_KEYS = ('lens-column-widths', 'salvage-disk-rebuild')
 results = []
 state = {}
 

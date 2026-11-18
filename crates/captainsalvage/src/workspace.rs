@@ -12,10 +12,10 @@ const APP_FOLDER: &str = "Captain Salvage";
 /// The working name's folder, from before the app had its real name.
 const OLD_APP_FOLDER: &str = "exfat-lens";
 
-/// The app's own folder: settings, and one workspace per volume with its map and canvases.
+/// The app's own folder: settings, and one workspace per volume with its map and Disk Rebuilds.
 ///
 /// The first time, a folder kept under the working name is moved here whole. A move within one
-/// disk changes no file, so a map and weeks of canvas work arrive exactly as they were. The old
+/// disk changes no file, so a map and weeks of Disk Rebuild work arrive exactly as they were. The old
 /// name is left as a link, so a copy of the app from before still finds the same files.
 pub fn app_support() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("HOME is not set")?;

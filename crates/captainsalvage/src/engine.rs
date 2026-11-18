@@ -1,8 +1,8 @@
 //! The single entry point for every action, from the app or from MCP.
 
 use crate::browse::BrowseQuery;
-use crate::canvas::Place;
 use crate::content::GROUP_NAMES;
+use crate::disk_rebuild::Place;
 use crate::export::{list_volumes, CopyRequest};
 use crate::exporting::{ExportOptions, RebuildCopyOptions};
 use crate::map::{from_extents, to_extents, Extent, ResolveParams};
@@ -103,31 +103,11 @@ fn need_i64(args: &Value, key: &str) -> Result<i64> {
         .with_context(|| format!("argument {key} is required and must be an integer"))
 }
 
-/// The Disk Rebuild an argument names: `diskRebuild`, or `canvas`, its old name.
+/// The Disk Rebuild an argument names: `diskRebuild`.
 fn need_rebuild(args: &Value) -> Result<i64> {
     args.get("diskRebuild")
-        .or_else(|| args.get("canvas"))
         .and_then(Value::as_i64)
         .context("argument diskRebuild is required and must be an integer")
-}
-
-/// The tools that were renamed or removed, and what answers for them now.
-fn replacement_for(tool: &str) -> Option<String> {
-    if let Some(rest) = tool.strip_prefix("canvas_") {
-        return Some(format!("disk_rebuild_{rest}"));
-    }
-    let text = match tool {
-        "basket_list" => "disk_rebuild_list. There is no list of things to copy any more: a Disk Rebuild holds what is built, and a file or folder is exported from its right-click menu.",
-        "basket_add" => "export_plan and export_start to copy one file or folder, or disk_rebuild_place_file and disk_rebuild_place to put it in a Disk Rebuild.",
-        "basket_remove" | "basket_move" => "disk_rebuild_remove and disk_rebuild_move, on a Disk Rebuild.",
-        "basket_clear" => "disk_rebuild_delete, to remove a whole Disk Rebuild.",
-        "basket_plan" => "export_plan for one file or folder, or disk_rebuild_copy_plan for a Disk Rebuild.",
-        "basket_start" => "export_start for one file or folder, or disk_rebuild_copy_start for a Disk Rebuild.",
-        "copy_plan" => "export_plan for one file or folder, or disk_rebuild_copy_plan for a Disk Rebuild.",
-        "copy_start" => "export_start for one file or folder, or disk_rebuild_copy_start for a Disk Rebuild.",
-        _ => return None,
-    };
-    Some(text.to_string())
 }
 
 fn need_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
@@ -175,7 +155,7 @@ fn extents_of(args: &Value, key: &str) -> Result<Option<Vec<u32>>> {
     Ok(Some(from_extents(&extents)))
 }
 
-/// Where a canvas tool puts something: `{"item": id, "head": cluster}`, either or both left out.
+/// Where a Disk Rebuild tool puts something: `{"item": id, "head": cluster}`, either or both left out.
 fn place_of(args: &Value) -> Result<Place> {
     let Some(place) = args.get("place").filter(|place| !place.is_null()) else {
         return Ok(Place::default());
@@ -206,7 +186,7 @@ fn path_of_names(args: &Value) -> Result<Vec<String>> {
     }
 }
 
-/// Changing a canvas is the person's to do. Claude reads canvases, and suggests.
+/// Changing a Disk Rebuild is the person's to do. Claude reads Disk Rebuilds, and suggests.
 fn only_the_person(author: &str) -> Result<()> {
     if author != AUTHOR_USER {
         bail!("Only the person using the app changes a Disk Rebuild. Suggest a placement instead.");
@@ -468,9 +448,6 @@ impl Engine {
     }
 
     fn dispatch(&self, tool: &str, args: &Value, author: &str) -> Result<Value> {
-        if let Some(replacement) = replacement_for(tool) {
-            bail!("{tool} was removed in this version. Use {replacement}");
-        }
         if APP_TOOLS.contains(&tool) {
             return self.app_tool(tool, args);
         }
@@ -1216,43 +1193,43 @@ impl Engine {
                 )?)?)
             }
             "disk_rebuild_list" => Ok(serde_json::to_value(
-                session.with_database(|database| database.canvases())?,
+                session.with_database(|database| database.disk_rebuilds())?,
             )?),
             "disk_rebuild_items" => {
-                let canvas = need_rebuild(args)?;
+                let disk_rebuild = need_rebuild(args)?;
                 Ok(serde_json::to_value(session.with_database(
-                    |database| database.canvas_items(canvas),
+                    |database| database.disk_rebuild_items(disk_rebuild),
                 )?)?)
             }
             "disk_rebuild_tree" => {
-                let canvas = need_rebuild(args)?;
+                let disk_rebuild = need_rebuild(args)?;
                 let path = path_of_names(args)?;
                 let offset = u64_of(args, "offset").unwrap_or(0);
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
                 Ok(serde_json::to_value(session.with_database(
-                    |database| database.canvas_list(canvas, &path, offset, limit),
+                    |database| database.disk_rebuild_list(disk_rebuild, &path, offset, limit),
                 )?)?)
             }
             "disk_rebuild_clashes" => {
-                let canvas = need_rebuild(args)?;
+                let disk_rebuild = need_rebuild(args)?;
                 let need_you = args
                     .get("needYou")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let (offset, limit) = page(args);
                 Ok(serde_json::to_value(session.with_database(
-                    |database| database.canvas_clashes(canvas, need_you, offset, limit),
+                    |database| database.disk_rebuild_clashes(disk_rebuild, need_you, offset, limit),
                 )?)?)
             }
             "disk_rebuild_suggestions" => {
-                let canvas = need_rebuild(args)?;
+                let disk_rebuild = need_rebuild(args)?;
                 Ok(serde_json::to_value(session.with_database(
-                    |database| database.canvas_suggestions(canvas),
+                    |database| database.disk_rebuild_suggestions(disk_rebuild),
                 )?)?)
             }
             "disk_rebuild_suggest" => {
                 let id = session.with_database(|database| {
-                    database.canvas_suggest(
+                    database.disk_rebuild_suggest(
                         need_rebuild(args)?,
                         need_u32(args, "head")?,
                         place_of(args)?,
@@ -1261,7 +1238,10 @@ impl Engine {
                         author,
                     )
                 })?;
-                self.emit("canvas-changed", json!({"canvas": args.get("canvas")}));
+                self.emit(
+                    "disk-rebuild-changed",
+                    json!({"diskRebuild": args.get("diskRebuild")}),
+                );
                 Ok(json!({"id": id}))
             }
             "similar_pieces" => {
@@ -1272,11 +1252,11 @@ impl Engine {
                 )?)?)
             }
             "disk_rebuild_unused" => {
-                let canvas = need_rebuild(args)?;
+                let disk_rebuild = need_rebuild(args)?;
                 let offset = u64_of(args, "offset").unwrap_or(0);
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
                 Ok(serde_json::to_value(session.with_database(
-                    |database| database.canvas_unused(canvas, offset, limit),
+                    |database| database.disk_rebuild_unused(disk_rebuild, offset, limit),
                 )?)?)
             }
             "disk_rebuild_create"
@@ -1297,34 +1277,37 @@ impl Engine {
                 let result = session.with_database(|database| -> Result<Value> {
                     Ok(match tool {
                         "disk_rebuild_create" => {
-                            json!({"id": database.canvas_create(need_str(args, "name")?)?})
+                            json!({"id": database.disk_rebuild_create(need_str(args, "name")?)?})
                         }
                         "disk_rebuild_rename" => {
-                            database.canvas_rename(need_rebuild(args)?, need_str(args, "name")?)?;
+                            database.disk_rebuild_rename(
+                                need_rebuild(args)?,
+                                need_str(args, "name")?,
+                            )?;
                             json!({"ok": true})
                         }
                         "disk_rebuild_delete" => {
-                            database.canvas_delete(need_rebuild(args)?)?;
+                            database.disk_rebuild_delete(need_rebuild(args)?)?;
                             json!({"ok": true})
                         }
-                        "disk_rebuild_place" => json!({"id": database.canvas_place(
+                        "disk_rebuild_place" => json!({"id": database.disk_rebuild_place(
                             need_rebuild(args)?,
                             need_u32(args, "head")?,
                             place_of(args)?,
                             bool_of(args, "merge", false),
                         )?}),
-                        "disk_rebuild_place_file" => json!({"id": database.canvas_place_file(
+                        "disk_rebuild_place_file" => json!({"id": database.disk_rebuild_place_file(
                             need_rebuild(args)?,
                             need_i64(args, "entry")?,
                             place_of(args)?,
                         )?}),
-                        "disk_rebuild_folder" => json!({"id": database.canvas_folder(
+                        "disk_rebuild_folder" => json!({"id": database.disk_rebuild_folder(
                             need_rebuild(args)?,
                             need_str(args, "name")?,
                             place_of(args)?,
                         )?}),
                         "disk_rebuild_move" => {
-                            database.canvas_move(
+                            database.disk_rebuild_move(
                                 need_rebuild(args)?,
                                 need_i64(args, "item")?,
                                 place_of(args)?,
@@ -1333,38 +1316,38 @@ impl Engine {
                             json!({"ok": true})
                         }
                         "disk_rebuild_rename_item" => {
-                            database.canvas_rename_item(
+                            database.disk_rebuild_rename_item(
                                 need_rebuild(args)?,
                                 need_i64(args, "item")?,
                                 str_of(args, "name"),
                             )?;
                             json!({"ok": true})
                         }
-                        "disk_rebuild_accept" => json!({"id": database.canvas_accept(
+                        "disk_rebuild_accept" => json!({"id": database.disk_rebuild_accept(
                             need_rebuild(args)?,
                             need_i64(args, "suggestion")?,
                         )?}),
                         "disk_rebuild_dismiss" => {
-                            database.canvas_dismiss(
+                            database.disk_rebuild_dismiss(
                                 need_rebuild(args)?,
                                 need_i64(args, "suggestion")?,
                             )?;
                             json!({"ok": true})
                         }
                         "disk_rebuild_swap" => {
-                            database.canvas_swap(
+                            database.disk_rebuild_swap(
                                 need_rebuild(args)?,
                                 need_i64(args, "item")?,
                                 need_u32(args, "head")?,
                             )?;
                             json!({"ok": true})
                         }
-                        "disk_rebuild_remove" => json!({"removed": database.canvas_remove(
+                        "disk_rebuild_remove" => json!({"removed": database.disk_rebuild_remove(
                             need_rebuild(args)?,
                             need_i64(args, "item")?,
                         )?}),
                         "disk_rebuild_leftovers" => {
-                            let (folder, pieces) = database.canvas_leftovers(
+                            let (folder, pieces) = database.disk_rebuild_leftovers(
                                 need_rebuild(args)?,
                                 need_str(args, "name")?,
                                 u64_of(args, "maxFiles"),
@@ -1372,7 +1355,7 @@ impl Engine {
                             json!({"folder": folder, "pieces": pieces})
                         }
                         _ => {
-                            database.canvas_choose(
+                            database.disk_rebuild_choose(
                                 need_rebuild(args)?,
                                 &path_of_names(args)?,
                                 args.get("entry").and_then(Value::as_i64),
@@ -1381,7 +1364,10 @@ impl Engine {
                         }
                     })
                 })?;
-                self.emit("canvas-changed", json!({"canvas": args.get("canvas")}));
+                self.emit(
+                    "disk-rebuild-changed",
+                    json!({"diskRebuild": args.get("diskRebuild")}),
+                );
                 Ok(result)
             }
             "disk_rebuild_copy_plan" => {
@@ -1393,7 +1379,7 @@ impl Engine {
             }
             "disk_rebuild_copy_start" => {
                 if author != AUTHOR_USER {
-                    bail!("Only the person using the app can start copying. Use canvas_copy_plan, and ask them to start it.");
+                    bail!("Only the person using the app can start copying. Use disk_rebuild_copy_plan, and ask them to start it.");
                 }
                 let options: RebuildCopyOptions =
                     serde_json::from_value(args.clone()).context("invalid copy options")?;

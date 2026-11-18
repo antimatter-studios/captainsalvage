@@ -551,9 +551,9 @@ other `disk_rebuild_*` tools list, move, rename and remove what is in it. Agents
 plan with `export_plan` and `disk_rebuild_copy_plan` and suggest placements with
 `disk_rebuild_suggest`; building and copying stay the person's.
 
-The tools that were called `canvas_*` are now `disk_rebuild_*`. The old `basket_*` tools,
-`copy_plan` and `copy_start` are gone: the old names answer with the tool that replaces them,
-for this release only.
+The treasure list was removed, and nothing from an old one is imported. Its tools (`basket_*`,
+`copy_plan` and `copy_start`) no longer exist, and neither do the `canvas_*` names that
+`disk_rebuild_*` replaced. A call to one fails as an unknown tool, like any other unknown name.
 
 To inspect a disk without choosing a filesystem first:
 

@@ -25,7 +25,7 @@ function pieceName(row: Row): string {
 
 /**
  * Other pieces holding many of the same files as this one, found on request because it reads
- * every file entry. Each can be opened, or swapped in where a canvas offers that.
+ * every file entry. Each can be opened, or swapped in where a diskRebuild offers that.
  */
 export function SimilarPieces({ head, onOpen, onSwap, used }: {
   head: number;

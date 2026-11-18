@@ -5,11 +5,11 @@ import { bytes, count } from "../format";
 import { fromEngine, t } from "../i18n";
 
 /**
- * Copies a canvas's rebuilt tree off the disk: each file goes where the canvas puts it, as the
- * copy the canvas shows for it, in a folder named after the canvas.
+ * Copies a diskRebuild's rebuilt tree off the disk: each file goes where the diskRebuild puts it, as the
+ * copy the diskRebuild shows for it, in a folder named after the diskRebuild.
  */
-export function CanvasCopy({ canvas, copy, revision, onClose }: {
-  canvas: number;
+export function DiskRebuildCopy({ diskRebuild, copy, revision, onClose }: {
+  diskRebuild: number;
   copy: CopyStatus | null;
   revision: number;
   onClose: () => void;
@@ -34,7 +34,7 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
     let current = true;
     setChecking(true);
     const timer = setTimeout(() => {
-      call<CopyPlan>("disk_rebuild_copy_plan", { canvas, destination, includePartial })
+      call<CopyPlan>("disk_rebuild_copy_plan", { diskRebuild, destination, includePartial })
         .then((value) => {
           if (current) {
             setPlan(value);
@@ -48,12 +48,12 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
       current = false;
       clearTimeout(timer);
     };
-  }, [canvas, destination, includePartial, revision]);
+  }, [diskRebuild, destination, includePartial, revision]);
 
   async function start() {
     setError(null);
     try {
-      await call("disk_rebuild_copy_start", { canvas, destination, includePartial });
+      await call("disk_rebuild_copy_start", { diskRebuild, destination, includePartial });
     } catch (reason) {
       setError(String(reason));
     }
@@ -62,8 +62,8 @@ export function CanvasCopy({ canvas, copy, revision, onClose }: {
   const free = plan?.freeBytes ?? 0;
   const fraction = plan && free > 0 ? Math.min(plan.bytes / free, 1) : 0;
   return (
-    <div className="canvas-copy">
-      <div className="canvas-copy-head">
+    <div className="disk-rebuild-copy">
+      <div className="disk-rebuild-copy-head">
         <strong>{t("Copy the rebuilt tree")}</strong>
         <button className="link" onClick={onClose}>{t("Done")}</button>
       </div>

@@ -1,4 +1,4 @@
-//! Shows canvases in Finder, through the File Provider extension inside the app.
+//! Shows Disk Rebuilds in Finder, through the File Provider extension inside the app.
 //!
 //! `file_provider` adds and removes the Finder locations, in the app itself. The extension
 //! lists folders and reads files through the media port, so nothing here gives Finder a way to
@@ -15,13 +15,13 @@ use std::process::Command;
 use tauri::State;
 
 #[derive(Deserialize)]
-pub struct CanvasRevision {
+pub struct DiskRebuildRevision {
     id: i64,
     name: String,
     revision: String,
 }
 
-/// Whether this copy of the app can show canvases in Finder.
+/// Whether this copy of the app can show Disk Rebuilds in Finder.
 fn helper() -> Option<()> {
     crate::file_provider::available().then_some(())
 }
@@ -44,7 +44,7 @@ fn port(state: &AppState) -> Result<Value> {
     Ok(json!({"base": media.base_url, "token": media.token, "serial": serial_text(&session)}))
 }
 
-/// Whether the helper is installed, and which of this disk's canvases are in Finder.
+/// Whether the helper is installed, and which of this disk's Disk Rebuilds are in Finder.
 #[tauri::command(async)]
 pub fn finder_status(state: State<'_, AppState>) -> Result<Value, String> {
     status(&state).map_err(|error| format!("{error:#}"))
@@ -66,20 +66,20 @@ pub fn status(state: &AppState) -> Result<Value> {
     Ok(json!({"available": true, "shown": shown}))
 }
 
-/// Adds a canvas to Finder, or finds it there, and opens its folder in Finder.
+/// Adds a Disk Rebuild to Finder, or finds it there, and opens its folder in Finder.
 #[tauri::command(async)]
 pub fn finder_show(
     state: State<'_, AppState>,
-    canvas: i64,
+    disk_rebuild: i64,
     name: String,
     revision: String,
 ) -> Result<Value, String> {
-    show(&state, canvas, &name, &revision).map_err(|error| format!("{error:#}"))
+    show(&state, disk_rebuild, &name, &revision).map_err(|error| format!("{error:#}"))
 }
 
-pub fn show(state: &AppState, canvas: i64, name: &str, revision: &str) -> Result<Value> {
+pub fn show(state: &AppState, disk_rebuild: i64, name: &str, revision: &str) -> Result<Value> {
     let mut request = port(state)?;
-    request["canvas"] = json!(canvas);
+    request["canvas"] = json!(disk_rebuild);
     request["name"] = json!(name);
     request["revision"] = json!(revision);
     let reply = run("show", request)?;
@@ -92,31 +92,31 @@ pub fn show(state: &AppState, canvas: i64, name: &str, revision: &str) -> Result
 }
 
 #[tauri::command(async)]
-pub fn finder_hide(state: State<'_, AppState>, canvas: i64) -> Result<Value, String> {
-    hide(&state, canvas).map_err(|error| format!("{error:#}"))
+pub fn finder_hide(state: State<'_, AppState>, disk_rebuild: i64) -> Result<Value, String> {
+    hide(&state, disk_rebuild).map_err(|error| format!("{error:#}"))
 }
 
-pub fn hide(state: &AppState, canvas: i64) -> Result<Value> {
+pub fn hide(state: &AppState, disk_rebuild: i64) -> Result<Value> {
     let serial = serial_text(&*state.engine.session()?);
-    run("hide", json!({"serial": serial, "canvas": canvas}))
+    run("hide", json!({"serial": serial, "canvas": disk_rebuild}))
 }
 
-/// Tells this disk's Finder locations about the canvases as they are now. A location whose
-/// canvas was deleted goes, and other disks' locations show as unreachable.
+/// Tells this disk's Finder locations about the Disk Rebuilds as they are now. A location whose
+/// Disk Rebuild was deleted goes, and other disks' locations show as unreachable.
 #[tauri::command(async)]
 pub fn finder_sync(
     state: State<'_, AppState>,
-    canvases: Vec<CanvasRevision>,
+    disk_rebuilds: Vec<DiskRebuildRevision>,
 ) -> Result<Value, String> {
     if helper().is_none() {
         return Ok(json!({"shown": []}));
     }
     let work = || -> Result<Value> {
         let mut request = port(&state)?;
-        request["canvases"] = canvases
+        request["canvases"] = disk_rebuilds
             .iter()
             .map(
-                |canvas| json!({"id": canvas.id, "name": canvas.name, "revision": canvas.revision}),
+                |disk_rebuild| json!({"id": disk_rebuild.id, "name": disk_rebuild.name, "revision": disk_rebuild.revision}),
             )
             .collect();
         run("sync", request)

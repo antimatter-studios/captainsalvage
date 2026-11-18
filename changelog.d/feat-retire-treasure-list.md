@@ -6,5 +6,4 @@
 ### Changed
 
 - **The treasure list is gone.** There is no list of files to copy any more, no "Add to the treasure list" button or tick box, and no Treasure list tab. A Disk Rebuild is the one way to build what gets copied: drag pieces from the left panel onto a parent in its tree. To copy a single file or folder, right-click it and choose Export.
-- **Your old treasure list was not lost.** If it held items, it became a Disk Rebuild named "Imported treasure list" for its scan, which you can keep, change or delete.
-- **"Canvas" is now called "Disk Rebuild" everywhere.** The old `canvas_*` tools answer with the `disk_rebuild_*` tool that replaces them, and so do the removed `basket_*`, `copy_plan` and `copy_start` tools, for this release only.
+- **"Canvas" is now called "Disk Rebuild" everywhere**, in the window, the tool descriptions and the engine's messages. The tools for it are named `disk_rebuild_*`, and the argument that names one is `diskRebuild`.

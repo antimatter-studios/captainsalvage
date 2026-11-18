@@ -1,6 +1,6 @@
 //! The person's own rebuild of the folder tree, from the pieces the scan found.
 //!
-//! A damaged disk leaves pieces: found folders whose parent is gone. A canvas records where the
+//! A damaged disk leaves pieces: found folders whose parent is gone. A Disk Rebuild records where the
 //! person put each one, as if doing a jigsaw: inside another folder, merged into one so their
 //! contents become a single folder, or inside a folder they made up because the disk lost it.
 //!
@@ -9,7 +9,7 @@
 //! never to the disk. Where two pieces hold a file of the same name, the copy with the best data
 //! quality is shown, unless the person chose another.
 //!
-//! A canvas is about arranging what was found. It does not change how the map reads the disk,
+//! A Disk Rebuild is about arranging what was found. It does not change how the map reads the disk,
 //! which is what hypotheses do.
 
 use crate::map::{file_row, node_row, MapDb, Row, FILE_COLUMNS, NODE_COLUMNS};
@@ -35,7 +35,7 @@ const MAX_NAME_CHARS: usize = 255;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Canvas {
+pub struct DiskRebuild {
     pub id: i64,
     pub name: String,
     pub created_at_millis: u64,
@@ -45,7 +45,7 @@ pub struct Canvas {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CanvasItem {
+pub struct DiskRebuildItem {
     pub id: i64,
     pub kind: String,
     /// The found folder, for a piece or a merge.
@@ -60,8 +60,8 @@ pub struct CanvasItem {
     pub entry: Option<i64>,
 }
 
-/// Where something is put: in a canvas item, and optionally in a found folder inside it.
-/// Nothing at all means the canvas itself: the root when there is none yet, inside it after.
+/// Where something is put: in a Disk Rebuild item, and optionally in a found folder inside it.
+/// Nothing at all means the Disk Rebuild itself: the root when there is none yet, inside it after.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Place {
     pub item: Option<i64>,
@@ -204,7 +204,7 @@ fn lost_key(head: u32) -> String {
 }
 
 impl MapDb {
-    pub fn canvases(&self) -> Result<Vec<Canvas>> {
+    pub fn disk_rebuilds(&self) -> Result<Vec<DiskRebuild>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT c.id, c.name, c.created_at_millis, c.updated_at_millis, \
              (SELECT COUNT(*) FROM canvas_items i WHERE i.canvas = c.id) \
@@ -212,7 +212,7 @@ impl MapDb {
         )?;
         let rows = statement
             .query_map([], |row| {
-                Ok(Canvas {
+                Ok(DiskRebuild {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     created_at_millis: row.get::<_, i64>(2)? as u64,
@@ -224,7 +224,7 @@ impl MapDb {
         Ok(rows)
     }
 
-    pub fn canvas_create(&self, name: &str) -> Result<i64> {
+    pub fn disk_rebuild_create(&self, name: &str) -> Result<i64> {
         let name = clean_name(name)?;
         let now = now_millis() as i64;
         self.connection.execute(
@@ -234,57 +234,65 @@ impl MapDb {
         Ok(self.connection.last_insert_rowid())
     }
 
-    pub fn canvas_rename(&self, canvas: i64, name: &str) -> Result<()> {
+    pub fn disk_rebuild_rename(&self, disk_rebuild: i64, name: &str) -> Result<()> {
         let name = clean_name(name)?;
-        self.need_canvas(canvas)?;
+        self.need_disk_rebuild(disk_rebuild)?;
         self.connection.execute(
             "UPDATE canvases SET name = ?2, updated_at_millis = ?3 WHERE id = ?1",
-            params![canvas, name, now_millis() as i64],
+            params![disk_rebuild, name, now_millis() as i64],
         )?;
         Ok(())
     }
 
-    pub fn canvas_delete(&self, canvas: i64) -> Result<()> {
-        self.need_canvas(canvas)?;
+    pub fn disk_rebuild_delete(&self, disk_rebuild: i64) -> Result<()> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let transaction = self.connection.unchecked_transaction()?;
-        transaction.execute("DELETE FROM canvas_items WHERE canvas = ?1", [canvas])?;
-        transaction.execute("DELETE FROM canvas_choices WHERE canvas = ?1", [canvas])?;
-        transaction.execute("DELETE FROM canvas_suggestions WHERE canvas = ?1", [canvas])?;
-        transaction.execute("DELETE FROM canvases WHERE id = ?1", [canvas])?;
+        transaction.execute("DELETE FROM canvas_items WHERE canvas = ?1", [disk_rebuild])?;
+        transaction.execute(
+            "DELETE FROM canvas_choices WHERE canvas = ?1",
+            [disk_rebuild],
+        )?;
+        transaction.execute(
+            "DELETE FROM canvas_suggestions WHERE canvas = ?1",
+            [disk_rebuild],
+        )?;
+        transaction.execute("DELETE FROM canvases WHERE id = ?1", [disk_rebuild])?;
         transaction.commit()?;
         Ok(())
     }
 
-    fn need_canvas(&self, canvas: i64) -> Result<()> {
+    fn need_disk_rebuild(&self, disk_rebuild: i64) -> Result<()> {
         let found: Option<i64> = self
             .connection
-            .query_row("SELECT id FROM canvases WHERE id = ?1", [canvas], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT id FROM canvases WHERE id = ?1",
+                [disk_rebuild],
+                |row| row.get(0),
+            )
             .optional()?;
         found
             .map(|_| ())
-            .with_context(|| format!("there is no Disk Rebuild {canvas}"))
+            .with_context(|| format!("there is no Disk Rebuild {disk_rebuild}"))
     }
 
-    fn touch_canvas(&self, canvas: i64) -> Result<()> {
+    fn touch_disk_rebuild(&self, disk_rebuild: i64) -> Result<()> {
         self.connection.execute(
             "UPDATE canvases SET updated_at_millis = ?2 WHERE id = ?1",
-            params![canvas, now_millis() as i64],
+            params![disk_rebuild, now_millis() as i64],
         )?;
         Ok(())
     }
 
-    /// Every item on a canvas, in the order they were placed.
-    pub fn canvas_items(&self, canvas: i64) -> Result<Vec<CanvasItem>> {
-        self.need_canvas(canvas)?;
+    /// Every item on a Disk Rebuild, in the order they were placed.
+    pub fn disk_rebuild_items(&self, disk_rebuild: i64) -> Result<Vec<DiskRebuildItem>> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let mut statement = self.connection.prepare_cached(
             "SELECT id, kind, head, name, parent_item, parent_head, entry FROM canvas_items \
              WHERE canvas = ?1 ORDER BY position, id",
         )?;
         let rows = statement
-            .query_map([canvas], |row| {
-                Ok(CanvasItem {
+            .query_map([disk_rebuild], |row| {
+                Ok(DiskRebuildItem {
                     id: row.get(0)?,
                     kind: row.get(1)?,
                     head: row.get(2)?,
@@ -298,16 +306,16 @@ impl MapDb {
         Ok(rows)
     }
 
-    fn canvas_item(&self, canvas: i64, item: i64) -> Result<CanvasItem> {
-        self.canvas_items(canvas)?
+    fn disk_rebuild_item(&self, disk_rebuild: i64, item: i64) -> Result<DiskRebuildItem> {
+        self.disk_rebuild_items(disk_rebuild)?
             .into_iter()
             .find(|found| found.id == item)
-            .with_context(|| format!("there is no item {item} on Disk Rebuild {canvas}"))
+            .with_context(|| format!("there is no item {item} on Disk Rebuild {disk_rebuild}"))
     }
 
-    fn canvas_root(&self, canvas: i64) -> Result<Option<CanvasItem>> {
+    fn disk_rebuild_root(&self, disk_rebuild: i64) -> Result<Option<DiskRebuildItem>> {
         Ok(self
-            .canvas_items(canvas)?
+            .disk_rebuild_items(disk_rebuild)?
             .into_iter()
             .find(|item| item.parent_item.is_none()))
     }
@@ -333,12 +341,12 @@ impl MapDb {
         bail!("the folder at cluster {head} is in a loop")
     }
 
-    /// Works out where a place really is, refusing one that does not exist on this canvas.
-    fn resolve_place(&self, canvas: i64, place: Place) -> Result<Option<(i64, Option<u32>)>> {
+    /// Works out where a place really is, refusing one that does not exist on this Disk Rebuild.
+    fn resolve_place(&self, disk_rebuild: i64, place: Place) -> Result<Option<(i64, Option<u32>)>> {
         let item = match place.item {
-            Some(item) => self.canvas_item(canvas, item)?,
+            Some(item) => self.disk_rebuild_item(disk_rebuild, item)?,
             None => {
-                match self.canvas_root(canvas)? {
+                match self.disk_rebuild_root(disk_rebuild)? {
                     Some(root) => root,
                     None => {
                         if place.head.is_some() {
@@ -360,26 +368,32 @@ impl MapDb {
         Ok(Some((item.id, place.head)))
     }
 
-    fn next_position(&self, canvas: i64) -> Result<i64> {
+    fn next_position(&self, disk_rebuild: i64) -> Result<i64> {
         Ok(self.connection.query_row(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM canvas_items WHERE canvas = ?1",
-            [canvas],
+            [disk_rebuild],
             |row| row.get(0),
         )?)
     }
 
-    fn used_heads(&self, canvas: i64) -> Result<HashSet<u32>> {
+    fn used_heads(&self, disk_rebuild: i64) -> Result<HashSet<u32>> {
         Ok(self
-            .canvas_items(canvas)?
+            .disk_rebuild_items(disk_rebuild)?
             .into_iter()
             .filter_map(|item| item.head)
             .collect())
     }
 
-    /// Puts a piece on the canvas, as a folder of its own or merged into the folder it lands
-    /// in. The first thing placed becomes the root. A piece can be used once on each canvas.
-    pub fn canvas_place(&self, canvas: i64, head: u32, place: Place, merge: bool) -> Result<i64> {
-        self.need_canvas(canvas)?;
+    /// Puts a piece on the Disk Rebuild, as a folder of its own or merged into the folder it lands
+    /// in. The first thing placed becomes the root. A piece can be used once on each Disk Rebuild.
+    pub fn disk_rebuild_place(
+        &self,
+        disk_rebuild: i64,
+        head: u32,
+        place: Place,
+        merge: bool,
+    ) -> Result<i64> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let top: Option<Option<u32>> = self
             .connection
             .query_row("SELECT parent FROM nodes WHERE head = ?1", [head], |row| {
@@ -387,14 +401,14 @@ impl MapDb {
             })
             .optional()?;
         // A folder from inside a piece may be placed too, as a layer of its own. Where its
-        // piece is also on the canvas, the same files at the same clusters are one copy.
+        // piece is also on the Disk Rebuild, the same files at the same clusters are one copy.
         if top.is_none() {
             bail!("there is no folder at cluster {head}");
         }
-        if self.used_heads(canvas)?.contains(&head) {
+        if self.used_heads(disk_rebuild)?.contains(&head) {
             bail!("That piece is already in this Disk Rebuild.");
         }
-        let resolved = self.resolve_place(canvas, place)?;
+        let resolved = self.resolve_place(disk_rebuild, place)?;
         let (kind, parent_item, parent_head) = match resolved {
             // The first piece is the root, which nothing can be merged into yet.
             None => (ITEM_PIECE, None, None),
@@ -403,17 +417,22 @@ impl MapDb {
         self.connection.execute(
             "INSERT INTO canvas_items (canvas, kind, head, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![canvas, kind, head, parent_item, parent_head, self.next_position(canvas)?, now_millis() as i64],
+            params![disk_rebuild, kind, head, parent_item, parent_head, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(id)
     }
 
     /// Places one found file on its own, as a small layer: its file joins the folder it is
     /// placed in, and clashes with a file of the same name there like any other copy.
-    pub fn canvas_place_file(&self, canvas: i64, entry: i64, place: Place) -> Result<i64> {
-        self.need_canvas(canvas)?;
+    pub fn disk_rebuild_place_file(
+        &self,
+        disk_rebuild: i64,
+        entry: i64,
+        place: Place,
+    ) -> Result<i64> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let is_file: Option<bool> = self
             .connection
             .query_row(
@@ -427,24 +446,24 @@ impl MapDb {
             Some(false) => bail!("That is a folder. Place a folder as a piece instead."),
             Some(true) => {}
         }
-        let Some((item, at)) = self.resolve_place(canvas, place)? else {
+        let Some((item, at)) = self.resolve_place(disk_rebuild, place)? else {
             bail!("A file cannot be the top of the tree. Place a piece or make a folder first.");
         };
         self.connection.execute(
             "INSERT INTO canvas_items (canvas, kind, entry, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![canvas, ITEM_FILE, entry, item, at, self.next_position(canvas)?, now_millis() as i64],
+            params![disk_rebuild, ITEM_FILE, entry, item, at, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(id)
     }
 
     /// Makes up a folder the disk no longer has, so pieces can be put inside it.
-    pub fn canvas_folder(&self, canvas: i64, name: &str, place: Place) -> Result<i64> {
-        self.need_canvas(canvas)?;
+    pub fn disk_rebuild_folder(&self, disk_rebuild: i64, name: &str, place: Place) -> Result<i64> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let name = clean_name(name)?;
-        let resolved = self.resolve_place(canvas, place)?;
+        let resolved = self.resolve_place(disk_rebuild, place)?;
         let (parent_item, parent_head) = match resolved {
             None => (None, None),
             Some((item, at)) => (Some(item), at),
@@ -452,29 +471,29 @@ impl MapDb {
         self.connection.execute(
             "INSERT INTO canvas_items (canvas, kind, name, parent_item, parent_head, position, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![canvas, ITEM_FOLDER, name, parent_item, parent_head, self.next_position(canvas)?, now_millis() as i64],
+            params![disk_rebuild, ITEM_FOLDER, name, parent_item, parent_head, self.next_position(disk_rebuild)?, now_millis() as i64],
         )?;
         let id = self.connection.last_insert_rowid();
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(id)
     }
 
-    /// Moves an item, and everything in it, somewhere else on the same canvas.
-    pub fn canvas_move(
+    /// Moves an item, and everything in it, somewhere else on the same Disk Rebuild.
+    pub fn disk_rebuild_move(
         &self,
-        canvas: i64,
+        disk_rebuild: i64,
         item: i64,
         place: Place,
         merge: Option<bool>,
     ) -> Result<()> {
-        let moving = self.canvas_item(canvas, item)?;
+        let moving = self.disk_rebuild_item(disk_rebuild, item)?;
         if moving.parent_item.is_none() {
             bail!("The root cannot move. Put things inside it instead.");
         }
-        let Some((target, at)) = self.resolve_place(canvas, place)? else {
+        let Some((target, at)) = self.resolve_place(disk_rebuild, place)? else {
             bail!("The Disk Rebuild has no root to move it into.");
         };
-        let items = self.canvas_items(canvas)?;
+        let items = self.disk_rebuild_items(disk_rebuild)?;
         let parents: HashMap<i64, Option<i64>> = items
             .iter()
             .map(|found| (found.id, found.parent_item))
@@ -503,14 +522,14 @@ impl MapDb {
             "UPDATE canvas_items SET parent_item = ?2, parent_head = ?3, kind = ?4 WHERE id = ?1",
             params![item, target, at, kind],
         )?;
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(())
     }
 
     /// Swaps the piece behind an item for another unused piece, keeping where it sits and
     /// everything placed in it. For trading a piece for a similar one with better data.
-    pub fn canvas_swap(&self, canvas: i64, item: i64, head: u32) -> Result<()> {
-        let found = self.canvas_item(canvas, item)?;
+    pub fn disk_rebuild_swap(&self, disk_rebuild: i64, item: i64, head: u32) -> Result<()> {
+        let found = self.disk_rebuild_item(disk_rebuild, item)?;
         if found.kind == ITEM_FOLDER {
             bail!("A folder you made has no piece to swap.");
         }
@@ -527,13 +546,13 @@ impl MapDb {
             }
             Some(None) => {}
         }
-        if self.used_heads(canvas)?.contains(&head) {
+        if self.used_heads(disk_rebuild)?.contains(&head) {
             bail!("That piece is already in this Disk Rebuild.");
         }
         // Things placed in a found folder of the old piece have nowhere to be in the new one.
         let stranded: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM canvas_items WHERE canvas = ?1 AND parent_item = ?2 AND parent_head IS NOT NULL",
-            params![canvas, item],
+            params![disk_rebuild, item],
             |row| row.get(0),
         )?;
         if stranded > 0 {
@@ -543,13 +562,18 @@ impl MapDb {
             "UPDATE canvas_items SET head = ?2 WHERE id = ?1",
             params![item, head],
         )?;
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(())
     }
 
     /// Names an item in the rebuilt tree. For a piece, no name puts back the folder's own.
-    pub fn canvas_rename_item(&self, canvas: i64, item: i64, name: Option<&str>) -> Result<()> {
-        let found = self.canvas_item(canvas, item)?;
+    pub fn disk_rebuild_rename_item(
+        &self,
+        disk_rebuild: i64,
+        item: i64,
+        name: Option<&str>,
+    ) -> Result<()> {
+        let found = self.disk_rebuild_item(disk_rebuild, item)?;
         let name = match name {
             Some(name) => Some(clean_name(name)?),
             None if found.kind == ITEM_FOLDER => bail!("A folder you made needs a name."),
@@ -559,14 +583,14 @@ impl MapDb {
             "UPDATE canvas_items SET name = ?2 WHERE id = ?1",
             params![item, name],
         )?;
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(())
     }
 
-    /// Takes an item off the canvas with everything inside it, so its pieces are unused again.
-    pub fn canvas_remove(&self, canvas: i64, item: i64) -> Result<u64> {
-        self.canvas_item(canvas, item)?;
-        let items = self.canvas_items(canvas)?;
+    /// Takes an item off the Disk Rebuild with everything inside it, so its pieces are unused again.
+    pub fn disk_rebuild_remove(&self, disk_rebuild: i64, item: i64) -> Result<u64> {
+        self.disk_rebuild_item(disk_rebuild, item)?;
+        let items = self.disk_rebuild_items(disk_rebuild)?;
         let mut doomed = vec![item];
         let mut index = 0;
         while index < doomed.len() {
@@ -584,18 +608,23 @@ impl MapDb {
             transaction.execute("DELETE FROM canvas_items WHERE id = ?1", [id])?;
         }
         transaction.commit()?;
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(doomed.len() as u64)
     }
 
-    /// Top-level found folders not yet on this canvas, largest first.
-    pub fn canvas_unused(&self, canvas: i64, offset: u64, limit: u64) -> Result<UnusedPieces> {
-        self.need_canvas(canvas)?;
+    /// Top-level found folders not yet on this Disk Rebuild, largest first.
+    pub fn disk_rebuild_unused(
+        &self,
+        disk_rebuild: i64,
+        offset: u64,
+        limit: u64,
+    ) -> Result<UnusedPieces> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let unused = "FROM nodes WHERE parent IS NULL AND head NOT IN \
              (SELECT head FROM canvas_items WHERE canvas = ?1 AND head IS NOT NULL)";
         let (total, total_files, total_bytes): (i64, i64, i64) = self.connection.query_row(
             &format!("SELECT COUNT(*), COALESCE(SUM(files), 0), COALESCE(SUM(bytes), 0) {unused}"),
-            [canvas],
+            [disk_rebuild],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         let sql = format!(
@@ -603,7 +632,7 @@ impl MapDb {
         );
         let mut statement = self.connection.prepare_cached(&sql)?;
         let rows = statement
-            .query_map(params![canvas, limit as i64, offset as i64], node_row)?
+            .query_map(params![disk_rebuild, limit as i64, offset as i64], node_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(UnusedPieces {
             rows,
@@ -614,17 +643,17 @@ impl MapDb {
     }
 
     /// Puts every unused piece, or only those with at most `max_files` files, into one made-up
-    /// folder at the top of the canvas, so the small ones need not be placed one by one.
-    pub fn canvas_leftovers(
+    /// folder at the top of the Disk Rebuild, so the small ones need not be placed one by one.
+    pub fn disk_rebuild_leftovers(
         &self,
-        canvas: i64,
+        disk_rebuild: i64,
         name: &str,
         max_files: Option<u64>,
     ) -> Result<(i64, u64)> {
-        let Some(root) = self.canvas_root(canvas)? else {
+        let Some(root) = self.disk_rebuild_root(disk_rebuild)? else {
             bail!("Place a first piece before putting the rest away.");
         };
-        let unused = self.canvas_unused(canvas, 0, u64::MAX >> 1)?;
+        let unused = self.disk_rebuild_unused(disk_rebuild, 0, u64::MAX >> 1)?;
         let chosen: Vec<u32> = unused
             .rows
             .iter()
@@ -634,8 +663,8 @@ impl MapDb {
         if chosen.is_empty() {
             bail!("There are no unused pieces left to put away.");
         }
-        let folder = self.canvas_folder(
-            canvas,
+        let folder = self.disk_rebuild_folder(
+            disk_rebuild,
             name,
             Place {
                 item: Some(root.id),
@@ -643,27 +672,32 @@ impl MapDb {
             },
         )?;
         let transaction = self.connection.unchecked_transaction()?;
-        let first = self.next_position(canvas)?;
+        let first = self.next_position(disk_rebuild)?;
         let now = now_millis() as i64;
         for (position, head) in (first..).zip(chosen.iter()) {
             transaction.execute(
                 "INSERT INTO canvas_items (canvas, kind, head, parent_item, position, created_at_millis) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![canvas, ITEM_PIECE, head, folder, position, now],
+                params![disk_rebuild, ITEM_PIECE, head, folder, position, now],
             )?;
         }
         transaction.commit()?;
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok((folder, chosen.len() as u64))
     }
 
     /// Picks which copy of a clashing file the rebuilt tree shows. None puts back the best one.
-    pub fn canvas_choose(&self, canvas: i64, path: &[String], entry: Option<i64>) -> Result<()> {
-        self.need_canvas(canvas)?;
+    pub fn disk_rebuild_choose(
+        &self,
+        disk_rebuild: i64,
+        path: &[String],
+        entry: Option<i64>,
+    ) -> Result<()> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let Some((name, folder)) = path.split_last() else {
             bail!("A choice needs the path of a file.");
         };
-        let listing = self.canvas_list(canvas, folder, 0, u64::MAX >> 1)?;
+        let listing = self.disk_rebuild_list(disk_rebuild, folder, 0, u64::MAX >> 1)?;
         let file = listing
             .files
             .iter()
@@ -677,30 +711,30 @@ impl MapDb {
                 }
                 self.connection.execute(
                     "INSERT OR REPLACE INTO canvas_choices (canvas, path, entry) VALUES (?1, ?2, ?3)",
-                    params![canvas, path_key, entry],
+                    params![disk_rebuild, path_key, entry],
                 )?;
             }
             None => {
                 self.connection.execute(
                     "DELETE FROM canvas_choices WHERE canvas = ?1 AND path = ?2",
-                    params![canvas, path_key],
+                    params![disk_rebuild, path_key],
                 )?;
             }
         }
-        self.touch_canvas(canvas)?;
+        self.touch_disk_rebuild(disk_rebuild)?;
         Ok(())
     }
 
     /// Lists one folder of the rebuilt tree, found by the names on the way down from the root.
     /// The files are paged; the folders are always all there.
-    pub fn canvas_list(
+    pub fn disk_rebuild_list(
         &self,
-        canvas: i64,
+        disk_rebuild: i64,
         path: &[String],
         offset: u64,
         limit: u64,
     ) -> Result<Listing> {
-        let items = self.canvas_items(canvas)?;
+        let items = self.disk_rebuild_items(disk_rebuild)?;
         let mut listing = Listing {
             path: path.to_vec(),
             folders: Vec::new(),
@@ -716,7 +750,7 @@ impl MapDb {
             }
             return Ok(listing);
         };
-        let tree = Tree::new(self, canvas, &items)?;
+        let tree = Tree::new(self, disk_rebuild, &items)?;
         let mut sources = vec![Source::Item(root.id)];
         for name in path {
             let (folders, _) = tree.contents(&sources)?;
@@ -754,7 +788,7 @@ impl MapDb {
 
 /// One file of the whole rebuilt tree, with the folders it sits in and the copy that fills it.
 #[derive(Clone, Debug)]
-pub struct CanvasFile {
+pub struct DiskRebuildFile {
     /// Folder names from the top of the tree down, with lost names as `Lost folder <cluster>`.
     pub folders: Vec<String>,
     pub row: Row,
@@ -837,17 +871,17 @@ pub struct ClashPage {
 
 impl MapDb {
     /// Visits every file of the rebuilt tree with its folders' path names and shown names.
-    fn walk_canvas(
+    fn walk_disk_rebuild(
         &self,
-        canvas: i64,
+        disk_rebuild: i64,
         mut visit: impl FnMut(&[String], &[String], RebuiltFile),
     ) -> Result<()> {
-        self.need_canvas(canvas)?;
-        let items = self.canvas_items(canvas)?;
+        self.need_disk_rebuild(disk_rebuild)?;
+        let items = self.disk_rebuild_items(disk_rebuild)?;
         let Some(root) = items.iter().find(|item| item.parent_item.is_none()) else {
             bail!("This Disk Rebuild is empty.");
         };
-        let tree = Tree::new(self, canvas, &items)?;
+        let tree = Tree::new(self, disk_rebuild, &items)?;
         let choices = tree.choices()?;
         let mut visited: HashSet<Vec<Source>> = HashSet::new();
         // Each folder: what it is made of, its path for choices, and its folder names on disk.
@@ -879,10 +913,10 @@ impl MapDb {
     }
 
     /// Every file of the rebuilt tree, each as the copy that would fill it, for copying out.
-    pub fn canvas_files(&self, canvas: i64) -> Result<Vec<CanvasFile>> {
+    pub fn disk_rebuild_files(&self, disk_rebuild: i64) -> Result<Vec<DiskRebuildFile>> {
         let mut out = Vec::new();
-        self.walk_canvas(canvas, |_, folders, file| {
-            out.push(CanvasFile {
+        self.walk_disk_rebuild(disk_rebuild, |_, folders, file| {
+            out.push(DiskRebuildFile {
                 folders: folders.to_vec(),
                 row: file.chosen,
             });
@@ -891,15 +925,15 @@ impl MapDb {
     }
 
     /// Every clash in the rebuilt tree, those that need the person first.
-    pub fn canvas_clashes(
+    pub fn disk_rebuild_clashes(
         &self,
-        canvas: i64,
+        disk_rebuild: i64,
         need_you_only: bool,
         offset: u64,
         limit: u64,
     ) -> Result<ClashPage> {
         let mut found = Vec::new();
-        self.walk_canvas(canvas, |path, folders, file| {
+        self.walk_disk_rebuild(disk_rebuild, |path, folders, file| {
             if file.copies.len() > 1 && (file.needs_you || !need_you_only) {
                 let mut full = path.to_vec();
                 full.push(file.name.clone());
@@ -946,16 +980,16 @@ pub struct Suggestion {
 
 impl MapDb {
     /// Records where a piece might go, without placing it. Claude suggests; the person decides.
-    pub fn canvas_suggest(
+    pub fn disk_rebuild_suggest(
         &self,
-        canvas: i64,
+        disk_rebuild: i64,
         head: u32,
         place: Place,
         merge: bool,
         note: &str,
         author: &str,
     ) -> Result<i64> {
-        self.need_canvas(canvas)?;
+        self.need_disk_rebuild(disk_rebuild)?;
         let top: Option<Option<u32>> = self
             .connection
             .query_row("SELECT parent FROM nodes WHERE head = ?1", [head], |row| {
@@ -969,11 +1003,11 @@ impl MapDb {
             }
             Some(None) => {}
         }
-        if self.used_heads(canvas)?.contains(&head) {
+        if self.used_heads(disk_rebuild)?.contains(&head) {
             bail!("That piece is already in this Disk Rebuild.");
         }
         // Checked now, so a suggestion that names a place that does not exist is refused at once.
-        let resolved = self.resolve_place(canvas, place)?;
+        let resolved = self.resolve_place(disk_rebuild, place)?;
         let (item, at) = match resolved {
             None => (None, None),
             Some((item, at)) => (Some(item), at),
@@ -984,18 +1018,18 @@ impl MapDb {
         self.connection.execute(
             "INSERT INTO canvas_suggestions (canvas, head, place_item, place_head, merge, note, author, state, created_at_millis) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8)",
-            params![canvas, head, item, at, merge, note.trim(), author, now_millis() as i64],
+            params![disk_rebuild, head, item, at, merge, note.trim(), author, now_millis() as i64],
         )?;
         Ok(self.connection.last_insert_rowid())
     }
 
     /// Suggestions still waiting for the person, oldest first.
-    pub fn canvas_suggestions(&self, canvas: i64) -> Result<Vec<Suggestion>> {
-        self.need_canvas(canvas)?;
+    pub fn disk_rebuild_suggestions(&self, disk_rebuild: i64) -> Result<Vec<Suggestion>> {
+        self.need_disk_rebuild(disk_rebuild)?;
         // One whose piece has since been placed, or whose place is gone, has nothing left to ask.
-        let used = self.used_heads(canvas)?;
+        let used = self.used_heads(disk_rebuild)?;
         let items: HashSet<i64> = self
-            .canvas_items(canvas)?
+            .disk_rebuild_items(disk_rebuild)?
             .iter()
             .map(|item| item.id)
             .collect();
@@ -1004,7 +1038,7 @@ impl MapDb {
              WHERE canvas = ?1 AND state = 'open' ORDER BY id",
         )?;
         let rows = statement
-            .query_map([canvas], |row| {
+            .query_map([disk_rebuild], |row| {
                 Ok(Suggestion {
                     id: row.get(0)?,
                     head: row.get(1)?,
@@ -1026,9 +1060,9 @@ impl MapDb {
     }
 
     /// Places a suggested piece where it was suggested, and closes the suggestion.
-    pub fn canvas_accept(&self, canvas: i64, suggestion: i64) -> Result<i64> {
+    pub fn disk_rebuild_accept(&self, disk_rebuild: i64, suggestion: i64) -> Result<i64> {
         let found = self
-            .canvas_suggestions(canvas)?
+            .disk_rebuild_suggestions(disk_rebuild)?
             .into_iter()
             .find(|row| row.id == suggestion)
             .with_context(|| format!("there is no open suggestion {suggestion}"))?;
@@ -1036,7 +1070,7 @@ impl MapDb {
             item: found.place_item,
             head: found.place_head,
         };
-        let item = self.canvas_place(canvas, found.head, place, found.merge)?;
+        let item = self.disk_rebuild_place(disk_rebuild, found.head, place, found.merge)?;
         self.connection.execute(
             "UPDATE canvas_suggestions SET state = 'accepted' WHERE id = ?1",
             [suggestion],
@@ -1044,11 +1078,11 @@ impl MapDb {
         Ok(item)
     }
 
-    pub fn canvas_dismiss(&self, canvas: i64, suggestion: i64) -> Result<()> {
-        self.need_canvas(canvas)?;
+    pub fn disk_rebuild_dismiss(&self, disk_rebuild: i64, suggestion: i64) -> Result<()> {
+        self.need_disk_rebuild(disk_rebuild)?;
         let changed = self.connection.execute(
             "UPDATE canvas_suggestions SET state = 'dismissed' WHERE id = ?1 AND canvas = ?2 AND state = 'open'",
-            params![suggestion, canvas],
+            params![suggestion, disk_rebuild],
         )?;
         if changed == 0 {
             bail!("there is no open suggestion {suggestion}");
@@ -1072,14 +1106,14 @@ struct Group {
     sources: Vec<Source>,
 }
 
-/// One canvas, read once, for working out its folders.
+/// One Disk Rebuild, read once, for working out its folders.
 struct Tree<'a> {
     database: &'a MapDb,
-    canvas: i64,
-    items: HashMap<i64, CanvasItem>,
+    disk_rebuild: i64,
+    items: HashMap<i64, DiskRebuildItem>,
     /// Items in each place, in the order placed.
     inside: HashMap<Source, Vec<i64>>,
-    /// The layer each found folder's files came from: the canvas item that brought it, whose
+    /// The layer each found folder's files came from: the Disk Rebuild item that brought it, whose
     /// id grows with each drop, so a later drop is an upper layer.
     folder_layers: RefCell<HashMap<u32, i64>>,
     /// The same, for each file seen, by entry id.
@@ -1087,7 +1121,7 @@ struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
-    fn new(database: &'a MapDb, canvas: i64, items: &[CanvasItem]) -> Result<Self> {
+    fn new(database: &'a MapDb, disk_rebuild: i64, items: &[DiskRebuildItem]) -> Result<Self> {
         let mut inside: HashMap<Source, Vec<i64>> = HashMap::new();
         for item in items {
             let place = match (item.parent_item, item.parent_head) {
@@ -1099,7 +1133,7 @@ impl<'a> Tree<'a> {
         }
         Ok(Self {
             database,
-            canvas,
+            disk_rebuild,
             items: items.iter().map(|item| (item.id, item.clone())).collect(),
             inside,
             folder_layers: RefCell::new(HashMap::new()),
@@ -1113,7 +1147,7 @@ impl<'a> Tree<'a> {
             .connection
             .prepare_cached("SELECT path, entry FROM canvas_choices WHERE canvas = ?1")?;
         let rows = statement
-            .query_map([self.canvas], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map([self.disk_rebuild], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<HashMap<String, i64>>>()?;
         Ok(rows)
     }
@@ -1268,7 +1302,7 @@ impl<'a> Tree<'a> {
     }
 
     /// The name an item has in the rebuilt tree, or the found folder whose name was lost.
-    fn item_name(&self, item: &CanvasItem) -> Result<(Option<String>, Option<u32>)> {
+    fn item_name(&self, item: &DiskRebuildItem) -> Result<(Option<String>, Option<u32>)> {
         if let Some(name) = &item.name {
             return Ok((Some(name.clone()), None));
         }

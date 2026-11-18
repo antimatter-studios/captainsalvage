@@ -578,9 +578,9 @@ export interface DetailsProps {
   onEntry: (row: Row) => void;
   onChanged: () => void;
   tabRequest: { tab: DetailsTab; at: number } | null;
-  /** Says which tab is showing, so the sidebar can mark the pieces a canvas has used. */
+  /** Says which tab is showing, so the sidebar can mark the pieces a diskRebuild has used. */
   onTab: (tab: DetailsTab) => void;
-  /** The Rebuild tab's canvas, which pieces are dragged onto from the sidebar. */
+  /** The Rebuild tab's diskRebuild, which pieces are dragged onto from the sidebar. */
   rebuild: ReactNode;
   /** The conversation with Claude. It stays mounted on other tabs, so a reply keeps arriving. */
   agent: ReactNode;

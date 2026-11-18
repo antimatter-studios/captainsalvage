@@ -4,7 +4,7 @@
 //! overwrites a file, hashes each copy as it is written, and writes the manifest the copy
 //! report reads. This module only says what to copy and where it lands.
 
-use crate::export::{canvas_target, CopyPlan, CopyRequest};
+use crate::export::{disk_rebuild_target, CopyPlan, CopyRequest};
 use crate::session::Session;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -113,7 +113,7 @@ impl Session {
     /// Where a Disk Rebuild copies to: a folder named after it, inside the destination.
     fn rebuild_request(&self, rebuild: i64, options: &RebuildCopyOptions) -> Result<CopyRequest> {
         let name = self
-            .with_database(|database| database.canvases())?
+            .with_database(|database| database.disk_rebuilds())?
             .into_iter()
             .find(|found| found.id == rebuild)
             .map(|found| found.name)
@@ -128,7 +128,7 @@ impl Session {
             String::new()
         } else {
             Path::new(&base)
-                .join(canvas_target(&[], &name))
+                .join(disk_rebuild_target(&[], &name))
                 .display()
                 .to_string()
         };
@@ -136,7 +136,7 @@ impl Session {
             destination,
             min_confidence: options.min_confidence,
             include_partial: options.include_partial,
-            canvas: Some(rebuild),
+            disk_rebuild: Some(rebuild),
             ..CopyRequest::default()
         })
     }

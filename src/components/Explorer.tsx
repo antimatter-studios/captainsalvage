@@ -41,8 +41,8 @@ interface RowProps {
   selectedKey: string | null;
   /** The folder whose files are showing. It stays marked while other things are selected. */
   openKey: string | null;
-  /** While a canvas is showing, top-level folders are its pieces: unused ones can be dragged. */
-  canvasPieces: Set<number> | null;
+  /** While a diskRebuild is showing, top-level folders are its pieces: unused ones can be dragged. */
+  diskRebuildPieces: Set<number> | null;
   onEntry: (row: Row) => void;
   onFolder: (row: Row) => void;
   /** Right-clicking a file or a folder offers to export it. */
@@ -120,8 +120,8 @@ function FolderRow({ row, depth, props }: { row: Row; depth: number; props: RowP
   const guessed = row.name || row.nodeKind === "root" ? null : guessedFolderLabel(row.contents);
   // Top-level folders are the pieces. A folder inside one can be placed too, as a layer of its
   // own, and is only marked used when it was placed itself.
-  const piece = props.canvasPieces !== null;
-  const used = piece && (props.canvasPieces?.has(head) ?? false);
+  const piece = props.diskRebuildPieces !== null;
+  const used = piece && (props.diskRebuildPieces?.has(head) ?? false);
   const key = `folder:${head}`;
   return (
     <>

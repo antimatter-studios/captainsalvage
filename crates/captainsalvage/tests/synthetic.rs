@@ -4510,7 +4510,7 @@ fn the_command_line_exports_a_file_and_waits_for_the_copy() {
     let status = json_of(&run(&["--call", "export_start", &arguments]));
     assert_eq!(status["state"], "finished", "{status}");
     assert!(destination.join("photo.jpg").is_file());
-    // The removed names answer with what replaces them, and fail the command.
+    // A name that no longer exists fails the command like any other unknown name.
     let output = Command::new(env!("CARGO_BIN_EXE_captainsalvage"))
         .arg("scan")
         .arg(&image)
@@ -4519,13 +4519,13 @@ fn the_command_line_exports_a_file_and_waits_for_the_copy() {
         .output()
         .expect("runs");
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("export_start"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown tool basket_start"));
     let _ = std::fs::remove_dir_all(home);
 }
 
 #[test]
-fn the_removed_tools_answer_with_the_one_that_replaces_them() {
-    let (engine, _session, dir) = engine_with_volume("deprecated");
+fn the_removed_tool_names_no_longer_exist() {
+    let (engine, _session, dir) = engine_with_volume("removed-names");
     let advertised: Vec<String> = tool_definitions()
         .iter()
         .map(|tool| tool["name"].as_str().expect("name").to_string())
@@ -4538,7 +4538,7 @@ fn the_removed_tools_answer_with_the_one_that_replaces_them() {
     );
     assert!(!advertised
         .iter()
-        .any(|name| name == "captainsalvage_copy_plan"));
+        .any(|name| name == "captainsalvage_copy_plan" || name == "captainsalvage_copy_start"));
     for new in [
         "captainsalvage_export_plan",
         "captainsalvage_disk_rebuild_list",
@@ -4552,45 +4552,59 @@ fn the_removed_tools_answer_with_the_one_that_replaces_them() {
     ] {
         assert!(advertised.iter().any(|name| name == new), "{new}");
     }
-    for (old, replacement) in [
-        ("basket_list", "disk_rebuild_list"),
-        ("basket_add", "export_plan"),
-        ("basket_remove", "disk_rebuild_remove"),
-        ("basket_move", "disk_rebuild_move"),
-        ("basket_clear", "disk_rebuild_delete"),
-        ("basket_plan", "export_plan"),
-        ("basket_start", "export_start"),
-        ("copy_plan", "export_plan"),
-        ("copy_start", "export_start"),
-        ("canvas_list", "disk_rebuild_list"),
-        ("canvas_place", "disk_rebuild_place"),
-        ("canvas_copy_start", "disk_rebuild_copy_start"),
+    // The export tools that remain: planning is open to all, starting is the person's.
+    assert!(!advertised
+        .iter()
+        .any(|name| name == "captainsalvage_export_start"));
+    for old in [
+        "basket_list",
+        "basket_add",
+        "basket_remove",
+        "basket_move",
+        "basket_clear",
+        "basket_plan",
+        "basket_start",
+        "copy_plan",
+        "copy_start",
+        "canvas_list",
+        "canvas_place",
+        "canvas_copy_start",
     ] {
         for author in [AUTHOR_CLAUDE, "you"] {
             let error = engine
                 .call(old, &json!({}), author)
-                .expect_err("a removed tool does not run");
+                .expect_err("a removed tool does not exist");
             let message = format!("{error:#}");
-            assert!(message.contains(old), "{message}");
-            assert!(message.contains(replacement), "{old}: {message}");
+            assert!(
+                message.contains(&format!("unknown tool {old}")),
+                "{old}: {message}"
+            );
+            assert!(!message.contains("disk_rebuild"), "{old}: {message}");
         }
     }
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
-fn a_disk_rebuild_is_named_by_diskrebuild_and_the_old_canvas_argument_still_works() {
+fn a_disk_rebuild_is_named_by_diskrebuild_only() {
     let (engine, _session, dir) = engine_with_volume("rebuild-arg");
     let rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Mine"}))["id"]
         .as_i64()
         .expect("id");
-    let by_new = call(
+    let items = call(
         &engine,
         "disk_rebuild_items",
         json!({"diskRebuild": rebuild}),
     );
-    let by_old = call(&engine, "disk_rebuild_items", json!({"canvas": rebuild}));
-    assert_eq!(by_new, by_old);
+    assert!(items.is_array(), "{items}");
+    // The old name for the argument is not read.
+    assert!(engine
+        .call(
+            "disk_rebuild_items",
+            &json!({"canvas": rebuild}),
+            AUTHOR_CLAUDE
+        )
+        .is_err());
     assert!(engine
         .call("disk_rebuild_items", &json!({}), AUTHOR_CLAUDE)
         .is_err());
@@ -4598,24 +4612,13 @@ fn a_disk_rebuild_is_named_by_diskrebuild_and_the_old_canvas_argument_still_work
 }
 
 #[test]
-fn an_old_treasure_list_becomes_one_disk_rebuild_once_and_loses_nothing() {
-    let (engine, session, dir) = engine_with_volume("import-list");
+fn an_old_treasure_list_table_is_left_alone_and_nothing_is_imported() {
+    let (engine, session, dir) = engine_with_volume("old-list");
     let photo = call(&engine, "search", json!({"query": "photo.jpg"}))["rows"][0]["id"]
         .as_i64()
         .expect("id");
-    let song = call(&engine, "search", json!({"query": "song.mp3"}))["rows"][0]["id"]
-        .as_i64()
-        .expect("id");
-    assert_eq!(
-        call(&engine, "disk_rebuild_list", json!({}))
-            .as_array()
-            .expect("list")
-            .len(),
-        0
-    );
-
-    // The list as an earlier version stored it.
     let database = session.workspace.database();
+    // The list as an earlier version stored it.
     {
         let old = rusqlite::Connection::open(&database).expect("open");
         old.execute_batch(
@@ -4623,81 +4626,38 @@ fn an_old_treasure_list_becomes_one_disk_rebuild_once_and_loses_nothing() {
              position INTEGER NOT NULL, added_at_millis INTEGER NOT NULL, UNIQUE (kind, target));",
         )
         .expect("old table");
-        for (position, (kind, target)) in [("entry", photo), ("folder", 21), ("entry", song)]
-            .iter()
-            .enumerate()
-        {
-            old.execute(
-                "INSERT INTO basket (kind, target, position, added_at_millis) VALUES (?1, ?2, ?3, 0)",
-                rusqlite::params![kind, target, position as i64],
-            )
-            .expect("old row");
-        }
+        old.execute(
+            "INSERT INTO basket (kind, target, position, added_at_millis) VALUES ('entry', ?1, 0, 7)",
+            rusqlite::params![photo],
+        )
+        .expect("old row");
     }
-
-    let opened = MapDb::open(&database).expect("database");
-    let rebuilds = opened.canvases().expect("rebuilds");
-    assert_eq!(rebuilds.len(), 1, "{rebuilds:?}");
-    assert_eq!(rebuilds[0].name, "Imported treasure list");
-    let id = rebuilds[0].id;
-    let items = opened.canvas_items(id).expect("items");
-    // The made-up root, the folder and the two files.
-    assert_eq!(items.len(), 4, "{items:?}");
-    assert_eq!(items.iter().filter(|item| item.kind == "file").count(), 2);
-    assert!(items.iter().any(|item| item.head == Some(21)));
-
-    // Opening again, or in another process, makes nothing more.
-    drop(opened);
     for _ in 0..2 {
-        let again = MapDb::open(&database).expect("database");
-        assert_eq!(again.canvases().expect("rebuilds").len(), 1);
-        assert_eq!(again.canvas_items(id).expect("items").len(), 4);
+        let opened = MapDb::open(&database).expect("database");
+        assert!(opened.disk_rebuilds().expect("rebuilds").is_empty());
     }
-    // It is an ordinary Disk Rebuild, and the person can delete it.
-    call_as_person(&engine, "disk_rebuild_delete", json!({"diskRebuild": id}));
-    let after = MapDb::open(&database).expect("database");
-    assert!(
-        after.canvases().expect("rebuilds").is_empty(),
-        "not made again"
-    );
-
+    let old = rusqlite::Connection::open(&database).expect("open");
+    let (target, added): (i64, i64) = old
+        .query_row("SELECT target, added_at_millis FROM basket", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("old table and row untouched");
+    assert_eq!((target, added), (photo, 7));
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
-fn an_empty_old_list_makes_nothing_and_an_unplaceable_item_keeps_its_table() {
-    let (_engine, session, dir) = engine_with_volume("import-empty");
-    let database = session.workspace.database();
-    let create = |rows: &[(&str, i64)]| {
-        let old = rusqlite::Connection::open(&database).expect("open");
-        old.execute_batch(
-            "DROP TABLE IF EXISTS basket; DELETE FROM scan_state WHERE key = 'treasure_list_imported'; \
-             CREATE TABLE basket (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, target INTEGER NOT NULL, \
-             position INTEGER NOT NULL, added_at_millis INTEGER NOT NULL, UNIQUE (kind, target));",
+fn a_new_database_never_creates_the_old_treasure_list_table() {
+    let (_engine, session, dir) = engine_with_volume("no-old-list");
+    let old = rusqlite::Connection::open(session.workspace.database()).expect("open");
+    let tables: i64 = old
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'basket'",
+            [],
+            |row| row.get(0),
         )
-        .expect("old table");
-        for (position, (kind, target)) in rows.iter().enumerate() {
-            old.execute(
-                "INSERT INTO basket (kind, target, position, added_at_millis) VALUES (?1, ?2, ?3, 0)",
-                rusqlite::params![kind, target, position as i64],
-            )
-            .expect("old row");
-        }
-    };
-    create(&[]);
-    let opened = MapDb::open(&database).expect("database");
-    assert!(opened.canvases().expect("rebuilds").is_empty());
-
-    // A file the disk no longer has cannot be placed, so the old row stays where it was.
-    create(&[("entry", 999_999)]);
-    drop(opened);
-    let opened = MapDb::open(&database).expect("database");
-    assert_eq!(opened.canvases().expect("rebuilds").len(), 1);
-    let old = rusqlite::Connection::open(&database).expect("open");
-    let left: i64 = old
-        .query_row("SELECT COUNT(*) FROM basket", [], |row| row.get(0))
-        .expect("old table kept");
-    assert_eq!(left, 1);
+        .expect("count");
+    assert_eq!(tables, 0);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -4770,7 +4730,7 @@ fn a_recorded_copy_that_stopped_reporting_is_not_shown_as_running() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Four lost folders and nothing else, for rebuilding a tree on a canvas. Two of them hold a
+/// Four lost folders and nothing else, for rebuilding a tree on a Disk Rebuild. Two of them hold a
 /// `shared.jpg`: the copy at cluster 32 is whole, and the one at cluster 23 was wiped to zeros.
 fn build_jigsaw_volume() -> Vec<u8> {
     let mut b = Builder::new();
@@ -4857,43 +4817,52 @@ fn names(listing: &serde_json::Value, kind: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
-    let (engine, _session, dir) = engine_with_image("canvas", build_jigsaw_volume());
-    let canvas = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Mine"}))["id"]
+fn a_disk_rebuild_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
+    let (engine, _session, dir) = engine_with_image("disk-rebuild", build_jigsaw_volume());
+    let disk_rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Mine"}))
+        ["id"]
         .as_i64()
         .expect("id");
 
-    // Claude reads canvases, and only the person changes them.
+    // Claude reads Disk Rebuilds, and only the person changes them.
     let claude = engine.call(
         "disk_rebuild_place",
-        &json!({"canvas": canvas, "head": 20}),
+        &json!({"diskRebuild": disk_rebuild, "head": 20}),
         AUTHOR_CLAUDE,
     );
     assert!(format!("{:#}", claude.expect_err("refused")).contains("Only the person"));
 
     // The volume root and four lost folders are the pieces, largest first.
-    let unused = call(&engine, "disk_rebuild_unused", json!({"canvas": canvas}));
+    let unused = call(
+        &engine,
+        "disk_rebuild_unused",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert_eq!(unused["total"], 5);
 
     // The first piece becomes the root. C goes inside it, and B merges into it.
     let root = call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
     )["id"]
         .as_i64()
         .expect("root");
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 40}),
+        json!({"diskRebuild": disk_rebuild, "head": 40}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 30, "merge": true}),
+        json!({"diskRebuild": disk_rebuild, "head": 30, "merge": true}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert_eq!(
         names(&top, "files"),
         ["a1.jpg", "b1.mp3", "SHARED.jpg"],
@@ -4935,9 +4904,13 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     call_as_person(
         &engine,
         "disk_rebuild_choose",
-        json!({"canvas": canvas, "path": ["shared.jpg"], "entry": wiped}),
+        json!({"diskRebuild": disk_rebuild, "path": ["shared.jpg"], "entry": wiped}),
     );
-    let picked = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let picked = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     let shared = picked["files"]
         .as_array()
         .expect("files")
@@ -4954,18 +4927,22 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     call_as_person(
         &engine,
         "disk_rebuild_choose",
-        json!({"canvas": canvas, "path": ["shared.jpg"]}),
+        json!({"diskRebuild": disk_rebuild, "path": ["shared.jpg"]}),
     );
 
     // A made-up folder, and a piece moved into it.
     let photos = call_as_person(
         &engine,
         "disk_rebuild_folder",
-        json!({"canvas": canvas, "name": "Photos"}),
+        json!({"diskRebuild": disk_rebuild, "name": "Photos"}),
     )["id"]
         .as_i64()
         .expect("folder");
-    let items = call(&engine, "disk_rebuild_items", json!({"canvas": canvas}));
+    let items = call(
+        &engine,
+        "disk_rebuild_items",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     let c_item = items
         .as_array()
         .expect("items")
@@ -4977,9 +4954,13 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     call_as_person(
         &engine,
         "disk_rebuild_move",
-        json!({"canvas": canvas, "item": c_item, "place": {"item": photos}}),
+        json!({"diskRebuild": disk_rebuild, "item": c_item, "place": {"item": photos}}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     let made = top["folders"]
         .as_array()
         .expect("folders")
@@ -4995,7 +4976,7 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     let inside = call(
         &engine,
         "disk_rebuild_tree",
-        json!({"canvas": canvas, "path": ["Photos"]}),
+        json!({"diskRebuild": disk_rebuild, "path": ["Photos"]}),
     );
     assert_eq!(names(&inside, "folders"), ["lost:40"]);
     assert_eq!(
@@ -5003,7 +4984,7 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
             &call(
                 &engine,
                 "disk_rebuild_tree",
-                json!({"canvas": canvas, "path": ["Photos", "lost:40"]})
+                json!({"diskRebuild": disk_rebuild, "path": ["Photos", "lost:40"]})
             ),
             "files"
         ),
@@ -5015,12 +4996,12 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 50, "place": {"item": root, "head": 21}}),
+        json!({"diskRebuild": disk_rebuild, "head": 50, "place": {"item": root, "head": 21}}),
     );
     let sub = call(
         &engine,
         "disk_rebuild_tree",
-        json!({"canvas": canvas, "path": ["sub"]}),
+        json!({"diskRebuild": disk_rebuild, "path": ["sub"]}),
     );
     assert_eq!(names(&sub, "files"), ["deep.mp3"]);
     assert_eq!(names(&sub, "folders"), ["lost:50"]);
@@ -5029,30 +5010,34 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     assert!(refusal(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20})
+        json!({"diskRebuild": disk_rebuild, "head": 20})
     )
     .contains("already in this Disk Rebuild"));
     // A folder from inside a piece can be placed as a layer of its own, and taken off again.
     let inner = call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 21}),
+        json!({"diskRebuild": disk_rebuild, "head": 21}),
     )["id"]
         .as_i64()
         .expect("inner");
     call_as_person(
         &engine,
         "disk_rebuild_remove",
-        json!({"canvas": canvas, "item": inner}),
+        json!({"diskRebuild": disk_rebuild, "item": inner}),
     );
     assert!(refusal(
         &engine,
         "disk_rebuild_move",
-        json!({"canvas": canvas, "item": photos, "place": {"item": photos}})
+        json!({"diskRebuild": disk_rebuild, "item": photos, "place": {"item": photos}})
     )
     .contains("inside itself"));
     assert_eq!(
-        call(&engine, "disk_rebuild_unused", json!({"canvas": canvas}))["total"],
+        call(
+            &engine,
+            "disk_rebuild_unused",
+            json!({"diskRebuild": disk_rebuild})
+        )["total"],
         1,
         "only the volume root is left"
     );
@@ -5062,12 +5047,16 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
         call_as_person(
             &engine,
             "disk_rebuild_remove",
-            json!({"canvas": canvas, "item": photos})
+            json!({"diskRebuild": disk_rebuild, "item": photos})
         )["removed"],
         2
     );
     assert_eq!(
-        call(&engine, "disk_rebuild_unused", json!({"canvas": canvas}))["total"],
+        call(
+            &engine,
+            "disk_rebuild_unused",
+            json!({"diskRebuild": disk_rebuild})
+        )["total"],
         2
     );
 
@@ -5075,21 +5064,29 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
     let away = call_as_person(
         &engine,
         "disk_rebuild_leftovers",
-        json!({"canvas": canvas, "name": "Leftovers"}),
+        json!({"diskRebuild": disk_rebuild, "name": "Leftovers"}),
     );
     assert_eq!(away["pieces"], 2);
     assert_eq!(
-        call(&engine, "disk_rebuild_unused", json!({"canvas": canvas}))["total"],
+        call(
+            &engine,
+            "disk_rebuild_unused",
+            json!({"diskRebuild": disk_rebuild})
+        )["total"],
         0
     );
 
-    // Rebuilding the map keeps the canvas, because pieces are known by their first cluster.
+    // Rebuilding the map keeps the Disk Rebuild, because pieces are known by their first cluster.
     call_as_person(&engine, "resolve", json!({}));
-    let again = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let again = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert!(names(&again, "folders").contains(&"Leftovers".to_string()));
     assert_eq!(names(&again, "files"), ["a1.jpg", "b1.mp3", "SHARED.jpg"]);
 
-    // A second canvas is independent of the first.
+    // A second Disk Rebuild is independent of the first.
     let other = call_as_person(
         &engine,
         "disk_rebuild_create",
@@ -5098,7 +5095,11 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
         .as_i64()
         .expect("id");
     assert_eq!(
-        call(&engine, "disk_rebuild_unused", json!({"canvas": other}))["total"],
+        call(
+            &engine,
+            "disk_rebuild_unused",
+            json!({"diskRebuild": other})
+        )["total"],
         5
     );
     assert_eq!(
@@ -5108,7 +5109,11 @@ fn a_canvas_rebuilds_a_tree_from_lost_pieces_without_touching_the_map() {
             .len(),
         2
     );
-    call_as_person(&engine, "disk_rebuild_delete", json!({"canvas": other}));
+    call_as_person(
+        &engine,
+        "disk_rebuild_delete",
+        json!({"diskRebuild": other}),
+    );
     assert_eq!(
         call(&engine, "disk_rebuild_list", json!({}))
             .as_array()
@@ -5242,54 +5247,59 @@ fn similar_pieces_are_found_by_shared_files_and_can_be_swapped_in() {
     );
 
     // A placed piece can be swapped for another, keeping its place.
-    let canvas = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Swap"}))["id"]
+    let disk_rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Swap"}))
+        ["id"]
         .as_i64()
         .expect("id");
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
     );
     let c = call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 40}),
+        json!({"diskRebuild": disk_rebuild, "head": 40}),
     )["id"]
         .as_i64()
         .expect("C");
     call_as_person(
         &engine,
         "disk_rebuild_swap",
-        json!({"canvas": canvas, "item": c, "head": 50}),
+        json!({"diskRebuild": disk_rebuild, "item": c, "head": 50}),
     );
     let swapped = call(
         &engine,
         "disk_rebuild_tree",
-        json!({"canvas": canvas, "path": ["lost:50"]}),
+        json!({"diskRebuild": disk_rebuild, "path": ["lost:50"]}),
     );
     assert_eq!(names(&swapped, "files"), ["d.mp3"]);
     assert_eq!(
-        call(&engine, "disk_rebuild_unused", json!({"canvas": canvas}))["total"],
+        call(
+            &engine,
+            "disk_rebuild_unused",
+            json!({"diskRebuild": disk_rebuild})
+        )["total"],
         3,
         "C is free again, D is used"
     );
     assert!(refusal(
         &engine,
         "disk_rebuild_swap",
-        json!({"canvas": canvas, "item": c, "head": 20})
+        json!({"diskRebuild": disk_rebuild, "item": c, "head": 20})
     )
     .contains("already in this Disk Rebuild"));
     let made = call_as_person(
         &engine,
         "disk_rebuild_folder",
-        json!({"canvas": canvas, "name": "Made"}),
+        json!({"diskRebuild": disk_rebuild, "name": "Made"}),
     )["id"]
         .as_i64()
         .expect("folder");
     assert!(refusal(
         &engine,
         "disk_rebuild_swap",
-        json!({"canvas": canvas, "item": made, "head": 40})
+        json!({"diskRebuild": disk_rebuild, "item": made, "head": 40})
     )
     .contains("no piece to swap"));
 
@@ -5299,30 +5309,35 @@ fn similar_pieces_are_found_by_shared_files_and_can_be_swapped_in() {
 #[test]
 fn claude_suggests_placements_and_only_the_person_accepts_them() {
     let (engine, _session, dir) = engine_with_image("suggest", build_jigsaw_volume());
-    let canvas = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Ideas"}))["id"]
+    let disk_rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Ideas"}))
+        ["id"]
         .as_i64()
         .expect("id");
 
-    // Claude may suggest, with a reason, and the canvas is unchanged until the person acts.
+    // Claude may suggest, with a reason, and the Disk Rebuild is unchanged until the person acts.
     let first = call(
         &engine,
         "disk_rebuild_suggest",
-        json!({"canvas": canvas, "head": 20, "note": "Holds the most files."}),
+        json!({"diskRebuild": disk_rebuild, "head": 20, "note": "Holds the most files."}),
     )["id"]
         .as_i64()
         .expect("id");
     assert_eq!(
-        call(&engine, "disk_rebuild_items", json!({"canvas": canvas}))
-            .as_array()
-            .expect("items")
-            .len(),
+        call(
+            &engine,
+            "disk_rebuild_items",
+            json!({"diskRebuild": disk_rebuild})
+        )
+        .as_array()
+        .expect("items")
+        .len(),
         0
     );
     assert!(
         engine
             .call(
                 "disk_rebuild_suggest",
-                &json!({"canvas": canvas, "head": 40, "note": "  "}),
+                &json!({"diskRebuild": disk_rebuild, "head": 40, "note": "  "}),
                 AUTHOR_CLAUDE
             )
             .is_err(),
@@ -5332,7 +5347,7 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
         engine
             .call(
                 "disk_rebuild_accept",
-                &json!({"canvas": canvas, "suggestion": first}),
+                &json!({"diskRebuild": disk_rebuild, "suggestion": first}),
                 AUTHOR_CLAUDE
             )
             .is_err(),
@@ -5342,7 +5357,7 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
     let root = call_as_person(
         &engine,
         "disk_rebuild_accept",
-        json!({"canvas": canvas, "suggestion": first}),
+        json!({"diskRebuild": disk_rebuild, "suggestion": first}),
     )["id"]
         .as_i64()
         .expect("root");
@@ -5350,7 +5365,7 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
         call(
             &engine,
             "disk_rebuild_suggestions",
-            json!({"canvas": canvas})
+            json!({"diskRebuild": disk_rebuild})
         )
         .as_array()
         .expect("open")
@@ -5358,43 +5373,51 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
         0
     );
     assert_eq!(
-        call(&engine, "disk_rebuild_items", json!({"canvas": canvas}))[0]["head"],
+        call(
+            &engine,
+            "disk_rebuild_items",
+            json!({"diskRebuild": disk_rebuild})
+        )[0]["head"],
         20
     );
 
     // A suggestion into a place, and a merge, carry over when accepted.
-    let merge = call(&engine, "disk_rebuild_suggest", json!({"canvas": canvas, "head": 30, "place": {"item": root}, "merge": true, "note": "Shares shared.jpg."}))["id"].as_i64().expect("id");
-    let inside = call(&engine, "disk_rebuild_suggest", json!({"canvas": canvas, "head": 50, "place": {"item": root, "head": 21}, "note": "Also music."}))["id"].as_i64().expect("id");
+    let merge = call(&engine, "disk_rebuild_suggest", json!({"diskRebuild": disk_rebuild, "head": 30, "place": {"item": root}, "merge": true, "note": "Shares shared.jpg."}))["id"].as_i64().expect("id");
+    let inside = call(&engine, "disk_rebuild_suggest", json!({"diskRebuild": disk_rebuild, "head": 50, "place": {"item": root, "head": 21}, "note": "Also music."}))["id"].as_i64().expect("id");
     let dismissed = call(
         &engine,
         "disk_rebuild_suggest",
-        json!({"canvas": canvas, "head": 40, "note": "Probably nothing."}),
+        json!({"diskRebuild": disk_rebuild, "head": 40, "note": "Probably nothing."}),
     )["id"]
         .as_i64()
         .expect("id");
     let open = call(
         &engine,
         "disk_rebuild_suggestions",
-        json!({"canvas": canvas}),
+        json!({"diskRebuild": disk_rebuild}),
     );
     assert_eq!(open.as_array().expect("open").len(), 3);
     assert_eq!(open[0]["author"], "claude");
     call_as_person(
         &engine,
         "disk_rebuild_accept",
-        json!({"canvas": canvas, "suggestion": merge}),
+        json!({"diskRebuild": disk_rebuild, "suggestion": merge}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_accept",
-        json!({"canvas": canvas, "suggestion": inside}),
+        json!({"diskRebuild": disk_rebuild, "suggestion": inside}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_dismiss",
-        json!({"canvas": canvas, "suggestion": dismissed}),
+        json!({"diskRebuild": disk_rebuild, "suggestion": dismissed}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert!(
         names(&top, "files").contains(&"b1.mp3".to_string()),
         "merged into the top"
@@ -5404,7 +5427,7 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
             &call(
                 &engine,
                 "disk_rebuild_tree",
-                json!({"canvas": canvas, "path": ["sub"]})
+                json!({"diskRebuild": disk_rebuild, "path": ["sub"]})
             ),
             "folders"
         ),
@@ -5414,7 +5437,7 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
         call(
             &engine,
             "disk_rebuild_suggestions",
-            json!({"canvas": canvas})
+            json!({"diskRebuild": disk_rebuild})
         )
         .as_array()
         .expect("open")
@@ -5426,18 +5449,18 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
     call(
         &engine,
         "disk_rebuild_suggest",
-        json!({"canvas": canvas, "head": 40, "note": "Second thoughts."}),
+        json!({"diskRebuild": disk_rebuild, "head": 40, "note": "Second thoughts."}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 40}),
+        json!({"diskRebuild": disk_rebuild, "head": 40}),
     );
     assert_eq!(
         call(
             &engine,
             "disk_rebuild_suggestions",
-            json!({"canvas": canvas})
+            json!({"diskRebuild": disk_rebuild})
         )
         .as_array()
         .expect("open")
@@ -5448,7 +5471,7 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
         engine
             .call(
                 "disk_rebuild_suggest",
-                &json!({"canvas": canvas, "head": 40, "note": "Again."}),
+                &json!({"diskRebuild": disk_rebuild, "head": 40, "note": "Again."}),
                 AUTHOR_CLAUDE
             )
             .is_err(),
@@ -5459,10 +5482,10 @@ fn claude_suggests_placements_and_only_the_person_accepts_them() {
 }
 
 #[test]
-fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
-    let (engine, session, dir) = engine_with_image("canvas-copy", build_jigsaw_volume());
-    let destination = copy_destination("canvas-copy");
-    let canvas = call_as_person(
+fn a_disk_rebuild_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
+    let (engine, session, dir) = engine_with_image("disk-rebuild-copy", build_jigsaw_volume());
+    let destination = copy_destination("disk-rebuild-copy");
+    let disk_rebuild = call_as_person(
         &engine,
         "disk_rebuild_create",
         json!({"name": "Rebuilt one"}),
@@ -5472,19 +5495,20 @@ fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 40}),
+        json!({"diskRebuild": disk_rebuild, "head": 40}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 30, "merge": true}),
+        json!({"diskRebuild": disk_rebuild, "head": 30, "merge": true}),
     );
-    let args = json!({"canvas": canvas, "destination": destination.display().to_string()});
+    let args =
+        json!({"diskRebuild": disk_rebuild, "destination": destination.display().to_string()});
 
     // Claude can plan the copy, but only the person starts it.
     let plan = call(&engine, "disk_rebuild_copy_plan", args.clone());
@@ -5506,7 +5530,7 @@ fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
     assert_eq!(status.state, "finished", "{:?}", status.error);
     assert_eq!(status.files_done, 5);
 
-    // Each file is where the canvas puts it, and the piece left off the canvas is not copied.
+    // Each file is where the Disk Rebuild puts it, and the piece left off the Disk Rebuild is not copied.
     for path in [
         "a1.jpg",
         "b1.mp3",
@@ -5527,16 +5551,17 @@ fn a_canvas_copies_out_at_its_rebuilt_paths_with_the_chosen_copies() {
 }
 
 #[test]
-fn finder_reads_a_canvas_through_the_media_port_and_only_for_the_open_disk() {
+fn finder_reads_a_disk_rebuild_through_the_media_port_and_only_for_the_open_disk() {
     use captainsalvage::media::{serial_text, MediaServer};
     let (engine, session, dir) = engine_with_image("finder", build_jigsaw_volume());
-    let canvas = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Finder"}))["id"]
+    let disk_rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Finder"}))
+        ["id"]
         .as_i64()
         .expect("id");
     for args in [
-        json!({"canvas": canvas, "head": 20}),
-        json!({"canvas": canvas, "head": 40}),
-        json!({"canvas": canvas, "head": 30, "merge": true}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 40}),
+        json!({"diskRebuild": disk_rebuild, "head": 30, "merge": true}),
     ] {
         call_as_person(&engine, "disk_rebuild_place", args);
     }
@@ -5551,7 +5576,7 @@ fn finder_reads_a_canvas_through_the_media_port_and_only_for_the_open_disk() {
             .collect()
     };
     let get = |query: String| {
-        let (status, body) = local_get(&port, &format!("/canvas/{canvas}?{query}"), None);
+        let (status, body) = local_get(&port, &format!("/canvas/{disk_rebuild}?{query}"), None);
         let value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
         (status, value)
     };
@@ -5620,9 +5645,9 @@ fn finder_reads_a_canvas_through_the_media_port_and_only_for_the_open_disk() {
 }
 
 #[test]
-fn a_canvas_survives_a_restart_a_new_scan_and_a_map_rebuild() {
-    let (engine, session, dir) = engine_with_image("canvas-keeps", build_jigsaw_volume());
-    let canvas = call_as_person(
+fn a_disk_rebuild_survives_a_restart_a_new_scan_and_a_map_rebuild() {
+    let (engine, session, dir) = engine_with_image("disk-rebuild-keeps", build_jigsaw_volume());
+    let disk_rebuild = call_as_person(
         &engine,
         "disk_rebuild_create",
         json!({"name": "Weeks of work"}),
@@ -5632,29 +5657,33 @@ fn a_canvas_survives_a_restart_a_new_scan_and_a_map_rebuild() {
     let root = call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
     )["id"]
         .as_i64()
         .expect("root");
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 30, "merge": true}),
+        json!({"diskRebuild": disk_rebuild, "head": 30, "merge": true}),
     );
     let made = call_as_person(
         &engine,
         "disk_rebuild_folder",
-        json!({"canvas": canvas, "name": "Music", "place": {"item": root}}),
+        json!({"diskRebuild": disk_rebuild, "name": "Music", "place": {"item": root}}),
     )["id"]
         .as_i64()
         .expect("folder");
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 40, "place": {"item": made}}),
+        json!({"diskRebuild": disk_rebuild, "head": 40, "place": {"item": made}}),
     );
     // The person prefers the wiped copy of the clashing file, for their own reasons.
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     let wiped = top["files"]
         .as_array()
         .expect("files")
@@ -5666,24 +5695,28 @@ fn a_canvas_survives_a_restart_a_new_scan_and_a_map_rebuild() {
     call_as_person(
         &engine,
         "disk_rebuild_choose",
-        json!({"canvas": canvas, "path": ["SHARED.jpg"], "entry": wiped}),
+        json!({"diskRebuild": disk_rebuild, "path": ["SHARED.jpg"], "entry": wiped}),
     );
     call(
         &engine,
         "disk_rebuild_suggest",
-        json!({"canvas": canvas, "head": 50, "place": {"item": made}, "note": "More music."}),
+        json!({"diskRebuild": disk_rebuild, "head": 50, "place": {"item": made}, "note": "More music."}),
     );
     let before = (
-        call(&engine, "disk_rebuild_tree", json!({"canvas": canvas})),
         call(
             &engine,
             "disk_rebuild_tree",
-            json!({"canvas": canvas, "path": ["Music"]}),
+            json!({"diskRebuild": disk_rebuild}),
+        ),
+        call(
+            &engine,
+            "disk_rebuild_tree",
+            json!({"diskRebuild": disk_rebuild, "path": ["Music"]}),
         ),
         call(
             &engine,
             "disk_rebuild_suggestions",
-            json!({"canvas": canvas}),
+            json!({"diskRebuild": disk_rebuild}),
         ),
     );
     let image = build_jigsaw_volume();
@@ -5704,16 +5737,20 @@ fn a_canvas_survives_a_restart_a_new_scan_and_a_map_rebuild() {
     engine.set_session(session.clone());
 
     let after = (
-        call(&engine, "disk_rebuild_tree", json!({"canvas": canvas})),
         call(
             &engine,
             "disk_rebuild_tree",
-            json!({"canvas": canvas, "path": ["Music"]}),
+            json!({"diskRebuild": disk_rebuild}),
+        ),
+        call(
+            &engine,
+            "disk_rebuild_tree",
+            json!({"diskRebuild": disk_rebuild, "path": ["Music"]}),
         ),
         call(
             &engine,
             "disk_rebuild_suggestions",
-            json!({"canvas": canvas}),
+            json!({"diskRebuild": disk_rebuild}),
         ),
     );
     assert_eq!(
@@ -5809,7 +5846,7 @@ fn a_copy_started_under_the_old_manifest_name_keeps_it() {
 /// means something inside the window.
 #[test]
 fn every_engine_tool_the_window_uses_is_listed_over_mcp() {
-    // Writing files, choosing where they go, and arranging a canvas stay the person's.
+    // Writing files, choosing where they go, and arranging a Disk Rebuild stay the person's.
     const PERSON_ONLY: &[&str] = &[
         "export_start",
         "disk_rebuild_choose",
@@ -5960,20 +5997,25 @@ fn clashing_copies_that_measure_the_same_go_to_the_upper_layer_and_ask_the_perso
         b.put(song, 16, &noise(song, CLUSTER - 16));
     }
     let (engine, _session, dir) = engine_with_image("layers", b.image);
-    let canvas = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Layers"}))["id"]
+    let disk_rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Layers"}))
+        ["id"]
         .as_i64()
         .expect("id");
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
     );
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 30, "merge": true}),
+        json!({"diskRebuild": disk_rebuild, "head": 30, "merge": true}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     let song = &top["files"][0];
     assert_eq!(song["copies"].as_array().expect("copies").len(), 2);
     assert_eq!(
@@ -5989,20 +6031,24 @@ fn clashing_copies_that_measure_the_same_go_to_the_upper_layer_and_ask_the_perso
     call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 40, "merge": true}),
+        json!({"diskRebuild": disk_rebuild, "head": 40, "merge": true}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert_eq!(top["files"][0]["chosen"]["firstCluster"], 41);
     assert_eq!(
         top["files"][0]["copies"].as_array().expect("copies").len(),
         3
     );
 
-    // The whole canvas's clashes, those needing the person first.
+    // The whole Disk Rebuild's clashes, those needing the person first.
     let clashes = call(
         &engine,
         "disk_rebuild_clashes",
-        json!({"canvas": canvas, "needYou": true}),
+        json!({"diskRebuild": disk_rebuild, "needYou": true}),
     );
     assert_eq!(clashes["needYou"], 1);
     assert_eq!(clashes["clashes"][0]["path"], json!(["song.mp3"]));
@@ -6018,9 +6064,13 @@ fn clashing_copies_that_measure_the_same_go_to_the_upper_layer_and_ask_the_perso
     call_as_person(
         &engine,
         "disk_rebuild_choose",
-        json!({"canvas": canvas, "path": ["song.mp3"], "entry": lower}),
+        json!({"diskRebuild": disk_rebuild, "path": ["song.mp3"], "entry": lower}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert_eq!(top["files"][0]["decidedBy"], "person");
     assert_eq!(top["clashesNeedYou"], 0);
     let _ = std::fs::remove_dir_all(dir);
@@ -6054,13 +6104,14 @@ fn a_single_file_can_be_laid_over_a_folder_as_its_own_layer() {
         b.put(song, 16, &noise(song, CLUSTER - 16));
     }
     let (engine, _session, dir) = engine_with_image("file-layer", b.image);
-    let canvas = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Files"}))["id"]
+    let disk_rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Files"}))
+        ["id"]
         .as_i64()
         .expect("id");
     let root = call_as_person(
         &engine,
         "disk_rebuild_place",
-        json!({"canvas": canvas, "head": 20}),
+        json!({"diskRebuild": disk_rebuild, "head": 20}),
     )["id"]
         .as_i64()
         .expect("root");
@@ -6075,15 +6126,19 @@ fn a_single_file_can_be_laid_over_a_folder_as_its_own_layer() {
     assert!(refusal(
         &engine,
         "disk_rebuild_place_file",
-        json!({"canvas": canvas, "entry": 999_999, "place": {"item": root}})
+        json!({"diskRebuild": disk_rebuild, "entry": 999_999, "place": {"item": root}})
     )
     .contains("no file"));
     call_as_person(
         &engine,
         "disk_rebuild_place_file",
-        json!({"canvas": canvas, "entry": other, "place": {"item": root}}),
+        json!({"diskRebuild": disk_rebuild, "entry": other, "place": {"item": root}}),
     );
-    let top = call(&engine, "disk_rebuild_tree", json!({"canvas": canvas}));
+    let top = call(
+        &engine,
+        "disk_rebuild_tree",
+        json!({"diskRebuild": disk_rebuild}),
+    );
     assert_eq!(
         top["files"][0]["copies"].as_array().expect("copies").len(),
         2

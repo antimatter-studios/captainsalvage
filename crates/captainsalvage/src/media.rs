@@ -573,13 +573,13 @@ impl MediaServer {
         let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         match parts.as_slice() {
             ["file", id] => self.serve_file(id.parse()?, headers),
-            ["canvas", canvas] => {
+            ["canvas", disk_rebuild] => {
                 let folder = query
                     .split('&')
                     .find_map(|pair| pair.strip_prefix("p="))
                     .unwrap_or("");
                 Ok(self
-                    .serve_canvas(canvas.parse()?, folder)
+                    .serve_disk_rebuild(disk_rebuild.parse()?, folder)
                     .unwrap_or_else(|error| text_answer(404, &format!("{error:#}"))))
             }
             ["hls", id, "index.m3u8"] => {
@@ -606,17 +606,18 @@ impl MediaServer {
         }
     }
 
-    /// One folder of a canvas's rebuilt tree, for Finder. The folder is named by the path names
+    /// One folder of a Disk Rebuild's rebuilt tree, for Finder. The folder is named by the path names
     /// from the top, as JSON in hex, so no name needs escaping.
-    fn serve_canvas(&self, canvas: i64, folder: &str) -> Result<Answer> {
+    fn serve_disk_rebuild(&self, disk_rebuild: i64, folder: &str) -> Result<Answer> {
         let session = self.engine.session()?;
         let path: Vec<String> = if folder.is_empty() {
             Vec::new()
         } else {
             serde_json::from_slice(&from_hex(folder)?)?
         };
-        let listing = session
-            .with_database(|database| database.canvas_list(canvas, &path, 0, u64::MAX >> 1))?;
+        let listing = session.with_database(|database| {
+            database.disk_rebuild_list(disk_rebuild, &path, 0, u64::MAX >> 1)
+        })?;
         let folders: Vec<Value> = listing
             .folders
             .iter()

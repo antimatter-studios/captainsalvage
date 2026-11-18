@@ -4,8 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   call,
-  type Canvas,
-  type CanvasItem,
+  type DiskRebuild,
+  type DiskRebuildItem,
   type FinderState,
   type BrowseRow,
   type ClusterInfo,
@@ -60,11 +60,11 @@ const MAP_REFRESH_DURING_SCAN_MILLIS = 15000;
 const REBUILD_DURING_SCAN_MILLIS = 5 * 60 * 1000;
 
 type CenterView = "overview" | "browse" | "bytes" | "zip";
-const CANVAS_STORAGE_KEY = "salvage-canvas";
+const DISK_REBUILD_STORAGE_KEY = "salvage-disk-rebuild";
 
-function rememberedCanvas(): number | null {
+function rememberedDiskRebuild(): number | null {
   try {
-    const saved = Number(localStorage.getItem(CANVAS_STORAGE_KEY));
+    const saved = Number(localStorage.getItem(DISK_REBUILD_STORAGE_KEY));
     return Number.isFinite(saved) && saved > 0 ? saved : null;
   } catch {
     return null;
@@ -408,11 +408,11 @@ export default function App() {
   const [byteRange, setByteRange] = useState<[number, number] | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; item: ExportItem } | null>(null);
   const [exporting, setExporting] = useState<ExportItem | null>(null);
-  const [canvases, setCanvases] = useState<Canvas[]>([]);
-  const [canvas, setCanvas] = useState<number | null>(rememberedCanvas);
-  const [canvasRevision, setCanvasRevision] = useState(0);
+  const [diskRebuilds, setDiskRebuilds] = useState<DiskRebuild[]>([]);
+  const [diskRebuild, setDiskRebuild] = useState<number | null>(rememberedDiskRebuild);
+  const [diskRebuildRevision, setDiskRebuildRevision] = useState(0);
   const [finder, setFinder] = useState<FinderState>({ available: false, shown: [] });
-  const [canvasUsed, setCanvasUsed] = useState<Set<number>>(new Set());
+  const [diskRebuildUsed, setDiskRebuildUsed] = useState<Set<number>>(new Set());
   const [tabRequest, setTabRequest] = useState<{ tab: "lens"; at: number } | null>(null);
   const [center, setCenter] = useState<CenterView>("overview");
   const [detailsTab, setDetailsTab] = useState<DetailsTab>("selected");
@@ -442,27 +442,27 @@ export default function App() {
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  // The canvases, and which pieces the one showing has used, kept as the person rebuilds.
-  const bumpCanvas = useCallback(() => setCanvasRevision((value) => value + 1), []);
+  // The diskRebuilds, and which pieces the one showing has used, kept as the person rebuilds.
+  const bumpDiskRebuild = useCallback(() => setDiskRebuildRevision((value) => value + 1), []);
   useEffect(() => {
     if (!overview) return;
     let current = true;
-    call<Canvas[]>("disk_rebuild_list")
+    call<DiskRebuild[]>("disk_rebuild_list")
       .then((found) => {
         if (!current) return;
-        setCanvases(found);
-        setCanvas((chosen) => (chosen !== null && found.some((item) => item.id === chosen) ? chosen : found[0]?.id ?? null));
+        setDiskRebuilds(found);
+        setDiskRebuild((chosen) => (chosen !== null && found.some((item) => item.id === chosen) ? chosen : found[0]?.id ?? null));
       })
       .catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [overview, canvasRevision]);
-  // Finder shows each canvas through a helper app. Telling it about every change keeps an open
-  // Finder window in step, and drops a location whose canvas was deleted.
+  }, [overview, diskRebuildRevision]);
+  // Finder shows each diskRebuild through a helper app. Telling it about every change keeps an open
+  // Finder window in step, and drops a location whose diskRebuild was deleted.
   const [finderRevision, setFinderRevision] = useState(0);
   useEffect(() => {
-    // An MCP client showed or hid a canvas in Finder.
+    // An MCP client showed or hid a diskRebuild in Finder.
     const stop = listen("salvage-finder-changed", () => setFinderRevision((value) => value + 1));
     return () => void stop.then((unlisten) => unlisten());
   }, []);
@@ -479,32 +479,32 @@ export default function App() {
   useEffect(() => {
     if (!overview || !finder.available) return;
     const timer = setTimeout(() => {
-      const revisions = canvases.map((item) => ({ id: item.id, name: item.name, revision: `${item.updatedAtMillis}-${revision}` }));
-      invoke<{ shown: number[] }>("finder_sync", { canvases: revisions })
+      const revisions = diskRebuilds.map((item) => ({ id: item.id, name: item.name, revision: `${item.updatedAtMillis}-${revision}` }));
+      invoke<{ shown: number[] }>("finder_sync", { diskRebuilds: revisions })
         .then((synced) => setFinder({ available: true, shown: synced.shown }))
         .catch(() => undefined);
     }, 500);
     return () => clearTimeout(timer);
-  }, [overview, finder.available, canvases, revision]);
+  }, [overview, finder.available, diskRebuilds, revision]);
   useEffect(() => {
     try {
-      if (canvas === null) localStorage.removeItem(CANVAS_STORAGE_KEY);
-      else localStorage.setItem(CANVAS_STORAGE_KEY, String(canvas));
+      if (diskRebuild === null) localStorage.removeItem(DISK_REBUILD_STORAGE_KEY);
+      else localStorage.setItem(DISK_REBUILD_STORAGE_KEY, String(diskRebuild));
     } catch {
-      // Remembering the canvas is only a convenience.
+      // Remembering the diskRebuild is only a convenience.
     }
-    if (canvas === null) {
-      setCanvasUsed(new Set());
+    if (diskRebuild === null) {
+      setDiskRebuildUsed(new Set());
       return;
     }
     let current = true;
-    call<CanvasItem[]>("disk_rebuild_items", { canvas })
-      .then((items) => current && setCanvasUsed(new Set(items.flatMap((item) => (item.head !== null ? [item.head] : [])))))
-      .catch(() => current && setCanvasUsed(new Set()));
+    call<DiskRebuildItem[]>("disk_rebuild_items", { diskRebuild })
+      .then((items) => current && setDiskRebuildUsed(new Set(items.flatMap((item) => (item.head !== null ? [item.head] : [])))))
+      .catch(() => current && setDiskRebuildUsed(new Set()));
     return () => {
       current = false;
     };
-  }, [canvas, canvasRevision]);
+  }, [diskRebuild, diskRebuildRevision]);
 
   /** Applies what `open_source` answered: the raw source is always there, and the interpretation
    * decides whether the filesystem workspace or the byte map is what shows first. */
@@ -762,7 +762,7 @@ export default function App() {
   useEffect(() => {
     const stops = [
       listen("salvage-map-changed", bump),
-      listen("salvage-canvas-changed", bumpCanvas),
+      listen("salvage-disk-rebuild-changed", bumpDiskRebuild),
       listen("salvage-activity", () => setActivityRevision((value) => value + 1)),
       listen<{ kind: string; value?: number; start?: number; end?: number }>("salvage-focus", async ({ payload }) => {
         if (payload.kind === "cluster" && payload.value !== undefined) {
@@ -900,7 +900,7 @@ export default function App() {
         revision={revision}
         selectedKey={selectedKey}
         openKey={browseScope ? `folder:${browseScope.head}` : null}
-        canvasPieces={detailsTab === "rebuild" && canvas !== null ? canvasUsed : null}
+        diskRebuildPieces={detailsTab === "rebuild" && diskRebuild !== null ? diskRebuildUsed : null}
         onEntry={openEntry}
         onFolder={openFolder}
         onChain={selectChain}
@@ -999,11 +999,11 @@ export default function App() {
           agentActive={chatActivity.busy || chatActivity.replies > repliesSeen}
           rebuild={
             <RebuildView
-              canvases={canvases}
-              canvas={canvas}
-              onCanvas={setCanvas}
-              revision={canvasRevision}
-              onChanged={bumpCanvas}
+              diskRebuilds={diskRebuilds}
+              diskRebuild={diskRebuild}
+              onDiskRebuild={setDiskRebuild}
+              revision={diskRebuildRevision}
+              onChanged={bumpDiskRebuild}
               onEntry={(row) => row.id !== null && void noteEntry(row.id)}
               copy={status?.copy ?? null}
               finder={finder}
