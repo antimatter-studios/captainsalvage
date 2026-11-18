@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const VOLUME_FILE: &str = "volume.json";
+pub(crate) const VOLUME_FILE: &str = "volume.json";
 const WORKSPACE_PREFIX: &str = "vol-";
 const NOT_APPLICABLE: &str = "Not applicable";
 const HIDDEN_PARTITIONS: &[&str] = &["EFI"];
@@ -358,12 +358,13 @@ fn known_volume(dir: &Path) -> Option<KnownVolume> {
     Some(known)
 }
 
-/// Everything recorded under this app's data folder, most recently opened first.
-pub fn known_volumes(root: &Path) -> Vec<KnownVolume> {
+/// The folders of scans that remembered a volume: the workspaces of earlier versions, named from
+/// a serial number, and the folders of the scans a source has.
+fn scan_folders(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
-    let mut known: Vec<KnownVolume> = entries
+    let mut folders: Vec<PathBuf> = entries
         .flatten()
         .filter(|entry| {
             entry
@@ -371,9 +372,40 @@ pub fn known_volumes(root: &Path) -> Vec<KnownVolume> {
                 .to_string_lossy()
                 .starts_with(WORKSPACE_PREFIX)
         })
-        .filter_map(|entry| known_volume(&entry.path()))
+        .map(|entry| entry.path())
+        .collect();
+    let sources = fs::read_dir(root.join("sources"))
+        .into_iter()
+        .flatten()
+        .flatten();
+    for source in sources {
+        folders.extend(
+            fs::read_dir(source.path().join("scans"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|scan| scan.path()),
+        );
+    }
+    folders
+}
+
+/// Everything recorded under this app's data folder, most recently opened first. A volume scanned
+/// more than once (another format, another extent) is listed once, with its latest scan.
+pub fn known_volumes(root: &Path) -> Vec<KnownVolume> {
+    let mut known: Vec<KnownVolume> = scan_folders(root)
+        .iter()
+        .filter_map(|folder| known_volume(folder))
         .collect();
     known.sort_by_key(|volume| std::cmp::Reverse(volume.record.last_opened_millis));
+    let mut seen = std::collections::HashSet::new();
+    known.retain(|volume| {
+        volume
+            .record
+            .uuid
+            .as_ref()
+            .is_none_or(|uuid| seen.insert(uuid.clone()))
+    });
     known
 }
 

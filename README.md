@@ -541,6 +541,124 @@ resume a stopped range, pass that offset and the remaining length. MCP exposes t
 operations as `captainsalvage_open_raw_disk`, `captainsalvage_discover_raw_disk`,
 `captainsalvage_read_raw_disk`, and `captainsalvage_open_disk_region`.
 
+### Sources, interpretations and scans
+
+A scan is the unit of stored work. It is made of:
+
+- a **source**: a drive or image, recognised by its markers (see above), not by a path, a device
+  number or a serial number;
+- an **interpretation**: an extent of the source (start and length) and the format read there
+  (exFAT, FAT12/16/32, NTFS, or `none` for raw bytes only), with where it came from (`analysis`
+  for boot evidence or a range analysis, `manual` when the person chose it) and a confidence;
+- the scan's **options**, the **scanner version** and the **range** it covers.
+
+Change any of them and it is a new scan. The earlier scan stays, and opens again without
+scanning. Opening the same combination finds the scan it made, with its results, and starts
+nothing. A scan only runs when nothing is stored for that combination, when the person asks to
+rescan, or (not built yet) when a probable match asks to rescan the regions around the changed
+markers, which the saved scan already records.
+
+Everything a scan stores belongs to it. A filesystem scan keeps its map (`map.sqlite`: nodes,
+file tests, islands, read errors, overlays and its Disk Rebuilds) in the scan's own folder. A raw
+scan keeps its findings and failures in `raw-scans.sqlite`, under its saved scan ID. Only
+metadata is stored, never file contents; bytes are read from the source when they are needed.
+
+The records are tables in `~/Library/Application Support/Captain Salvage/raw-scans.sqlite`, the
+database that already held saved raw scans and hypotheses, so a foreign key can point at them:
+
+| Table | Holds |
+|---|---|
+| `sources` | `id`, `label`, `length`, `fingerprint` (the markers, as JSON; empty until a source from an older workspace is seen), `hardware` (reserved), first and last seen, last path |
+| `hypotheses` | unchanged. An interpretation **is** a saved hypothesis: its `id` is the foreign key, and `origin` and `confidence` are the ones the hypothesis already had |
+| `interpretations` | ties a hypothesis to its source (`hypothesis_id`, `source_id`), says whether it `listed` as a layer of the source's hypotheses (one made by opening is kept for its scans and is not listed) and whether it is `verified` (a migration only guessed it) |
+| `scans` | `id`, `source_id`, `interpretation_id`, `kind` (`raw` or `filesystem`), the interpretation as it was when the scan was made (`format`, `ext_start`, `ext_length`, `boot_offset`, `origin`, `confidence`), `options` (canonical JSON), `scanner_version`, `range_start`, `range_end`, `raw_scan_id`, `data_dir`, `volume_key`, `legacy_key`, `label`, `stored_bytes`, times |
+| `source_blocks` | where a source keeps the caches shared by its scans, per block grid |
+| `catalog_meta` | the migration marker and the path of the backup |
+
+A scan keeps the interpretation as it was made, so editing the hypothesis later never changes
+what an existing scan means. Deleting a hypothesis that scans were made under only takes it off
+the list of layers. The tables are added beside the old ones, and nothing old is altered, so a
+copy of the app from before the catalog still reads and writes the same database.
+
+Files, under the same folder:
+
+```text
+raw-scans.sqlite                  the catalog, saved raw scans and hypotheses
+sources/<source>/blocks/<grid>/   entropy.bin and texthead.bin: caches of the source's bytes
+sources/<source>/scans/<scan>/    map.sqlite, class.bin, confidence.bin, ownership.bin, baseline
+vol-<serial>/                     a workspace made before the catalog; it is a scan, used in place
+backups/                          copy of the database, made before the catalog first changed it
+```
+
+A block grid is the extent's start and the block (cluster) size, because the same bytes cut into
+other blocks are other facts. Every scan of a source with the same grid shares the entropy and
+text-head caches, so a second scan costs only what depends on its interpretation. `class.bin`
+stays with the scan: it marks directories, which depends on the format the blocks are read as.
+Splitting the content class from the directory mark would let it be shared too.
+
+How a device is matched to a source when it is opened (`Catalog::resolve_source`):
+
+1. An **exact** marker match is the source. A **probable** one is not applied without the
+   person's acknowledgement (`acceptChangedMarkers`): the stored source comes back as `declined`
+   and a new source is made, so nothing stored is applied silently below exact. A stored scan is
+   opened on a probable match by its ID with that acknowledgement (`open_stored_scan`).
+2. A volume's old key (`vol-<serial>`, `ntfs-<serial>`, or the same plus the region) is still
+   looked up, as a fallback. It finds a source whose markers match at least probably, or one that
+   has none yet. A key whose markers say weak or different is another drive with the same serial
+   number, and is not used.
+3. Otherwise a new source is made. A source with no usable markers (blank or unreadable) is told
+   apart only by its path and length.
+
+Hardware identity (model and serial number, where the bus reports them) is a reserved column
+(`sources.hardware`): the macOS tools the app already uses do not report it for every bus, and it
+would only add confidence, never decide a match. Nothing fills it in yet.
+
+#### Migration
+
+The first time a catalog is opened in a run of the app (and with `captainsalvage source migrate`)
+everything older versions stored is registered as a source, an interpretation and a scan that
+reproduces its old key:
+
+- each `vol-<serial>` or `ntfs-<serial>` folder becomes a filesystem scan of a source with no
+  markers yet, read as the format its name suggests (a guess, marked unverified). The scan uses
+  the folder where it is. Nothing is moved, copied or changed, so a window or command-line session
+  of the earlier version that is still open keeps working on the same files, and a scan that took
+  three hours is never repeated. The first time the device is seen, its markers are stored, and
+  the format and extent the device reports replace the guess.
+- each `region-*` folder inside a workspace (a raw disk read as a filesystem) becomes a scan too;
+  regions of the same disk path share one source.
+- each saved raw scan becomes a raw scan of the source its fingerprint names. Scans with the same
+  sampled hash are scans of one source; a drive whose markers changed between two scans is two
+  sources until it is seen again. The scan keeps its saved scan ID, so resuming by it still works.
+- hypotheses saved before the catalog become interpretations of the source with the same sampled
+  hash, still listed as layers.
+
+Before the catalog's tables are first created, the database is copied with `VACUUM INTO` to
+`backups/raw-scans-before-catalog-<time>.sqlite`; a failed copy stops the change. The registration
+is one write transaction, so it either registers everything or nothing, and a run that is stopped
+half way is simply done again. Every scan registered from old files carries the key it came from
+(`legacy_key`, unique), so running it again registers nothing twice, and two apps running it
+together wait for each other. If the catalog cannot be opened (a read-only home folder, a locked
+database), opening a volume falls back to the volume's own folder, as before. Opening a volume
+whose old folder is not registered yet (made by an older copy after the sweep) registers it
+first.
+
+```sh
+captainsalvage source list
+captainsalvage source identify /path/to/disk.img [--show-all]
+captainsalvage source scans /path/to/disk.img            # the stored scans of the sources it matches
+captainsalvage source scans --source SOURCE_ID
+captainsalvage source open /path/to/disk.img --scan SCAN_ID [--accept-changed-markers]
+captainsalvage source switch /path/to/disk.img --format NTFS --start 0 --length BYTES
+captainsalvage source label --scan SCAN_ID --label "before the repair"
+captainsalvage source migrate
+```
+
+MCP and the window offer the same as `captainsalvage_list_sources`, `_identify_source`,
+`_list_scans`, `_open_stored_scan`, `_switch_interpretation`, `_label_scan`, `_label_source` and
+`_migrate_catalog`. The listing tools are read only. The ones that make a scan or change a name are
+the person's to run, as changing a Disk Rebuild is: an agent that asks is told to suggest it.
+
 ### Tests
 
 ```sh

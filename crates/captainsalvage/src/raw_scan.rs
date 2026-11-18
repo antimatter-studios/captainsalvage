@@ -15,7 +15,7 @@ pub use markers::{
     MIN_MATCHED_MARKERS, PROBABLE_PERCENT,
 };
 
-const SCANNER_VERSION: u32 = 1;
+pub(crate) const SCANNER_VERSION: u32 = 1;
 
 fn identifier() -> Result<String> {
     let mut bytes = [0u8; 16];
@@ -87,23 +87,9 @@ pub struct ScanStep {
     pub batch: DiscoveryBatch,
 }
 
-pub struct ScanStore {
-    connection: Connection,
-}
-
-impl ScanStore {
-    pub fn for_user() -> Result<Self> {
-        Self::open(&Workspace::root()?.join("raw-scans.sqlite"))
-    }
-
-    pub fn open(path: &Path) -> Result<Self> {
-        let connection = Connection::open(path)?;
-        connection.busy_timeout(Duration::from_secs(5))?;
-        connection.execute_batch(
-            "PRAGMA foreign_keys = ON;
-             PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = FULL;
-             CREATE TABLE IF NOT EXISTS raw_scans (
+/// The tables of saved raw scans. Created here, and by the catalog, which refers to them.
+pub(crate) const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS raw_scans (
                  id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, source_length INTEGER NOT NULL,
                  source_path TEXT NOT NULL, scanner_version INTEGER NOT NULL,
                  scan_start INTEGER NOT NULL, scan_end INTEGER NOT NULL, next_offset INTEGER NOT NULL,
@@ -126,9 +112,39 @@ impl ScanStore {
                  resumed_at_millis INTEGER NOT NULL, confidence_percent INTEGER NOT NULL,
                  matched INTEGER NOT NULL, changed INTEGER NOT NULL, unreadable INTEGER NOT NULL,
                  total INTEGER NOT NULL, changed_offsets TEXT NOT NULL, summary TEXT NOT NULL
-             );",
+             );";
+
+pub struct ScanStore {
+    connection: Connection,
+    /// Where the app's folder is, when the store is the app's own: scans made are then registered
+    /// in the catalog as scans of a source. A store opened on another file does not.
+    catalog_root: Option<std::path::PathBuf>,
+}
+
+impl ScanStore {
+    pub fn for_user() -> Result<Self> {
+        Self::open_in(&Workspace::root()?)
+    }
+
+    /// The store of the app's folder `root`: its scans are also registered in the catalog.
+    pub fn open_in(root: &Path) -> Result<Self> {
+        let mut store = Self::open(&root.join("raw-scans.sqlite"))?;
+        store.catalog_root = Some(root.to_path_buf());
+        Ok(store)
+    }
+
+    pub fn open(path: &Path) -> Result<Self> {
+        let connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.execute_batch(
+            "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;",
         )?;
-        Ok(Self { connection })
+        connection.execute_batch(SCHEMA)?;
+        connection.execute_batch(crate::catalog::SCHEMA)?;
+        Ok(Self {
+            connection,
+            catalog_root: None,
+        })
     }
 
     pub fn list(&self, disk: &RawDisk) -> Result<SavedScans> {
@@ -219,7 +235,21 @@ impl ScanStore {
             ],
         )?;
         bindings.insert(id.clone(), token);
+        self.register(disk, &id, start, length);
         self.snapshot(&id)
+    }
+
+    /// Records the scan in the catalog, as a scan of the source the device is. The scan is saved
+    /// whether or not this works: the next run of the app registers it from what it saved.
+    fn register(&self, disk: &RawDisk, id: &str, start: u64, length: u64) {
+        let Some(root) = &self.catalog_root else {
+            return;
+        };
+        let result = crate::catalog::Catalog::open(root)
+            .and_then(|catalog| catalog.register_raw_scan(disk, id, start, length));
+        if let Err(error) = result {
+            eprintln!("could not register the scan in the catalog: {error:#}");
+        }
     }
 
     pub fn resume(
@@ -281,6 +311,7 @@ impl ScanStore {
         }
         transaction.commit()?;
         bindings.insert(id.into(), token);
+        self.touch(id);
         self.snapshot(id)
     }
 
@@ -377,6 +408,19 @@ impl ScanStore {
             scan_id: id.into(),
             batch,
         })
+    }
+
+    /// Notes in the catalog that this scan was opened, which makes its interpretation the one
+    /// last used.
+    fn touch(&self, id: &str) {
+        let Some(root) = &self.catalog_root else {
+            return;
+        };
+        if let Ok(catalog) = crate::catalog::Catalog::open(root) {
+            if let Ok(Some(scan)) = catalog.scan_of_raw(id) {
+                let _ = catalog.touch_scan(&scan.id);
+            }
+        }
     }
 
     fn snapshot(&self, id: &str) -> Result<ScanSnapshot> {

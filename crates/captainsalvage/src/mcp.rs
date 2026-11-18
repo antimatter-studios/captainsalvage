@@ -219,6 +219,18 @@ pub fn tool_definitions() -> Vec<Value> {
         tool("activity", "Recent tool calls by anyone, newest first.", json!({"afterId": integer("Only items after this id."), "limit": integer("Default 100.")}), &[]),
     ];
     tools.extend(
+        crate::catalog_tools::definitions()
+            .into_iter()
+            .map(|definition| {
+                tool(
+                    definition.name,
+                    definition.description,
+                    definition.properties,
+                    definition.required,
+                )
+            }),
+    );
+    tools.extend(
         crate::range_tools::definitions()
             .into_iter()
             .map(|definition| {

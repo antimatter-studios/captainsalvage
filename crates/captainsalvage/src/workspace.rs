@@ -41,9 +41,17 @@ pub fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
+/// The files of one scan, and the per-block caches it shares with other scans of its source.
+///
+/// A workspace made with [`Workspace::at`] keeps everything in one folder, as every workspace did
+/// before scans had a catalog. One made with [`Workspace::split`] keeps what only this scan owns
+/// (the map, the resolved maps, the baseline) in `dir`, and the caches that depend only on the
+/// bytes of the source (entropy and text heads) in `shared`, where every scan of the source with
+/// the same block grid finds them.
 #[derive(Clone, Debug)]
 pub struct Workspace {
     dir: PathBuf,
+    shared: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -67,7 +75,20 @@ impl Workspace {
     pub fn at(dir: impl Into<PathBuf>) -> Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        Ok(Self { dir })
+        Ok(Self {
+            shared: dir.clone(),
+            dir,
+        })
+    }
+
+    /// A scan's own folder, with the caches of its source kept in `shared`.
+    pub fn split(dir: impl Into<PathBuf>, shared: impl Into<PathBuf>) -> Result<Self> {
+        let dir = dir.into();
+        let shared = shared.into();
+        for folder in [&dir, &shared] {
+            fs::create_dir_all(folder).with_context(|| format!("creating {}", folder.display()))?;
+        }
+        Ok(Self { dir, shared })
     }
 
     /// The folder that holds one workspace per volume.
@@ -93,16 +114,25 @@ impl Workspace {
         self.dir.join("map.sqlite")
     }
 
+    /// What each block looks like, with directories marked. The mark depends on the filesystem
+    /// the scan reads the block as, so this belongs to the scan, not to the source.
     pub fn classes(&self) -> PathBuf {
         self.dir.join("class.bin")
     }
 
+    /// Entropy per block. It depends only on the bytes, so every scan of the source shares it.
     pub fn entropy(&self) -> PathBuf {
-        self.dir.join("entropy.bin")
+        self.shared.join("entropy.bin")
     }
 
+    /// The start of each block's text, likewise shared.
     pub fn text_heads(&self) -> PathBuf {
-        self.dir.join("texthead.bin")
+        self.shared.join("texthead.bin")
+    }
+
+    /// The folder the shared caches are in.
+    pub fn shared_dir(&self) -> &Path {
+        &self.shared
     }
 
     pub fn confidence(&self) -> PathBuf {
