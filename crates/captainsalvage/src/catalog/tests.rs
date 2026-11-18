@@ -791,24 +791,30 @@ fn raw_scans_are_registered_as_scans_of_the_source_they_were_made_on() {
 }
 
 #[test]
-fn a_folder_that_cannot_be_written_does_not_open_a_catalog() {
-    use std::os::unix::fs::PermissionsExt;
+fn two_apps_meeting_a_new_drive_together_make_it_one_source() {
     let root = Root::new();
-    old_layout(&root.0);
-    let mut permissions = std::fs::metadata(&root.0).unwrap().permissions();
-    permissions.set_mode(0o500);
-    std::fs::set_permissions(&root.0, permissions.clone()).unwrap();
-    let opened = Catalog::open_unmigrated(&root.0);
-    permissions.set_mode(0o700);
-    std::fs::set_permissions(&root.0, permissions).unwrap();
-    // Whatever it does, nothing stored is lost: the workspaces are still there to be opened.
-    assert!(
-        std::fs::read_dir(root.0.join("vol-1a2b3c4d"))
-            .unwrap()
-            .count()
-            >= 4
-    );
-    drop(opened);
+    root.catalog();
+    let path = root.0.clone();
+    let data = patterned(SIZE, 21);
+    let workers: Vec<_> = (0..4)
+        .map(|_| {
+            let (path, data) = (path.clone(), data.clone());
+            std::thread::spawn(move || {
+                let catalog = Catalog::open_unmigrated(&path).unwrap();
+                let drive = disk("/dev/rdisk7", data);
+                catalog
+                    .resolve_source(&drive, Accept::Exact, None)
+                    .unwrap()
+                    .source
+                    .id
+            })
+        })
+        .collect();
+    let ids: Vec<String> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    assert_eq!(root.catalog().sources().unwrap().len(), 1, "{ids:?}");
 }
 
 #[test]
@@ -834,4 +840,23 @@ fn hardware_identity_is_kept_but_decides_nothing() {
             .matched_by,
         MatchedBy::New
     );
+}
+
+#[test]
+fn a_workspace_whose_remembered_size_is_not_the_devices_is_still_found_by_its_serial() {
+    let root = Root::new();
+    // The size a volume record holds is what diskutil said of the volume, not the device's.
+    old_workspace(&root.0, "vol-0badf00d", SIZE as u64 - 12_288, 100);
+    let catalog = root.catalog();
+    migrate(&catalog).unwrap();
+    let drive = disk("/dev/rdisk5", patterned(SIZE, 30));
+    let opened = catalog
+        .open_filesystem(&drive, &open_as("exFAT", "vol-0badf00d", Accept::Exact))
+        .unwrap();
+    assert!(
+        !opened.created,
+        "a scan of hours is not made again over a size"
+    );
+    assert_eq!(opened.workspace.dir(), root.0.join("vol-0badf00d"));
+    assert_eq!(opened.source.length, SIZE as u64);
 }

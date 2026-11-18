@@ -319,6 +319,14 @@ impl Catalog {
         Ok(())
     }
 
+    fn sources_of_length(&self, length: u64) -> Result<i64> {
+        Ok(self.connection.query_row(
+            "SELECT count(*) FROM sources WHERE length = ?1",
+            [length as i64],
+            |row| row.get(0),
+        )?)
+    }
+
     pub(crate) fn fingerprint_of(&self, id: &str) -> Result<Option<Fingerprint>> {
         let text: Option<String> = self.connection.query_row(
             "SELECT fingerprint FROM sources WHERE id = ?1",
@@ -398,6 +406,19 @@ impl Catalog {
         accept: Accept,
         volume_key: Option<&str>,
     ) -> Result<Resolution> {
+        self.resolve_attempt(disk, accept, volume_key, 0)
+    }
+
+    /// One try at [`Catalog::resolve_source`]. Another app can make the source for this same
+    /// device between the comparison and the insert, which would give a drive two sources, so the
+    /// insert checks that no source of this length appeared and, if one did, compares again.
+    fn resolve_attempt(
+        &self,
+        disk: &RawDisk,
+        accept: Accept,
+        volume_key: Option<&str>,
+        attempt: u32,
+    ) -> Result<Resolution> {
         ensure!(
             disk.length <= i64::MAX as u64,
             "source exceeds the stored length limit"
@@ -409,6 +430,7 @@ impl Catalog {
             "The disk has been disconnected; it was not identified."
         );
         let path = disk.path.to_string_lossy().into_owned();
+        let known = self.sources_of_length(disk.length)?;
         let (matches, _) = self.compare_all(disk, &mut reader, false)?;
         let mut declined = None;
         if let Some(best) = matches.iter().find(|found| match found.verification {
@@ -466,11 +488,20 @@ impl Catalog {
         }
         let id = identifier()?;
         let now = now_millis() as i64;
-        self.connection.execute(
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        if attempt < 3 && self.sources_of_length(disk.length)? != known {
+            drop(transaction);
+            return self.resolve_attempt(disk, accept, volume_key, attempt + 1);
+        }
+        transaction.execute(
             "INSERT INTO sources (id, length, fingerprint, first_seen_millis, last_seen_millis, last_path)
              VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
             params![id, disk.length as i64, serde_json::to_string(&current)?, now, path],
         )?;
+        transaction.commit()?;
         Ok(Resolution {
             source: self.source(&id)?,
             matched_by: MatchedBy::New,
@@ -499,15 +530,16 @@ impl Catalog {
         for id in ids {
             let source = self.source(&id)?;
             match self.fingerprint_of(&id)? {
-                None if source.length == 0 || source.length == disk.length => {
-                    // Seen for the first time since the upgrade: it is this device now.
+                None => {
+                    // Seen for the first time since the upgrade: it is this device now. Its
+                    // length, if it has one, is only what the workspace remembered of the
+                    // volume, which need not be the length of the device that holds it.
                     self.connection.execute(
                         "UPDATE sources SET fingerprint = ?2, length = ?3 WHERE id = ?1",
                         params![id, serde_json::to_string(current)?, disk.length as i64],
                     )?;
                     return Ok(Some((source, None)));
                 }
-                None => {}
                 Some(saved) => {
                     let comparison = saved.compare(reader);
                     if matches!(
