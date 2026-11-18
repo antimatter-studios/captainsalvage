@@ -101,17 +101,30 @@ impl FilesystemKind {
     pub fn capabilities(self) -> Vec<Capability> {
         use Support::{Limited, Missing, Supported};
         match self {
-            Self::Exfat | Self::Fat12 | Self::Fat16 | Self::Fat32 => vec![
+            Self::Exfat => vec![
                 capability("open", Supported, "Boot sector, FAT and allocation bitmap are read and saved as a baseline."),
                 capability("scan", Supported, "Every cluster is read once for directory entries; resumable."),
                 capability("map", Supported, "Allocation, content, ownership and confidence layers."),
                 capability("browse", Supported, "The folder tree is rebuilt from directory clusters."),
-                capability("preview", Supported, "Bytes are read through the FAT chain, or contiguously where the entry says so."),
+                capability("preview", Limited, "Bytes are read through the FAT chain, or contiguously where the entry says so. A cluster that cannot be read shows as zeros."),
                 capability("resume", Supported, "A paused or interrupted scan continues from its last saved cluster."),
                 capability("baseline", Supported, "Boot regions, FAT, bitmap and root are hashed and kept; changes are explained."),
                 capability("file_tests", Supported, "File formats are walked through the reassembled bytes."),
                 capability("rebuilds", Supported, "Disk Rebuilds overlay cluster lists and folder links without touching the disk."),
-                capability("export", Supported, "Copies are hashed, never overwrite, and record complete or partial status."),
+                capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros and the copy is marked partial."),
+                capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
+            ],
+            Self::Fat12 | Self::Fat16 | Self::Fat32 => vec![
+                capability("open", Supported, "The boot sector, the reserved sectors, the FAT copies and the root directory are read and saved as a baseline. FAT12, FAT16 and FAT32 are told apart by their cluster count. FAT has no allocation bitmap on disk. Checked on synthetic images and by the driver's independent tests, not yet on a real damaged drive."),
+                capability("scan", Supported, "Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable."),
+                capability("map", Supported, "A cluster is allocated when its FAT entry is not zero, because there is no bitmap to read. Content, ownership and confidence layers."),
+                capability("browse", Supported, "The folder tree is rebuilt from directory clusters and the fixed root of FAT12 and FAT16. A long name is used only when its checksum agrees with its short name."),
+                capability("preview", Limited, "Bytes are read through the FAT chain. A deleted file's chain is cleared, so it is partial unless the person turns on the contiguous-fallback hypothesis, which assumes the clusters after the first follow it. A cluster that cannot be read shows as zeros."),
+                capability("resume", Supported, "A paused or interrupted scan continues from its last saved cluster."),
+                capability("baseline", Supported, "The boot sector, the reserved sectors, every FAT copy and the root directory are hashed and kept, and a changed copy of a FAT32 table is reported; changes are explained."),
+                capability("file_tests", Supported, "File formats are walked through the reassembled bytes."),
+                capability("rebuilds", Supported, "Disk Rebuilds overlay cluster lists and folder links without touching the disk."),
+                capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros and the copy is marked partial."),
                 capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
             ],
             Self::Ntfs => vec![
@@ -136,6 +149,84 @@ impl FilesystemKind {
             ],
         }
     }
+}
+
+impl Support {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Supported => "Supported",
+            Self::Limited => "Limited",
+            Self::Missing => "Missing",
+        }
+    }
+}
+
+/// The feature as the window and the README name it.
+fn feature_label(feature: &str) -> String {
+    match feature {
+        "baseline" => "Baseline copy".into(),
+        "export" => "Copy out".into(),
+        "rebuilds" => "Disk Rebuilds".into(),
+        _ => {
+            let mut words = feature.replace('_', " ");
+            if let Some(first) = words.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            words
+        }
+    }
+}
+
+/// The support table as the README shows it: one matrix of the three filesystem families, then
+/// every note for the two FAT-shaped ones. NTFS's notes are longer and have a section of their
+/// own. The README block is checked against this text, so the README cannot claim more than the
+/// table that the window, the command line and MCP report.
+pub fn capabilities_markdown() -> String {
+    let families = [
+        ("exFAT", FilesystemKind::Exfat),
+        ("FAT12, FAT16, FAT32", FilesystemKind::Fat32),
+        ("NTFS", FilesystemKind::Ntfs),
+    ];
+    let tables: Vec<Vec<Capability>> = families
+        .iter()
+        .map(|(_, kind)| kind.capabilities())
+        .collect();
+    let mut features: Vec<&'static str> = Vec::new();
+    for table in &tables {
+        for row in table {
+            if !features.contains(&row.feature) {
+                features.push(row.feature);
+            }
+        }
+    }
+    let mut text = String::from("| Feature |");
+    for (name, _) in &families {
+        text.push_str(&format!(" {name} |"));
+    }
+    text.push_str("\n|---|---|---|---|\n");
+    for feature in &features {
+        text.push_str(&format!("| {} |", feature_label(feature)));
+        for table in &tables {
+            let cell = table
+                .iter()
+                .find(|row| row.feature == *feature)
+                .map_or("Not offered", |row| row.support.label());
+            text.push_str(&format!(" {cell} |"));
+        }
+        text.push('\n');
+    }
+    for (name, kind) in [families[0], families[1]] {
+        text.push_str(&format!("\n**{name}**\n\n"));
+        for row in kind.capabilities() {
+            text.push_str(&format!(
+                "- {} ({}): {}\n",
+                feature_label(row.feature),
+                row.support.label(),
+                row.note
+            ));
+        }
+    }
+    text
 }
 
 #[derive(Clone)]
