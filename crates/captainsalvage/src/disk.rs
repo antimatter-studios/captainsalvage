@@ -148,6 +148,7 @@ impl BlockSource for RegionSource {
     fn is_gone(&self) -> bool {
         self.source.is_gone()
     }
+    #[cfg(feature = "test-hooks")]
     fn simulate_disconnect(&self) {
         self.source.simulate_disconnect();
     }

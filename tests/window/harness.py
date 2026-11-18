@@ -69,10 +69,21 @@ def wait_for(expression, seconds=60):
     return False
 
 
+def require_test_hooks(binary):
+    """Stops a test that was pointed at a build without the test hooks (the shipped app has none:
+    it cannot run script in its window). Build the right one with scripts/build-test-app.sh, which
+    puts it in target/test-hooks."""
+    with open(binary, 'rb') as built:
+        if b'SALVAGE_TEST_UI' not in built.read():
+            raise SystemExit('%s has no test hooks. Window tests drive the test-hooks build: run scripts/build-test-app.sh '
+                             'and pass target/test-hooks/release/bundle/macos/Captain Salvage.app/Contents/MacOS/captain-salvage' % binary)
+
+
 def renamed_copy(binary):
     """Runs a copy of the bundle under its own identifier. A network filter's rule for the real
     app then never holds the test's local ports, and the copy's browser storage is its own."""
     import shutil
+    require_test_hooks(binary)
     bundle = os.path.abspath(binary).split('/Contents/MacOS/')[0]
     target = os.path.join(SCRATCH, 'testapp', 'Salvage Test.app')
     shutil.rmtree(os.path.dirname(target), ignore_errors=True)
@@ -91,6 +102,8 @@ def start(binary, seconds=600):
     state['home'] = home
     state['cfg'] = os.path.join(home, 'Library/Application Support/Captain Salvage/mcp.json')
     env = {'HOME': home, 'USER': os.environ.get('USER', ''), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'SALVAGE_TEST_UI': '1', 'SALVAGE_TEST_HIDDEN': '1', 'SALVAGE_TEST_COPY_ROOT': SCRATCH, **{k: v for k, v in os.environ.items() if k.startswith(('SALVAGE_AGENT_', 'SALVAGE_TEST_STARTUP'))}}
+    if os.environ.get('SALVAGE_TEST_KEEP_ID'):
+        require_test_hooks(binary)
     program = binary if os.environ.get('SALVAGE_TEST_KEEP_ID') else renamed_copy(binary)
     # The fake home has no global preferences, so App Nap is turned off here. SALVAGE_TEST_NAP
     # leaves it on, for reproducing a nap problem.

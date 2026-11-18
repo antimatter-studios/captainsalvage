@@ -34,6 +34,7 @@ pub trait BlockSource: Send + Sync {
         false
     }
     /// For testing the window against a real device: acts as if it has been unplugged.
+    #[cfg(feature = "test-hooks")]
     fn simulate_disconnect(&self) {}
 }
 
@@ -124,6 +125,7 @@ impl BlockSource for FileSource {
         self.counters.gone.load(Ordering::Relaxed)
     }
 
+    #[cfg(feature = "test-hooks")]
     fn simulate_disconnect(&self) {
         self.counters.gone.store(true, Ordering::Relaxed);
     }

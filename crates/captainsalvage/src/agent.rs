@@ -155,11 +155,16 @@ impl AgentKind {
         }
     }
 
-    /// The agent's command. SALVAGE_AGENT_<ID> names another one, which tests use.
+    /// The agent's command. In a test-hooks build, SALVAGE_AGENT_<ID> names another one, which
+    /// the window tests use. No other build reads it, so the environment cannot choose what the
+    /// app runs.
     pub fn find(self) -> Result<PathBuf> {
-        let variable = format!("SALVAGE_AGENT_{}", self.id().to_uppercase());
-        if let Some(path) = std::env::var_os(variable) {
-            return Ok(PathBuf::from(path));
+        #[cfg(feature = "test-hooks")]
+        {
+            let variable = format!("SALVAGE_AGENT_{}", self.id().to_uppercase());
+            if let Some(path) = std::env::var_os(variable) {
+                return Ok(PathBuf::from(path));
+            }
         }
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let (in_home, on_system) = self.places();

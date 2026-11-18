@@ -84,7 +84,10 @@ pub fn show(state: &AppState, disk_rebuild: i64, name: &str, revision: &str) -> 
     request["revision"] = json!(revision);
     let reply = run("show", request)?;
     // A hidden test copy opens no windows on the screen of the person using the Mac.
+    #[cfg(feature = "test-hooks")]
     let hidden = std::env::var_os("SALVAGE_TEST_HIDDEN").is_some();
+    #[cfg(not(feature = "test-hooks"))]
+    let hidden = false;
     if let (Some(folder), false) = (reply["folder"].as_str(), hidden) {
         let _ = Command::new("/usr/bin/open").arg(folder).status();
     }

@@ -8,6 +8,10 @@ edition = "2021"
 name = "captain_salvage_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Hooks for driving the window in tests. Never part of a release or an installed app.
+test-hooks = ["captainsalvage/test-hooks"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

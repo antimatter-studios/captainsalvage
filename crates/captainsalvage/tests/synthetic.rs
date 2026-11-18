@@ -2934,20 +2934,6 @@ fn disks_are_kept_awake_once_and_only_when_asked() {
 }
 
 #[test]
-fn a_test_disconnect_is_refused_outside_a_test_run() {
-    let (engine, _session, dir) = engine_with_volume("no-test-tool");
-    assert!(!tool_definitions()
-        .iter()
-        .any(|tool| tool.to_string().contains("test_disconnect")));
-    if std::env::var_os("SALVAGE_TEST_UI").is_none() {
-        assert!(engine
-            .call("test_disconnect", &json!({}), AUTHOR_CLAUDE)
-            .is_err());
-    }
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn only_a_lost_device_counts_as_gone() {
     use captainsalvage::source::means_device_gone;
     assert!(means_device_gone(&std::io::Error::from_raw_os_error(
@@ -4012,8 +3998,7 @@ fn only_the_person_can_start_or_stop_a_copy() {
     assert!(!advertised
         .iter()
         .any(|name| name == "captainsalvage_export_start"
-            || name == "captainsalvage_disk_rebuild_copy_start"
-            || name == "captainsalvage_ui_eval"));
+            || name == "captainsalvage_disk_rebuild_copy_start"));
     let _ = std::fs::remove_dir_all(dir);
 }
 

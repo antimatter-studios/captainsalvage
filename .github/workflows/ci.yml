@@ -71,6 +71,10 @@ jobs:
         run: cargo clippy -p captainsalvage --all-targets --locked -- -D warnings
       - name: test the engine
         run: cargo test -p captainsalvage --locked
+      - name: lint and test the engine with the test hooks, which only the window tests' build has
+        run: |
+          cargo clippy -p captainsalvage --all-targets --locked --features test-hooks -- -D warnings
+          cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
 
   oracle:
     # `chore test:oracle`: the NTFS flows against ntfs-3g's tools and the Linux kernel's ntfs3
@@ -141,6 +145,18 @@ jobs:
           swiftc -typecheck -parse-as-library -application-extension macos/finder/Extension.swift
       - name: lint the app, and the engine on macOS
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: lint the app with the test hooks
+        run: cargo clippy -p captain-salvage --all-targets --locked --features test-hooks -- -D warnings
+      # The shipped app has none of the hooks that drive its window in tests. The normal build
+      # is checked to hold none, then the test-hooks build to hold them all.
+      - name: the normal app holds no test hook
+        run: |
+          cargo build -p captain-salvage --locked
+          scripts/check-test-hooks.sh absent target/debug/captain-salvage
+      - name: the test-hooks app holds the test hooks
+        run: |
+          cargo build -p captain-salvage --locked --features test-hooks
+          scripts/check-test-hooks.sh present target/debug/captain-salvage
 
   ci:
     name: CI
