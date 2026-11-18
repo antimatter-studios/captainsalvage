@@ -33,12 +33,6 @@
 //! change that opens it, or opens it wrongly, fails; every other exFAT image is held to the full
 //! comparison.
 //!
-//! A known gap, issue #232: on exFAT a file whose entry set crosses from one cluster of its folder
-//! into the next is not listed when the next cluster is not the one beside it on the disk. The
-//! comparisons let the app omit exactly the files of the folder `many/` whose sets cross a cluster,
-//! worked out from their names, and say how many it omitted; any other omission, a wrong name or
-//! wrong bytes is a difference.
-//!
 //! What this does not check, so that nobody reads more into a pass than is there:
 //!
 //! - sectors of 1024 or 2048 bytes, and volumes over 272 MiB (large exFAT and FAT32 volumes);
@@ -296,7 +290,6 @@ struct Case {
     name: String,
     kind: String,
     sector: u64,
-    cluster: u64,
     offset: u64,
     size: u64,
     mtools: bool,
@@ -322,7 +315,6 @@ fn cases() -> Vec<Case> {
                 name: fields[0].to_string(),
                 kind: fields[1].to_string(),
                 sector: fields[2].parse().unwrap(),
-                cluster: fields[3].parse().unwrap(),
                 offset: fields[4].parse().unwrap(),
                 size: fields[5].parse().unwrap(),
                 mtools: fields[6] == "1",
@@ -544,30 +536,6 @@ fn copied_files(session: &Arc<Session>, label: &str) -> BTreeMap<String, (u64, S
     copied
 }
 
-/// KNOWN GAP, issue #232: on exFAT a file whose entry set crosses from one cluster of its folder
-/// into the next is not listed when the next cluster is not the one beside it on the disk. The
-/// oracle's folder `many/` is written in name order into an empty folder, so the sets that cross a
-/// cluster are worked out from the names: a set is a File entry, a Stream Extension entry and one
-/// name entry per fifteen characters, at thirty-two bytes an entry. These are the only files the
-/// app may leave out, and the comparison says how many it did.
-fn exfat_straddlers(case: &Case, oracle: &Tree) -> BTreeSet<String> {
-    let mut straddlers = BTreeSet::new();
-    if case.kind != "exfat" {
-        return straddlers;
-    }
-    let per_cluster = case.cluster / 32;
-    let mut slot = 0;
-    for path in oracle.files.keys().filter(|p| p.starts_with("many/")) {
-        let name = path.trim_start_matches("many/");
-        let entries = 2 + (name.encode_utf16().count() as u64).div_ceil(15);
-        if slot / per_cluster != (slot + entries - 1) / per_cluster {
-            straddlers.insert(path.clone());
-        }
-        slot += entries;
-    }
-    straddlers
-}
-
 /// KNOWN LIMIT, issue #234: the driver reads exFAT structures at 512-byte sectors only. The app
 /// must say so when the volume is opened, and show nothing of it.
 fn exfat_with_4096_byte_sectors_is_refused(case: &Case) {
@@ -627,25 +595,6 @@ fn read_like_the_oracles(case: &Case) {
     let session = open_image(case, &image, &case.name);
     scan(&session);
     let (app, not_live) = app_tree(&session);
-    let mut oracle = oracle;
-    // Files the app may omit (issue #232) and no others.
-    let straddlers = exfat_straddlers(case, &oracle);
-    let omitted: Vec<String> = oracle
-        .files
-        .keys()
-        .filter(|path| !app.files.contains_key(*path) && straddlers.contains(*path))
-        .cloned()
-        .collect();
-    if !omitted.is_empty() {
-        println!(
-            "{}: known gap #232, not listed: {}",
-            case.name,
-            omitted.len()
-        );
-    }
-    for path in &omitted {
-        oracle.files.remove(path);
-    }
     let found = differences(&oracle, &app);
     assert_eq!(
         found, "",
@@ -805,37 +754,6 @@ fn a_changed_byte_in_what_an_oracle_reports_fails_the_comparison() {
 }
 
 #[test]
-fn the_sets_that_cross_a_cluster_of_the_exfat_folder_are_the_ones_the_oracle_run_lost() {
-    let files = (0..120)
-        .map(|number| {
-            (
-                format!("many/entry file with a long name {number:04}.txt"),
-                (1, String::new()),
-            )
-        })
-        .collect();
-    let oracle = Tree {
-        dirs: BTreeSet::new(),
-        files,
-    };
-    let case = |kind: &str, cluster: u64| Case {
-        name: "x".into(),
-        kind: kind.into(),
-        sector: 512,
-        cluster,
-        offset: 0,
-        size: 0,
-        mtools: false,
-    };
-    let found: Vec<String> = exfat_straddlers(&case("exfat", 4096), &oracle)
-        .into_iter()
-        .map(|path| path[path.len() - 8..path.len() - 4].to_string())
-        .collect();
-    assert_eq!(found, ["0025", "0051", "0076", "0102"]);
-    assert!(exfat_straddlers(&case("fat16", 4096), &oracle).is_empty());
-}
-
-#[test]
 fn fat12_images_are_read_like_the_oracles_read_them() {
     for case in cases_of("fat12") {
         read_like_the_oracles(&case);
@@ -953,12 +871,8 @@ fn a_damaged_volume_never_shows_wrong_bytes_as_a_file_that_is_there() {
             }
         }
         if !any {
-            let straddlers = exfat_straddlers(&case, &truth);
             for path in truth.files.keys() {
-                if !touched.contains(&path.as_str())
-                    && !seen.contains(path)
-                    && !straddlers.contains(path)
-                {
+                if !touched.contains(&path.as_str()) && !seen.contains(path) {
                     problems.push(format!(
                         "{path} cannot be reached by the damage, and the app does not list it"
                     ));

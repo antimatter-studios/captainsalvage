@@ -32,6 +32,10 @@ const LOOKAHEAD_BYTES: u64 = 1024;
 /// short entry nearer the start of a cluster than this may have the rest of its name in the cluster
 /// before it in the folder.
 const LONG_NAME_REACH: usize = 20 * 32;
+/// An exFAT file's entry set is at most nineteen entries of thirty-two bytes (the File entry, the
+/// Stream Extension and seventeen name entries). A File entry nearer the end of a cluster than this
+/// may have the rest of its set in the next cluster of its folder.
+const EXFAT_SET_REACH: usize = 19 * 32;
 const DEFAULT_CHUNK_BYTES: u64 = 64 * 1024 * 1024;
 
 const STATE_NEXT: &str = "next_cluster";
@@ -235,6 +239,18 @@ fn read_chunk(
                     .collect();
             }
         }
+        // An exFAT entry set is placed by its first entry, and the driver is given the next
+        // `lookahead` bytes of the disk for the rest of it. When the folder goes on in a cluster
+        // that is not the next on the disk, the rest is there, so it is read by the FAT chain.
+        if volume.kind == FilesystemKind::Exfat
+            && starts_set_near_end(&data[..cluster_size as usize])
+        {
+            if let Some(next) = chain_continuation(volume, cluster, lookahead_max as usize) {
+                let mut joined = data[..cluster_size as usize].to_vec();
+                joined.extend(next);
+                sets = volume.find_sets(&joined, cluster_size as usize);
+            }
+        }
         let holds_directory = sets.iter().any(|set| set.checksum_ok);
         let (class, scaled) = classify(&buffer[start..end], holds_directory);
         class_bytes[index] = class;
@@ -270,6 +286,27 @@ fn read_chunk(
         directories,
         sets: sets_total,
     })
+}
+
+/// True when a File entry (in use or deleted) starts in the last nineteen entries of a cluster.
+fn starts_set_near_end(cluster: &[u8]) -> bool {
+    let from = cluster.len().saturating_sub(EXFAT_SET_REACH) / 32 * 32;
+    cluster[from..]
+        .chunks_exact(32)
+        .any(|entry| matches!(entry[0], 0x85 | 0x05))
+}
+
+/// The start of the cluster that follows `cluster` in its FAT chain, up to `length` bytes, when it
+/// is not the one beside it on the disk. None when the chain ends, leaves the volume, or goes to
+/// the next cluster, which the scan already has.
+fn chain_continuation(volume: &Volume, cluster: u32, length: usize) -> Option<Vec<u8>> {
+    let next = volume.fat_value(cluster);
+    if next == cluster + 1 || !volume.valid_cluster(next) {
+        return None;
+    }
+    let mut bytes = volume.read_cluster(next).ok()?;
+    bytes.truncate(length);
+    Some(bytes)
 }
 
 fn is_fat(kind: FilesystemKind) -> bool {
