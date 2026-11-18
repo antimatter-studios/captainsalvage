@@ -1,3 +1,0 @@
-### Added
-
-- **An agent can build a Disk Rebuild for you.** Ask it in the chat to put the pieces back together, and it makes the Disk Rebuild, its folders and its layers itself, then reads the tree back and says which layer's copy of each file wins and why. Everything it makes shows at once in the Rebuild tab with an Agent mark and in the activity log, and you can take it back: **Undo** one step, **Undo all agent changes** of its latest session, or **Restore to before the agent**. The agent only changes the app's own database, never the disk, one call may change at most 1000 rows and a session 10000, and only you can start a copy, accept a suggestion or undo. If you only ask where something belongs, it still suggests.
