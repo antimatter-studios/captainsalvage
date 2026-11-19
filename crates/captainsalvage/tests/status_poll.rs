@@ -18,8 +18,12 @@ use std::time::{Duration, Instant};
 
 /// File test results in the made-up map.
 const TESTS: u32 = 300_000;
-/// What one status call may take, with a map of that size.
-const STATUS_BUDGET: Duration = Duration::from_millis(50);
+/// What a status call may take on average, with a map of that size. Before the fix of #254 one call
+/// took about 184 ms; after it, about 2 ms. Shared CI machines stall now and then, so a single call is
+/// judged against the looser `SLOWEST_BUDGET` and the average against this one.
+const STATUS_BUDGET: Duration = Duration::from_millis(25);
+/// What the slowest single status call may take: still below the 184 ms the unfixed poll needed.
+const SLOWEST_BUDGET: Duration = Duration::from_millis(150);
 const POLLS: usize = 20;
 
 /// The tests time calls, so they take turns.
@@ -133,11 +137,16 @@ fn a_status_poll_over_a_large_map_is_fast_and_starts_no_process() {
             "poll {poll}"
         );
         assert!(
-            took <= STATUS_BUDGET,
-            "poll {poll} of status took {took:?}, over {STATUS_BUDGET:?}"
+            took <= SLOWEST_BUDGET,
+            "poll {poll} of status took {took:?}, over {SLOWEST_BUDGET:?}"
         );
     }
-    println!("status over {TESTS} file test results: slowest {slowest:?}, average {:?} over {POLLS} polls", total / POLLS as u32);
+    let average = total / POLLS as u32;
+    println!("status over {TESTS} file test results: slowest {slowest:?}, average {average:?} over {POLLS} polls");
+    assert!(
+        average <= STATUS_BUDGET,
+        "a status call took {average:?} on average over {POLLS} polls, over {STATUS_BUDGET:?}"
+    );
     assert_eq!(
         captainsalvage::proc::processes_started(),
         processes,
