@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-11-19
+
+### Maintenance
+
+- A window test opens a synthetic NTFS image, scans, browses, previews a fragmented file and copies it out ([#246](https://github.com/antimatter-studios/captainsalvage/pull/246))
+
 ## [0.4.5] — 2026-11-19
 
 ### Fixed
