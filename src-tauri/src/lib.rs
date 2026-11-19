@@ -148,6 +148,25 @@ async fn read_entry_range(
     Ok(Response::new(part))
 }
 
+/// The stretches of a file, within a range, whose clusters could not be read, as bytes from the
+/// start of the file. The preview shows them as missing, not as the zeros that stand in for them.
+#[tauri::command]
+async fn entry_unreadable(
+    state: State<'_, AppState>,
+    id: i64,
+    start: u64,
+    length: u64,
+) -> Result<Vec<captainsalvage::browse::ByteRange>, String> {
+    let engine = state.engine.clone();
+    blocking(move || {
+        Ok(engine
+            .session()?
+            .read_entry_range(id, start, length.min(MAX_TEXT_READ_BYTES))?
+            .unreadable)
+    })
+    .await
+}
+
 /// Whether ffmpeg is installed, and where the window's player can reach converted files.
 #[tauri::command]
 fn media_info(state: State<'_, AppState>) -> Option<MediaInfo> {
@@ -426,6 +445,7 @@ pub fn run() {
             read_raw,
             read_entry_bytes,
             read_entry_range,
+            entry_unreadable,
             media_info,
             mcp_info,
             last_device,

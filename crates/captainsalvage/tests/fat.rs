@@ -301,6 +301,134 @@ fn a_short_name_with_accented_letters_in_code_page_437_is_listed_with_them() {
     }
 }
 
+/// A source that reads like a memory image until it is told that a stretch of it has gone bad.
+struct Flaky {
+    source: MemorySource,
+    bad: std::sync::Mutex<Option<std::ops::Range<u64>>>,
+}
+
+impl captainsalvage::source::BlockSource for Flaky {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        if let Some(bad) = self.bad.lock().unwrap().clone() {
+            if offset < bad.end && offset + buffer.len() as u64 > bad.start {
+                return Err(std::io::Error::from_raw_os_error(libc::EIO));
+            }
+        }
+        self.source.read_exact_at(offset, buffer)
+    }
+
+    fn read_stats(&self) -> captainsalvage::source::ReadStats {
+        self.source.read_stats()
+    }
+}
+
+/// `Captain log.txt` is 700 bytes in clusters 5 and 9 (512 bytes each): the second cluster, which
+/// holds bytes 512 to 700 of the file, is made unreadable after the scan.
+fn with_a_bad_second_cluster(kind: FilesystemKind, label: &str) -> (Arc<Session>, Vec<u8>, i64) {
+    let fixture = Fixture::new(kind);
+    let wanted = fixture.contents.clone();
+    let bad_at = ((fixture.data_sector + 9 - 2) * 512) as u64;
+    let source = Arc::new(Flaky {
+        source: MemorySource::new(fixture.image),
+        bad: std::sync::Mutex::new(None),
+    });
+    let session = Session::with_source(
+        Path::new("/test/fat-bad-cluster"),
+        source.clone(),
+        workspace(label),
+    )
+    .unwrap();
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let rows = call(&engine, "search", json!({"query": "Captain log.txt"}));
+    let id = rows["rows"][0]["id"].as_i64().unwrap();
+    *source.bad.lock().unwrap() = Some(bad_at..bad_at + 512);
+    (session, wanted, id)
+}
+
+#[test]
+fn a_preview_says_which_bytes_could_not_be_read_and_keeps_the_rest() {
+    use captainsalvage::browse::ByteRange;
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        let (session, wanted, id) = with_a_bad_second_cluster(kind, &format!("bad-preview-{kind}"));
+        let whole = session.read_entry_range(id, 0, 700).unwrap();
+        assert_eq!(whole.data.len(), 700, "{kind}");
+        assert_eq!(whole.data[..512], wanted[..512], "{kind}");
+        assert_eq!(
+            whole.data[512..],
+            [0u8; 188],
+            "{kind}: zeros stand in for what is not there"
+        );
+        assert_eq!(
+            whole.unreadable,
+            [ByteRange {
+                start: 512,
+                end: 700
+            }],
+            "{kind}"
+        );
+        // A range that stays in the readable cluster has nothing unreadable, and one that crosses
+        // names only the part of it that is.
+        assert!(session
+            .read_entry_range(id, 100, 200)
+            .unwrap()
+            .unreadable
+            .is_empty());
+        let across = session.read_entry_range(id, 500, 100).unwrap();
+        assert_eq!(
+            across.unreadable,
+            [ByteRange {
+                start: 512,
+                end: 600
+            }],
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn a_copy_keeps_the_layout_writes_zeros_and_names_the_unreadable_ranges_in_the_manifest() {
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        let (session, wanted, id) = with_a_bad_second_cluster(kind, &format!("bad-copy-{kind}"));
+        let destination = session.workspace.dir().join("bad-copy");
+        session
+            .copy_start(CopyRequest {
+                destination: destination.to_string_lossy().into_owned(),
+                entry_ids: vec![id],
+                include_partial: true,
+                ..CopyRequest::default()
+            })
+            .unwrap();
+        wait_for_copy_with_partial(&session, 1, 1);
+        let copied = std::fs::read(destination.join("Volume root/Captain log.txt")).unwrap();
+        assert_eq!(copied.len(), 700, "{kind}");
+        assert_eq!(copied[..512], wanted[..512], "{kind}");
+        assert_eq!(copied[512..], [0u8; 188], "{kind}");
+        let manifest =
+            std::fs::read_to_string(destination.join("captain-salvage-manifest.jsonl")).unwrap();
+        let row: Value = serde_json::from_str(manifest.lines().next().unwrap()).unwrap();
+        assert!(
+            row["status"].as_str().unwrap().starts_with("partial"),
+            "{kind}: {row}"
+        );
+        assert_eq!(row["unreadableClusters"], 1, "{kind}");
+        assert_eq!(
+            row["unreadableRanges"],
+            json!([{"start": 512, "end": 700}]),
+            "{kind}"
+        );
+    }
+}
+
 #[test]
 fn fat_scans_resume_after_restart_without_duplicating_fixed_roots() {
     for kind in [
@@ -656,12 +784,16 @@ fn one_engine_switches_between_exfat_and_fat_sessions() {
 }
 
 fn wait_for_copy(session: &Session, files: u64) {
+    wait_for_copy_with_partial(session, files, 0);
+}
+
+fn wait_for_copy_with_partial(session: &Session, files: u64, partial: u64) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         let status = session.copy_status().unwrap();
         if status.state == "finished" {
             assert_eq!(status.files_done, files, "{status:?}");
-            assert_eq!((status.files_failed, status.files_partial), (0, 0));
+            assert_eq!((status.files_failed, status.files_partial), (0, partial));
             return;
         }
         assert!(
