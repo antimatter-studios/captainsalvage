@@ -1,50 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore, useState } from "react";
 import { call, type Status, type StructureChanges } from "../api";
 import { bytes, count } from "../format";
 import { locale, t } from "../i18n";
+import { closedBox } from "../writtenClosing";
+import { Icon } from "./icons";
 
 /** How often the disk's structures are read again and compared with the baseline. */
 const RECHECK_EVERY_MILLIS = 10 * 60_000;
 
 /**
- * Says loudly, on every screen, that something wrote to the disk after its baseline, and what
- * that cost: which clusters now hold other data and which found files used them. It can be
- * folded to a red strip but not dismissed, and a new change unfolds it again.
+ * What changed on the disk after its baseline, and what to do about it: the clusters that now hold
+ * other data, the found files that used them, the advice about macOS, and the actions. It is the body
+ * of the box that says so loudly, and of the same check in the disk safety panel, so what the box said
+ * stays one click away after it is closed.
  */
-export function WrittenWarning({ status, clusterSize, onChanged }: { status: Status | null; clusterSize: number; onChanged: () => void }) {
-  const [folded, setFolded] = useState<string | null>(null);
+export function WrittenDetails({ status, clusterSize, onChanged }: { status: Status; clusterSize: number; onChanged: () => void }) {
   const [details, setDetails] = useState<StructureChanges | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-
-  // Reading the structures again is what notices a write made while the app is open.
-  useEffect(() => {
-    if (!status) return;
-    const timer = window.setInterval(() => {
-      call("verify_unchanged").then(onChanged).catch(() => undefined);
-    }, RECHECK_EVERY_MILLIS);
-    return () => window.clearInterval(timer);
-  }, [status !== null, onChanged]);
-
-  const changed = status !== null && !status.baseline.unchanged;
-  const key = status?.baseline.currentHash ?? "";
+  const changed = !status.baseline.unchanged;
+  const key = status.baseline.currentHash ?? "";
   useEffect(() => {
     if (!changed) return;
     call<StructureChanges | null>("structure_changes").then(setDetails).catch(() => undefined);
   }, [changed, key]);
 
-  if (!status || !changed) return null;
   const date = new Date(status.baseline.recordedAtMillis).toLocaleDateString(locale());
   const summary = status.changes;
-
-  if (folded === key) {
-    return (
-      <button className="written-strip" onClick={() => setFolded(null)}>
-        {t("Something wrote to this disk after {date}. Show what changed", { date })}
-      </button>
-    );
-  }
-
   const run = async (label: string, tool: string) => {
     setBusy(label);
     try {
@@ -56,8 +38,7 @@ export function WrittenWarning({ status, clusterSize, onChanged }: { status: Sta
   };
 
   return (
-    <div className="written-warning" role="alert">
-      <strong>{t("Something wrote to this disk after {date}.", { date })}</strong>
+    <>
       {summary ? (
         <>
           <p>
@@ -115,8 +96,53 @@ export function WrittenWarning({ status, clusterSize, onChanged }: { status: Sta
         <button disabled={busy !== null} onClick={() => void run("check", "verify_unchanged")}>
           {busy === "check" ? t("Checking") : t("Check again")}
         </button>
-        <button className="link" onClick={() => setFolded(key)}>{t("Fold away")}</button>
       </div>
+    </>
+  );
+}
+
+/**
+ * Says loudly, on every screen, that something wrote to the disk after its baseline, and what that
+ * cost. It has a close button (and Escape), and closing it removes it: no strip is left behind. What it
+ * said stays in the Check disk safety panel at the top right, which stays red while the disk is
+ * changed. A new change (a different current hash) shows the box again once.
+ */
+export function WrittenWarning({ status, clusterSize, onChanged }: { status: Status | null; clusterSize: number; onChanged: () => void }) {
+  const closedFor = useSyncExternalStore(closedBox.subscribe, closedBox.get);
+
+  // Reading the structures again is what notices a write made while the app is open.
+  useEffect(() => {
+    if (!status) return;
+    const timer = window.setInterval(() => {
+      call("verify_unchanged").then(onChanged).catch(() => undefined);
+    }, RECHECK_EVERY_MILLIS);
+    return () => window.clearInterval(timer);
+  }, [status !== null, onChanged]);
+
+  const changed = status !== null && !status.baseline.unchanged;
+  const key = status?.baseline.currentHash ?? "";
+  useEffect(() => closedBox.settle(changed), [changed]);
+  const open = closedBox.isOpen(changed, key);
+  useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closedBox.close(key);
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [open, key]);
+
+  if (!status || !open || closedFor === key) return null;
+  const date = new Date(status.baseline.recordedAtMillis).toLocaleDateString(locale());
+  return (
+    <div className="written-warning" role="alert">
+      <div className="written-warning-head">
+        <strong>{t("Something wrote to this disk after {date}.", { date })}</strong>
+        <button className="icon-button written-close" aria-label={t("Close")} title={t("Close")} onClick={() => closedBox.close(key)}>
+          <Icon name="close" size={13} />
+        </button>
+      </div>
+      <WrittenDetails status={status} clusterSize={clusterSize} onChanged={onChanged} />
     </div>
   );
 }
