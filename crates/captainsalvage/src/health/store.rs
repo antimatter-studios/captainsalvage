@@ -1,8 +1,14 @@
-//! What the read journal and the health map keep in the catalog.
+//! What the read journal and the health map keep.
 //!
 //! The journal is written BEFORE a read starts (`started`) and after it ends (`done`). A device
 //! that resets during a read takes the reader with it, or the person quits the app: the row of
 //! that read is left without an end, and the next open reads it as the cause.
+//!
+//! A device read never waits on the catalog. The journal is a file of its own (`read-journal.sqlite`) with
+//! its own connection, so a write transaction the catalog's other users hold (a raw scan's, in this same
+//! process) cannot stall it, and both the journal and the catalog's connection give up after a moment instead of
+//! waiting without end: a journal write that cannot be made is kept in memory and written when the file is free
+//! (see [`Journal`]), and the map is kept in memory and written at the next change.
 //!
 //! Rows are keyed by the source's key (see [`super::source_key`]), which comes from the source's
 //! bytes and not from its /dev path, so the same drive is the same after it comes back as another
@@ -12,10 +18,30 @@ use super::map::{HealthMap, HealthRange, RangeState};
 use crate::catalog::Catalog;
 use crate::workspace::now_millis;
 use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
-use std::collections::HashSet;
+use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
+
+/// How long the journal waits for its own file, and the catalog's connection for the catalog's, before giving
+/// up. Nothing here may wait without end: a read of a device is waiting behind it.
+const JOURNAL_BUSY: Duration = Duration::from_millis(100);
+const CATALOG_BUSY: Duration = Duration::from_millis(300);
+/// What the end of a read waits for the journal's file: a little longer, because the read is over.
+const JOURNAL_END_BUSY: Duration = Duration::from_millis(500);
+const JOURNAL_FILE: &str = "read-journal.sqlite";
+
+const JOURNAL_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS read_journal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_key TEXT NOT NULL, source_id TEXT,
+    owner TEXT NOT NULL,
+    start INTEGER NOT NULL, length INTEGER NOT NULL,
+    started_millis INTEGER NOT NULL,
+    finished_millis INTEGER, elapsed_ms INTEGER, outcome TEXT
+);
+CREATE INDEX IF NOT EXISTS read_journal_key ON read_journal(source_key, finished_millis);";
 
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS read_journal (
@@ -63,8 +89,58 @@ pub struct OpenRead {
     pub owner: String,
 }
 
+/// A row of the journal as an earlier version kept it in the catalog.
+type OldJournalRow = (
+    String,
+    Option<String>,
+    String,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+);
+
+/// A read the journal could not write when it started, kept until the file is free.
+struct PendingRow {
+    key: String,
+    owner: String,
+    start: u64,
+    length: u64,
+    started_millis: u64,
+    /// When it ended, how long it took and how: set when `done` came before the row was written.
+    finished: Option<(u64, u64, String)>,
+}
+
+/// How a read ended, when the journal's file was busy at that moment.
+struct PendingEnd {
+    row: i64,
+    finished_millis: u64,
+    elapsed_ms: u64,
+    outcome: String,
+}
+
+#[derive(Default)]
+struct Pending {
+    next: i64,
+    /// Ends of reads that were written to the file, not yet written: a row left open would read, next run, as a
+    /// read the device went away during.
+    ends: Vec<PendingEnd>,
+    rows: HashMap<i64, PendingRow>,
+    /// The rows that were written after all, by the number `started` gave: their row in the file.
+    written: HashMap<i64, i64>,
+}
+
+/// The read journal: a file of its own, with its own connection, that gives up after a moment.
+struct Journal {
+    connection: Mutex<Connection>,
+    pending: Mutex<Pending>,
+}
+
 pub struct HealthStore {
     catalog: Mutex<Catalog>,
+    journal: Journal,
 }
 
 impl HealthStore {
@@ -81,16 +157,78 @@ impl HealthStore {
         Self::with_catalog(Catalog::for_user()?)
     }
 
-    /// The journal writes twice for a read, so its own connection does not wait for the disk on each
-    /// commit: what it writes survives the app being stopped, which is what it is for. (The catalog's
-    /// other connections keep full synchronous commits.)
+    /// The journal writes twice for a read, so its own connection does not wait for the disk on each commit:
+    /// what it writes survives the app being stopped, which is what it is for. The catalog's connection here
+    /// gives up after a moment on a lock someone else holds, instead of the half minute the catalog's own
+    /// users wait: what is asked of it is the status of a source, which must always answer.
     fn with_catalog(catalog: Catalog) -> Result<Self> {
         catalog
             .connection()
             .execute_batch("PRAGMA synchronous = NORMAL;")?;
-        Ok(Self {
+        catalog.connection().busy_timeout(CATALOG_BUSY)?;
+        let connection = Connection::open(catalog.root().join(JOURNAL_FILE))?;
+        connection.busy_timeout(JOURNAL_BUSY)?;
+        connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        connection.execute_batch(JOURNAL_SCHEMA)?;
+        let store = Self {
             catalog: Mutex::new(catalog),
-        })
+            journal: Journal {
+                connection: Mutex::new(connection),
+                pending: Mutex::new(Pending::default()),
+            },
+        };
+        store.move_old_journal_rows();
+        Ok(store)
+    }
+
+    /// Rows an earlier version wrote in the catalog move to the journal's file, once. Not worth waiting
+    /// for: when the catalog is busy they stay, and move at the next start.
+    fn move_old_journal_rows(&self) {
+        let rows: Vec<OldJournalRow> = {
+            let catalog = self.lock();
+            let Ok(mut statement) = catalog.connection().prepare(
+                "SELECT source_key, source_id, owner, start, length, started_millis, finished_millis, elapsed_ms, outcome
+                 FROM read_journal ORDER BY id",
+            ) else {
+                return;
+            };
+            let Ok(found) = statement.query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            }) else {
+                return;
+            };
+            found.filter_map(Result::ok).collect()
+        };
+        if rows.is_empty() {
+            return;
+        }
+        let moved = self.with_journal(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            for row in &rows {
+                transaction.execute(
+                    "INSERT INTO read_journal (source_key, source_id, owner, start, length, started_millis, finished_millis, elapsed_ms, outcome)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8],
+                )?;
+            }
+            transaction.commit()
+        });
+        if moved.is_ok() {
+            let _ = self
+                .lock()
+                .connection()
+                .execute("DELETE FROM read_journal", []);
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Catalog> {
@@ -99,42 +237,179 @@ impl HealthStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Writes that a read of `start..start + length` is about to start. Returns its row.
+    fn with_journal<R>(
+        &self,
+        work: impl FnOnce(&Connection) -> rusqlite::Result<R>,
+    ) -> rusqlite::Result<R> {
+        let connection = self
+            .journal
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        work(&connection)
+    }
+
+    fn pending(&self) -> MutexGuard<'_, Pending> {
+        self.journal
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Writes the reads that could not be written when they started, if the file is free now.
+    fn flush_pending(&self) {
+        let mut pending = self.pending();
+        let ends = std::mem::take(&mut pending.ends);
+        for end in ends {
+            let wrote = self.with_journal(|connection| {
+                connection.execute(
+                    "UPDATE read_journal SET finished_millis = ?2, elapsed_ms = ?3, outcome = ?4 WHERE id = ?1",
+                    params![end.row, end.finished_millis as i64, end.elapsed_ms as i64, end.outcome],
+                )
+            });
+            if wrote.is_err() {
+                pending.ends.push(end);
+            }
+        }
+        if pending.rows.is_empty() {
+            return;
+        }
+        let numbers: Vec<i64> = pending.rows.keys().copied().collect();
+        for number in numbers {
+            let Some(row) = pending.rows.get(&number) else {
+                continue;
+            };
+            let wrote = self.with_journal(|connection| {
+                connection.execute(
+                    "INSERT INTO read_journal (source_key, owner, start, length, started_millis, finished_millis, elapsed_ms, outcome)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        row.key,
+                        row.owner,
+                        row.start as i64,
+                        row.length as i64,
+                        row.started_millis as i64,
+                        row.finished.as_ref().map(|f| f.0 as i64),
+                        row.finished.as_ref().map(|f| f.1 as i64),
+                        row.finished.as_ref().map(|f| f.2.clone()),
+                    ],
+                )?;
+                Ok(connection.last_insert_rowid())
+            });
+            match wrote {
+                Ok(real) => {
+                    if let Some(row) = pending.rows.remove(&number) {
+                        if row.finished.is_none() {
+                            pending.written.insert(number, real);
+                        }
+                    }
+                }
+                // Busy again: the rest wait too.
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// Writes that a read of `start..start + length` is about to start. Returns its row. When the journal's
+    /// file is not free within a moment the read is kept in memory, written when it is, and the read goes on.
     pub fn started(&self, key: &str, owner: &str, start: u64, length: u64) -> Result<i64> {
-        let catalog = self.lock();
-        catalog.connection().execute(
-            "INSERT INTO read_journal (source_key, owner, start, length, started_millis)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![key, owner, start as i64, length as i64, now_millis() as i64],
-        )?;
-        Ok(catalog.connection().last_insert_rowid())
+        self.flush_pending();
+        let started_millis = now_millis();
+        let wrote = self.with_journal(|connection| {
+            connection.execute(
+                "INSERT INTO read_journal (source_key, owner, start, length, started_millis)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    key,
+                    owner,
+                    start as i64,
+                    length as i64,
+                    started_millis as i64
+                ],
+            )?;
+            Ok(connection.last_insert_rowid())
+        });
+        match wrote {
+            Ok(row) => Ok(row),
+            Err(_) => {
+                let mut pending = self.pending();
+                pending.next -= 1;
+                let number = pending.next;
+                pending.rows.insert(
+                    number,
+                    PendingRow {
+                        key: key.into(),
+                        owner: owner.into(),
+                        start,
+                        length,
+                        started_millis,
+                        finished: None,
+                    },
+                );
+                Ok(number)
+            }
+        }
     }
 
     /// Writes that the read ended: how long it took and how it ended (`ok`, `error` or `gone`).
     pub fn done(&self, id: i64, elapsed_ms: u64, outcome: &str) -> Result<()> {
-        self.lock().connection().execute(
-            "UPDATE read_journal SET finished_millis = ?2, elapsed_ms = ?3, outcome = ?4 WHERE id = ?1",
-            params![id, now_millis() as i64, elapsed_ms as i64, outcome],
-        )?;
+        let finished_millis = now_millis();
+        let id = if id < 0 {
+            let mut pending = self.pending();
+            if let Some(row) = pending.rows.get_mut(&id) {
+                // Never written: it is written now, once, with its end.
+                row.finished = Some((finished_millis, elapsed_ms, outcome.to_string()));
+                drop(pending);
+                self.flush_pending();
+                return Ok(());
+            }
+            match pending.written.remove(&id) {
+                Some(real) => real,
+                None => return Ok(()),
+            }
+        } else {
+            id
+        };
+        // The read is over, so the end is worth a little more waiting than the start was, and when the file
+        // is still busy it is kept and written later: a row left open is read, next run, as the cause of a reset.
+        let wrote = self.with_journal(|connection| {
+            connection.busy_timeout(JOURNAL_END_BUSY)?;
+            let wrote = connection.execute(
+                "UPDATE read_journal SET finished_millis = ?2, elapsed_ms = ?3, outcome = ?4 WHERE id = ?1",
+                params![id, finished_millis as i64, elapsed_ms as i64, outcome],
+            );
+            let _ = connection.busy_timeout(JOURNAL_BUSY);
+            wrote
+        });
+        if wrote.is_err() {
+            self.pending().ends.push(PendingEnd {
+                row: id,
+                finished_millis,
+                elapsed_ms,
+                outcome: outcome.to_string(),
+            });
+        }
         Ok(())
     }
 
     /// The reads of `key` that started and never ended, and are not in flight now.
     pub fn abandoned(&self, key: &str) -> Result<Vec<OpenRead>> {
-        let catalog = self.lock();
-        let mut statement = catalog.connection().prepare(
-            "SELECT id, start, length, owner FROM read_journal
-             WHERE source_key = ?1 AND finished_millis IS NULL ORDER BY id",
-        )?;
-        let rows = statement.query_map([key], |row| {
-            Ok(OpenRead {
-                id: row.get(0)?,
-                start: row.get::<_, i64>(1)? as u64,
-                length: row.get::<_, i64>(2)? as u64,
-                owner: row.get(3)?,
-            })
+        self.flush_pending();
+        let all = self.with_journal(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, start, length, owner FROM read_journal
+                 WHERE source_key = ?1 AND finished_millis IS NULL ORDER BY id",
+            )?;
+            let rows = statement.query_map([key], |row| {
+                Ok(OpenRead {
+                    id: row.get(0)?,
+                    start: row.get::<_, i64>(1)? as u64,
+                    length: row.get::<_, i64>(2)? as u64,
+                    owner: row.get(3)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
         })?;
-        let all = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(all
             .into_iter()
             .filter(|read| !super::owner_is_alive(&read.owner))
@@ -143,44 +418,55 @@ impl HealthStore {
 
     /// Closes the rows of reads that never ended, so each is counted once.
     pub fn settle(&self, ids: &[i64], outcome: &str) -> Result<()> {
-        let catalog = self.lock();
-        for id in ids {
-            catalog.connection().execute(
-                "UPDATE read_journal SET finished_millis = ?2, outcome = ?3 WHERE id = ?1",
-                params![id, now_millis() as i64, outcome],
-            )?;
-        }
+        self.with_journal(|connection| {
+            for id in ids {
+                connection.execute(
+                    "UPDATE read_journal SET finished_millis = ?2, outcome = ?3 WHERE id = ?1",
+                    params![id, now_millis() as i64, outcome],
+                )?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
     /// The most recent rows of a source, newest first.
     pub fn recent(&self, key: &str, limit: usize) -> Result<Vec<serde_json::Value>> {
-        let catalog = self.lock();
-        let mut statement = catalog.connection().prepare(
-            "SELECT start, length, started_millis, finished_millis, elapsed_ms, outcome
-             FROM read_journal WHERE source_key = ?1 ORDER BY id DESC LIMIT ?2",
-        )?;
-        let rows = statement.query_map(params![key, limit as i64], |row| {
-            Ok(serde_json::json!({
-                "start": row.get::<_, i64>(0)?,
-                "length": row.get::<_, i64>(1)?,
-                "startedMillis": row.get::<_, i64>(2)?,
-                "finishedMillis": row.get::<_, Option<i64>>(3)?,
-                "elapsedMs": row.get::<_, Option<i64>>(4)?,
-                "outcome": row.get::<_, Option<String>>(5)?,
-            }))
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        self.flush_pending();
+        Ok(self.with_journal(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT start, length, started_millis, finished_millis, elapsed_ms, outcome
+                 FROM read_journal WHERE source_key = ?1 ORDER BY id DESC LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![key, limit as i64], |row| {
+                Ok(serde_json::json!({
+                    "start": row.get::<_, i64>(0)?,
+                    "length": row.get::<_, i64>(1)?,
+                    "startedMillis": row.get::<_, i64>(2)?,
+                    "finishedMillis": row.get::<_, Option<i64>>(3)?,
+                    "elapsedMs": row.get::<_, Option<i64>>(4)?,
+                    "outcome": row.get::<_, Option<String>>(5)?,
+                }))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })?)
     }
 
     /// Drops old rows of reads that went well.
     pub fn prune(&self, key: &str) -> Result<()> {
-        self.lock().connection().execute(
-            "DELETE FROM read_journal WHERE source_key = ?1 AND outcome = 'ok'
-             AND id <= (SELECT coalesce(max(id), 0) FROM read_journal WHERE source_key = ?1) - ?2",
-            params![key, KEPT_GOOD_ROWS],
-        )?;
+        self.with_journal(|connection| {
+            connection.execute(
+                "DELETE FROM read_journal WHERE source_key = ?1 AND outcome = 'ok'
+                 AND id <= (SELECT coalesce(max(id), 0) FROM read_journal WHERE source_key = ?1) - ?2",
+                params![key, KEPT_GOOD_ROWS],
+            )
+        })?;
         Ok(())
+    }
+
+    /// How many reads the journal holds in memory because its file was busy.
+    pub fn journal_pending(&self) -> usize {
+        self.pending().rows.len()
     }
 
     /// The bad zones stored for a source key, as extents. They are the same whichever run of the app, and
@@ -249,13 +535,16 @@ impl HealthStore {
 
     /// Tells the rows of `key` which stored source they are about.
     pub fn adopt(&self, key: &str, source_id: &str) -> Result<()> {
-        let catalog = self.lock();
-        for table in ["health_ranges", "read_journal"] {
-            catalog.connection().execute(
-                &format!("UPDATE {table} SET source_id = ?2 WHERE source_key = ?1"),
+        self.lock().connection().execute(
+            "UPDATE health_ranges SET source_id = ?2 WHERE source_key = ?1",
+            params![key, source_id],
+        )?;
+        self.with_journal(|connection| {
+            connection.execute(
+                "UPDATE read_journal SET source_id = ?2 WHERE source_key = ?1",
                 params![key, source_id],
-            )?;
-        }
+            )
+        })?;
         Ok(())
     }
 
@@ -361,11 +650,6 @@ impl HealthStore {
                 [child_key],
             )?;
         }
-        // Its journal rows (an open one is a culprit for the disk too), in the disk's offsets.
-        transaction.execute(
-            "UPDATE read_journal SET source_key = ?2, start = start + ?3 WHERE source_key = ?1",
-            params![child_key, parent_key, offset as i64],
-        )?;
         // Its reset count: the drive is one drive.
         let child_resets: i64 = transaction
             .query_row(
@@ -387,6 +671,15 @@ impl HealthStore {
             [child_key],
         )?;
         transaction.commit()?;
+        drop(catalog);
+        // Its journal rows (an open one is a culprit for the disk too), in the disk's offsets: in the journal's
+        // own file, after the catalog's commit, so neither waits for the other.
+        self.with_journal(|connection| {
+            connection.execute(
+                "UPDATE read_journal SET source_key = ?2, start = start + ?3 WHERE source_key = ?1",
+                params![child_key, parent_key, offset as i64],
+            )
+        })?;
         Ok(())
     }
 
@@ -396,32 +689,35 @@ impl HealthStore {
         if old == new {
             return Ok(false);
         }
+        let in_journal = |key: &str| -> Result<i64> {
+            Ok(self.with_journal(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM read_journal WHERE source_key = ?1",
+                    [key],
+                    |row| row.get(0),
+                )
+            })?)
+        };
+        let (journal_new, journal_old) = (in_journal(new)?, in_journal(old)?);
         let catalog = self.lock();
         let transaction = catalog.connection().unchecked_transaction()?;
         let taken: i64 = transaction.query_row(
             "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
-                  + (SELECT count(*) FROM health_flags WHERE source_key = ?1)
-                  + (SELECT count(*) FROM read_journal WHERE source_key = ?1)",
+                  + (SELECT count(*) FROM health_flags WHERE source_key = ?1)",
             [new],
             |row| row.get(0),
         )?;
         let has: i64 = transaction.query_row(
             "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
                   + (SELECT count(*) FROM health_flags WHERE source_key = ?1)
-                  + (SELECT count(*) FROM read_journal WHERE source_key = ?1)
                   + (SELECT count(*) FROM health_links WHERE parent_key = ?1)",
             [old],
             |row| row.get(0),
         )?;
-        if taken > 0 || has == 0 {
+        if taken + journal_new > 0 || has + journal_old == 0 {
             return Ok(false);
         }
-        for table in [
-            "health_ranges",
-            "health_flags",
-            "read_journal",
-            "health_probes",
-        ] {
+        for table in ["health_ranges", "health_flags", "health_probes"] {
             transaction.execute(
                 &format!("UPDATE {table} SET source_key = ?2 WHERE source_key = ?1"),
                 params![old, new],
@@ -432,19 +728,27 @@ impl HealthStore {
             params![old, new],
         )?;
         transaction.commit()?;
+        drop(catalog);
+        self.with_journal(|connection| {
+            connection.execute(
+                "UPDATE read_journal SET source_key = ?2 WHERE source_key = ?1",
+                params![old, new],
+            )
+        })?;
         Ok(true)
     }
 
     /// The reads of `key` that ended well, most recent first: ranges known to read, from earlier opens.
     pub fn good_reads(&self, key: &str, limit: usize) -> Result<Vec<(u64, u64)>> {
-        let catalog = self.lock();
-        let mut statement = catalog.connection().prepare(
-            "SELECT start, length FROM read_journal WHERE source_key = ?1 AND outcome = 'ok' ORDER BY id DESC LIMIT ?2",
-        )?;
-        let rows = statement.query_map(params![key, limit as i64], |row| {
-            Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64))
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        Ok(self.with_journal(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT start, length FROM read_journal WHERE source_key = ?1 AND outcome = 'ok' ORDER BY id DESC LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![key, limit as i64], |row| {
+                Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })?)
     }
 
     /// Removes the reset-culprit ranges that were recorded for a read made after the device had already gone:
@@ -522,12 +826,21 @@ impl HealthStore {
 
     /// Every source key with a map or an open row, for a listing.
     pub fn keys(&self) -> Result<HashSet<String>> {
-        let catalog = self.lock();
-        let mut statement = catalog
-            .connection()
-            .prepare("SELECT DISTINCT source_key FROM health_ranges UNION SELECT DISTINCT source_key FROM read_journal")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-        Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
+        let mut keys: HashSet<String> = {
+            let catalog = self.lock();
+            let mut statement = catalog
+                .connection()
+                .prepare("SELECT DISTINCT source_key FROM health_ranges")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<HashSet<_>>>()?
+        };
+        keys.extend(self.with_journal(|connection| {
+            let mut statement =
+                connection.prepare("SELECT DISTINCT source_key FROM read_journal")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })?);
+        Ok(keys)
     }
 }
 

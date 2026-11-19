@@ -362,10 +362,10 @@ impl ScanStore {
         let token = bindings
             .get(id)
             .context("Verify and load this saved scan before continuing.")?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (start, end, saved_token, attempt_start): (i64, i64, String, i64) = transaction.query_row(
+        // What the scan has done so far is read without the write lock: the disk is read next, which can take a
+        // long time on a failing drive, and nothing else that writes to this catalog (the read journal of the same
+        // process among them) may wait for it. The write lock is taken after, for the writes only.
+        let (start, end, saved_token, attempt_start): (i64, i64, String, i64) = self.connection.query_row(
             "SELECT next_offset, scan_end, source_token, attempt_start FROM raw_scans WHERE id = ?1", [id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
@@ -381,6 +381,18 @@ impl ScanStore {
         ensure!(
             batch.next_offset > start as u64 && batch.next_offset <= end as u64,
             "Discovery did not advance within the saved range."
+        );
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (now_start, now_token): (i64, String) = transaction.query_row(
+            "SELECT next_offset, source_token FROM raw_scans WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        ensure!(
+            now_start == start && *token == now_token,
+            "This scan moved while the disk was being read; step again."
         );
         transaction.execute(
             "DELETE FROM raw_findings WHERE scan_id = ?1 AND offset >= ?2 AND offset < ?3",
