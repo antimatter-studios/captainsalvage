@@ -140,6 +140,14 @@ sides of conflicts where two branches appended to the same file (`scripts/resolv
 and pushes only if the TypeScript and clippy checks pass. Read the result of a Rust conflict by
 hand: keeping both sides can join two functions or two tests together.
 
+## Coverage does not fall
+
+`scripts/coverage.py` (`chore test:coverage`) measures what the tests run of the engine, the Tauri crate
+and our TypeScript, and CI fails a pull request that takes any part more than half a point under
+`docs/coverage-baseline.json`. Add the tests that were lost; raise the baseline (`chore coverage:baseline`)
+only in a pull request that improved a number, and say so. A change that removes code and its tests may
+lower it, and says why. The VM and window tests are not part of it.
+
 ## Independent oracles
 
 A reader that shares the code it checks proves only that it agrees with itself. NTFS is also

@@ -75,6 +75,20 @@ tasks:
       - ../fs-linux-test-harness/scripts/vm.sh up
       - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle --test fat_exfat_oracle
 
+  test:coverage:
+    desc: "What the tests run of our own code (Rust engine, Tauri crate, TypeScript), checked against docs/coverage-baseline.json"
+    # Instruments and runs the whole workspace's tests and the TypeScript tests, so it takes as long as
+    # both, twice over. It needs `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`
+    # (the repository's toolchain). It fails when a part is more than the tolerance under the baseline. The VM
+    # and window tests are not run, so they add nothing here. See scripts/coverage.py.
+    cmds:
+      - python3 scripts/coverage.py check
+
+  coverage:baseline:
+    desc: "Measure and write docs/coverage-baseline.json: a deliberate act, in the pull request that earned it"
+    cmds:
+      - python3 scripts/coverage.py baseline
+
   siblings:windows:
     desc: Check out the Windows test harness beside this repository, at its pinned tag
     cmds:

@@ -1,0 +1,65 @@
+{
+  "about": "What the tests run of our own code. Written by `scripts/coverage.py baseline`; checked by `scripts/coverage.py check`, which fails when a part is more than the tolerance under it.",
+  "tolerance_points": 0.5,
+  "tools": {
+    "rust": "cargo llvm-cov (1.95.0, workspace)",
+    "typescript": "node --test --experimental-test-coverage"
+  },
+  "rust_engine": {
+    "lines": {
+      "covered": 23979,
+      "count": 27567,
+      "percent": 86.98
+    },
+    "regions": {
+      "covered": 40712,
+      "count": 48790,
+      "percent": 83.44
+    },
+    "functions": {
+      "covered": 2349,
+      "count": 2772,
+      "percent": 84.74
+    }
+  },
+  "rust_tauri": {
+    "lines": {
+      "covered": 22,
+      "count": 1052,
+      "percent": 2.09
+    },
+    "regions": {
+      "covered": 29,
+      "count": 1742,
+      "percent": 1.66
+    },
+    "functions": {
+      "covered": 2,
+      "count": 172,
+      "percent": 1.16
+    }
+  },
+  "typescript": {
+    "lines": {
+      "covered": 824,
+      "count": 832,
+      "percent": 99.04
+    },
+    "branches": {
+      "covered": 210,
+      "count": 218,
+      "percent": 96.33
+    },
+    "functions": {
+      "covered": 83,
+      "count": 84,
+      "percent": 98.81
+    },
+    "files_loaded": {
+      "covered": 9,
+      "count": 54,
+      "percent": 16.67
+    },
+    "unloaded_source_lines": 13220
+  }
+}
