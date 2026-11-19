@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS health_ranges (
     PRIMARY KEY (source_key, start)
 );
 CREATE INDEX IF NOT EXISTS health_ranges_source ON health_ranges(source_id);
+CREATE TABLE IF NOT EXISTS health_flags (
+    source_key TEXT PRIMARY KEY,
+    resets INTEGER NOT NULL DEFAULT 0,
+    failing_after INTEGER NOT NULL DEFAULT 2,
+    updated_millis INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS health_probes (
     source_key TEXT PRIMARY KEY, state TEXT NOT NULL, updated_millis INTEGER NOT NULL
 );";
@@ -240,6 +246,54 @@ impl HealthStore {
                 params![key, source_id],
             )?;
         }
+        Ok(())
+    }
+
+    /// How many times the device went away while this source was being read, and after how many the
+    /// drive is called failing.
+    pub fn load_flags(&self, key: &str) -> Result<(u64, u64)> {
+        Ok(self
+            .lock()
+            .connection()
+            .query_row(
+                "SELECT resets, failing_after FROM health_flags WHERE source_key = ?1",
+                [key],
+                |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
+            )
+            .optional()?
+            .unwrap_or((0, super::DEFAULT_FAILING_AFTER)))
+    }
+
+    /// Adds `resets` to the count and returns the new count.
+    pub fn add_resets(&self, key: &str, resets: u64) -> Result<u64> {
+        let catalog = self.lock();
+        catalog.connection().execute(
+            "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_key) DO UPDATE SET resets = resets + excluded.resets, updated_millis = excluded.updated_millis",
+            params![key, resets as i64, now_millis() as i64],
+        )?;
+        Ok(catalog.connection().query_row(
+            "SELECT resets FROM health_flags WHERE source_key = ?1",
+            [key],
+            |row| row.get::<_, i64>(0),
+        )? as u64)
+    }
+
+    pub fn set_resets(&self, key: &str, resets: u64) -> Result<()> {
+        self.lock().connection().execute(
+            "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_key) DO UPDATE SET resets = excluded.resets, updated_millis = excluded.updated_millis",
+            params![key, resets as i64, now_millis() as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_failing_after(&self, key: &str, after: u64) -> Result<()> {
+        self.lock().connection().execute(
+            "INSERT INTO health_flags (source_key, failing_after, updated_millis) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_key) DO UPDATE SET failing_after = excluded.failing_after, updated_millis = excluded.updated_millis",
+            params![key, after as i64, now_millis() as i64],
+        )?;
         Ok(())
     }
 

@@ -38,7 +38,7 @@ export interface DiscoveryBatch {
 }
 
 /** How a range of the source reads, from `health_map`. Only the ranges that are not good are drawn. */
-export type HealthState = "good" | "slow" | "unreadable" | "reset-culprit";
+export type HealthState = "good" | "slow" | "suspect" | "unreadable" | "reset-culprit";
 
 export interface HealthRange {
   start: number;
@@ -157,6 +157,8 @@ export const MAP_BAND_ALTERNATE = 12;
 export const MAP_HEALTH_SLOW = 13;
 export const MAP_HEALTH_UNREADABLE = 14;
 export const MAP_HEALTH_CULPRIT = 15;
+/** A band the probe jumped over, because a read in it failed, was slow or reset the drive: not read, edges not mapped. */
+export const MAP_HEALTH_SUSPECT = 16;
 /** How many canvas rows the partition bands take. The lanes and the scan row take one each. */
 export const BAND_ROWS = 3;
 
@@ -216,7 +218,7 @@ function formatValue(format: string): number {
 }
 
 function healthValue(state: HealthState): number {
-  return state === "reset-culprit" ? MAP_HEALTH_CULPRIT : state === "unreadable" ? MAP_HEALTH_UNREADABLE : MAP_HEALTH_SLOW;
+  return state === "reset-culprit" ? MAP_HEALTH_CULPRIT : state === "unreadable" ? MAP_HEALTH_UNREADABLE : state === "suspect" ? MAP_HEALTH_SUSPECT : MAP_HEALTH_SLOW;
 }
 
 /** How many map rows the health lane takes: one when anything is known to be wrong with the drive, else none. */
@@ -226,7 +228,7 @@ export function healthRows(disk: Pick<RawDiskState, "health">): number {
 
 /** A worse state is painted over a better one where two ranges meet in a bucket. */
 function healthPaints(disk: RawDiskState): Paint[] {
-  const order: HealthState[] = ["slow", "unreadable", "reset-culprit"];
+  const order: HealthState[] = ["slow", "suspect", "unreadable", "reset-culprit"];
   return (disk.health ?? [])
     .filter((range) => range.state !== "good")
     .sort((left, right) => order.indexOf(left.state) - order.indexOf(right.state))

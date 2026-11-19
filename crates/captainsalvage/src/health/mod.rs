@@ -37,7 +37,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -45,6 +45,11 @@ use std::time::Instant;
 pub const BLOCK: u64 = 4096;
 /// A read slower than this is `slow`, unless a probe says otherwise.
 pub const DEFAULT_SLOW_MS: u64 = 500;
+/// After this many resets a source is a failing drive (see [`Health::failing`]), unless said otherwise.
+pub const DEFAULT_FAILING_AFTER: u64 = 2;
+/// On a failing drive no read is longer than this: a long read into a bad area keeps the drive
+/// retrying for longer, and its reset costs more.
+const CAREFUL_PIECE_BYTES: u64 = 64 * 1024;
 /// A read this long is always journaled, whoever asks: nothing small enough to be one bad sector
 /// is journaled unless it is a probe or the source is being opened.
 const JOURNAL_FROM_BYTES: u64 = 1024 * 1024;
@@ -145,6 +150,11 @@ pub struct Health {
     slow_ms: AtomicU64,
     found_at_open: Mutex<Vec<HealthRange>>,
     identity: Mutex<Option<Fingerprint>>,
+    /// How many times the device went away while this source was read, over all runs.
+    resets: AtomicU64,
+    failing_after: AtomicU64,
+    /// The current disappearance of the device has been counted.
+    counted_gone: AtomicBool,
 }
 
 impl Drop for Health {
@@ -215,6 +225,11 @@ impl Health {
             map.record(range.clone());
             found.push(range);
         }
+        let (mut resets, failing_after) = store.load_flags(&key)?;
+        if !abandoned.is_empty() {
+            // Each read that was open when its run ended is a reset that run could not count.
+            resets = store.add_resets(&key, abandoned.len() as u64)?;
+        }
         let health = Arc::new(Self {
             key,
             owner: format!("{}:{serial}", std::process::id()),
@@ -230,6 +245,9 @@ impl Health {
             slow_ms: AtomicU64::new(DEFAULT_SLOW_MS),
             found_at_open: Mutex::new(found),
             identity: Mutex::new(None),
+            resets: AtomicU64::new(resets),
+            failing_after: AtomicU64::new(failing_after.max(1)),
+            counted_gone: AtomicBool::new(false),
         });
         if !abandoned.is_empty() {
             health.persist();
@@ -261,6 +279,44 @@ impl Health {
 
     pub fn slow_ms(&self) -> u64 {
         self.slow_ms.load(Ordering::Relaxed)
+    }
+
+    /// How many times the device went away while this source was being read.
+    pub fn resets(&self) -> u64 {
+        self.resets.load(Ordering::Relaxed)
+    }
+
+    pub fn failing_after(&self) -> u64 {
+        self.failing_after.load(Ordering::Relaxed)
+    }
+
+    pub fn set_failing_after(&self, after: u64) {
+        let after = after.max(1);
+        self.failing_after.store(after, Ordering::Relaxed);
+        let _ = self.store.set_failing_after(&self.key, after);
+    }
+
+    /// The drive has reset often enough to be called failing. Reading then goes carefully: every
+    /// read is journaled, none is longer than 64 KiB, and a suspect band is not read.
+    pub fn failing(&self) -> bool {
+        self.resets() >= self.failing_after()
+    }
+
+    /// The person says the count is wrong, or the drive was repaired.
+    pub fn clear_resets(&self) {
+        self.resets.store(0, Ordering::Relaxed);
+        let _ = self.store.set_resets(&self.key, 0);
+    }
+
+    /// The device went away during a read: counted once however many reads were in flight.
+    fn count_reset(&self) {
+        if !self.counted_gone.swap(true, Ordering::Relaxed) {
+            if let Ok(total) = self.store.add_resets(&self.key, 1) {
+                self.resets.store(total, Ordering::Relaxed);
+            } else {
+                self.resets.fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 
     pub fn set_slow_ms(&self, ms: u64) {
@@ -333,15 +389,22 @@ impl Health {
 
     /// The first range that blocks reading and overlaps `start..end`.
     pub fn blocked(&self, start: u64, end: u64) -> Option<KnownBadRange> {
+        self.blocked_with(start, end, true)
+    }
+
+    fn blocked_with(&self, start: u64, end: u64, suspect_blocks: bool) -> Option<KnownBadRange> {
         let state = self.state.read().ok()?;
         if state.map.is_empty() {
             return None;
         }
-        state.map.blocked(start, end).map(|range| KnownBadRange {
-            start: range.start,
-            end: range.end,
-            state: range.state,
-        })
+        state
+            .map
+            .blocked_with(start, end, suspect_blocks)
+            .map(|range| KnownBadRange {
+                start: range.start,
+                end: range.end,
+                state: range.state,
+            })
     }
 
     pub fn blocked_within(&self, start: u64, end: u64) -> Vec<(u64, u64)> {
@@ -370,6 +433,31 @@ impl Health {
         }
     }
 
+    /// A suspect band whose edges were mapped: what was suspect between `band_start` and `band_end`
+    /// is forgotten, and only `zone_start..zone_end` is suspect (or worse, as `state` says). The
+    /// reads that were good on the way, which the band had covered, are good again.
+    pub fn resolve_band(
+        &self,
+        band_start: u64,
+        band_end: u64,
+        zone: HealthRange,
+        good_reads: &[u64],
+    ) {
+        if let Ok(mut state) = self.state.write() {
+            state.map.clear_suspect(band_start, band_end);
+            state.map.record(zone);
+            for at in good_reads {
+                state.map.record(HealthRange::new(
+                    *at,
+                    *at + BLOCK,
+                    RangeState::Good,
+                    None,
+                    "a probe read this range well",
+                ));
+            }
+        }
+    }
+
     /// Forgets what is known about a range: the person says it is fine, or fixed.
     pub fn forgive(&self, start: u64, end: u64) {
         if let Ok(mut state) = self.state.write() {
@@ -392,6 +480,7 @@ impl Health {
         if let Ok(mut inner) = self.inner.write() {
             *inner = device;
         }
+        self.counted_gone.store(false, Ordering::Relaxed);
     }
 
     pub fn is_gone(&self) -> bool {
@@ -411,18 +500,54 @@ impl Health {
     }
 
     /// One read through the guard. See the module documentation for what it records.
-    fn read(&self, offset: u64, buffer: &mut [u8], force: bool) -> (io::Result<()>, u64, bool) {
+    fn read(
+        &self,
+        offset: u64,
+        buffer: &mut [u8],
+        force: bool,
+        through_suspect: bool,
+    ) -> (io::Result<()>, u64, bool) {
         let device = self.device();
         let length = buffer.len() as u64;
         let end = offset.saturating_add(length);
         if device.is_gone() {
             return (device.read_exact_at(offset, buffer), 0, false);
         }
-        if let Some(bad) = self.blocked(offset, end) {
+        if let Some(bad) = self.blocked_with(offset, end, !through_suspect) {
             return (Err(io::Error::other(bad)), 0, true);
         }
-        let journal =
-            force || self.journaling.load(Ordering::Relaxed) > 0 || length >= JOURNAL_FROM_BYTES;
+        let careful = self.failing();
+        let journal = force
+            || careful
+            || self.journaling.load(Ordering::Relaxed) > 0
+            || length >= JOURNAL_FROM_BYTES;
+        if careful && length > CAREFUL_PIECE_BYTES {
+            // Small reads, each journaled and timed, the first failure ending the read: whoever
+            // asked retries in smaller pieces, which are refused or read one by one.
+            let mut total = 0;
+            for (index, piece) in buffer.chunks_mut(CAREFUL_PIECE_BYTES as usize).enumerate() {
+                let at = offset + index as u64 * CAREFUL_PIECE_BYTES;
+                let (result, elapsed, refused) = self.read_once(&device, at, piece, journal);
+                total += elapsed;
+                if result.is_err() {
+                    return (result, total, refused);
+                }
+            }
+            return (Ok(()), total, false);
+        }
+        self.read_once(&device, offset, buffer, journal)
+    }
+
+    /// One read of the device, journaled when asked and recorded in the map by how it went.
+    fn read_once(
+        &self,
+        device: &Arc<dyn BlockSource>,
+        offset: u64,
+        buffer: &mut [u8],
+        journal: bool,
+    ) -> (io::Result<()>, u64, bool) {
+        let length = buffer.len() as u64;
+        let end = offset.saturating_add(length);
         let row = journal
             .then(|| {
                 self.store
@@ -444,6 +569,7 @@ impl Health {
         }
         let (from, to) = aligned(offset, end, self.length);
         if gone {
+            self.count_reset();
             self.record(HealthRange::new(
                 from,
                 to,
@@ -479,10 +605,13 @@ impl Health {
 
     /// One timed, journaled read of `len` bytes at `offset`, recorded as good, slow, unreadable
     /// or culprit. The map is not stored: the probe does that when it ends a step.
-    pub fn probe_read(&self, offset: u64, len: u64) -> Probed {
+    pub fn probe_read(&self, offset: u64, len: u64, through_suspect: bool) -> Probed {
         let mut buffer = vec![0u8; len as usize];
-        let before = self.snapshot().blocked(offset, offset + len).cloned();
-        let (result, latency_ms, refused) = self.read(offset, &mut buffer, true);
+        let before = self
+            .snapshot()
+            .blocked_with(offset, offset + len, !through_suspect)
+            .cloned();
+        let (result, latency_ms, refused) = self.read(offset, &mut buffer, true, through_suspect);
         let gone = self.is_gone();
         let (from, to) = aligned(offset, offset + len, self.length);
         let state = if refused {
@@ -522,9 +651,13 @@ impl Health {
             "sourceId": self.source_id(),
             "length": self.length,
             "slowThresholdMs": self.slow_ms(),
+            "resets": self.resets(),
+            "failingAfterResets": self.failing_after(),
+            "failing": self.failing(),
             "deviceGone": self.is_gone(),
             "good": counts(RangeState::Good),
             "slow": counts(RangeState::Slow),
+            "suspect": counts(RangeState::Suspect),
             "unreadable": counts(RangeState::Unreadable),
             "resetCulprit": counts(RangeState::ResetCulprit),
             "foundAtOpen": self.found_at_open(),
@@ -546,7 +679,7 @@ impl GuardedSource {
 
 impl BlockSource for GuardedSource {
     fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
-        self.health.read(offset, buffer, false).0
+        self.health.read(offset, buffer, false, false).0
     }
 
     fn read_stats(&self) -> ReadStats {
