@@ -7,19 +7,19 @@
   },
   "rust_engine": {
     "lines": {
-      "covered": 23636,
-      "count": 27081,
-      "percent": 87.28
+      "covered": 23979,
+      "count": 27567,
+      "percent": 86.98
     },
     "regions": {
-      "covered": 40112,
-      "count": 47978,
-      "percent": 83.6
+      "covered": 40712,
+      "count": 48790,
+      "percent": 83.44
     },
     "functions": {
-      "covered": 2299,
-      "count": 2696,
-      "percent": 85.27
+      "covered": 2349,
+      "count": 2772,
+      "percent": 84.74
     }
   },
   "rust_tauri": {
@@ -41,25 +41,25 @@
   },
   "typescript": {
     "lines": {
-      "covered": 668,
-      "count": 676,
-      "percent": 98.82
+      "covered": 824,
+      "count": 832,
+      "percent": 99.04
     },
     "branches": {
-      "covered": 167,
-      "count": 172,
-      "percent": 97.09
+      "covered": 210,
+      "count": 218,
+      "percent": 96.33
     },
     "functions": {
-      "covered": 62,
-      "count": 63,
-      "percent": 98.41
+      "covered": 83,
+      "count": 84,
+      "percent": 98.81
     },
     "files_loaded": {
-      "covered": 6,
-      "count": 51,
-      "percent": 11.76
+      "covered": 9,
+      "count": 54,
+      "percent": 16.67
     },
-    "unloaded_source_lines": 13131
+    "unloaded_source_lines": 13220
   }
 }
