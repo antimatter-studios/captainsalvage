@@ -42,6 +42,8 @@ const CHAIN_GUESSED_PENALTY: f64 = 0.75;
 /// A file part of which was written over after the baseline: what is left is still uncertain.
 const WRITTEN_PENALTY: f64 = 0.5;
 const FOLDER_NOT_FOUND_PENALTY: f64 = 0.2;
+/// How sure a file in the current filesystem is when another one claims some of its clusters.
+const CONTESTED_LIVE_CONFIDENCE: f64 = 0.3;
 const LINK_OVERLAY: f64 = 0.9;
 const CONFIDENCE_SCALE: f64 = 255.0;
 
@@ -492,6 +494,9 @@ struct Context<'a> {
     /// For clusters several streams claim: the first cluster of the stream that
     /// holds it, or None when nothing settles which one does.
     holders: &'a HashMap<u32, Option<u32>>,
+    /// Clusters that more than one file in the current filesystem claims. A file made of them
+    /// cannot be told apart from the other, so neither is read as live.
+    live_shared: &'a HashSet<u32>,
     /// Clusters written since the baseline, from the workspace's record of changes.
     written: &'a HashSet<u32>,
     node_heads: &'a HashSet<u32>,
@@ -681,6 +686,21 @@ impl Context<'_> {
             && found == stream.needed
             && allocated == found
         {
+            let shared = stream
+                .clusters
+                .iter()
+                .filter(|cluster| self.live_shared.contains(cluster))
+                .count();
+            if shared > 0 {
+                return build(
+                    VERDICT_PARTIAL,
+                    CODE_CONTESTED,
+                    format!(
+                        "{shared} of {found} clusters are also claimed by another file in the current filesystem, so their bytes may belong to either file."
+                    ),
+                    CONTESTED_LIVE_CONFIDENCE,
+                );
+            }
             return build(
                 VERDICT_LIVE,
                 CODE_LIVE,
@@ -1098,12 +1118,29 @@ impl MapDb {
         let mut first_claimant = vec![0u32; last];
         let mut sharing: HashMap<u32, Vec<u32>> = HashMap::new();
         let mut claimed_first: HashSet<u32> = HashSet::new();
+        let mut live_first: HashSet<u32> = HashSet::new();
+        let mut live_claims: HashMap<u32, u16> = HashMap::new();
+        let mut live_shared: HashSet<u32> = HashSet::new();
         for set in sets
             .iter()
             .filter(|set| !set.is_dir && set.checksum_ok && set.length > 0 && set.has_clusters())
         {
-            if claimed_first.insert(set.first_cluster) {
+            let first_claim = claimed_first.insert(set.first_cluster);
+            let live_claim = set.in_use && live_first.insert(set.first_cluster);
+            if first_claim || live_claim {
                 let (stream, _) = streams.claim(set);
+                if live_claim {
+                    for &cluster in &stream.clusters {
+                        let count = live_claims.entry(cluster).or_insert(0);
+                        *count = count.saturating_add(1);
+                        if *count > 1 {
+                            live_shared.insert(cluster);
+                        }
+                    }
+                }
+                if !first_claim {
+                    continue;
+                }
                 for cluster in stream.clusters {
                     let index = (cluster - FIRST_CLUSTER) as usize;
                     claims[cluster as usize] = claims[cluster as usize].saturating_add(1);
@@ -1153,6 +1190,7 @@ impl MapDb {
             text_heads: &text_heads,
             claims: &claims,
             holders: &holders,
+            live_shared: &live_shared,
             written: &written,
             node_heads: &node_heads,
             ntfs_children: &ntfs_children,
