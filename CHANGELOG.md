@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.15] — 2026-11-19
+
+### Maintenance
+
+- A pull request fails when what the tests run of our code falls below a captured baseline ([#267](https://github.com/antimatter-studios/captainsalvage/pull/267))
+
 ## [0.4.14] — 2026-11-19
 
 ### Documentation
