@@ -370,36 +370,18 @@ fn diff(path: &str, what: impl Into<String>) -> Diff {
 /// What the app does not do yet, as these volumes show it. Each is found by Windows' volumes, has
 /// an issue, and is pinned here: the test fails for any other difference, and it fails too when a
 /// gap that must show on a volume no longer does, so that fixing one means removing it here and
-/// from the README.
-const COMPRESSED: &str = "files compressed by NTFS (LZNT1) are listed but refused (issue #174)";
+/// from the README. Compression (issue #174) and hard links (#175) were gaps and are not now; the
+/// 4096-byte-sector volume (#177) is refused at open, which is checked apart.
 const SECTOR_4096: &str =
     "a volume on 4096-byte sectors with 1024-byte records is refused at open (issue #177)";
 
-fn known_gap(want: &Manifest, difference: &Diff) -> Option<&'static str> {
-    let compressed = want
-        .attributes
-        .get(&difference.path)
-        .is_some_and(|flags| flags.contains("Compressed"))
-        && want.extents.get(&difference.path).is_some_and(|n| *n > 0);
-    if compressed
-        && ["could not be read", "is called ", "not copied"]
-            .iter()
-            .any(|start| difference.what.starts_with(start))
-    {
-        return Some(COMPRESSED);
-    }
+fn known_gap(_want: &Manifest, _difference: &Diff) -> Option<&'static str> {
     None
 }
 
 /// Which gaps this volume must show: it holds the shape that triggers each.
-fn gaps_expected(want: &Manifest) -> BTreeSet<&'static str> {
-    let mut gaps = BTreeSet::new();
-    if want.attributes.iter().any(|(path, flags)| {
-        flags.contains("Compressed") && want.extents.get(path).is_some_and(|n| *n > 0)
-    }) {
-        gaps.insert(COMPRESSED);
-    }
-    gaps
+fn gaps_expected(_want: &Manifest) -> BTreeSet<&'static str> {
+    BTreeSet::new()
 }
 
 /// What differs in the listing, one line each, so a failure names every path.

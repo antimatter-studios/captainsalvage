@@ -9,7 +9,9 @@ use crate::content::{
     content_match, expected_class, text_head_match, ContentMatch, CLASS_DIRECTORY, CLASS_NAMES,
     CLASS_TEXT, CLASS_ZEROS,
 };
-use crate::filesystem::{NtfsRun, STORAGE_DAMAGED, STORAGE_RESIDENT, STORAGE_RUNS};
+use crate::filesystem::{
+    NtfsRun, STORAGE_COMPRESSED, STORAGE_DAMAGED, STORAGE_RESIDENT, STORAGE_RUNS,
+};
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
     OVERLAY_DIRECTORY_CLUSTER, OVERLAY_FILE_EXTENTS, OVERLAY_FOLDER_PARENT, OVERLAY_REGION_LABEL,
@@ -199,7 +201,12 @@ impl LoadedSet {
         self.ntfs
             .as_ref()
             .map(|ntfs| ntfs.storage.as_str())
-            .filter(|storage| *storage != STORAGE_RESIDENT && *storage != STORAGE_RUNS)
+            .filter(|storage| {
+                !matches!(
+                    *storage,
+                    STORAGE_RESIDENT | STORAGE_RUNS | STORAGE_COMPRESSED
+                )
+            })
     }
 }
 
@@ -662,8 +669,8 @@ impl Context<'_> {
 
         if let Some(storage) = set.unreadable_storage() {
             let why = match storage {
-                "compressed" => {
-                    "Its data is NTFS-compressed, which Captain Salvage does not decode."
+                "compression-unsupported" => {
+                    "Its data is flagged as NTFS-compressed in a way Captain Salvage does not decode."
                 }
                 "encrypted" => "Its data is encrypted (EFS), which Captain Salvage cannot read.",
                 "attribute-list" => {

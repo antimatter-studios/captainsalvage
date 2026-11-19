@@ -82,7 +82,7 @@ export const ENGINE_TEXT: string[] = [
   "First cluster is {held}, which neither confirms nor contradicts the name.",
   "Zero-length file.",
   "Its FILE record failed its update-sequence check, so nothing in it can be trusted. It shows only that a record was here.",
-  "Its data is NTFS-compressed, which Captain Salvage does not decode.",
+  "Its data is flagged as NTFS-compressed in a way Captain Salvage does not decode.",
   "Its data is encrypted (EFS), which Captain Salvage cannot read.",
   "Its data continues in other FILE records, which are not followed yet.",
   "Only part of its run list is in this record.",

@@ -1070,7 +1070,7 @@ const strings: Record<string, string> = {
   "It is listed, but its bytes cannot be copied.": "Il figure dans la liste, mais ses octets ne peuvent pas être copiés.",
   "Its bytes are stored inside its own FILE record, which survived. No cluster holds them, so none can have been reused.": "Ses octets sont stockés dans son propre enregistrement FILE, qui a survécu. Aucun cluster ne les contient, donc aucun n'a pu être réutilisé.",
   "Its data continues in other FILE records, which are not followed yet.": "Ses données se poursuivent dans d'autres enregistrements FILE, qui ne sont pas encore suivis.",
-  "Its data is NTFS-compressed, which Captain Salvage does not decode.": "Ses données sont compressées par NTFS, ce que Captain Salvage ne décode pas.",
+  "Its data is flagged as NTFS-compressed in a way Captain Salvage does not decode.": "Ses données sont marquées comme compressées par NTFS d'une manière que Captain Salvage ne décode pas.",
   "Its data is encrypted (EFS), which Captain Salvage cannot read.": "Ses données sont chiffrées (EFS), ce que Captain Salvage ne peut pas lire.",
   "Its run list ends early: {found} of {needed} clusters reachable.": "Sa liste d'étendues s'arrête trop tôt : {found} clusters accessibles sur {needed}.",
   "Its run list names clusters outside the volume.": "Sa liste d'étendues désigne des clusters situés hors du volume.",

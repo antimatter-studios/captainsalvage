@@ -370,7 +370,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 | Named streams | Not offered | Not offered | Limited |
 | Hard links | Not offered | Not offered | Supported |
 | Attribute lists | Not offered | Not offered | Missing |
-| Compression | Not offered | Not offered | Missing |
+| Compression | Not offered | Not offered | Supported |
 | Encryption | Not offered | Not offered | Missing |
 | Journal | Not offered | Not offered | Missing |
 | Large volumes | Not offered | Not offered | Limited |
@@ -436,15 +436,16 @@ one place, so none of them can claim more than the adapter does.
 | Scan | Supported | Every cluster is read for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found as well as live ones. A record that fails its update-sequence check is kept as a damaged entry and never read as a file. Resumable. |
 | Map | Supported | Allocation comes from `$Bitmap`. Clusters holding FILE records show as directory structure. The first two clusters, which hold the boot sector and its code, are not drawn: they are covered by the baseline. |
 | Browse | Supported | The tree is rebuilt from each record's parent reference. A folder whose own record was lost is listed with no name, as an exFAT folder is. A name linked under a parent whose sequence number has since changed gets a lower link confidence. |
-| Preview, tests | Limited | Resident, fragmented, sparse and deleted data is read through the driver. Compressed, EFS-encrypted and attribute-list streams are listed with their size and cannot be read. Those streams are errors that say why, never zeros. A stretch of a stream held in runs that cannot be read (a damaged or missing run, a run outside the volume, a failed read) is marked: the text and byte previews show each of its bytes as ?, and name the range. Only that stretch, the zeros NTFS defines (sparse holes and bytes past the initialised length) and nothing else read as zeros. |
+| Preview, tests | Limited | Resident, fragmented, sparse, deleted and NTFS-compressed (LZNT1) data is read through the driver. EFS-encrypted, attribute-list and otherwise compressed streams are listed with their size and cannot be read. Those streams are errors that say why, never zeros. A stretch of a stream held in runs that cannot be read (a damaged or missing run, a run outside the volume, a failed read, a compression unit that does not decode) is marked: the text and byte previews show each of its bytes as ?, and name the range. Only that stretch, the zeros NTFS defines (sparse holes and bytes past the initialised length) and nothing else read as zeros. |
 | Resume | Supported | Same checkpoints as exFAT. |
 | Baseline copy | Supported | Clusters written since the baseline are reported, and a changed volume is read through the saved structures. |
 | Disk Rebuilds | Limited | A rebuild can replace a file's clusters or a folder's parent and is read as clusters. A record, its names and its run list are never altered. |
-| Copy out | Limited | Hashed, never overwrites, complete or partial. A stretch of a stream held in runs that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges. A stream that cannot be read at all (compressed, encrypted, in other records, incomplete, or a record that changed) is reported failed, writes no file and is never filled with zeros. |
+| Copy out | Limited | Hashed, never overwrites, complete or partial. A stretch of a stream held in runs that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges. A stream that cannot be read at all (encrypted, compressed in a way this does not decode, in other records, incomplete, or a record that changed) is reported failed, writes no file and is never filled with zeros. |
 | Mount block | Missing | The block is set by volume UUID, and macOS reports no volume UUID for an NTFS volume (checked on a throwaway NTFS image, bare and in a GPT partition: `diskutil info` gives a partition UUID only for the GPT partition), so the Block mount checkbox does not appear for one. macOS mounts NTFS read-only itself; only a third-party NTFS driver would write. |
 | Alternate data streams | Limited | Listed in the record details (`captainsalvage_ntfs_entry`), never merged into the file or copied as files of their own. |
 | Hard links | Supported | A file with several names is listed under each, in the folder the name belongs to, with the file's size and bytes, and a copy holds it under every name. Each name is an entry of its own, told apart from the others by its place in the record's names, so a rescan does not duplicate it. |
-| Attribute lists, compression, journal | Missing | A file whose attributes continue in extension records, and an LZNT1-compressed file, are listed but not read ([rust-fs-ntfs#1379](https://github.com/antimatter-studios/rust-fs-ntfs/issues/1379)). `$LogFile` and `$UsnJrnl` are not interpreted. |
+| Attribute lists, journal | Missing | A file whose attributes continue in extension records is listed but not read ([rust-fs-ntfs#1379](https://github.com/antimatter-studios/rust-fs-ntfs/issues/1379)). `$LogFile` and `$UsnJrnl` are not interpreted. |
+| Compression | Supported | An LZNT1-compressed file is read: each compression unit is mapped to its clusters here and decoded by the driver. Checked on synthetic images (the units laid out as NTFS does, read back whole, in pieces and copied, and a unit that does not decode marked) and on volumes Windows compressed files on (512, 1024 and 4096-byte clusters), each file with the SHA-256 Windows reports. |
 | Encryption | Missing | EFS files are listed and marked unreadable. BitLocker volumes are refused. |
 | Very large volumes | Limited | Up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters. |
 
@@ -513,8 +514,7 @@ What was checked against something that is not this app:
   - **Not written.** The image's hash is the same afterwards and the baseline check agrees.
 
   What the app does not do, as these volumes show it, is pinned in the test by an issue each, and
-  the test fails if one of them stops being true: the data of **NTFS-compressed** files is not
-  read ([#174](https://github.com/antimatter-studios/captainsalvage/issues/174)); and a volume on
+  the test fails if one of them stops being true: a volume on
   **4096-byte sectors** is refused at open, because the pinned driver expects a record of at
   least that size and Windows makes one of 1024 bytes
   ([#177](https://github.com/antimatter-studios/captainsalvage/issues/177)), so that volume is

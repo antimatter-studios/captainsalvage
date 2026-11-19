@@ -205,17 +205,17 @@ impl FilesystemKind {
                 capability("scan", Supported, "Every cluster is read for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found. Resumable."),
                 capability("map", Supported, "Allocation comes from $Bitmap. Clusters holding FILE records are shown as directory structure. The first two clusters, the boot area, are not drawn."),
                 capability("browse", Supported, "The folder tree is rebuilt from each record's parent reference. A folder whose own record was lost is listed unnamed."),
-                capability("preview", Limited, "Resident, fragmented, sparse and deleted data is read through the NTFS driver. Compressed, encrypted (EFS) and attribute-list streams are listed but cannot be read, and say why. A stretch of a stream held in runs that cannot be read (a damaged or missing run, a run outside the volume, a failed read) is marked: the text and byte previews show each of its bytes as ?, and name the range."),
+                capability("preview", Limited, "Resident, fragmented, sparse, deleted and NTFS-compressed (LZNT1) data is read. Encrypted (EFS) and attribute-list streams are listed but cannot be read, and say why. A stretch of a stream held in runs that cannot be read (a damaged or missing run, a run outside the volume, a failed read, a compression unit that does not decode) is marked: the text and byte previews show each of its bytes as ?, and name the range."),
                 capability("resume", Supported, "A paused or interrupted scan continues from its last saved cluster."),
                 capability("baseline", Supported, "The boot sector, its backup, $MFT, $Volume, the root record and $Bitmap are hashed and kept; clusters written since are reported."),
                 capability("file_tests", Limited, "Formats are walked through the bytes the driver reads. Streams that cannot be read are not tested."),
                 capability("rebuilds", Limited, "Disk Rebuilds can replace a file's clusters and folder links, and are read as clusters. The record, its names and its run list are never altered."),
-                capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A stretch of a stream held in runs that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges. A stream that cannot be read at all (compressed, encrypted, in other records, incomplete, or a record that changed) is reported failed, writes no file and is never filled with zeros."),
+                capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A stretch of a stream held in runs that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges. A stream that cannot be read at all (encrypted, compressed in a way this does not decode, in other records, incomplete, or a record that changed) is reported failed, writes no file and is never filled with zeros."),
                 capability("mount_block", Missing, "The block is set by volume UUID, and macOS reports no volume UUID for an NTFS volume (it reports a partition UUID for a GPT partition, not a volume one), so the Block mount checkbox does not appear for one. macOS mounts NTFS read-only itself; only a third-party NTFS driver would write."),
                 capability("named_streams", Limited, "Alternate data streams are listed in the record details, not copied as separate files. Streams held in extension records are not followed."),
                 capability("hard_links", Supported, "A file with several names is listed under each, in the folder the name belongs to, with the file's size and bytes, and a copy holds it under every name. Each name is an entry of its own, told apart from the others by its place in the record's names, so a rescan does not duplicate it."),
                 capability("attribute_lists", Missing, "A file whose attributes continue in extension records is listed, with its size, but its data is not read (rust-fs-ntfs#1379)."),
-                capability("compression", Missing, "NTFS-compressed streams are listed but not decoded (rust-fs-ntfs#1379)."),
+                capability("compression", Supported, "A file NTFS compressed (LZNT1) is read: each compression unit is mapped to its clusters here and decoded by the driver. Checked on synthetic images and on volumes Windows formatted and compressed files on (512, 1024 and 4096-byte clusters), where every file has the SHA-256 Windows reports. Another compression method, or a stream whose runs continue in another record, is listed and refused."),
                 capability("encryption", Missing, "EFS-encrypted files are listed and marked unreadable. BitLocker volumes are refused."),
                 capability("journal", Missing, "$LogFile and $UsnJrnl are not interpreted, and nothing is replayed onto the volume."),
                 capability("large_volumes", Limited, "Volumes of up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters."),
@@ -352,7 +352,11 @@ pub struct NtfsRun {
 pub const STORAGE_RESIDENT: &str = "resident";
 pub const STORAGE_RUNS: &str = "runs";
 pub const STORAGE_NONE: &str = "none";
+/// An LZNT1-compressed stream, which is decoded when it is read.
 pub const STORAGE_COMPRESSED: &str = "compressed";
+/// A stream flagged as compressed in a way this app does not decode: another method, or no usable
+/// compression unit.
+pub const STORAGE_COMPRESSION_UNSUPPORTED: &str = "compression-unsupported";
 pub const STORAGE_ENCRYPTED: &str = "encrypted";
 pub const STORAGE_ATTRIBUTE_LIST: &str = "attribute-list";
 pub const STORAGE_INCOMPLETE: &str = "incomplete";
@@ -378,7 +382,10 @@ pub struct NtfsEntry {
 impl NtfsEntry {
     /// Whether the bytes can be read through the driver rather than only described.
     pub fn is_readable(&self) -> bool {
-        matches!(self.storage.as_str(), STORAGE_RESIDENT | STORAGE_RUNS)
+        matches!(
+            self.storage.as_str(),
+            STORAGE_RESIDENT | STORAGE_RUNS | STORAGE_COMPRESSED
+        )
     }
 }
 
