@@ -936,7 +936,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.3 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.4 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1071,6 +1071,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 <!-- changelog:start -->
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
+
+### v0.4.4 — 2026-11-19
+
+**Fixed**
+
+- **A file whose long name was stored across two folder blocks is listed under its real name.** On FAT12, FAT16 and FAT32, when a long file name began at the end of one block of a folder and the rest of the entry was at the start of the next, the file was listed under its short 8.3 name, such as `ENTRYF~4.TXT`, instead of its real name. Its size and contents were right. The scan now joins the end of the block before it, following the folder's chain, so the real name is shown.
 
 ### v0.4.3 — 2026-11-19
 
