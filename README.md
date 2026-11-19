@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.7.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.7.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.7.1 — 2026-11-19
+
+**Fixed**
+
+- **The app no longer says it can keep an NTFS volume unmounted.** The Block mount switch works by the volume's UUID, and macOS reports no volume UUID for an NTFS volume, so the checkbox never appears for one and nothing is blocked. The support table (in the window, `captainsalvage filesystem capabilities` and the README) said "Supported"; it now says "Missing" and why. macOS mounts NTFS read-only by itself, so only a third-party NTFS driver on the Mac would write to such a volume.
+
 ### v0.7.0 — 2026-11-19
 
 **Added**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **The start screen follows the disks.** The list of disks and volumes was read once, when the screen opened, so a volume you unmounted still showed as mounted, and a disk you plugged in or took out did not appear or go until you pressed Check again. The screen now keeps itself current: it checks every 10 seconds and when the window comes back into view, so a disk attached or removed, or a volume mounted or unmounted outside the app, shows without a button and without the list flickering or moving. When the app itself sends a command to the system (Unmount, or blocking a volume from being mounted), it reads the state back as soon as the command returns and once more a moment later, because macOS can be slow to update, so the row changes at once. It asks the system for its list of disks and mounts, and rebuilds the report (which looks at each volume) only when that list changed, so a damaged disk is not asked about every few seconds.
-
-### v0.4.10 — 2026-11-19
-
-**Fixed**
-
-- **Opening a large volume that was scanned and tested before is much faster.** The window asks the app for its status every two seconds, and each of those calls counted every file test result in the map with a sort, which on a large volume (hundreds of thousands of results) kept the app busy so that opening the volume waited behind it for up to a minute. The counts are now read from an index, once, and kept up to date as tests run. The app also no longer asks macOS about the disks every two seconds: it reads the list of mounted volumes from the system without starting a program, runs `diskutil` once for a volume it has not seen before, and checks the disks' write counters in the background, so a status call neither starts a process nor waits on a disk.
 
 <!-- changelog:end -->
 
