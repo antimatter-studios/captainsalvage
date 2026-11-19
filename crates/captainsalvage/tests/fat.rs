@@ -259,6 +259,48 @@ fn a_long_name_that_continues_into_the_next_folder_cluster_is_listed_by_its_long
     }
 }
 
+/// A root with a file whose short entry has high bytes in the DOS code page 437 (0x82 is é, 0x84 ä,
+/// 0x94 ö) and no long name before it, as a DOS program or a camera makes one.
+fn dos_named_file(kind: FilesystemKind) -> Fixture {
+    let mut fixture = Fixture::new(kind);
+    let mut root = long_entry("Captain log.txt", b"CAPTAI~1TXT", 5, 700);
+    root.extend(short_entry(b"ARCHIVE    ", 0x10, 3, 0));
+    root.extend(short_entry(b"\x82\x84\x94X    TXT", 0x20, 22, 11));
+    root.extend([0; 32]);
+    fixture.put_sector(fixture.root_sector, &root);
+    fixture.fat(22, u32::MAX);
+    fixture.put_cluster(22, b"dos content");
+    fixture
+}
+
+#[test]
+fn a_short_name_with_accented_letters_in_code_page_437_is_listed_with_them() {
+    for kind in [
+        FilesystemKind::Fat12,
+        FilesystemKind::Fat16,
+        FilesystemKind::Fat32,
+    ] {
+        let fixture = dos_named_file(kind);
+        let session = Session::with_source(
+            Path::new("/test/fat-dos-name"),
+            Arc::new(MemorySource::new(fixture.image)),
+            workspace(&format!("dos-name-{kind}")),
+        )
+        .unwrap();
+        scan(&session);
+        let rows = session
+            .query_map("SELECT name FROM sets WHERE first_cluster = 22 AND in_use = 1")
+            .unwrap();
+        let names: Vec<&str> = rows["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["\u{e9}\u{e4}\u{f6}X.TXT"], "{kind}");
+    }
+}
+
 #[test]
 fn fat_scans_resume_after_restart_without_duplicating_fixed_roots() {
     for kind in [
