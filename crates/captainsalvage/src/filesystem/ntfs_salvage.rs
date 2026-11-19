@@ -17,6 +17,7 @@ use super::{
     STORAGE_RESIDENT, STORAGE_RUNS,
 };
 use crate::changes::StructureCopy;
+use crate::ranges::RangeList;
 use crate::source::BlockSource;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use fs_core::BlockRead;
@@ -518,7 +519,11 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
 
 /// The entry one FILE record describes, or none when it is not a base record that
 /// survived its fixups well enough to say anything.
-pub fn entry_from_record(record: &RecordEvidence, offset: usize) -> Option<SalvageEntry> {
+pub fn entry_from_record(
+    record: &RecordEvidence,
+    offset: usize,
+    geometry: &VolumeGeometry,
+) -> Option<SalvageEntry> {
     if record.fixed.is_none() || record.base_reference != 0 {
         return None;
     }
@@ -549,6 +554,21 @@ pub fn entry_from_record(record: &RecordEvidence, offset: usize) -> Option<Salva
         (None, Some(name)) => (name.modified_nt, name.created_nt, name.accessed_nt),
         (None, None) => (0, 0, 0),
     };
+    let length = if is_dir { 0 } else { data.length };
+    let valid_length = if is_dir { 0 } else { data.valid_length };
+    let ntfs = NtfsEntry {
+        record_number: record.record_number,
+        sequence: record.sequence,
+        parent_record: chosen.map(|name| name.parent_record),
+        parent_sequence: chosen.map(|name| name.parent_sequence),
+        storage: if is_dir {
+            STORAGE_NONE.to_string()
+        } else {
+            data.storage.to_string()
+        },
+        runs: if is_dir { Vec::new() } else { data.runs },
+    };
+    let ranges = RangeList::for_ntfs(&ntfs, geometry, length, valid_length);
     // A record that fixes up and has a name is intact. Its number may be unknown, which only
     // means it cannot be named as a folder's parent until the scan works it out from `$MFT`.
     let intact = record.issues.is_empty() && chosen.is_some();
@@ -569,25 +589,15 @@ pub fn entry_from_record(record: &RecordEvidence, offset: usize) -> Option<Salva
             .unwrap_or(0),
         is_dir,
         first_cluster,
-        length: if is_dir { 0 } else { data.length },
-        valid_length: if is_dir { 0 } else { data.valid_length },
+        length,
+        valid_length,
         no_fat_chain: contiguous,
         created: nt_time(created),
         modified: nt_time(modified),
         accessed: nt_time(accessed),
         slots: 1,
-        ntfs: Some(NtfsEntry {
-            record_number: record.record_number,
-            sequence: record.sequence,
-            parent_record: chosen.map(|name| name.parent_record),
-            parent_sequence: chosen.map(|name| name.parent_sequence),
-            storage: if is_dir {
-                STORAGE_NONE.to_string()
-            } else {
-                data.storage.to_string()
-            },
-            runs: if is_dir { Vec::new() } else { data.runs },
-        }),
+        ntfs: Some(ntfs),
+        ranges,
     })
 }
 
@@ -617,6 +627,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
             storage: STORAGE_DAMAGED.to_string(),
             runs: Vec::new(),
         }),
+        ranges: RangeList::default(),
     }
 }
 
@@ -642,7 +653,7 @@ pub fn find_entries(
                 data[offset..offset + record_size].to_vec(),
                 sector as u16,
             );
-            if let Some(entry) = entry_from_record(&record, offset) {
+            if let Some(entry) = entry_from_record(&record, offset, geometry) {
                 found.push(entry);
                 offset += record_size;
                 continue;

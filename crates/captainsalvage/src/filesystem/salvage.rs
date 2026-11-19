@@ -2,6 +2,7 @@ use super::ntfs_salvage::{self, NtfsBoot};
 use super::{FilesystemDetails, FilesystemKind, SalvageEntry, VolumeGeometry};
 use crate::allocation;
 use crate::changes::StructureCopy;
+use crate::ranges::RangeList;
 use crate::source::BlockSource;
 use anyhow::{bail, Context, Result};
 use fs_exfat::primitives::{
@@ -327,7 +328,18 @@ pub fn find_entries(
                 },
             )
             .into_iter()
-            .map(SalvageEntry::from)
+            .map(|set| {
+                let mut entry = SalvageEntry::from(set);
+                entry.ranges = RangeList::for_cluster_stream(
+                    geometry,
+                    fat,
+                    entry.first_cluster,
+                    entry.length,
+                    entry.valid_length,
+                    entry.no_fat_chain,
+                );
+                entry
+            })
             .collect()
         }
         FilesystemKind::Fat12 => FatKind::Fat12,
@@ -394,6 +406,14 @@ pub fn find_entries(
                 accessed: stamp(18, None),
                 slots: 1,
                 ntfs: None,
+                ranges: RangeList::for_cluster_stream(
+                    geometry,
+                    fat,
+                    entry.first_cluster,
+                    length,
+                    length,
+                    false,
+                ),
             })
         })
         .collect()
