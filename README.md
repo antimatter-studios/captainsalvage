@@ -381,12 +381,12 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 - Scan (Supported): Every cluster is read once for directory entries; resumable.
 - Map (Supported): Allocation, content, ownership and confidence layers.
 - Browse (Supported): The folder tree is rebuilt from directory clusters.
-- Preview (Limited): Bytes are read through the FAT chain, or contiguously where the entry says so. A cluster that cannot be read shows as zeros.
+- Preview (Limited): Bytes are read through the FAT chain, or contiguously where the entry says so. A cluster that cannot be read is marked: the text and byte previews show each of its bytes as ?, and name the range; an image or a film shows it as zeros.
 - Resume (Supported): A paused or interrupted scan continues from its last saved cluster.
 - Baseline copy (Supported): Boot regions, FAT, bitmap and root are hashed and kept; changes are explained.
 - File tests (Supported): File formats are walked through the reassembled bytes.
 - Disk Rebuilds (Supported): Disk Rebuilds overlay cluster lists and folder links without touching the disk.
-- Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros and the copy is marked partial.
+- Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges.
 - Mount block (Supported): macOS is refused a mount of the volume while the app is open.
 
 **FAT12, FAT16, FAT32**
@@ -395,12 +395,12 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 - Scan (Supported): Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable.
 - Map (Supported): A cluster is allocated when its FAT entry is not zero, because there is no bitmap to read. Content, ownership and confidence layers.
 - Browse (Supported): The folder tree is rebuilt from directory clusters and the fixed root of FAT12 and FAT16. A long name is used only when its checksum agrees with its short name.
-- Preview (Limited): Bytes are read through the FAT chain. A deleted file's chain is cleared, so it is partial unless the person turns on the contiguous-fallback hypothesis, which assumes the clusters after the first follow it. A cluster that cannot be read shows as zeros.
+- Preview (Limited): Bytes are read through the FAT chain. A deleted file's chain is cleared, so it is partial unless the person turns on the contiguous-fallback hypothesis, which assumes the clusters after the first follow it. A cluster that cannot be read is marked: the text and byte previews show each of its bytes as ?, and name the range; an image or a film shows it as zeros.
 - Resume (Supported): A paused or interrupted scan continues from its last saved cluster.
 - Baseline copy (Supported): The boot sector, the reserved sectors, every FAT copy and the root directory are hashed and kept, and a changed copy of a FAT32 table is reported; changes are explained.
 - File tests (Supported): File formats are walked through the reassembled bytes.
 - Disk Rebuilds (Supported): Disk Rebuilds overlay cluster lists and folder links without touching the disk.
-- Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros and the copy is marked partial.
+- Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges.
 - Mount block (Supported): macOS is refused a mount of the volume while the app is open.
 <!-- capabilities:end -->
 

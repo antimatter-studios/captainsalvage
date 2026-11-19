@@ -9,6 +9,7 @@
 //! best-effort: unreadable clusters become zeros and are recorded, so one bad spot
 //! never costs the rest of a file. A manifest says exactly what was recovered.
 
+use crate::browse::{push_range, ByteRange};
 use crate::map::{Row, VERDICT_EMPTY, VERDICT_LIVE};
 use crate::session::{list_disks, whole_disk_path, Session};
 use crate::verify::verify_stream;
@@ -140,6 +141,10 @@ pub struct ManifestRow {
     pub clusters_found: u64,
     pub clusters_needed: u64,
     pub unreadable_clusters: u64,
+    /// The stretches of the file, in bytes from its start, that could not be read and are zeros in
+    /// the copy. Empty for a file with none, and for a manifest line from before this was kept.
+    #[serde(default)]
+    pub unreadable_ranges: Vec<ByteRange>,
     pub format: Option<String>,
     pub format_valid_fraction: Option<f64>,
     pub format_breaks: Option<u64>,
@@ -1044,6 +1049,7 @@ impl Session {
         let mut hasher = Sha256::new();
         let mut written = 0u64;
         let mut unreadable = 0u64;
+        let mut unreadable_ranges: Vec<ByteRange> = Vec::new();
         let valid = row.valid_length.min(row.length);
         let mut index = 0;
         // An NTFS stream is read through the driver in pieces. A piece that cannot be read ends
@@ -1111,11 +1117,17 @@ impl Session {
                 Ok(data) => data,
                 Err(_) => {
                     let mut pieces = Vec::with_capacity(run_bytes as usize);
-                    for &cluster in &clusters[index..index + run] {
+                    for (place, &cluster) in clusters[index..index + run].iter().enumerate() {
                         match self.volume.read_cluster(cluster) {
                             Ok(data) => pieces.extend_from_slice(&data),
                             Err(_) => {
                                 unreadable += 1;
+                                let first = written + place as u64 * cluster_size;
+                                push_range(
+                                    &mut unreadable_ranges,
+                                    first,
+                                    (first + cluster_size).min(row.length),
+                                );
                                 pieces.resize(pieces.len() + cluster_size as usize, 0);
                             }
                         }
@@ -1206,6 +1218,7 @@ impl Session {
             },
             clusters_needed: row.length.div_ceil(cluster_size),
             unreadable_clusters: unreadable,
+            unreadable_ranges,
             format,
             format_valid_fraction: valid_fraction,
             format_breaks: breaks,

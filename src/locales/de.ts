@@ -559,6 +559,7 @@ const strings: Record<string, string> = {
   "readable text": "lesbarer Text",
   "reading allocation bitmap": "Lesen der Belegungs-Bitmap",
   "reading backup boot region": "Lesen des Sicherungs-Bootbereichs",
+  "Could not be read from the disk, and shown as ?: {ranges}.": "Nicht vom Datenträger lesbar, als ? angezeigt: {ranges}.",
   "Reading from the disk.": "Lese vom Datenträger.",
   "reading main boot region": "Lesen des Haupt-Bootbereichs",
   "reading root directory": "Lesen des Stammverzeichnisses",

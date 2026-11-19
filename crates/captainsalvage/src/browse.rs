@@ -8,7 +8,7 @@ use crate::session::Session;
 use anyhow::{anyhow, Context, Result};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageDecoder, ImageReader};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -236,12 +236,34 @@ pub(crate) struct EntryStream {
     ntfs: Option<crate::filesystem::ntfs_salvage::StreamReference>,
 }
 
+/// A stretch of a file, in bytes from its start: `start` is in it, `end` is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ByteRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Adds the stretch from `start` to `end`, joining it to the last one when they touch.
+pub fn push_range(ranges: &mut Vec<ByteRange>, start: u64, end: u64) {
+    if start >= end {
+        return;
+    }
+    match ranges.last_mut() {
+        Some(last) if last.end == start => last.end = end,
+        _ => ranges.push(ByteRange { start, end }),
+    }
+}
+
 /// Part of a file, read live from the disk.
 pub struct EntryRange {
     pub data: Vec<u8>,
     pub start: u64,
     pub total: u64,
     pub name: String,
+    /// The stretches of this file (in bytes from its start, within what was asked for) whose
+    /// clusters could not be read. `data` holds zeros there: they are not the file's bytes, and the
+    /// caller is to show them as missing, never as zeros.
+    pub unreadable: Vec<ByteRange>,
 }
 
 #[derive(Clone)]
@@ -613,9 +635,10 @@ impl Session {
         Ok(stream)
     }
 
-    /// Clusters that follow each other are read together. A bad spot reads as zeros, so
-    /// one damaged cluster never hides the rest of a file.
-    fn read_cluster_run(&self, clusters: &[u32]) -> Vec<u8> {
+    /// Clusters that follow each other are read together. A bad spot reads as zeros, so one
+    /// damaged cluster never hides the rest of a file, and the places in the run (by cluster) that
+    /// could not be read are returned with the bytes, so a reader can tell the zeros from real ones.
+    fn read_cluster_run(&self, clusters: &[u32]) -> (Vec<u8>, Vec<usize>) {
         let size = self.volume.geometry.cluster_size() as usize;
         if clusters
             .iter()
@@ -625,11 +648,12 @@ impl Session {
                 self.volume.cluster_offset(clusters[0]),
                 clusters.len() * size,
             ) {
-                return data;
+                return (data, Vec::new());
             }
         }
         let mut out = Vec::with_capacity(clusters.len() * size);
-        for &cluster in clusters {
+        let mut unreadable = Vec::new();
+        for (place, &cluster) in clusters.iter().enumerate() {
             let data = self
                 .volume
                 .valid_cluster(cluster)
@@ -637,10 +661,13 @@ impl Session {
                 .flatten();
             match data {
                 Some(data) => out.extend_from_slice(&data),
-                None => out.resize(out.len() + size, 0),
+                None => {
+                    unreadable.push(place);
+                    out.resize(out.len() + size, 0);
+                }
             }
         }
-        out
+        (out, unreadable)
     }
 
     /// How many bytes of this file can be read, and its name.
@@ -656,6 +683,7 @@ impl Session {
         let total = stream.total;
         let end = start.saturating_add(length).min(total);
         let mut data = Vec::new();
+        let mut unreadable = Vec::new();
         if let (Some(ntfs), true) = (&stream.ntfs, start < end) {
             data = self.read_ntfs_stream(ntfs, start, end - start)?;
             self.require_disk()?;
@@ -678,7 +706,17 @@ impl Session {
                 {
                     run += 1;
                 }
-                let bytes = self.read_cluster_run(&stream.clusters[index..index + run]);
+                let (bytes, missing) = self.read_cluster_run(&stream.clusters[index..index + run]);
+                for place in missing {
+                    let first = position + place as u64 * size;
+                    // Only what was asked for, and only what the file has: bytes past its valid
+                    // length are zeros by definition, not unreadable ones.
+                    push_range(
+                        &mut unreadable,
+                        first.max(start),
+                        (first + size).min(end).min(stream.valid),
+                    );
+                }
                 let from = start.saturating_sub(position) as usize;
                 let to = (end - position).min(bytes.len() as u64) as usize;
                 data.extend_from_slice(&bytes[from..to]);
@@ -699,6 +737,7 @@ impl Session {
             start,
             total,
             name: stream.name.clone(),
+            unreadable,
         })
     }
 

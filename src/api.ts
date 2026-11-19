@@ -1,4 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ByteRange } from "./unreadable";
+
+export type { ByteRange };
 
 export type Layer = "allocation" | "content" | "entropy" | "ownership" | "confidence" | "folders" | "lens";
 
@@ -723,6 +726,12 @@ export function mediaInfo(): Promise<MediaInfo | null> {
 /** Converted by ffmpeg as it plays, a few seconds at a time. Nothing is saved. */
 export function convertedUrl(media: MediaInfo, id: number): string {
   return `${media.baseUrl}/hls/${id}/index.m3u8?t=${media.token}`;
+}
+
+/** The stretches of a file, within a range, whose clusters could not be read. The bytes there come back
+ * as zeros from `readEntryRange`; they are not the file's. */
+export function entryUnreadable(id: number, start: number, length: number): Promise<ByteRange[]> {
+  return invoke<ByteRange[]>("entry_unreadable", { id, start, length });
 }
 
 export async function readEntryRange(id: number, start: number, length: number): Promise<Uint8Array> {
