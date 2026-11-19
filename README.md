@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.8.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.8.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.8.1 — 2026-11-19
+
+**Maintenance**
+
+- The changelog hook lets the integration branch of a release commit the release tool's CHANGELOG.md, so a candidate can be cut from it (#252) ([#282](https://github.com/antimatter-studios/captainsalvage/pull/282))
+
 ### v0.8.0 — 2026-11-19
 
 **Added**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **The "Something wrote to this disk" box can be closed.** It had no clear way to close: only a small "Fold away" link among its buttons, and folding it left a red strip across the bottom of every screen for as long as the disk was changed. The box now has a close button (an ×) in its top-right corner, and Escape closes it too. Closing it removes it completely, with no strip. What it said is not lost: the red Check disk safety button at the top right stays red while the disk is changed, and its panel now shows the same findings (what changed, how many clusters and files, the advice about macOS) with Show the files, Rebuild the map now and Check again. If something writes to the disk again later, the box comes back once for that new change.
-
-### v0.4.12 — 2026-11-19
-
-**Fixed**
-
-- **The parts of a start-screen disk card line up.** Under a disk, the partitions were indented, but the notices below them ("Mounted, so macOS may write to it" and "Reading needs your permission") started at the card's left edge, so the card had three different left edges. The notices now start on the same line as the partitions, and their text and commands start at the same place as the partition names.
 
 <!-- changelog:end -->
 

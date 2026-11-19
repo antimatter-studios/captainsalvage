@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-11-19
+
+### Maintenance
+
+- The changelog hook lets the integration branch of a release commit the release tool's CHANGELOG.md, so a candidate can be cut from it (#252) ([#282](https://github.com/antimatter-studios/captainsalvage/pull/282))
+
 ## [0.8.0] — 2026-11-19
 
 ### Added
