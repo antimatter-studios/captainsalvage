@@ -934,7 +934,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.5 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.6 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1069,6 +1069,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 <!-- changelog:start -->
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
+
+### v0.4.6 — 2026-11-19
+
+**Maintenance**
+
+- A window test opens a synthetic NTFS image, scans, browses, previews a fragmented file and copies it out ([#246](https://github.com/antimatter-studios/captainsalvage/pull/246))
 
 ### v0.4.5 — 2026-11-19
 
