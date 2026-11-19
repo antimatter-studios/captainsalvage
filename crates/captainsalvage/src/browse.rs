@@ -685,7 +685,16 @@ impl Session {
         let mut data = Vec::new();
         let mut unreadable = Vec::new();
         if let (Some(ntfs), true) = (&stream.ntfs, start < end) {
-            data = self.read_ntfs_stream(ntfs, start, end - start)?;
+            let (bytes, missing) = self.read_ntfs_stream_marked(ntfs, start, end - start)?;
+            data = bytes;
+            for range in missing {
+                // Bytes past the valid length are zeros NTFS defines, not unreadable ones.
+                push_range(
+                    &mut unreadable,
+                    start + range.start,
+                    (start + range.end).min(stream.valid),
+                );
+            }
             self.require_disk()?;
             // Bytes past the valid length are defined as zeros, and the driver reads them so.
             if end > stream.valid {

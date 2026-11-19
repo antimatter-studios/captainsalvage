@@ -1879,6 +1879,49 @@ impl Session {
         Ok(data)
     }
 
+    /// As `read_ntfs_stream`, for a stream NTFS holds in runs, but a stretch that cannot be read
+    /// (a damaged or missing run, a run outside the volume, a failed read) is zeros in the bytes
+    /// and a range in the second part, in bytes from `offset`, instead of an error for the whole
+    /// read. A stream that is compressed, encrypted, in other records or incomplete, and a record
+    /// that changed, are still errors: they are not a bad spot, and nothing is made up for them.
+    /// The unit that fails or does not is a cluster.
+    pub fn read_ntfs_stream_marked(
+        &self,
+        stream: &crate::filesystem::ntfs_salvage::StreamReference,
+        offset: u64,
+        length: u64,
+    ) -> Result<(Vec<u8>, Vec<crate::browse::ByteRange>)> {
+        let access = self
+            .volume
+            .ntfs
+            .as_ref()
+            .context("this volume is not NTFS")?;
+        access.verify(stream)?;
+        if let Ok(data) = self.read_ntfs_stream(stream, offset, length) {
+            return Ok((data, Vec::new()));
+        }
+        self.require_disk()?;
+        let size = self.volume.geometry.cluster_size();
+        let end = stream.length.min(offset.saturating_add(length));
+        let mut data = Vec::with_capacity(end.saturating_sub(offset) as usize);
+        let mut missing = Vec::new();
+        let mut at = offset;
+        while at < end {
+            let piece = (size - at % size).min(end - at);
+            match self.read_ntfs_stream(stream, at, piece) {
+                Ok(bytes) => data.extend_from_slice(&bytes),
+                Err(_) => {
+                    // A source that went away is not a bad cluster.
+                    self.require_disk()?;
+                    crate::browse::push_range(&mut missing, at - offset, at - offset + piece);
+                    data.resize(data.len() + piece as usize, 0);
+                }
+            }
+            at += piece;
+        }
+        Ok((data, missing))
+    }
+
     pub fn entropy_map(&self) -> Vec<u8> {
         self.workspace.read_cluster_map(
             &self.workspace.entropy(),

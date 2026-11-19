@@ -1052,8 +1052,11 @@ impl Session {
         let mut unreadable_ranges: Vec<ByteRange> = Vec::new();
         let valid = row.valid_length.min(row.length);
         let mut index = 0;
-        // An NTFS stream is read through the driver in pieces. A piece that cannot be read ends
-        // the copy there: the file is reported partial, and nothing is filled in for it.
+        // An NTFS stream is read through the driver in pieces. A stretch of a stream held in runs
+        // that cannot be read is zeros in the copy and a range in the manifest, as on FAT and exFAT.
+        // A stream that cannot be read at all (compressed, encrypted, in other records, incomplete,
+        // or a record that changed) ends the copy there: it is reported partial, and nothing is
+        // filled in for it.
         let mut stream_error: Option<String> = None;
         if let Some(stream) = &ntfs {
             while written < row.length {
@@ -1063,8 +1066,20 @@ impl Session {
                     return Ok(None);
                 }
                 let wanted = (row.length - written).min(MAX_RUN_BYTES);
-                let mut chunk = match self.read_ntfs_stream(stream, written, wanted) {
-                    Ok(chunk) if !chunk.is_empty() => chunk,
+                let mut chunk = match self.read_ntfs_stream_marked(stream, written, wanted) {
+                    Ok((chunk, missing)) if !chunk.is_empty() => {
+                        for range in missing {
+                            // Only what the file has written: zeros past its valid length are
+                            // NTFS's own.
+                            let (from, to) =
+                                (written + range.start, (written + range.end).min(valid));
+                            if from < to {
+                                unreadable += (to - from).div_ceil(cluster_size);
+                                push_range(&mut unreadable_ranges, from, to);
+                            }
+                        }
+                        chunk
+                    }
                     Ok(_) => {
                         stream_error = Some("the stream ended early".into());
                         break;
@@ -1191,6 +1206,8 @@ impl Session {
             format!("partial: could not read the stream ({error})")
         } else if written < row.length {
             "partial: chain ended early".to_string()
+        } else if unreadable > 0 && ntfs.is_some() {
+            "partial: unreadable parts of the stream filled with zeros".to_string()
         } else if unreadable > 0 {
             "partial: unreadable clusters filled with zeros".to_string()
         } else if row.clusters_allocated > 0 && row.verdict != VERDICT_LIVE {
