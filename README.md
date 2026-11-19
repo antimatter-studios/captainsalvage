@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.6.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.7.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.7.0 — 2026-11-19
+
+**Added**
+
+- **NTFS shows and copies what could be read of a damaged file.** When part of an NTFS file's data cannot be read (a damaged or missing run, a run outside the volume, or a read that fails), the text and byte previews now show each unreadable byte as `?` and say which bytes they are, and a copy keeps the file's layout, writes zeros there and the rest as read, is marked partial, and its manifest names the unreadable byte ranges. Before, the whole read failed and a copy made no file. Compressed, encrypted and incomplete streams are not treated this way: they still say why they cannot be read, and no file of zeros is made for them.
+
 ### v0.6.0 — 2026-11-19
 
 **Added**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **Opening a large volume that was scanned and tested before is much faster.** The window asks the app for its status every two seconds, and each of those calls counted every file test result in the map with a sort, which on a large volume (hundreds of thousands of results) kept the app busy so that opening the volume waited behind it for up to a minute. The counts are now read from an index, once, and kept up to date as tests run. The app also no longer asks macOS about the disks every two seconds: it reads the list of mounted volumes from the system without starting a program, runs `diskutil` once for a volume it has not seen before, and checks the disks' write counters in the background, so a status call neither starts a process nor waits on a disk.
-
-### v0.4.9 — 2026-11-19
-
-**Maintenance**
-
-- The shared engine asks the filesystem kind what it needs and no longer tests for exFAT, FAT or NTFS by name ([#255](https://github.com/antimatter-studios/captainsalvage/pull/255))
 
 <!-- changelog:end -->
 
