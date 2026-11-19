@@ -11,6 +11,7 @@ whose subject is the pull request's title, ending in (#number).
     scripts/release.py prepare --append [VERSION]      add the fragments that remain to a section that exists
     scripts/release.py notes-check [--strict]          flag retired words in the notes a release will say
     scripts/release.py contents [VERSION]              print the next version and what is in it
+    scripts/release.py maintenance [REF]               print the entries for pull requests that write no fragment
     scripts/release.py section VERSION                 print a version's CHANGELOG.md section
     scripts/release.py check v0.2.0                    fail unless a tag matches the files
     scripts/release.py next-rc                         print the next release candidate, such as 0.4.0-rc1
@@ -21,10 +22,16 @@ whose subject is the pull request's title, ending in (#number).
 
 scripts/create-release is what you run to cut a release: it calls these.
 
-Version numbers follow what was merged since the last tag. A new feature raises the minor
-number and resets the patch. A fix raises the patch. Anything else moves nothing. Several
-merges take the largest of these, once. So the number is worked out, and a build shows the
-number that code would be released as. Going to 1.0.0 is a deliberate choice: name it.
+Every merged pull request is released. Version numbers follow what was merged since the last tag:
+a new feature raises the minor number and resets the patch, and every other type (fix, docs, test,
+chore, ci, refactor, or none) raises the patch. Several merges take the largest of these, once.
+The release commits themselves (`chore(release)`) move nothing. So the number is worked out, and a
+build shows the number that code would be released as. Going to 1.0.0 is a deliberate choice that
+only the owner makes: name it. A release is a tag and its notes, and has no binaries.
+
+A pull request that is not a feature or a fix has no fragment, so `prepare` lists it itself, from
+git, under "Documentation" (docs) or "Maintenance" (test, chore, ci, refactor, anything else) in the
+release's section. A release of only such changes is therefore never empty.
 
 A release candidate, 0.4.0-rc1, is a release's content under a version that has not been
 released. The release pull request keeps VERSION at 0.4.0, and the candidate's tag points at a
@@ -86,8 +93,11 @@ VOCABULARY_EXEMPT = "Removed"
 # An entry that says it is a rename may name the old word, because that is what it reports.
 RENAME_MARKERS = re.compile(r"\b(?:is now called|are now called|was renamed|renamed to)\b", re.IGNORECASE)
 NO_CHANGES = "No pull requests merged yet."
-SECTION_ORDER = ["Added", "Fixed", "Documentation", "Other"]
+SECTION_ORDER = ["Added", "Fixed", "Documentation", "Maintenance"]
 SECTION_FOR_TYPE = {"feat": "Added", "fix": "Fixed", "docs": "Documentation"}
+# The sections of pull requests that write no fragment: `prepare` writes their entries from git.
+SECTIONS_WITHOUT_FRAGMENTS = ("Documentation", "Maintenance")
+MAINTENANCE_FRAGMENT = "maintenance.md"
 SUBJECT = re.compile(r"^(?:(?P<type>[a-z]+)(?P<scope>\([^)]*\))?(?P<breaking>!)?:\s*)?(?P<title>.+?)\s*\(#(?P<number>\d+)\)$")
 LEVEL_MAJOR = 3
 LEVEL_MINOR = 2
@@ -127,7 +137,7 @@ def parse_subject(subject):
     title = match["title"]
     return {
         "number": int(match["number"]),
-        "section": SECTION_FOR_TYPE.get(kind, "Other"),
+        "section": SECTION_FOR_TYPE.get(kind, "Maintenance"),
         "title": title[0].upper() + title[1:],
     }
 
@@ -256,19 +266,29 @@ def next_candidate(version, tags):
 
 
 def release_level(subjects):
-    """How far these squash commits move the version. A commit from no pull request counts for nothing."""
+    """How far these squash commits move the version. Every merged pull request is released, so one
+    counts as a patch at least. A commit from no pull request, and a release commit, count for nothing."""
     level = LEVEL_NONE
     for subject in subjects:
-        match = SUBJECT.match(subject.strip())
-        if not match:
+        if not parse_subject(subject):
             continue
+        match = SUBJECT.match(subject.strip())
         if match["breaking"]:
             level = max(level, LEVEL_MAJOR)
         elif match["type"] == "feat":
             level = max(level, LEVEL_MINOR)
-        elif match["type"] == "fix":
+        else:
             level = max(level, LEVEL_PATCH)
     return level
+
+
+def maintenance_fragment(subjects, repo=REPO):
+    """The fragment for the merged pull requests that write none (docs, test, chore, ci, refactor and
+    the rest), made from their subjects: `### Documentation` and `### Maintenance` entries linking each
+    pull request. Empty when there are none."""
+    pulls = [parse_subject(subject) for subject in subjects]
+    pulls = [pull for pull in pulls if pull and pull["section"] in SECTIONS_WITHOUT_FRAGMENTS]
+    return render_notes(pulls, repo) if pulls else ""
 
 
 def next_version(manifest, latest_tag, subjects):
@@ -395,10 +415,16 @@ def command_contents(args):
     if args.version:
         version = args.version.removeprefix("v")
     elif not release:
-        raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
+        raise SystemExit("Nothing to release: no pull request has merged since the last tag.")
     print(version)
     for subject in subjects:
         print(subject)
+
+
+def command_maintenance(args):
+    """Prints the entries `prepare` would write for the pull requests that have no fragment, going by
+    what is committed at a ref (default origin/main) since its last release."""
+    print(maintenance_fragment(version_at(args.ref)[2]), end="")
 
 
 def command_section(args):
@@ -476,12 +502,20 @@ def command_prepare(args):
     else:
         version, release = current_version()
         if not release:
-            raise SystemExit("Nothing to release: no feat or fix has merged since the last tag.")
+            raise SystemExit("Nothing to release: no pull request has merged since the last tag.")
     # Everything that can be known to fail is checked before the first file changes.
     require_npm_packages()
     gather = ["bash", str(ROOT / "scripts/changelog-gather.sh"), *(["--append"] if args.append else []), version]
+    # The pull requests that write no fragment are listed from git, in a fragment of their own that
+    # the gathering takes with the rest and deletes.
+    extra = maintenance_fragment(subjects_since(latest_tag()))
+    path = ROOT / FRAGMENTS / MAINTENANCE_FRAGMENT
+    if extra:
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(extra)
     done = subprocess.run(gather, cwd=ROOT)
     if done.returncode != 0:
+        path.unlink(missing_ok=True)
         raise SystemExit(done.returncode)
     write_readme()
     write_versions(version)
@@ -716,6 +750,9 @@ def main():
     contents = commands.add_parser("contents")
     contents.add_argument("version", nargs="?")
     contents.set_defaults(run=command_contents)
+    maintenance = commands.add_parser("maintenance")
+    maintenance.add_argument("ref", nargs="?", default="origin/main")
+    maintenance.set_defaults(run=command_maintenance)
     section = commands.add_parser("section")
     section.add_argument("version")
     section.set_defaults(run=command_section)

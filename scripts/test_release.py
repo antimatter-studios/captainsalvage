@@ -24,8 +24,9 @@ class Subjects(unittest.TestCase):
     def test_each_type_lands_in_its_section(self):
         self.assertEqual(release.parse_subject("fix: a thing (#2)")["section"], "Fixed")
         self.assertEqual(release.parse_subject("docs: a thing (#3)")["section"], "Documentation")
-        self.assertEqual(release.parse_subject("ci: a thing (#4)")["section"], "Other")
-        self.assertEqual(release.parse_subject("no prefix at all (#5)")["section"], "Other")
+        for kind in ("ci", "test", "chore", "refactor"):
+            self.assertEqual(release.parse_subject(f"{kind}: a thing (#4)")["section"], "Maintenance")
+        self.assertEqual(release.parse_subject("no prefix at all (#5)")["section"], "Maintenance")
 
     def test_a_commit_without_a_pull_request_is_left_out(self):
         self.assertIsNone(release.parse_subject("docs: add the README"))
@@ -40,7 +41,7 @@ class Notes(unittest.TestCase):
         text = release.render_notes(pulls, repo="o/r")
         self.assertIn("### Added\n\n- One ([#1](https://github.com/o/r/pull/1))", text)
         self.assertIn("### Fixed\n\n- Two ([#2](https://github.com/o/r/pull/2))", text)
-        self.assertNotIn("### Other", text)
+        self.assertNotIn("### Maintenance", text)
         self.assertNotIn("Full Changelog", text)
 
     def test_an_empty_range_says_so(self):
@@ -58,9 +59,20 @@ class Versions(unittest.TestCase):
         subjects = ["fix: one (#1)", "feat: two (#2)", "feat: three (#3)", "fix: four (#4)"]
         self.assertEqual(release.next_version("0.1.0", "v0.2.3", subjects), ("0.3.0", True))
 
-    def test_anything_else_releases_nothing(self):
-        subjects = ["docs: a (#1)", "chore: b (#2)", "test: c (#3)", "ci: d (#4)", "no prefix (#5)"]
-        self.assertEqual(release.next_version("0.1.0", "v0.2.3", subjects), ("0.2.3", False))
+    def test_every_other_merged_pull_request_raises_the_patch(self):
+        for subject in ("docs: a (#1)", "chore: b (#2)", "test: c (#3)", "ci: d (#4)", "refactor: e (#5)", "no prefix (#6)"):
+            self.assertEqual(release.next_version("0.1.0", "v0.2.3", [subject]), ("0.2.4", True), subject)
+
+    def test_a_feature_or_a_fix_beats_the_types_that_only_raise_the_patch(self):
+        subjects = ["docs: a (#1)", "test: b (#2)", "feat: c (#3)", "chore: d (#4)"]
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", subjects), ("0.3.0", True))
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["ci: a (#1)", "fix: b (#2)"]), ("0.2.4", True))
+
+    def test_the_release_commit_itself_releases_nothing(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["chore(release): v0.2.3 (#9)"]), ("0.2.3", False))
+
+    def test_a_breaking_change_of_any_type_is_still_a_minor_before_one(self):
+        self.assertEqual(release.next_version("0.1.0", "v0.2.3", ["refactor!: a (#1)"]), ("0.3.0", True))
 
     def test_the_same_code_keeps_the_same_number(self):
         self.assertEqual(release.next_version("0.1.0", "v0.2.3", []), ("0.2.3", False))
@@ -660,6 +672,71 @@ class Prepare(Project):
     def prepare(self, version=None, append=False):
         with contextlib.redirect_stdout(io.StringIO()):
             release.command_prepare(argparse.Namespace(version=version, append=append))
+
+    def tag_release(self):
+        self.git("tag", "-a", "v0.4.0", "-m", "release")
+
+    def test_a_release_of_only_tests_says_so_under_maintenance_and_raises_the_patch(self):
+        self.tag_release()
+        self.commit("test: an oracle for the thing (#7)")
+        self.commit("chore: a tool changes (#8)")
+        self.assertEqual(release.current_version()[:2], ("0.4.1", True))
+        self.prepare()
+        text = release.CHANGELOG.read_text()
+        self.assertIn("## [0.4.1]", text)
+        section = text[text.index("## [0.4.1]"):text.index("## [0.4.0]")]
+        self.assertIn("### Maintenance", section)
+        self.assertIn("- An oracle for the thing ([#7](https://github.com/antimatter-studios/captainsalvage/pull/7))", section)
+        self.assertIn("- A tool changes ([#8](https://github.com/antimatter-studios/captainsalvage/pull/8))", section)
+        self.assertNotIn("### Added", section)
+        self.assertEqual((self.root / "VERSION").read_text(), "0.4.1\n")
+        self.assertEqual(sorted(path.name for path in (self.root / "changelog.d").iterdir()), ["README.md"])
+
+    def test_documentation_pull_requests_are_listed_under_documentation(self):
+        self.tag_release()
+        self.commit("docs: say how it works (#9)")
+        self.prepare()
+        section = release.CHANGELOG.read_text()
+        self.assertIn("### Documentation\n\n- Say how it works", section)
+        self.assertNotIn("### Maintenance", section.split("## [0.4.0]")[0])
+
+    def test_maintenance_goes_beside_the_fragments_of_a_feature(self):
+        self.tag_release()
+        self.commit("feat: a thing (#10)")
+        self.fragment("a-thing.md", "### Added\n\n- **A thing.** Yes.\n")
+        self.commit("test: its tests (#11)")
+        self.assertEqual(release.current_version()[:2], ("0.5.0", True))
+        self.prepare("0.5.0")
+        section = release.CHANGELOG.read_text().split("## [0.4.0]")[0]
+        self.assertIn("### Added\n\n- **A thing.** Yes.", section)
+        self.assertIn("### Maintenance\n\n- Its tests ([#11]", section)
+        self.assertNotIn("a feature's own pull request (#10)", section)
+
+    def test_the_release_commit_is_not_listed_as_maintenance(self):
+        self.tag_release()
+        self.commit("chore(release): v0.3.0 (#6)")
+        self.commit("ci: a workflow (#12)")
+        self.assertEqual(release.maintenance_fragment(release.subjects_since("v0.4.0")).count("- "), 1)
+
+    def test_with_no_pull_request_and_no_fragment_there_is_still_nothing_to_release(self):
+        self.tag_release()
+        self.commit("pushed straight to main")
+        self.assertEqual(release.current_version()[:2], ("0.4.0", False))
+        self.assertEqual(release.maintenance_fragment(release.subjects_since("v0.4.0")), "")
+        self.assertIn("Nothing to release", self.refused(release.command_prepare, argparse.Namespace(version=None, append=False)))
+
+    def test_append_does_not_list_a_maintenance_entry_twice(self):
+        release.CHANGELOG.write_text(self.APPENDING)
+        self.tag_release()
+        self.commit("test: a check (#13)")
+        self.prepare(append=True)
+        self.commit("test: another check (#14)")
+        self.prepare(append=True)
+        self.commit("test: a third check (#15)")
+        self.prepare(append=True)
+        text = release.CHANGELOG.read_text()
+        for number in (13, 14, 15):
+            self.assertEqual(text.count(f"/pull/{number})"), 1, number)
 
     def test_the_license_list_is_written_after_the_version_is_set(self):
         self.fragment("a.md", "### Added\n\n- **A thing.** Yes.\n")

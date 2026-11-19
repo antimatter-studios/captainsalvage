@@ -8,6 +8,10 @@
 # fragments, so the entries move rather than copy and the directory is empty
 # again after every release (its README.md stays).
 #
+# `scripts/release.py prepare` writes one more fragment before this runs, `maintenance.md`, with the
+# pull requests that wrote none of their own (docs, test, chore, ci, refactor), so every merged pull
+# request is in the notes. This script treats it like any other fragment.
+#
 # Headings: Keep a Changelog's own, in its order (Added, Changed, Deprecated,
 # Removed, Fixed, Security), then any other a fragment used, in the order the
 # fragments first use them. Fragments are read in file-name order, so the

@@ -2,15 +2,20 @@
 
 ## Each pull request's title sets the next version
 
-When a release is prepared, the version comes from the type at the start of each title since
-the last one, and nothing else. So before opening a pull request, assess what it changes for
-someone using the app, and title it to match.
+Every merged pull request is released. When a release is prepared, the version comes from the type
+at the start of each title since the last one, and nothing else. So before opening a pull request,
+assess what it changes for someone using the app, and title it to match.
 
 | Type | Use it when | Version |
 |---|---|---|
+| `feat:` | The app can do something it could not do before | Minor goes up, patch resets to 0 |
 | `fix:` | Something that should already work was wrong, and now it is right | Patch goes up |
-| `feat:` | The app can do something it could not do before | Minor goes up |
-| `docs:`, `test:`, `chore:`, `ci:`, `refactor:` | Someone using the app would notice nothing | None, and no release |
+| `docs:`, `test:`, `chore:`, `ci:`, `refactor:` | Someone using the app would notice nothing | Patch goes up |
+
+A release is a GitHub tag with its notes, and has no binaries. The `chore(release)` commits that
+make a release move nothing. A `feat` or `fix` writes a changelog fragment (below); a pull request of
+any other type writes none, and the release lists it itself, under Documentation (`docs:`) or
+Maintenance (the rest), so a release of only tests is not empty.
 
 - Judge by the effect on the user, not by the size of the change. A large repair is still a
   `fix:`, and a small new option is still a `feat:`.
@@ -18,7 +23,8 @@ someone using the app, and title it to match.
 - If a change does both, split it into two pull requests. If it cannot be split, use `feat:`.
 - Say why in the description, so the assessment can be checked. Correct the title before
   merging if the work changed, because the squash commit takes its subject from the title.
-- Never set a version by hand. 1.0.0 and other named versions are the owner's decision.
+- Never set a version by hand. Only the owner can name 1.0.0 or any other version; the number
+  otherwise follows the rule above, and `scripts/create-release` is how it is cut.
 - **No AI attribution and no co-author trailers**, in commits or in pull request descriptions.
 
 ## Changelog entries are fragments

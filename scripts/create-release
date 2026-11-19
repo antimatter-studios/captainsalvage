@@ -342,7 +342,11 @@ stage_cut() {
     # What goes out is what is on main, not what happens to be in this checkout.
     local fragments
     fragments="$(git ls-tree -r --name-only origin/main -- changelog.d | grep -v '^changelog.d/README.md$' | grep '\.md$' || true)"
-    [ -n "$fragments" ] || FAILURES+=("changelog.d/ on main has no fragments, so this release would have nothing to say.")
+    # A pull request that is not a feature or a fix writes no fragment: its entry is made from git.
+    local maintenance
+    maintenance="$("$PYTHON" scripts/release.py maintenance origin/main 2>/dev/null || true)"
+    [ -n "$fragments" ] || [ -n "$maintenance" ] ||
+        FAILURES+=("changelog.d/ on main has no fragments and no pull request without one has merged, so this release would have nothing to say.")
     # The words the product has retired do not belong in what a release says, except under Removed or in a rename.
     local vocabulary
     if ! vocabulary="$("$PYTHON" scripts/release.py notes-check --fragments origin/main --strict 2>&1)" &&
@@ -357,10 +361,16 @@ stage_cut() {
     printf '%s\n' "$contents" | sed -n '2,$p' | sed 's/^/  /'
     echo
     echo "Entries it will say:"
-    printf '%s\n' "$fragments" | while IFS= read -r path; do
-        git show "origin/main:$path" | sed 's/^/  /'
+    if [ -n "$fragments" ]; then
+        printf '%s\n' "$fragments" | while IFS= read -r path; do
+            git show "origin/main:$path" | sed 's/^/  /'
+            echo
+        done
+    fi
+    if [ -n "$maintenance" ]; then
+        printf '%s\n' "$maintenance" | sed 's/^/  /'
         echo
-    done
+    fi
     if [ "$DRY_RUN" = "true" ]; then
         echo "Dry run: nothing has changed."
         exit 0
