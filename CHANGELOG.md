@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-11-19
+
+### Maintenance
+
+- The shared engine asks the filesystem kind what it needs and no longer tests for exFAT, FAT or NTFS by name ([#255](https://github.com/antimatter-studios/captainsalvage/pull/255))
+
 ## [0.4.8] — 2026-11-19
 
 ### Fixed
