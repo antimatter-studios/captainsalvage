@@ -1024,7 +1024,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.5.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.5.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1160,6 +1160,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.5.1 — 2026-11-19
+
+**Maintenance**
+
+- The shared engine has a typed range model, and the FAT, exFAT and NTFS adapters fill it for every entry beside the cluster lists ([#272](https://github.com/antimatter-studios/captainsalvage/pull/272))
+
 ### v0.5.0 — 2026-11-19
 
 **Added**
@@ -1213,12 +1219,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **A file whose short DOS name has accented letters shows them correctly.** On FAT volumes, a file made by DOS, a camera or another old device, with no long name and letters such as é, ä or ö in its 8.3 name, was listed with replacement characters (`���X.TXT`). The name is now read in the DOS code page 437, so it shows as `éäöX.TXT`.
-
-### v0.4.7 — 2026-11-19
-
-**Documentation**
-
-- The README lists what each filesystem supports from the table the app reports, and FAT's notes stop claiming a bitmap ([#220](https://github.com/antimatter-studios/captainsalvage/pull/220))
 
 <!-- changelog:end -->
 

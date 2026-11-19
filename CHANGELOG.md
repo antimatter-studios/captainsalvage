@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-19
+
+### Maintenance
+
+- The shared engine has a typed range model, and the FAT, exFAT and NTFS adapters fill it for every entry beside the cluster lists ([#272](https://github.com/antimatter-studios/captainsalvage/pull/272))
+
 ## [0.5.0] — 2026-11-19
 
 ### Added
