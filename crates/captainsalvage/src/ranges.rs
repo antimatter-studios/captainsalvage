@@ -8,10 +8,11 @@
 //! stream's size, which `RangeList::new` checks.
 //!
 //! This is the first slice of issue #212. The model is filled in by the FAT, exFAT and NTFS
-//! adapters for every entry they describe, from the same data the cluster lists come from, and
-//! nothing reads it but tests: `map::EntrySource::Clusters` and NTFS's `StreamReference` stay what
-//! the preview, the export, the map and the Disk Rebuilds read. It is never serialised and never
-//! stored, so saved scans and the frozen parity references do not change.
+//! adapters for every entry they describe, from the same data the cluster lists come from. The second
+//! slice moved the preview of a FAT or exFAT entry to read them (`RangeList::from_clusters` and
+//! `RangeList::read`); `map::EntrySource::Clusters` and NTFS's `StreamReference` are still what the
+//! export, the map and the Disk Rebuilds read. It is never serialised and never stored, so saved scans
+//! and the frozen parity references do not change.
 //!
 //! Reading a range, once something does: only `Sparse` reads as zeros. `Missing` is an error, a
 //! `Compressed` range is decoded by the format's own reader (an LZNT1 stream is), and a `Shared` range
@@ -213,6 +214,116 @@ impl RangeList {
             }
         }
         Self { ranges: kept }
+    }
+
+    /// The ranges of a stream held in an explicit list of clusters (the list the map keeps for an entry):
+    /// clusters that lie side by side are one readable range, a cluster outside the volume is
+    /// `Missing`, and bytes past `valid_length` are `Sparse`. `length` is the stream's size, at most
+    /// what the clusters hold; the list may be longer than the stream needs, and the extra is ignored.
+    pub fn from_clusters(
+        geometry: &VolumeGeometry,
+        clusters: &[u32],
+        length: u64,
+        valid_length: u64,
+    ) -> Self {
+        let size = geometry.cluster_size();
+        let mut found: Vec<Range> = Vec::new();
+        let mut claimed = 0u64;
+        for &cluster in clusters {
+            if claimed >= length {
+                break;
+            }
+            let bytes = size.min(length - claimed);
+            let range = if valid_cluster(geometry, cluster) {
+                Range {
+                    start: claimed,
+                    length: bytes,
+                    kind: RangeKind::Readable,
+                    provenance: Some(Provenance::Source {
+                        offset: allocation::cluster_offset(geometry, cluster),
+                        length: bytes,
+                    }),
+                }
+            } else {
+                missing(claimed, bytes)
+            };
+            push_merged(&mut found, range);
+            claimed += bytes;
+        }
+        if claimed < length {
+            push_merged(&mut found, missing(claimed, length - claimed));
+        }
+        Self { ranges: found }.unwritten_from(valid_length.min(length))
+    }
+
+    /// Reads bytes `start` to `end` of the stream (`end` is not read, and is at most the stream's size).
+    /// `read_source(offset, length)` reads bytes of the source, or none when it cannot.
+    ///
+    /// A `Readable` or `Shared` range is read from its place on the source in one piece; when that
+    /// fails it is read again in whole units of `unit` bytes (a cluster, from the start of the range),
+    /// so that one bad cluster costs only itself. A `Sparse` range is zeros and is not read. A range of
+    /// any other kind, and a piece that cannot be read, is zeros too, and is returned among the
+    /// stretches (as `(start, end)` in bytes from the start of the stream) that are not the stream's
+    /// bytes: the caller shows those as missing, never as data.
+    pub fn read(
+        &self,
+        start: u64,
+        end: u64,
+        unit: u64,
+        read_source: &mut dyn FnMut(u64, u64) -> Option<Vec<u8>>,
+    ) -> (Vec<u8>, Vec<(u64, u64)>) {
+        let mut data = Vec::with_capacity(end.saturating_sub(start) as usize);
+        let mut unreadable: Vec<(u64, u64)> = Vec::new();
+        let mut note = |from: u64, to: u64| match unreadable.last_mut() {
+            Some(last) if last.1 == from => last.1 = to,
+            _ => unreadable.push((from, to)),
+        };
+        for range in &self.ranges {
+            let from = range.start.max(start);
+            let to = range.end().min(end);
+            if from >= to {
+                continue;
+            }
+            match (range.kind, range.provenance) {
+                (RangeKind::Sparse, _) => data.resize(data.len() + (to - from) as usize, 0),
+                (
+                    RangeKind::Readable | RangeKind::Shared,
+                    Some(Provenance::Source { offset, .. }),
+                ) => {
+                    let place = |at: u64| offset + (at - range.start);
+                    match read_source(place(from), to - from) {
+                        Some(bytes) if bytes.len() as u64 == to - from => {
+                            data.extend_from_slice(&bytes)
+                        }
+                        _ => {
+                            // Whole units, as a bad cluster fails as a whole, whatever part of it was asked for.
+                            let mut at = from;
+                            while at < to {
+                                let first = range.start + (at - range.start) / unit * unit;
+                                let next = (first + unit).min(to);
+                                match read_source(place(first), unit) {
+                                    Some(bytes) if bytes.len() as u64 == unit => {
+                                        data.extend_from_slice(
+                                            &bytes[(at - first) as usize..(next - first) as usize],
+                                        );
+                                    }
+                                    _ => {
+                                        data.resize(data.len() + (next - at) as usize, 0);
+                                        note(at, next);
+                                    }
+                                }
+                                at = next;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    data.resize(data.len() + (to - from) as usize, 0);
+                    note(from, to);
+                }
+            }
+        }
+        (data, unreadable)
     }
 
     /// The ranges of a FAT or exFAT stream that starts at `first` and is `length` bytes, from the
@@ -608,5 +719,89 @@ mod tests {
         assert_eq!(list.bytes_of(RangeKind::Sparse), 10);
         assert_eq!(list.bytes_of(RangeKind::Missing), 10);
         assert_eq!(list.bytes_of(RangeKind::Compressed), 10);
+    }
+
+    /// A source that is the offset itself, byte for byte, except where it is told it cannot read.
+    fn source(bad: Option<std::ops::Range<u64>>) -> impl FnMut(u64, u64) -> Option<Vec<u8>> {
+        move |offset, length| {
+            if bad
+                .iter()
+                .any(|bad| offset < bad.end && offset + length > bad.start)
+            {
+                return None;
+            }
+            Some(
+                (offset..offset + length)
+                    .map(|at| (at % 251) as u8)
+                    .collect(),
+            )
+        }
+    }
+
+    #[test]
+    fn clusters_that_follow_each_other_are_one_range_and_one_outside_the_volume_is_missing() {
+        let geometry = geometry(512);
+        // Clusters 2, 3, then 9 (apart), then one outside the volume, for 4 x 512 bytes, 1600 valid.
+        let list = RangeList::from_clusters(&geometry, &[2, 3, 9, 5000], 2048, 1600);
+        let found: Vec<(u64, u64, RangeKind)> = list
+            .ranges()
+            .iter()
+            .map(|range| (range.start, range.length, range.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (0, 1024, RangeKind::Readable),
+                (1024, 512, RangeKind::Readable),
+                (1536, 64, RangeKind::Missing),
+                (1600, 448, RangeKind::Sparse),
+            ]
+        );
+        assert_eq!(list.size(), 2048);
+        // A list longer than the stream is cut at its size, and a shorter one leaves the rest missing.
+        assert_eq!(
+            RangeList::from_clusters(&geometry, &[2, 3, 4], 700, 700).size(),
+            700
+        );
+        let short = RangeList::from_clusters(&geometry, &[2], 1000, 1000);
+        assert_eq!(short.bytes_of(RangeKind::Missing), 488);
+        assert!(RangeList::from_clusters(&geometry, &[], 0, 0).is_empty());
+    }
+
+    #[test]
+    fn a_read_takes_readable_bytes_from_the_source_and_zeros_for_a_hole_and_names_the_rest() {
+        let geometry = geometry(512);
+        let list = RangeList::from_clusters(&geometry, &[2, 3, 9, 5000], 2048, 1600);
+        let place = |cluster: u64| (cluster - 2) * 512;
+        // Across the join of two ranges, into the missing stretch and the zeros past the valid length.
+        let (data, unreadable) = list.read(1000, 1700, 512, &mut source(None));
+        assert_eq!(data.len(), 700);
+        assert_eq!(data[0], ((place(2) + 1000) % 251) as u8);
+        assert_eq!(
+            data[24],
+            ((place(9)) % 251) as u8,
+            "the second range starts at byte 1024"
+        );
+        assert_eq!(
+            unreadable,
+            [(1536, 1600)],
+            "the cluster outside the volume is named"
+        );
+        assert!(
+            data[600..].iter().all(|byte| *byte == 0),
+            "bytes past the valid length are zeros"
+        );
+        // The whole of the first range cannot be read in one piece: only the bad cluster is lost.
+        let (data, unreadable) = list.read(0, 1024, 512, &mut source(Some(0..512)));
+        assert_eq!(unreadable, [(0, 512)]);
+        assert!(data[..512].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            data[512],
+            ((place(2) + 512) % 251) as u8,
+            "the cluster beside it is read"
+        );
+        // Nothing is read for a stretch that is only zeros.
+        let (_, unreadable) = list.read(1700, 2000, 512, &mut |_, _| panic!("a hole was read"));
+        assert!(unreadable.is_empty());
     }
 }
