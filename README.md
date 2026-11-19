@@ -340,6 +340,82 @@ mounted, and no other program sees it. A hypothesis with a virtual position othe
 start can be read in the layout, but **Open** opens the extent where it lies in
 the source. Layouts of several unrelated filesystems are not merged into one filesystem.
 
+## What each filesystem supports
+
+exFAT, FAT12, FAT16, FAT32 and NTFS volumes open in one workspace with the same read-only rules.
+The table below is the one the window, `captainsalvage filesystem capabilities SOURCE`, the engine
+tool `capabilities` and MCP's `captainsalvage_capabilities` report, and a test fails when this
+block differs from it, so the README cannot claim more than the app reports. **Not offered**
+means the feature does not exist for that filesystem (FAT has no alternate data streams). It is
+not the same as **Missing**, which exists but is not done yet. NTFS has its own section below.
+
+<!-- capabilities:start -->
+| Feature | exFAT | FAT12, FAT16, FAT32 | NTFS |
+|---|---|---|---|
+| Open | Supported | Supported | Supported |
+| Scan | Supported | Supported | Supported |
+| Map | Supported | Supported | Supported |
+| Browse | Supported | Supported | Supported |
+| Preview | Limited | Limited | Limited |
+| Resume | Supported | Supported | Supported |
+| Baseline copy | Supported | Supported | Supported |
+| File tests | Supported | Supported | Limited |
+| Disk Rebuilds | Supported | Supported | Limited |
+| Copy out | Limited | Limited | Limited |
+| Mount block | Supported | Supported | Supported |
+| Named streams | Not offered | Not offered | Limited |
+| Hard links | Not offered | Not offered | Limited |
+| Attribute lists | Not offered | Not offered | Missing |
+| Compression | Not offered | Not offered | Missing |
+| Encryption | Not offered | Not offered | Missing |
+| Journal | Not offered | Not offered | Missing |
+| Large volumes | Not offered | Not offered | Limited |
+
+**exFAT**
+
+- Open (Supported): Boot sector, FAT and allocation bitmap are read and saved as a baseline.
+- Scan (Supported): Every cluster is read once for directory entries; resumable.
+- Map (Supported): Allocation, content, ownership and confidence layers.
+- Browse (Supported): The folder tree is rebuilt from directory clusters.
+- Preview (Limited): Bytes are read through the FAT chain, or contiguously where the entry says so. A cluster that cannot be read shows as zeros.
+- Resume (Supported): A paused or interrupted scan continues from its last saved cluster.
+- Baseline copy (Supported): Boot regions, FAT, bitmap and root are hashed and kept; changes are explained.
+- File tests (Supported): File formats are walked through the reassembled bytes.
+- Disk Rebuilds (Supported): Disk Rebuilds overlay cluster lists and folder links without touching the disk.
+- Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros and the copy is marked partial.
+- Mount block (Supported): macOS is refused a mount of the volume while the app is open.
+
+**FAT12, FAT16, FAT32**
+
+- Open (Supported): The boot sector, the reserved sectors, the FAT copies and the root directory are read and saved as a baseline. FAT12, FAT16 and FAT32 are told apart by their cluster count. FAT has no allocation bitmap on disk. Checked on synthetic images and by the driver's independent tests, not yet on a real damaged drive.
+- Scan (Supported): Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable.
+- Map (Supported): A cluster is allocated when its FAT entry is not zero, because there is no bitmap to read. Content, ownership and confidence layers.
+- Browse (Supported): The folder tree is rebuilt from directory clusters and the fixed root of FAT12 and FAT16. A long name is used only when its checksum agrees with its short name.
+- Preview (Limited): Bytes are read through the FAT chain. A deleted file's chain is cleared, so it is partial unless the person turns on the contiguous-fallback hypothesis, which assumes the clusters after the first follow it. A cluster that cannot be read shows as zeros.
+- Resume (Supported): A paused or interrupted scan continues from its last saved cluster.
+- Baseline copy (Supported): The boot sector, the reserved sectors, every FAT copy and the root directory are hashed and kept, and a changed copy of a FAT32 table is reported; changes are explained.
+- File tests (Supported): File formats are walked through the reassembled bytes.
+- Disk Rebuilds (Supported): Disk Rebuilds overlay cluster lists and folder links without touching the disk.
+- Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros and the copy is marked partial.
+- Mount block (Supported): macOS is refused a mount of the volume while the app is open.
+<!-- capabilities:end -->
+
+What each was checked against, apart from this app's own synthetic images:
+
+- **exFAT** was used on one real damaged volume. The `rust-fs-exfat` driver compares listings and
+  every file's SHA-256 with the macOS driver and `fsck_exfat` on images macOS formatted, and with
+  the Linux kernel and exfatprogs on images they formatted and filled. The app does not yet read
+  an independently formatted exFAT image in its own tests.
+- **FAT12, FAT16 and FAT32** are one family in one driver, `rust-fs-fat` (package `rust-fs-fat32`).
+  Its tests build images with `mkfs.fat`, fill them through the Linux kernel's vfat driver and
+  compare listings, bytes and cluster chains with `mtools`, including fragmented files, deleted
+  entries and damage recipes graded by `fsck.fat`. This app reads hand-built synthetic images
+  only. Not checked yet by anyone: a partition at an offset, 4096-byte sectors, volumes over
+  40 MiB, damaged FATs beyond one truncated chain, directory loops, cross-linked chains and real
+  damaged drives.
+- **NTFS** is checked against ntfs-3g, the Linux kernel's ntfs3 and volumes Windows formatted,
+  as described in the next section. No real damaged NTFS drive has been recovered yet.
+
 ## NTFS volumes
 
 NTFS opens in the same workspace as exFAT and FAT, with the same read-only rules: the app
