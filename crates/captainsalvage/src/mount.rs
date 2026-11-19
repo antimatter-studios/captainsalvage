@@ -86,19 +86,26 @@ pub fn parse_write_counter(ioreg: &str, disk: &str) -> Option<WriteCounter> {
 }
 
 fn read_write_counter(disk: &str) -> Option<WriteCounter> {
-    let output = Command::new(IOREG)
-        .args(["-r", "-c", "IOBlockStorageDriver", "-w0", "-l"])
-        .output()
-        .ok()?;
+    let output = crate::proc::output(Command::new(IOREG).args([
+        "-r",
+        "-c",
+        "IOBlockStorageDriver",
+        "-w0",
+        "-l",
+    ]))
+    .ok()?;
     parse_write_counter(&String::from_utf8_lossy(&output.stdout), disk)
 }
 
-/// Follows one disk's counter from the moment a volume on it was opened.
+/// Follows one disk's counter from the moment a volume on it was opened. Reading the counter is a process
+/// call, so it is made on its own thread, at most once every `CHECK_INTERVAL`: a status call (the window
+/// makes one every two seconds) never waits for it, and reports the last counter read.
 pub(crate) struct WriteWatch {
     disk: Option<String>,
     at_open: Option<WriteCounter>,
-    latest: Option<WriteCounter>,
+    latest: std::sync::Arc<Mutex<Option<WriteCounter>>>,
     checked: Instant,
+    reading: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl WriteWatch {
@@ -110,17 +117,32 @@ impl WriteWatch {
         Self {
             disk,
             at_open,
-            latest: at_open,
+            latest: std::sync::Arc::new(Mutex::new(at_open)),
             checked: Instant::now(),
+            reading: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
     pub(crate) fn report(&mut self) -> DiskWrites {
-        if self.checked.elapsed() >= CHECK_INTERVAL {
-            self.latest = self.disk.as_deref().and_then(read_write_counter);
-            self.checked = Instant::now();
+        use std::sync::atomic::Ordering;
+        if let Some(disk) = self.disk.clone() {
+            if self.checked.elapsed() >= CHECK_INTERVAL
+                && !self.reading.swap(true, Ordering::AcqRel)
+            {
+                self.checked = Instant::now();
+                let latest = std::sync::Arc::clone(&self.latest);
+                let reading = std::sync::Arc::clone(&self.reading);
+                std::thread::spawn(move || {
+                    let counter = read_write_counter(&disk);
+                    if let Ok(mut slot) = latest.lock() {
+                        *slot = counter;
+                    }
+                    reading.store(false, Ordering::Release);
+                });
+            }
         }
-        DiskWrites::between(self.at_open, self.latest)
+        let latest = self.latest.lock().map_or(None, |slot| *slot);
+        DiskWrites::between(self.at_open, latest)
     }
 }
 
@@ -188,10 +210,7 @@ pub fn parse_disk_return(info: &str) -> Option<DiskReturn> {
 }
 
 pub(crate) fn diskutil_info(target: &str) -> Option<String> {
-    let output = Command::new(DISKUTIL)
-        .args(["info", target])
-        .output()
-        .ok()?;
+    let output = crate::proc::output(Command::new(DISKUTIL).args(["info", target])).ok()?;
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

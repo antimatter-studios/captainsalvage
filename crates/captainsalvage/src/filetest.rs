@@ -299,22 +299,31 @@ impl TestFilter {
 }
 
 impl Session {
+    /// How the file tests stand. The window asks every two seconds, so when no test has run in this app
+    /// the counts of results already in the map are read once, kept, and kept up to date by the tests and
+    /// by forgetting results: asking again counts nothing.
     pub fn file_test_status(&self) -> Result<FileTestStatus> {
-        let mut status = self
-            .file_tests
-            .status
-            .lock()
-            .map_err(|_| anyhow!("file test lock poisoned"))?
-            .clone();
+        let lock = || {
+            self.file_tests
+                .status
+                .lock()
+                .map_err(|_| anyhow!("file test lock poisoned"))
+        };
+        let known = lock()?.clone();
+        if !known.state.is_empty() {
+            return Ok(known);
+        }
+        // The map is read without the status lock held, so a test starting meanwhile is not waited for.
+        let counts = self.with_database(|database| database.file_test_counts())?;
+        let mut status = lock()?;
         if status.state.is_empty() {
             status.state = STATE_IDLE.into();
-            let counts = self.with_database(|database| database.file_test_counts())?;
             status.passed = counts.0;
             status.damaged = counts.1;
             status.untested = counts.2;
             status.done = counts.0 + counts.1 + counts.2;
         }
-        Ok(status)
+        Ok(status.clone())
     }
 
     pub fn file_test_stop(&self) {

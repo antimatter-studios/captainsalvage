@@ -11,7 +11,6 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Raw macOS devices reject requests that are not aligned to the sector size.
@@ -199,14 +198,13 @@ pub fn os_denies_writes(path: &Path) -> bool {
     }
 }
 
-/// Returns the `mount` output line for this device, if it is mounted.
+/// Returns the line of the list of mounts for this device, if it is mounted. The list is the
+/// kernel's own, so this starts no process and reads no disk.
 pub fn mount_line(path: &Path) -> Option<String> {
     let text = path.to_str()?;
     let block_device = text.replace("/dev/rdisk", "/dev/disk");
-    let needle = format!("{block_device} on ");
-    let output = Command::new("/sbin/mount").output().ok()?;
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find(|line| line.starts_with(&needle))
-        .map(str::to_string)
+    crate::mounttable::entries()
+        .into_iter()
+        .find(|entry| entry.device == block_device)
+        .map(|entry| entry.line())
 }
