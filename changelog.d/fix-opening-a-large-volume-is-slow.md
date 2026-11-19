@@ -1,0 +1,3 @@
+### Fixed
+
+- **Opening a large volume that was scanned and tested before is much faster.** The window asks the app for its status every two seconds, and each of those calls counted every file test result in the map with a sort, which on a large volume (hundreds of thousands of results) kept the app busy so that opening the volume waited behind it for up to a minute. The counts are now read from an index, once, and kept up to date as tests run. The app also no longer asks macOS about the disks every two seconds: it reads the list of mounted volumes from the system without starting a program, runs `diskutil` once for a volume it has not seen before, and checks the disks' write counters in the background, so a status call neither starts a process nor waits on a disk.

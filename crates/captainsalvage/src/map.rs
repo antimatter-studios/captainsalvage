@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS file_tests (
     tested_at_millis INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS file_tests_sha256 ON file_tests (sha256);
+CREATE INDEX IF NOT EXISTS file_tests_outcome ON file_tests (outcome);
 CREATE TABLE IF NOT EXISTS read_errors (cluster INTEGER PRIMARY KEY, message TEXT);
 CREATE TABLE IF NOT EXISTS nodes (
     head INTEGER PRIMARY KEY,
@@ -672,6 +673,10 @@ fn write_chunk(
     }
     Ok(())
 }
+
+/// How many file tests ended each way. It reads the `outcome` index alone, so SQLite counts the entries in
+/// order and neither sorts nor builds a temporary b-tree, however many tests the map holds.
+pub const FILE_TEST_COUNTS_SQL: &str = "SELECT outcome, COUNT(*) FROM file_tests GROUP BY outcome";
 
 impl MapDb {
     /// Opens the map, first renaming a database that still has the names from before Disk Rebuild
@@ -1834,9 +1839,7 @@ impl MapDb {
 
     /// Files passed, damaged and with no test yet.
     pub fn file_test_counts(&self) -> Result<(u64, u64, u64)> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT outcome, COUNT(*) FROM file_tests GROUP BY outcome")?;
+        let mut statement = self.connection.prepare(FILE_TEST_COUNTS_SQL)?;
         let mut counts = (0, 0, 0);
         let rows = statement.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
