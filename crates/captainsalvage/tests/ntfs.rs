@@ -1239,3 +1239,146 @@ fn a_copy_holds_a_file_with_several_hard_links_under_every_name() {
         b"one name"
     );
 }
+
+/// A source that reads like a memory image until it is told that a stretch of it has gone bad.
+struct Flaky {
+    source: MemorySource,
+    bad: Mutex<Option<std::ops::Range<u64>>>,
+}
+
+impl captainsalvage::source::BlockSource for Flaky {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        if let Some(bad) = self.bad.lock().unwrap().clone() {
+            if offset < bad.end && offset + buffer.len() as u64 > bad.start {
+                return Err(std::io::Error::from_raw_os_error(libc::EIO));
+            }
+        }
+        self.source.read_exact_at(offset, buffer)
+    }
+
+    fn read_stats(&self) -> captainsalvage::source::ReadStats {
+        self.source.read_stats()
+    }
+}
+
+/// `frag.bin` is 20000 bytes in two runs of 4096-byte clusters. Its fourth cluster (bytes 12288 to
+/// 16384) is made unreadable after the scan. Returns the session, the file's bytes and its entry.
+fn with_a_bad_cluster(label: &str) -> (Arc<Session>, Vec<u8>, i64) {
+    let fixture = fixture();
+    let wanted = fixture.content("/frag.bin").to_vec();
+    let source = Arc::new(Flaky {
+        source: MemorySource::new(fixture.image),
+        bad: Mutex::new(None),
+    });
+    let session = Session::with_source(
+        Path::new("/test/ntfs-bad-cluster"),
+        source.clone(),
+        workspace(label),
+    )
+    .unwrap();
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = find(&engine, "frag.bin");
+    let runs = session
+        .with_database(|database| {
+            database.entry_runs(
+                row["sourceCluster"].as_u64().unwrap() as u32,
+                row["sourceOffset"].as_u64().unwrap() as u32,
+            )
+        })
+        .unwrap();
+    // The cluster that holds byte 12288 of the file.
+    let run = runs
+        .iter()
+        .find(|run| run.vcn <= 3 && 3 < run.vcn + run.count)
+        .expect("a run holds the fourth cluster");
+    let lcn = run.lcn.expect("it is not a hole") + (3 - run.vcn);
+    *source.bad.lock().unwrap() = Some(lcn * 4096..(lcn + 1) * 4096);
+    (session, wanted, row["id"].as_i64().unwrap())
+}
+
+#[test]
+fn a_preview_of_an_ntfs_file_marks_the_stretch_that_could_not_be_read_and_keeps_the_rest() {
+    use captainsalvage::browse::ByteRange;
+    let (session, wanted, id) = with_a_bad_cluster("ntfs-bad-preview");
+    let whole = session.read_entry_range(id, 0, 20_000).unwrap();
+    assert_eq!(whole.data.len(), 20_000);
+    assert_eq!(whole.data[..12_288], wanted[..12_288]);
+    assert_eq!(
+        whole.data[12_288..16_384],
+        [0u8; 4096],
+        "zeros stand in for it"
+    );
+    assert_eq!(whole.data[16_384..], wanted[16_384..]);
+    assert_eq!(
+        whole.unreadable,
+        [ByteRange {
+            start: 12_288,
+            end: 16_384
+        }]
+    );
+    assert!(session
+        .read_entry_range(id, 0, 8000)
+        .unwrap()
+        .unreadable
+        .is_empty());
+    let across = session.read_entry_range(id, 12_000, 1000).unwrap();
+    assert_eq!(
+        across.unreadable,
+        [ByteRange {
+            start: 12_288,
+            end: 13_000
+        }]
+    );
+}
+
+#[test]
+fn a_copy_of_an_ntfs_file_with_an_unreadable_stretch_writes_zeros_there_and_names_it() {
+    let (session, wanted, id) = with_a_bad_cluster("ntfs-bad-copy");
+    let destination = session.workspace.dir().join("bad-copy");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![id],
+            include_partial: true,
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = session.copy_status().unwrap();
+        if status.state == "finished" {
+            assert_eq!(
+                (status.files_done, status.files_partial),
+                (1, 1),
+                "{status:?}"
+            );
+            break;
+        }
+        assert!(
+            !matches!(status.state.as_str(), "failed" | "stopped"),
+            "{status:?}"
+        );
+        assert!(std::time::Instant::now() < deadline, "copy timed out");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let copied = std::fs::read(destination.join("Volume root/frag.bin")).unwrap();
+    assert_eq!(copied.len(), 20_000);
+    assert_eq!(copied[..12_288], wanted[..12_288]);
+    assert_eq!(copied[12_288..16_384], [0u8; 4096]);
+    assert_eq!(copied[16_384..], wanted[16_384..]);
+    let manifest =
+        std::fs::read_to_string(destination.join("captain-salvage-manifest.jsonl")).unwrap();
+    let row: Value = serde_json::from_str(manifest.lines().next().unwrap()).unwrap();
+    assert_eq!(
+        row["status"],
+        "partial: unreadable parts of the stream filled with zeros"
+    );
+    assert_eq!(row["unreadableClusters"], 1);
+    assert_eq!(
+        row["unreadableRanges"],
+        json!([{"start": 12_288, "end": 16_384}])
+    );
+    assert_eq!(row["bytesWritten"], 20_000);
+}

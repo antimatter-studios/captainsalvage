@@ -790,9 +790,15 @@ impl Access {
         Ok(record)
     }
 
-    /// Reads from an entry's unnamed data stream. Bytes beyond the initialised length are
-    /// returned as the zeros NTFS defines them to be; any other failure is an error, never zeros.
-    pub fn read(&self, entry: &StreamReference, offset: u64, output: &mut [u8]) -> Result<usize> {
+    /// Whether the entry's bytes can be read at all, and the record they are in is still the one the
+    /// scan found. A stream NTFS compresses, encrypts or keeps in other records is refused here
+    /// by name, and so is a record that changed or cannot be read: those are the whole entry's, not
+    /// a stretch of it, and nothing is made up for them.
+    pub fn verify(&self, entry: &StreamReference) -> Result<()> {
+        self.checked_record(entry).map(|_| ())
+    }
+
+    fn checked_record(&self, entry: &StreamReference) -> Result<Arc<RecordEvidence>> {
         ensure!(
             matches!(entry.storage.as_str(), STORAGE_RESIDENT | STORAGE_RUNS),
             "this NTFS stream cannot be read: it is {}",
@@ -807,6 +813,13 @@ impl Access {
                 && (record.record_number.is_none() || record.record_number == entry.record_number),
             "the FILE record no longer matches the one that was found"
         );
+        Ok(record)
+    }
+
+    /// Reads from an entry's unnamed data stream. Bytes beyond the initialised length are
+    /// returned as the zeros NTFS defines them to be; any other failure is an error, never zeros.
+    pub fn read(&self, entry: &StreamReference, offset: u64, output: &mut [u8]) -> Result<usize> {
+        let record = self.checked_record(entry)?;
         let (index, attribute) =
             data_stream(&record).context("the FILE record has no data stream")?;
         let available = entry.length.saturating_sub(offset).min(output.len() as u64) as usize;
