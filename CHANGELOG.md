@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-19
+
+### Maintenance
+
+- Every merged pull request is released: feat raises the minor and everything else raises the patch ([#236](https://github.com/antimatter-studios/captainsalvage/pull/236))
+
 ## [0.4.0] — 2026-11-18
 
 ### Added
