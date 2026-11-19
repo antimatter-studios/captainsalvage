@@ -231,7 +231,8 @@ pub(crate) struct EntryStream {
     name: String,
     total: u64,
     valid: u64,
-    clusters: Vec<u32>,
+    /// Where the bytes of a stream held in clusters are, as typed ranges: the preview reads these.
+    ranges: crate::ranges::RangeList,
     /// NTFS: the stream is read through the driver, not by cluster.
     ntfs: Option<crate::filesystem::ntfs_salvage::StreamReference>,
 }
@@ -618,12 +619,15 @@ impl Session {
             ),
             crate::map::EntrySource::Ntfs(stream) => (stream.length, Vec::new(), Some(stream)),
         };
+        let valid = row.valid_length.min(row.length);
+        let ranges =
+            crate::ranges::RangeList::from_clusters(&self.volume.geometry, &clusters, total, valid);
         let stream = Arc::new(EntryStream {
             id,
             total,
-            valid: row.valid_length.min(row.length),
+            valid,
             name: row.name,
-            clusters,
+            ranges,
             ntfs,
         });
         let mut cache = self.lock_browse()?;
@@ -633,41 +637,6 @@ impl Session {
             cache.streams.pop_front();
         }
         Ok(stream)
-    }
-
-    /// Clusters that follow each other are read together. A bad spot reads as zeros, so one
-    /// damaged cluster never hides the rest of a file, and the places in the run (by cluster) that
-    /// could not be read are returned with the bytes, so a reader can tell the zeros from real ones.
-    fn read_cluster_run(&self, clusters: &[u32]) -> (Vec<u8>, Vec<usize>) {
-        let size = self.volume.geometry.cluster_size() as usize;
-        if clusters
-            .iter()
-            .all(|&cluster| self.volume.valid_cluster(cluster))
-        {
-            if let Ok(data) = self.volume.read_bytes(
-                self.volume.cluster_offset(clusters[0]),
-                clusters.len() * size,
-            ) {
-                return (data, Vec::new());
-            }
-        }
-        let mut out = Vec::with_capacity(clusters.len() * size);
-        let mut unreadable = Vec::new();
-        for (place, &cluster) in clusters.iter().enumerate() {
-            let data = self
-                .volume
-                .valid_cluster(cluster)
-                .then(|| self.volume.read_cluster(cluster).ok())
-                .flatten();
-            match data {
-                Some(data) => out.extend_from_slice(&data),
-                None => {
-                    unreadable.push(place);
-                    out.resize(out.len() + size, 0);
-                }
-            }
-        }
-        (out, unreadable)
     }
 
     /// How many bytes of this file can be read, and its name.
@@ -703,43 +672,20 @@ impl Session {
                 data[from..].fill(0);
             }
         } else if start < end {
+            // The stream's typed ranges say what each stretch is: readable bytes are read from the
+            // disk (a bad cluster reads as zeros and is named, so one never hides the rest of a file),
+            // bytes past the valid length are zeros by definition, and a stretch the clusters do not
+            // reach is named as missing. Zeros that stand in for unreadable bytes are not this
+            // file's contents if the disk left while they were being read.
             let size = self.volume.geometry.cluster_size();
-            let last = ((end - 1) / size) as usize;
-            let mut index = (start / size) as usize;
-            let mut position = index as u64 * size;
-            data.reserve((end - start) as usize);
-            while index <= last {
-                let mut run = 1;
-                while index + run <= last
-                    && stream.clusters[index + run] == stream.clusters[index + run - 1] + 1
-                {
-                    run += 1;
-                }
-                let (bytes, missing) = self.read_cluster_run(&stream.clusters[index..index + run]);
-                for place in missing {
-                    let first = position + place as u64 * size;
-                    // Only what was asked for, and only what the file has: bytes past its valid
-                    // length are zeros by definition, not unreadable ones.
-                    push_range(
-                        &mut unreadable,
-                        first.max(start),
-                        (first + size).min(end).min(stream.valid),
-                    );
-                }
-                let from = start.saturating_sub(position) as usize;
-                let to = (end - position).min(bytes.len() as u64) as usize;
-                data.extend_from_slice(&bytes[from..to]);
-                position += run as u64 * size;
-                index += run;
+            let (bytes, missing) = stream.ranges.read(start, end, size, &mut |offset, length| {
+                self.volume.read_bytes(offset, length as usize).ok()
+            });
+            data = bytes;
+            for (from, to) in missing {
+                push_range(&mut unreadable, from, to);
             }
-            // The zeros that stand in for unreadable clusters are not this file's contents
-            // if the disk left while they were being read.
             self.require_disk()?;
-            // Bytes past the valid length are undefined on disk, and read as zeros.
-            if end > stream.valid {
-                let keep = stream.valid.saturating_sub(start) as usize;
-                data[keep..].fill(0);
-            }
         }
         Ok(EntryRange {
             data,
