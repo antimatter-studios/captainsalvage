@@ -7,7 +7,7 @@
 use crate::content::{
     classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES,
 };
-use crate::filesystem::{SalvageEntry as EntrySet, STORAGE_DAMAGED};
+use crate::filesystem::{FilesystemKind, SalvageEntry as EntrySet, STORAGE_DAMAGED};
 use crate::map::MapDb;
 use crate::session::DISK_GONE;
 use crate::volume::Volume;
@@ -28,6 +28,10 @@ pub use rescan::{rescan_changed, FilesystemRescan};
 const LOCK_ATTEMPTS: u32 = 20;
 const LOCK_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
 const LOOKAHEAD_BYTES: u64 = 1024;
+/// A FAT file's long name is at most twenty entries of thirty-two bytes before its short entry. A
+/// short entry nearer the start of a cluster than this may have the rest of its name in the cluster
+/// before it in the folder.
+const LONG_NAME_REACH: usize = 20 * 32;
 const DEFAULT_CHUNK_BYTES: u64 = 64 * 1024 * 1024;
 
 const STATE_NEXT: &str = "next_cluster";
@@ -212,10 +216,25 @@ fn read_chunk(
         let cluster = first + index as u32;
         let start = index * cluster_size as usize;
         let end = start + cluster_size as usize;
-        let sets = volume.find_sets(
-            &buffer[start..buffer.len().min(end + lookahead_max as usize)],
-            cluster_size as usize,
-        );
+        let data = &buffer[start..buffer.len().min(end + lookahead_max as usize)];
+        let mut sets = volume.find_sets(data, cluster_size as usize);
+        // A FAT entry is placed by its short entry, so a long name that began in the cluster before
+        // it in the folder is whole only with that cluster's end in front.
+        if is_fat(volume.kind) && sets.iter().any(|set| set.offset < LONG_NAME_REACH) {
+            if let Some(lead) = long_name_lead(volume, cluster) {
+                let mut joined = lead.clone();
+                joined.extend_from_slice(data);
+                sets = volume
+                    .find_sets(&joined, lead.len() + cluster_size as usize)
+                    .into_iter()
+                    .filter(|set| set.offset >= lead.len())
+                    .map(|mut set| {
+                        set.offset -= lead.len();
+                        set
+                    })
+                    .collect();
+            }
+        }
         let holds_directory = sets.iter().any(|set| set.checksum_ok);
         let (class, scaled) = classify(&buffer[start..end], holds_directory);
         class_bytes[index] = class;
@@ -251,6 +270,39 @@ fn read_chunk(
         directories,
         sets: sets_total,
     })
+}
+
+fn is_fat(kind: FilesystemKind) -> bool {
+    matches!(
+        kind,
+        FilesystemKind::Fat12 | FilesystemKind::Fat16 | FilesystemKind::Fat32
+    )
+}
+
+/// The end of the folder cluster that comes before `cluster` in its chain, enough of it to hold the
+/// longest long name, or None when nothing in the FAT leads to this cluster or it cannot be read.
+fn long_name_lead(volume: &Volume, cluster: u32) -> Option<Vec<u8>> {
+    let size = volume.geometry.cluster_size() as usize;
+    let mut before = Vec::new();
+    let mut current = cluster;
+    while before.len() * size < LONG_NAME_REACH {
+        let Some(previous) = volume.predecessor(current) else {
+            break;
+        };
+        if previous == cluster || before.contains(&previous) {
+            break;
+        }
+        before.push(previous);
+        current = previous;
+    }
+    if before.is_empty() {
+        return None;
+    }
+    let mut lead = Vec::new();
+    for previous in before.into_iter().rev() {
+        lead.extend(volume.read_cluster(previous).ok()?);
+    }
+    Some(lead)
 }
 
 /// Takes the lock that lets one scan at a time work on a workspace, held until the file drops.

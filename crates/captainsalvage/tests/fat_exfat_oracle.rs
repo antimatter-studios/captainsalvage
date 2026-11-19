@@ -39,12 +39,6 @@
 //! worked out from their names, and say how many it omitted; any other omission, a wrong name or
 //! wrong bytes is a difference.
 //!
-//! A second known gap, issue #231 (and #233 for its aliases): on FAT a file whose long-name entries and short entry lie in
-//! two clusters of its folder is listed by its 8.3 alias (right size and bytes, wrong name). The
-//! volumes made here hold such files, so the comparisons accept an alias of the same folder, size
-//! and SHA-256 for a file the oracle names, and report how many they accepted. exFAT has no
-//! aliases and is held to the names.
-//!
 //! What this does not check, so that nobody reads more into a pass than is there:
 //!
 //! - sectors of 1024 or 2048 bytes, and volumes over 272 MiB (large exFAT and FAT32 volumes);
@@ -550,65 +544,6 @@ fn copied_files(session: &Arc<Session>, label: &str) -> BTreeMap<String, (u64, S
     copied
 }
 
-/// KNOWN GAP, issues #231 and #233: a FAT file whose long-name entries and short entry lie in two clusters
-/// of its folder is listed by its 8.3 alias (`ENTRYF~4.TXT`) with the right size and bytes. The
-/// oracle volumes hold such files, so a file the oracle names that the app lacks is accepted under
-/// an alias of the same folder, size and SHA-256, and no other way. Anything else is a difference.
-fn alias_shaped(path: &str) -> bool {
-    // The alias is in the volume's OEM code page, so what the app shows of a character above 0x7F
-    // is a replacement character (issue #233): only its shape is looked at, `BASE~N.EXT`.
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let (base, extension) = name.rsplit_once('.').unwrap_or((name, ""));
-    let Some((head, tail)) = base.rsplit_once('~') else {
-        return false;
-    };
-    !head.is_empty()
-        && head.chars().count() <= 6
-        && !tail.is_empty()
-        && tail.chars().all(|c| c.is_ascii_digit())
-        && extension.chars().count() <= 3
-}
-
-fn parent_of(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(parent, _)| parent)
-}
-
-/// The one file of `known` that an alias in the app's listing can be, if there is exactly one.
-fn alias_target(
-    known: &BTreeMap<String, (u64, String)>,
-    listed: &BTreeSet<String>,
-    alias: &str,
-    value: &(u64, String),
-) -> Option<String> {
-    if !alias_shaped(alias) {
-        return None;
-    }
-    let mut found = known.iter().filter(|(path, have)| {
-        !listed.contains(*path) && have == &value && parent_of(path) == parent_of(alias)
-    });
-    match (found.next(), found.next()) {
-        (Some((path, _)), None) => Some(path.clone()),
-        _ => None,
-    }
-}
-
-/// Renames the aliases in what the app listed or copied to the files they are, and says which.
-fn reconcile_aliases(oracle: &Tree, files: &mut BTreeMap<String, (u64, String)>) -> Vec<String> {
-    let listed: BTreeSet<String> = files.keys().cloned().collect();
-    let mut renamed = Vec::new();
-    for (path, value) in files.clone() {
-        if oracle.files.contains_key(&path) {
-            continue;
-        }
-        if let Some(real) = alias_target(&oracle.files, &listed, &path, &value) {
-            files.remove(&path);
-            files.insert(real.clone(), value);
-            renamed.push(format!("{path} for {real}"));
-        }
-    }
-    renamed
-}
-
 /// KNOWN GAP, issue #232: on exFAT a file whose entry set crosses from one cluster of its folder
 /// into the next is not listed when the next cluster is not the one beside it on the disk. The
 /// oracle's folder `many/` is written in name order into an empty folder, so the sets that cross a
@@ -691,21 +626,8 @@ fn read_like_the_oracles(case: &Case) {
     let before = file_sha(&image);
     let session = open_image(case, &image, &case.name);
     scan(&session);
-    let (mut app, not_live) = app_tree(&session);
+    let (app, not_live) = app_tree(&session);
     let mut oracle = oracle;
-    let aliased = reconcile_aliases(&oracle, &mut app.files);
-    if !aliased.is_empty() {
-        println!(
-            "{}: known gap #231, listed by alias: {}",
-            case.name,
-            aliased.len()
-        );
-    }
-    assert!(
-        aliased.is_empty() || case.kind != "exfat",
-        "{}: exFAT has no aliases: {aliased:?}",
-        case.name
-    );
     // Files the app may omit (issue #232) and no others.
     let straddlers = exfat_straddlers(case, &oracle);
     let omitted: Vec<String> = oracle
@@ -788,8 +710,7 @@ fn read_like_the_oracles(case: &Case) {
     }
 
     // What the app copies is byte for byte what the oracle read.
-    let mut copied = copied_files(&session, &case.name);
-    reconcile_aliases(&oracle, &mut copied);
+    let copied = copied_files(&session, &case.name);
     assert_eq!(
         copied, oracle.files,
         "{}: the copy differs from what the kernel reads",
@@ -884,56 +805,6 @@ fn a_changed_byte_in_what_an_oracle_reports_fails_the_comparison() {
 }
 
 #[test]
-fn an_alias_stands_for_a_file_of_the_oracle_only_when_folder_size_and_bytes_agree() {
-    let file = |size: u64, sum: &str| (size, sum.to_string());
-    let oracle = Tree {
-        dirs: ["many".to_string()].into(),
-        files: [
-            ("many/entry file 0003.txt".to_string(), file(11, "aa")),
-            ("many/entry file 0004.txt".to_string(), file(11, "bb")),
-            ("other.txt".to_string(), file(11, "aa")),
-        ]
-        .into(),
-    };
-    let mut app = oracle.files.clone();
-    assert!(reconcile_aliases(&oracle, &mut app).is_empty());
-    // Listed by its alias, with the same bytes in the same folder: the same file.
-    app.remove("many/entry file 0003.txt");
-    app.insert("many/ENTRYF~4.TXT".to_string(), file(11, "aa"));
-    assert_eq!(reconcile_aliases(&oracle, &mut app).len(), 1);
-    assert_eq!(app, oracle.files);
-    assert_eq!(
-        differences(
-            &oracle,
-            &Tree {
-                dirs: oracle.dirs.clone(),
-                files: app
-            }
-        ),
-        ""
-    );
-    // Other bytes, another folder, or a name that is not an alias are differences.
-    for (path, value) in [
-        ("many/ENTRYF~4.TXT", file(11, "zz")),
-        ("ENTRYF~4.TXT", file(11, "aa")),
-        ("many/Entry file 0003.txt", file(11, "aa")),
-    ] {
-        let mut app = oracle.files.clone();
-        app.remove("many/entry file 0003.txt");
-        app.insert(path.to_string(), value);
-        assert!(reconcile_aliases(&oracle, &mut app).is_empty(), "{path}");
-        assert!(differences(
-            &oracle,
-            &Tree {
-                dirs: oracle.dirs.clone(),
-                files: app
-            }
-        )
-        .contains("does not list"));
-    }
-}
-
-#[test]
 fn the_sets_that_cross_a_cluster_of_the_exfat_folder_are_the_ones_the_oracle_run_lost() {
     let files = (0..120)
         .map(|number| {
@@ -962,27 +833,6 @@ fn the_sets_that_cross_a_cluster_of_the_exfat_folder_are_the_ones_the_oracle_run
         .collect();
     assert_eq!(found, ["0025", "0051", "0076", "0102"]);
     assert!(exfat_straddlers(&case("fat16", 4096), &oracle).is_empty());
-}
-
-#[test]
-fn an_alias_is_known_by_its_shape_whatever_its_characters() {
-    for alias in [
-        "ENTRYF~4.TXT",
-        "many/\u{FFFD}N\u{FFFD}C\u{FFFD}D~1.TXT",
-        "A~1",
-        "EN3E1E~8.TXT",
-    ] {
-        assert!(alias_shaped(alias), "{alias}");
-    }
-    for other in [
-        "entry file 0003.txt",
-        "~1.TXT",
-        "TOOLONGNAME~1.TXT",
-        "A~.TXT",
-        "A~1.TEXT",
-    ] {
-        assert!(!alias_shaped(other), "{other}");
-    }
 }
 
 #[test]
@@ -1065,22 +915,8 @@ fn a_damaged_volume_never_shows_wrong_bytes_as_a_file_that_is_there() {
         let any = touched.contains(&"*");
         let mut problems = Vec::new();
         let mut seen = BTreeSet::new();
-        let items: Vec<Listed> = listed(&session)
-            .into_iter()
-            .filter(|item| !item.is_dir)
-            .collect();
-        let names: BTreeSet<String> = items.iter().map(|item| item.path.clone()).collect();
-        for mut item in items {
+        for item in listed(&session).into_iter().filter(|item| !item.is_dir) {
             let read = session.read_entry_range(item.id, 0, item.length + 8);
-            // An alias of a file the volume holds is that file (issue #231).
-            if !truth.files.contains_key(&item.path) {
-                if let Ok(range) = &read {
-                    let value = (range.data.len() as u64, sha(&range.data));
-                    if let Some(real) = alias_target(&truth.files, &names, &item.path, &value) {
-                        item.path = real;
-                    }
-                }
-            }
             let Some(want) = truth.files.get(&item.path) else {
                 problems.push(format!(
                     "the app lists {}, which the volume never held",
