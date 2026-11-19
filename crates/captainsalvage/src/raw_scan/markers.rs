@@ -29,6 +29,9 @@ pub const MIN_MATCHED_MARKERS: usize = 8;
 /// From this share of markers matching (12 of 20) a match is `probable`. Below it, `weak`.
 pub const PROBABLE_PERCENT: usize = 60;
 
+/// On a disk that has reset (a zone where it did, one a probe jumped over, or reset often), at most this
+/// many markers are read to recognise it, and only ones in ranges known to read.
+pub const CAREFUL_MARKER_READS: usize = 5;
 /// A marker that cannot be read is replaced by a nearby block, at most this many times.
 const SUBSTITUTE_TRIES: u32 = 12;
 /// A block that repeats with a period up to this many bytes cannot tell one drive from another.
@@ -109,6 +112,10 @@ pub struct Comparison {
 /// limit is passed or too many reads in a row have failed.
 pub struct MarkerReader<'a> {
     disk: &'a RawDisk,
+    /// The disk has reset: markers are read only where earlier reads went well, and few of them.
+    careful: bool,
+    /// How many reads of the device this reader has made.
+    reads: usize,
     cache: HashMap<(u64, u64), Option<String>>,
     started: Instant,
     failures: u32,
@@ -118,6 +125,8 @@ impl<'a> MarkerReader<'a> {
     pub fn new(disk: &'a RawDisk) -> Self {
         Self {
             disk,
+            careful: disk.careful_open(),
+            reads: 0,
             cache: HashMap::new(),
             started: Instant::now(),
             failures: 0,
@@ -130,8 +139,18 @@ impl<'a> MarkerReader<'a> {
             && !self.disk.source.is_gone()
     }
 
+    /// Whether this reader is sparing a disk that has reset.
+    pub fn is_careful(&self) -> bool {
+        self.careful
+    }
+
     fn block(&mut self, offset: u64, length: u64) -> Option<Vec<u8>> {
         if !self.may_read() {
+            return None;
+        }
+        // On a disk that has reset, only a range known to read is read for a marker.
+        if self.careful && !self.disk.known_good(offset, length) {
+            self.cache.insert((offset, length), None);
             return None;
         }
         // A range known to be bad is not read: it is unknown, and it is not a failure of the drive.
@@ -139,6 +158,7 @@ impl<'a> MarkerReader<'a> {
             self.cache.insert((offset, length), None);
             return None;
         }
+        self.reads += 1;
         match self.disk.read(offset, length) {
             Ok(data) => {
                 self.failures = 0;
@@ -180,6 +200,9 @@ impl Fingerprint {
         let mut samples: Vec<Sample> = Vec::new();
         let mut moved_for_bad_zones: Vec<u64> = Vec::new();
         for index in 0..targets.len() {
+            if reader.careful && reader.reads >= CAREFUL_MARKER_READS {
+                break;
+            }
             // A nominal block inside a bad zone is moved to the nearest block outside it, and
             // the markers are then chosen from there as they would be from the nominal block.
             let mut shifted = targets.clone();
@@ -279,7 +302,34 @@ impl Fingerprint {
         let mut matched = 0;
         let mut changed_offsets = Vec::new();
         let mut unreadable_offsets = Vec::new();
-        for sample in &self.samples {
+        // Markers that lie in a bad sector the health map knows are not read, and say nothing either way:
+        // they are left out of what the match is counted over, so a drive with a known bad zone is still
+        // an exact match when everything that can be read matches.
+        let mut in_bad_sectors = 0usize;
+        // On a disk that has reset, only a few saved markers are read to recognise it, from ranges known
+        // to read; the rest are left out the same way.
+        let mut skipped_to_spare = 0usize;
+        let chosen: Option<std::collections::HashSet<usize>> = reader
+            .careful
+            .then(|| careful_choice(&self.samples, reader));
+        for (index, sample) in self.samples.iter().enumerate() {
+            if sample.sha256.is_some()
+                && reader
+                    .disk
+                    .known_bad(sample.offset, sample.length)
+                    .is_some()
+            {
+                in_bad_sectors += 1;
+                unreadable_offsets.push(sample.offset);
+                continue;
+            }
+            if chosen
+                .as_ref()
+                .is_some_and(|chosen| !chosen.contains(&index))
+            {
+                skipped_to_spare += 1;
+                continue;
+            }
             let now = sample
                 .sha256
                 .as_ref()
@@ -292,6 +342,13 @@ impl Fingerprint {
         }
         let changed = changed_offsets.len();
         let unreadable = unreadable_offsets.len();
+        let total = total - in_bad_sectors - skipped_to_spare;
+        if total == 0 {
+            return incomplete(
+                Verification::Different,
+                "Every saved marker lies in a bad sector, which is not read, so nothing says which drive this is.",
+            );
+        }
         let confidence_percent = (matched * 100 / total) as u32;
         let state = if matched == 0 || matched < MIN_MATCHED_MARKERS.min(total) {
             Verification::Different
@@ -302,7 +359,24 @@ impl Fingerprint {
         } else {
             Verification::Weak
         };
-        let summary = summarise(self, state, total, matched, &changed_offsets, unreadable);
+        let mut summary = summarise(
+            self,
+            state,
+            total,
+            matched,
+            &changed_offsets,
+            unreadable - in_bad_sectors,
+        );
+        if in_bad_sectors > 0 {
+            summary.push_str(&format!(
+                " Of the saved markers, {in_bad_sectors} lie in bad sectors, which are not read, so they say nothing."
+            ));
+        }
+        if skipped_to_spare > 0 {
+            summary.push_str(&format!(
+                " This drive has reset, so only {total} of its saved markers were read, from places known to read, and {skipped_to_spare} were not, to spare it."
+            ));
+        }
         Comparison {
             state,
             total,
@@ -413,6 +487,45 @@ fn candidates(targets: &[u64], index: usize, size: u64) -> Vec<u64> {
         }
     }
     found
+}
+
+/// Which saved markers to read on a disk that has reset: those in ranges known to read, at most
+/// [`CAREFUL_MARKER_READS`] of them spread over the disk, or when none is known to read the one nearest the start.
+fn careful_choice(samples: &[Sample], reader: &MarkerReader) -> std::collections::HashSet<usize> {
+    let safe: Vec<usize> = samples
+        .iter()
+        .enumerate()
+        .filter(|(_, sample)| {
+            sample.sha256.is_some()
+                && reader
+                    .disk
+                    .known_bad(sample.offset, sample.length)
+                    .is_none()
+                && reader.disk.known_good(sample.offset, sample.length)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if safe.is_empty() {
+        return samples
+            .iter()
+            .enumerate()
+            .filter(|(_, sample)| {
+                sample.sha256.is_some()
+                    && reader
+                        .disk
+                        .known_bad(sample.offset, sample.length)
+                        .is_none()
+            })
+            .map(|(index, _)| index)
+            .take(1)
+            .collect();
+    }
+    if safe.len() <= CAREFUL_MARKER_READS {
+        return safe.into_iter().collect();
+    }
+    (0..CAREFUL_MARKER_READS)
+        .map(|step| safe[step * (safe.len() - 1) / (CAREFUL_MARKER_READS - 1)])
+        .collect()
 }
 
 /// The block of marker `index` at or after `offset` (before it, for the last marker, which looks

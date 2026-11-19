@@ -285,11 +285,19 @@ fn read_block(
     state: &mut ProbeState,
     offset: u64,
     through_suspect: bool,
-) -> (RangeState, u64, bool) {
+) -> Option<(RangeState, u64, bool)> {
     let probed = health.probe_read(offset, BLOCK.min(health.length() - offset), through_suspect);
     if !probed.refused {
         clock.reads += 1;
         state.reads += 1;
+    }
+    if probed.gone && !probed.in_flight {
+        // The device had gone before this read was issued: nothing is learned about the range, and it is
+        // not a reset of this probe's. The read is made again when the drive is back.
+        state.stopped_because = Some(
+            "the device had already gone when the last read was issued, so nothing was learned about that place: reopen the drive, then continue the probe".into(),
+        );
+        return None;
     }
     if probed.gone {
         state.resets += 1;
@@ -305,7 +313,7 @@ fn read_block(
             "the device went away during the last read, which is now marked reset-culprit: reopen the drive, then continue the probe, which will not read it again.{failing}"
         ));
     }
-    (probed.state, probed.latency_ms, probed.gone)
+    Some((probed.state, probed.latency_ms, probed.gone))
 }
 
 /// Steps a side toward the target once: halfway from its last good read, finishing the side when the
@@ -339,7 +347,9 @@ fn approach(
         Side::Lower => anchor + step,
         Side::Upper => anchor - step,
     };
-    let (outcome, latency, gone) = read_block(health, clock, state, next, true);
+    let Some((outcome, latency, gone)) = read_block(health, clock, state, next, true) else {
+        return;
+    };
     if gone {
         if let Some(band) = state.bands.get_mut(zone.band) {
             band.resets += 1;
@@ -445,7 +455,14 @@ fn grid_point(health: &Health, clock: &mut Clock, state: &mut ProbeState, offset
     let (outcome, latency, gone) = match known {
         // Already known to be bad: not read, and it counts as bad.
         Some(range) => (range.state, 0, false),
-        None => read_block(health, clock, state, offset, false),
+        None => match read_block(health, clock, state, offset, false) {
+            Some(read) => read,
+            None => {
+                // Read this point again after the drive is back.
+                state.next_point = state.next_point.saturating_sub(1);
+                return;
+            }
+        },
     };
     let bad = outcome != RangeState::Good;
     let elevated = !bad && state.elevated(latency);
@@ -501,7 +518,7 @@ pub fn start(health: &Health, options: Options) -> Result<ProbeState> {
     health.set_failing_after(state.failing_after);
     health
         .store()
-        .save_probe(health.key(), &serde_json::to_string(&state)?)?;
+        .save_probe(health.own_key(), &serde_json::to_string(&state)?)?;
     Ok(state)
 }
 
@@ -509,7 +526,7 @@ pub fn start(health: &Health, options: Options) -> Result<ProbeState> {
 pub fn load(health: &Health) -> Result<Option<ProbeState>> {
     Ok(health
         .store()
-        .load_probe(health.key())?
+        .load_probe(health.own_key())?
         .and_then(|text| serde_json::from_str(&text).ok()))
 }
 
@@ -625,7 +642,7 @@ pub fn step_with(
     }
     health
         .store()
-        .save_probe(health.key(), &serde_json::to_string(&state)?)?;
+        .save_probe(health.own_key(), &serde_json::to_string(&state)?)?;
     let report = StepReport {
         reads: clock.reads,
         millis: clock.started.elapsed().as_millis() as u64,

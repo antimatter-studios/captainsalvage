@@ -93,6 +93,8 @@ export interface OpenedSource {
   openError: string | null;
   /** The markers that identify this source, for saying when too few could be used. */
   fingerprint: { samples: { offset: number }[]; markersWanted: number };
+  /** Set when the drive has reset: opening it read few markers, from places known to read, and ran no analysis. */
+  carefulOpen?: { resets: number; markersRead: number; markersStored: number; analysisSkipped: boolean; summary: string } | null;
   overview: import("./api").Overview | null;
 }
 

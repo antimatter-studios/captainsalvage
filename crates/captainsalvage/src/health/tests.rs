@@ -190,7 +190,7 @@ fn a_read_the_device_reset_during_is_a_culprit_that_a_later_run_does_not_read() 
     let data = patterned(8 * MIB as usize, 3);
     let drive = FakeDrive::new(
         data.clone(),
-        vec![(5 * MIB, 5 * MIB + 8192, Fault::Reset(5))],
+        vec![(5 * MIB, 5 * MIB + 8192, Fault::Reset(40))],
     );
     let key;
     {
@@ -201,7 +201,7 @@ fn a_read_the_device_reset_during_is_a_culprit_that_a_later_run_does_not_read() 
         assert_eq!(health.snapshot().count(RangeState::ResetCulprit), 1);
     }
     // The drive comes back as another device, and the app starts again.
-    let back = FakeDrive::new(data, vec![(5 * MIB, 5 * MIB + 8192, Fault::Reset(5))]);
+    let back = FakeDrive::new(data, vec![(5 * MIB, 5 * MIB + 8192, Fault::Reset(40))]);
     let health = health_of(&back, &store);
     assert_eq!(
         health.key(),
@@ -490,7 +490,7 @@ fn a_probe_stops_when_the_device_resets_and_goes_on_after_it_is_rebound_without_
     let root = Root::new();
     let store = root.store();
     let data = patterned(32 * MIB as usize, 8);
-    let faults = vec![(12 * MIB, 13 * MIB, Fault::Reset(5))];
+    let faults = vec![(12 * MIB, 13 * MIB, Fault::Reset(40))];
     let drive = FakeDrive::new(data.clone(), faults.clone());
     let health = health_of(&drive, &store);
     probe::start(&health, options(4, 4, 500)).unwrap();
@@ -537,9 +537,9 @@ fn a_damaged_band_with_islands_costs_one_reset_not_two() {
     let block = 4096;
     let faults = vec![
         (13 * MIB, 13 * MIB + block, Fault::Slow(130)),
-        (14 * MIB, 14 * MIB + block, Fault::Reset(5)),
+        (14 * MIB, 14 * MIB + block, Fault::Reset(40)),
         (15 * MIB, 15 * MIB + block, Fault::Slow(130)),
-        (18 * MIB, 18 * MIB + block, Fault::Reset(5)),
+        (18 * MIB, 18 * MIB + block, Fault::Reset(40)),
     ];
     let drive = FakeDrive::new(data.clone(), faults.clone());
     let health = health_of(&drive, &store);
@@ -600,8 +600,8 @@ fn a_probe_pauses_when_the_drive_has_reset_twice_and_reading_becomes_careful() {
     let store = root.store();
     let data = patterned(48 * MIB as usize, 13);
     let faults = vec![
-        (10 * MIB, 10 * MIB + 4096, Fault::Reset(5)),
-        (30 * MIB, 30 * MIB + 4096, Fault::Reset(5)),
+        (10 * MIB, 10 * MIB + 4096, Fault::Reset(40)),
+        (30 * MIB, 30 * MIB + 4096, Fault::Reset(40)),
     ];
     let first = FakeDrive::new(data.clone(), faults.clone());
     let health = health_of(&first, &store);
@@ -768,7 +768,16 @@ fn a_comparison_does_not_read_a_marker_in_a_bad_zone_and_calls_it_unknown() {
         comparison.changed, 0,
         "a block that is not read is unknown, not changed"
     );
-    assert_eq!(comparison.state, crate::raw_scan::Verification::Probable);
+    // Everything that can be read matches, so it is an exact match: the marker in the bad sector says
+    // nothing, and is left out of what the match is counted over.
+    assert_eq!(comparison.state, crate::raw_scan::Verification::Exact);
+    // (A zone where the drive reset makes it a careful open, which reads fewer markers still.)
+    assert!(comparison.total >= 1 && comparison.total < saved.samples.len());
+    assert!(
+        comparison.summary.contains("lie in bad sectors"),
+        "{}",
+        comparison.summary
+    );
     assert_eq!(drive.reads_in(marker, marker + 4096), 0);
 }
 
@@ -895,4 +904,488 @@ fn a_region_of_a_guarded_source_reports_the_bad_ranges_in_its_own_offsets() {
         .ranges()
         .iter()
         .all(|range| range.found_millis > 0));
+}
+
+/// A whole disk of 8 MiB and a partition of it that starts at 2 MiB and is 4 MiB: the partition's bytes are the
+/// disk's, as the same drive seen through two device nodes.
+fn disk_and_partition(
+    store: &Arc<HealthStore>,
+    seed: u64,
+    disk_faults: Vec<(u64, u64, Fault)>,
+    partition_faults: Vec<(u64, u64, Fault)>,
+) -> (Arc<FakeDrive>, Arc<Health>, Arc<FakeDrive>, Arc<Health>) {
+    let data = patterned(8 * MIB as usize, seed);
+    let whole = FakeDrive::new(data.clone(), disk_faults);
+    let whole_health = health_of(&whole, store);
+    let part = FakeDrive::new(
+        data[2 * MIB as usize..6 * MIB as usize].to_vec(),
+        partition_faults,
+    );
+    let part_key = source_key(part.as_ref(), 4 * MIB);
+    let part_health = Health::attach_in(
+        part.clone(),
+        4 * MIB,
+        store.clone(),
+        part_key,
+        Some((whole_health.key().to_string(), 2 * MIB)),
+    )
+    .unwrap();
+    (whole, whole_health, part, part_health)
+}
+
+#[test]
+fn a_whole_disk_and_its_partitions_share_one_map_one_reset_count_and_one_failing_flag() {
+    let root = Root::new();
+    let store = root.store();
+    let (whole, whole_health, part, part_health) = disk_and_partition(&store, 31, vec![], vec![]);
+    assert_eq!(
+        part_health.key(),
+        whole_health.key(),
+        "kept under the physical disk's key"
+    );
+    assert_ne!(part_health.own_key(), whole_health.key());
+    assert_eq!(part_health.base(), 2 * MIB);
+
+    // A zone found through the partition (1 to 2 MiB into it) is the disk's 3 to 4 MiB, and the disk avoids it.
+    part_health
+        .mark_bad(
+            MIB,
+            2 * MIB,
+            RangeState::ResetCulprit,
+            "you",
+            "the owner's dd run",
+        )
+        .unwrap();
+    assert!(read(&part_health, MIB + 4096, 4096).is_err());
+    whole_health.reload();
+    let refused = read(&whole_health, 3 * MIB + 8192, 4096).unwrap_err();
+    assert_eq!(
+        known_bad(&refused).unwrap().start,
+        3 * MIB,
+        "in the disk's own offsets"
+    );
+    assert_eq!(whole.reads_in(3 * MIB, 4 * MIB), 0);
+    assert!(read(&whole_health, 3 * MIB - 4096, 4096).is_ok());
+    // And the other way: a zone the disk marks is seen from the partition, in the partition's offsets.
+    whole_health
+        .mark_bad(
+            5 * MIB,
+            5 * MIB + MIB / 2,
+            RangeState::Suspect,
+            "you",
+            "a probe",
+        )
+        .unwrap();
+    part_health.reload();
+    let seen = part_health.snapshot();
+    let starts: Vec<(u64, RangeState)> = seen
+        .ranges()
+        .iter()
+        .filter(|r| r.state.blocks())
+        .map(|r| (r.start, r.state))
+        .collect();
+    assert_eq!(
+        starts,
+        vec![
+            (MIB, RangeState::ResetCulprit),
+            (3 * MIB, RangeState::Suspect)
+        ]
+    );
+    assert_eq!(
+        part.reads_in(MIB, 2 * MIB),
+        0,
+        "the culprit was read once, before it was marked"
+    );
+    // Zones outside the partition are not its.
+    whole_health
+        .mark_bad(
+            7 * MIB,
+            7 * MIB + 4096,
+            RangeState::Unreadable,
+            "you",
+            "elsewhere",
+        )
+        .unwrap();
+    part_health.reload();
+    assert_eq!(
+        part_health
+            .snapshot()
+            .ranges()
+            .iter()
+            .filter(|r| r.state.blocks())
+            .count(),
+        2
+    );
+
+    // One reset count for the physical disk: a reset through either node counts for both, and the flag follows.
+    store.add_resets(whole_health.key(), 1).unwrap();
+    part_health.reload();
+    whole_health.reload();
+    assert_eq!((part_health.resets(), whole_health.resets()), (1, 1));
+    assert!(!whole_health.failing());
+    store.add_resets(part_health.key(), 1).unwrap();
+    whole_health.reload();
+    part_health.reload();
+    assert!(
+        whole_health.failing() && part_health.failing(),
+        "two resets, through two nodes, is a failing drive"
+    );
+}
+
+#[test]
+fn what_a_partition_stored_before_it_was_known_to_be_one_moves_into_the_disk_when_they_are_linked()
+{
+    let root = Root::new();
+    let store = root.store();
+    let data = patterned(8 * MIB as usize, 32);
+    // The partition is opened alone first: its own map, its own reset count, a read that never finished.
+    let part = FakeDrive::new(data[2 * MIB as usize..6 * MIB as usize].to_vec(), vec![]);
+    let own = source_key(part.as_ref(), 4 * MIB);
+    {
+        let alone = Health::attach(part.clone(), 4 * MIB, store.clone(), own.clone()).unwrap();
+        alone
+            .mark_bad(MIB, 2 * MIB, RangeState::ResetCulprit, "you", "found alone")
+            .unwrap();
+        store.started(&own, &alone.owner, 3 * MIB, 4096).unwrap();
+        store.add_resets(&own, 1).unwrap();
+    }
+    // The whole disk is opened, and says which stretch is the partition.
+    let whole = FakeDrive::new(data, vec![]);
+    let disk = health_of(&whole, &store);
+    store.link(&own, disk.key(), 2 * MIB, 4 * MIB).unwrap();
+    disk.reload();
+    let blocked: Vec<(u64, u64)> = disk
+        .snapshot()
+        .ranges()
+        .iter()
+        .filter(|r| r.state.blocks())
+        .map(|r| (r.start, r.end))
+        .collect();
+    assert_eq!(
+        blocked,
+        vec![(3 * MIB, 4 * MIB), (5 * MIB, 5 * MIB + 4096)],
+        "the zone, and the read that never finished, in the disk's offsets"
+    );
+    assert_eq!(
+        disk.resets(),
+        2,
+        "the partition's reset, and the read that never finished"
+    );
+    assert_eq!(
+        store.load_map(&own).unwrap().ranges().len(),
+        0,
+        "nothing is left under the partition's own key"
+    );
+    // The partition opened now shares all of it.
+    let again = Health::attach_in(
+        part,
+        4 * MIB,
+        store.clone(),
+        own,
+        Some((disk.key().to_string(), 2 * MIB)),
+    )
+    .unwrap();
+    assert_eq!(
+        again
+            .snapshot()
+            .ranges()
+            .iter()
+            .filter(|r| r.state.blocks())
+            .count(),
+        2
+    );
+    assert_eq!(again.resets(), 2);
+}
+
+#[test]
+fn only_the_read_in_flight_when_the_device_went_away_is_a_culprit() {
+    let root = Root::new();
+    let store = root.store();
+    let data = patterned(8 * MIB as usize, 33);
+    // A read that fails at once because the node had already vanished: issued after the device went away.
+    let drive = FakeDrive::new(data.clone(), vec![(4096, 8192, Fault::Reset(0))]);
+    let health = health_of(&drive, &store);
+    assert!(read(&health, 4096, 4096).is_err());
+    assert!(health.is_gone());
+    assert_eq!(
+        health.snapshot().count(RangeState::ResetCulprit),
+        0,
+        "offset 4096 read fine before: the failure says nothing about it"
+    );
+    assert_eq!(health.resets(), 1, "the device did go away");
+    let rows = store.recent(health.key(), 5).unwrap();
+    assert!(rows.iter().all(|row| row["outcome"] != "gone"), "{rows:?}");
+    // Reads after that are refused by the dead node without being recorded.
+    assert!(read(&health, 16384, 4096).is_err());
+    assert_eq!(health.snapshot().count(RangeState::ResetCulprit), 0);
+    // One that was in flight for a while is the culprit.
+    let slow = FakeDrive::new(data, vec![(MIB, MIB + 4096, Fault::Reset(60))]);
+    let second = health_of(&slow, &Root::new().store());
+    assert!(read(&second, MIB, 4096).is_err());
+    assert_eq!(second.snapshot().count(RangeState::ResetCulprit), 1);
+}
+
+#[test]
+fn a_probe_that_finds_the_device_already_gone_learns_nothing_and_reads_the_point_again_later() {
+    let root = Root::new();
+    let store = root.store();
+    let data = patterned(16 * MIB as usize, 34);
+    let drive = FakeDrive::new(
+        data.clone(),
+        vec![(4 * MIB, 4 * MIB + 4096, Fault::Reset(0))],
+    );
+    let health = health_of(&drive, &store);
+    probe::start(&health, options(1, 4, 500)).unwrap();
+    let (_, report) = probe::step(&health, BIG).unwrap();
+    assert!(
+        report
+            .stopped_because
+            .as_deref()
+            .unwrap()
+            .contains("already gone"),
+        "{report:?}"
+    );
+    assert_eq!(
+        health.snapshot().count(RangeState::ResetCulprit)
+            + health.snapshot().count(RangeState::Suspect),
+        0,
+        "no band, no culprit"
+    );
+    assert_eq!(report.bands, 0);
+    health.rebind(FakeDrive::new(data, vec![]));
+    let report = run_grid(&health);
+    assert_eq!(
+        report.phase,
+        probe::Phase::Done,
+        "the point was read again, and was fine: {report:?}"
+    );
+}
+
+#[test]
+fn culprits_recorded_for_a_read_made_after_the_device_had_gone_are_dropped_when_the_source_is_opened(
+) {
+    let root = Root::new();
+    let store = root.store();
+    let drive = FakeDrive::new(patterned(2 * MIB as usize, 35), vec![]);
+    let key = source_key(drive.as_ref(), 2 * MIB);
+    let mut map = HealthMap::default();
+    // As the real catalog held it: offset 0, a latency of 0, the guard's own note.
+    map.record(HealthRange::new(
+        0,
+        4096,
+        RangeState::ResetCulprit,
+        Some(0),
+        "the device went away during a read of this range",
+    ));
+    // The ones that are evidence: a long read, one the person marked, and one found from a read that never ended.
+    map.record(HealthRange::new(
+        MIB,
+        MIB + 4096,
+        RangeState::ResetCulprit,
+        Some(108),
+        "the device went away during a read of this range",
+    ));
+    map.record(HealthRange::new(
+        MIB + 8192,
+        MIB + 12288,
+        RangeState::ResetCulprit,
+        Some(0),
+        "marked by you: dd evidence",
+    ));
+    map.record(HealthRange::new(
+        MIB + 16384,
+        MIB + 20480,
+        RangeState::ResetCulprit,
+        None,
+        "a read of this range started and never finished, so the device probably reset during it",
+    ));
+    store.save_map(&key, None, &map).unwrap();
+    let health = health_of(&drive, &store);
+    let starts: Vec<u64> = health.snapshot().ranges().iter().map(|r| r.start).collect();
+    assert_eq!(
+        starts,
+        vec![MIB, MIB + 8192, MIB + 16384],
+        "only the instant one is gone"
+    );
+    assert!(read(&health, 0, 4096).is_ok(), "offset 0 reads again");
+    // Stored, so it is gone for good.
+    assert_eq!(store.load_map(&key).unwrap().ranges().len(), 3);
+}
+
+#[test]
+fn a_disk_that_has_reset_is_recognised_from_a_few_markers_in_places_known_to_read_and_says_so() {
+    let root = Root::new();
+    let store = root.store();
+    let length = 40 * MIB;
+    let data = patterned(length as usize, 36);
+    // First opened when nothing was wrong: the full set of markers is stored.
+    let saved = {
+        let disk = RawDisk::with_source(
+            Path::new("/x"),
+            FakeDrive::new(data.clone(), vec![]),
+            length,
+        )
+        .unwrap();
+        Fingerprint::read(&disk)
+    };
+    assert!(saved.samples.len() >= 19);
+    // Then it reset: a culprit zone, far from any marker.
+    let drive = FakeDrive::new(data, vec![]);
+    let disk = RawDisk::with_source_guarded(Path::new("/dev/rdisk9"), drive.clone(), length, store)
+        .unwrap();
+    let view = disk.health.as_ref().unwrap();
+    view.health
+        .mark_bad(
+            37 * MIB,
+            38 * MIB,
+            RangeState::ResetCulprit,
+            "you",
+            "found by dd",
+        )
+        .unwrap();
+    assert!(disk.careful_open());
+    // Two of the markers lie where an earlier open read well (journaled) and the rest nowhere known.
+    let known = [saved.samples[3].offset, saved.samples[12].offset];
+    for offset in known {
+        view.health
+            .store()
+            .started(view.health.key(), "0:0", offset, 4096)
+            .and_then(|row| view.health.store().done(row, 2, "ok"))
+            .unwrap();
+    }
+    view.health.reload();
+    let reads_before = drive.reads().len();
+    let mut reader = crate::raw_scan::MarkerReader::new(&disk);
+    assert!(reader.is_careful());
+    let comparison = saved.compare(&mut reader);
+    let reads = drive.reads()[reads_before..].to_vec();
+    assert!(
+        reads.len() <= crate::raw_scan::CAREFUL_MARKER_READS,
+        "{reads:?}"
+    );
+    assert!(
+        reads
+            .iter()
+            .all(|(offset, _)| *offset < MIB || known.contains(offset)),
+        "only the head and what earlier reads found good: {reads:?}"
+    );
+    assert_eq!(
+        comparison.state,
+        crate::raw_scan::Verification::Exact,
+        "{}",
+        comparison.summary
+    );
+    assert_eq!(comparison.total, reads.len());
+    assert!(
+        comparison.summary.contains("only") && comparison.summary.contains("to spare it"),
+        "{}",
+        comparison.summary
+    );
+
+    // A fresh reading of the markers reads no further than that either, and in the same places.
+    let before = drive.reads().len();
+    let fresh = Fingerprint::read(&disk);
+    let more = drive.reads()[before..].to_vec();
+    assert!(
+        more.len() <= crate::raw_scan::CAREFUL_MARKER_READS,
+        "{more:?}"
+    );
+    assert!(
+        more.iter()
+            .all(|(offset, _)| *offset < MIB || known.contains(offset)),
+        "{more:?}"
+    );
+    assert!(fresh.samples.len() < saved.samples.len());
+}
+
+#[test]
+fn nothing_is_marked_by_a_person_without_saying_why_and_what_is_marked_is_not_read() {
+    let root = Root::new();
+    let drive = FakeDrive::new(patterned(4 * MIB as usize, 37), vec![]);
+    let health = health_of(&drive, &root.store());
+    assert!(health
+        .mark_bad(MIB, 2 * MIB, RangeState::ResetCulprit, "you", "  ")
+        .is_err());
+    assert!(health
+        .mark_bad(2 * MIB, MIB, RangeState::ResetCulprit, "you", "why")
+        .is_err());
+    assert!(
+        health
+            .mark_bad(MIB, 5 * MIB, RangeState::ResetCulprit, "you", "why")
+            .is_err(),
+        "past the end"
+    );
+    assert!(health
+        .mark_bad(MIB, 2 * MIB, RangeState::Good, "you", "why")
+        .is_err());
+    let range = health
+        .mark_bad(
+            MIB,
+            2 * MIB,
+            RangeState::ResetCulprit,
+            "you",
+            "dd from 1 MiB dropped the drive",
+        )
+        .unwrap();
+    assert_eq!(range.note, "marked by you: dd from 1 MiB dropped the drive");
+    assert!(range.found_millis > 0);
+    assert!(known_bad(&read(&health, MIB + 4096, 4096).unwrap_err()).is_some());
+    assert_eq!(drive.reads_in(MIB, 2 * MIB), 0);
+}
+
+fn gpt_disk(seed: u64, guid: u8) -> Arc<FakeDrive> {
+    let mut data = patterned(2 * MIB as usize, seed);
+    // The same protective MBR as every GPT disk, then a header with this disk's GUID.
+    data[..512].fill(0);
+    data[446 + 4] = 0xEE;
+    data[510..512].copy_from_slice(&[0x55, 0xAA]);
+    data[512..520].copy_from_slice(b"EFI PART");
+    data[512 + 56..512 + 72].fill(guid);
+    FakeDrive::new(data, vec![])
+}
+
+#[test]
+fn two_gpt_disks_of_one_size_are_two_disks_and_what_was_stored_before_the_guid_moves_to_the_one_that_had_it(
+) {
+    let root = Root::new();
+    let store = root.store();
+    let (one, two) = (gpt_disk(41, 0xA1), gpt_disk(42, 0xB2));
+    let (key_one, key_two) = (
+        source_key(one.as_ref(), 2 * MIB),
+        source_key(two.as_ref(), 2 * MIB),
+    );
+    assert_ne!(
+        key_one, key_two,
+        "the same protective MBR, the same length: the GUID tells them apart"
+    );
+    assert!(key_one.contains("-g"));
+    let legacy = super::legacy_source_key(one.as_ref(), 2 * MIB);
+    assert_eq!(
+        legacy,
+        super::legacy_source_key(two.as_ref(), 2 * MIB),
+        "the old key could not"
+    );
+    // What an earlier version stored under the old key moves to the first disk that is opened, and the
+    // second disk, opened after, gets nothing of it.
+    let mut map = HealthMap::default();
+    map.record(HealthRange::new(
+        MIB,
+        MIB + 4096,
+        RangeState::ResetCulprit,
+        Some(108),
+        "the device went away during a read of this range",
+    ));
+    store.save_map(&legacy, None, &map).unwrap();
+    store.add_resets(&legacy, 1).unwrap();
+    assert!(store.rekey(&legacy, &key_one).unwrap());
+    assert!(
+        !store.rekey(&legacy, &key_two).unwrap(),
+        "nothing left under the old key"
+    );
+    assert_eq!(store.load_map(&key_one).unwrap().ranges().len(), 1);
+    assert_eq!(store.load_map(&key_two).unwrap().ranges().len(), 0);
+    assert_eq!(store.load_flags(&key_one).unwrap().0, 1);
+    // A key that already has something is not overwritten by another disk's old rows.
+    store.save_map(&legacy, None, &map).unwrap();
+    assert!(!store.rekey(&legacy, &key_one).unwrap());
 }

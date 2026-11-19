@@ -950,6 +950,20 @@ drive further. The app therefore learns where the bad areas are, once, and then 
   volume and its map read again. The descriptor on the vanished node is closed when the device is found
   to be gone.
 
+**One map per physical disk.** The map, the read journal and the reset count are kept under the physical disk's key
+and in its offsets. A whole disk (/dev/rdisk7) and its partitions (/dev/rdisk7s1) share them: a partition opened
+by its device name finds the disk and where it starts in it (by the partition table, confirmed by the first sector
+there), and a whole disk records which stretches are its partitions, moving what a partition had stored alone into
+its own map. A GPT disk's GUID is part of its key. Only the read that was in flight for at least 20 ms when the
+device went away is marked `reset-culprit`: a read that failed because the node had already vanished comes back at
+once and marks nothing (and such ranges recorded by an earlier version are removed when the source is opened).
+
+**A disk that has reset is opened carefully.** With a `reset-culprit` or `suspect` zone anywhere on it, or two resets,
+opening it reads at most five stored markers, only from places known to read (the first MiB, probe-verified ranges, and
+ranges earlier journaled reads read well), runs no range analysis, and says so (`carefulOpen` in the answer of
+`open_source`). `probe_health` action `mark_bad` records a zone found some other way (the person's or an agent's `dd`
+run), with who and why.
+
 The older `open_volume` door does not use the guard.
 
 ### Tests

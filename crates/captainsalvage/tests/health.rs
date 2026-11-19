@@ -124,7 +124,7 @@ fn a_range_an_earlier_run_marked_is_not_read_by_opening_and_markers_move_out_of_
     let range = HealthRange::new(
         nominal - MIB / 4,
         nominal + MIB / 4,
-        RangeState::ResetCulprit,
+        RangeState::Unreadable,
         None,
         "a test marked it",
     );
@@ -140,7 +140,7 @@ fn a_range_an_earlier_run_marked_is_not_read_by_opening_and_markers_move_out_of_
     let disk = open(&engine, &image);
     let map = call(&engine, "health_map", json!({"diskId": disk}));
     assert_eq!(
-        map["resetCulprit"]["ranges"], 1,
+        map["unreadable"]["ranges"], 1,
         "the map of the drive is loaded on opening"
     );
 
@@ -353,4 +353,236 @@ fn the_edges_wait_for_the_person_through_the_tools() {
         edges["step"]["finished"], true,
         "edges with nothing to map is harmless"
     );
+}
+
+/// A whole disk image (an MBR and one partition from 1 MiB, 4 MiB long) and the partition's bytes on their own,
+/// as the same drive under two device nodes.
+fn blocked(engine: &Engine, disk: &str) -> Vec<(u64, u64)> {
+    call(engine, "health_map", json!({"diskId": disk}))["ranges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|range| {
+            matches!(
+                range["state"].as_str().unwrap(),
+                "reset-culprit" | "unreadable" | "suspect"
+            )
+        })
+        .map(|range| {
+            (
+                range["start"].as_u64().unwrap(),
+                range["end"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn disk_and_partition(label: &str, seed: u64) -> (Image, Image) {
+    home();
+    let mut data = noise(8 * MIB as usize, seed);
+    data[..512].fill(0);
+    // An MBR disk signature of its own, as every disk has, so two of these are two disks.
+    data[440..444].copy_from_slice(&(seed as u32).to_le_bytes());
+    data[446 + 4] = 0x07;
+    data[446 + 8..446 + 12].copy_from_slice(&((MIB / 512) as u32).to_le_bytes());
+    data[446 + 12..446 + 16].copy_from_slice(&((4 * MIB / 512) as u32).to_le_bytes());
+    data[510..512].copy_from_slice(&[0x55, 0xAA]);
+    let part = data[MIB as usize..5 * MIB as usize].to_vec();
+    let write = |name: &str, bytes: &[u8]| {
+        let path = std::env::temp_dir().join(format!(
+            "captainsalvage-health-{}-{label}-{name}.img",
+            std::process::id()
+        ));
+        std::fs::write(&path, bytes).unwrap();
+        Image(path, bytes.len() as u64)
+    };
+    (write("disk", &data), write("part", &part))
+}
+
+#[test]
+fn a_zone_marked_through_the_whole_disk_is_avoided_through_its_partition_and_the_other_way_round() {
+    let (disk_image, part_image) = disk_and_partition("share", 11);
+    // The whole disk is opened first: it says which stretch is the partition.
+    let first = Engine::default();
+    let disk = open(&first, &disk_image);
+    let marked = call(
+        &first,
+        "probe_health",
+        json!({"diskId": disk, "action": "mark_bad", "start": 3 * MIB, "end": 3 * MIB + MIB / 2, "why": "dd from 3 MiB dropped the drive"}),
+    );
+    assert_eq!(
+        marked["marked"]["note"],
+        "marked by you: dd from 3 MiB dropped the drive"
+    );
+    drop(first);
+
+    // The partition opened alone, by its own bytes, finds the same zone, 2 MiB into it.
+    let second = Engine::default();
+    let part = open(&second, &part_image);
+    assert_eq!(blocked(&second, &part), vec![(2 * MIB, 2 * MIB + MIB / 2)]);
+    let refused = second
+        .call(
+            "read_raw_disk",
+            &json!({"diskId": part, "offset": 2 * MIB + 4096, "length": 512}),
+            AUTHOR_USER,
+        )
+        .expect_err("avoided through the partition too");
+    assert!(format!("{refused:#}").contains("not read"), "{refused:#}");
+
+    // A zone marked through the partition (1 MiB into it) is the disk's 2 MiB, seen from the whole disk.
+    call(
+        &second,
+        "probe_health",
+        json!({"diskId": part, "action": "mark_bad", "start": MIB, "end": MIB + 4096, "state": "unreadable", "why": "found through the partition"}),
+    );
+    drop(second);
+    let third = Engine::default();
+    let disk = open(&third, &disk_image);
+    let starts: Vec<u64> = blocked(&third, &disk).iter().map(|range| range.0).collect();
+    assert_eq!(starts, vec![2 * MIB, 3 * MIB], "{starts:?}");
+}
+
+#[test]
+fn what_a_partition_found_alone_moves_into_the_disk_when_the_disk_is_opened_and_the_reset_count_is_the_disks(
+) {
+    let (disk_image, part_image) = disk_and_partition("merge", 12);
+    let alone = Engine::default();
+    let part = open(&alone, &part_image);
+    call(
+        &alone,
+        "probe_health",
+        json!({"diskId": part, "action": "mark_bad", "start": 2 * MIB, "end": 3 * MIB, "why": "found with the partition opened alone"}),
+    );
+    HealthStore::for_user()
+        .unwrap()
+        .add_resets(&part_image.key(), 1)
+        .unwrap();
+    drop(alone);
+    let whole = Engine::default();
+    let disk = open(&whole, &disk_image);
+    assert_eq!(
+        blocked(&whole, &disk)[0].0,
+        3 * MIB,
+        "the partition's 2 MiB is the disk's 3 MiB"
+    );
+    let map = call(&whole, "health_map", json!({"diskId": disk}));
+    assert_eq!(
+        map["resets"], 1,
+        "the partition's reset count is the disk's now"
+    );
+    // A second reset, recorded under the disk's key, is a failing drive from the partition's node too.
+    HealthStore::for_user()
+        .unwrap()
+        .add_resets(&disk_image.key(), 1)
+        .unwrap();
+    drop(whole);
+    let again = Engine::default();
+    let part = open(&again, &part_image);
+    let map = call(&again, "health_map", json!({"diskId": part}));
+    assert_eq!(
+        (map["resets"].clone(), map["failing"].clone()),
+        (json!(2), json!(true)),
+        "{map}"
+    );
+}
+
+#[test]
+fn opening_a_disk_that_has_reset_reads_a_few_known_places_runs_no_analysis_and_says_so() {
+    let image = Image::new("careful", 13);
+    let engine = Engine::default();
+    // Opened while well: the markers are stored.
+    let disk = open(&engine, &image);
+    let first = call(&engine, "open_source", json!({"diskId": disk}));
+    assert!(
+        first["carefulOpen"].is_null(),
+        "nothing is wrong yet: {first}"
+    );
+    let stored = first["fingerprint"]["samples"].as_array().unwrap().len();
+    assert!(stored >= 19);
+    drop(engine);
+
+    // The drive resets once somewhere: a zone is marked.
+    HealthStore::for_user()
+        .unwrap()
+        .save_map(
+            &image.key(),
+            None,
+            &HealthMap::from_ranges(vec![HealthRange::new(
+                6 * MIB,
+                6 * MIB + MIB / 2,
+                RangeState::ResetCulprit,
+                Some(108),
+                "the device went away during a read of this range",
+            )]),
+        )
+        .unwrap();
+    let careful = Engine::default();
+    let disk = open(&careful, &image);
+    let opened = call(&careful, "open_source", json!({"diskId": disk}));
+    let note = &opened["carefulOpen"];
+    assert_eq!(note["analysisSkipped"], true, "{opened}");
+    assert!(note["markersRead"].as_u64().unwrap() <= 5, "{note}");
+    assert!(note["summary"]
+        .as_str()
+        .unwrap()
+        .contains("did not read fresh markers"));
+    // It is still the same source, found from the stored markers, and what is remembered of it is the full set.
+    assert_eq!(opened["created"], false, "{opened}");
+    assert_eq!(note["markersStored"].as_u64().unwrap() as usize, stored);
+    // Analysis is for the person to ask for.
+    let analysed = call(
+        &careful,
+        "analyze_range",
+        json!({"diskId": disk, "offset": 0, "length": MIB, "step": 4096, "signatures": false}),
+    );
+    assert!(analysed.is_object());
+}
+
+#[test]
+fn a_zone_is_marked_with_who_and_why_and_a_bad_request_is_refused() {
+    let image = Image::new("markbad", 14);
+    let engine = Engine::default();
+    let disk = open(&engine, &image);
+    let bad = |args: Value| {
+        engine
+            .call("probe_health", &args, AUTHOR_USER)
+            .expect_err("refused")
+    };
+    assert!(format!(
+        "{:#}",
+        bad(json!({"diskId": disk, "action": "mark_bad", "start": MIB, "end": 2 * MIB}))
+    )
+    .contains("say why"));
+    assert!(format!(
+        "{:#}",
+        bad(
+            json!({"diskId": disk, "action": "mark_bad", "start": 2 * MIB, "end": MIB, "why": "x"})
+        )
+    )
+    .contains("below end"));
+    assert!(format!(
+        "{:#}",
+        bad(
+            json!({"diskId": disk, "action": "mark_bad", "start": MIB, "end": 99 * MIB, "why": "x"})
+        )
+    )
+    .contains("past the end"));
+    assert!(format!("{:#}", bad(json!({"diskId": disk, "action": "mark_bad", "start": MIB, "end": 2 * MIB, "why": "x", "state": "good"}))).contains("state must be"));
+    let person = call(
+        &engine,
+        "probe_health",
+        json!({"diskId": disk, "action": "mark_bad", "start": 2 * MIB, "end": 2 * MIB + 4096, "why": "dd from 472,517,443,584 dropped the drive"}),
+    );
+    assert!(person["marked"]["note"]
+        .as_str()
+        .unwrap()
+        .starts_with("marked by you: dd from"));
+    let agent = engine
+        .call("probe_health", &json!({"diskId": disk, "action": "mark_bad", "start": 6 * MIB, "end": 6 * MIB + 4096, "why": "an agent's dd run", "state": "suspect"}), AUTHOR_CLAUDE)
+        .unwrap();
+    assert!(agent["marked"]["note"]
+        .as_str()
+        .unwrap()
+        .starts_with("marked by an agent:"));
+    assert_eq!(blocked(&engine, &disk).len(), 2);
 }

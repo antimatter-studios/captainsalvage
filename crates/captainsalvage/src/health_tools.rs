@@ -27,10 +27,12 @@ pub fn definitions() -> Vec<Definition> {
     vec![
         Definition {
             name: "probe_health",
-            description: "Finds the bad zones of a failing drive gently, without reading into them, so the drive is not reset again and again. The grid first: one 4 KiB read at every gridBytes (default 1 GiB) and at the last block, each timed. The first read that fails, is slow (over slowMs, default 500) or resets the drive opens a suspect band, and the grid jumps forward skipBytes (default 16 GiB) before it reads again; a read after the jump that is bad, or far slower than the running median, is part of the band, and the jump repeats; the first clean read ends it. A good but slow read just before the first bad one is part of the band too. The grid is finished first, and a band is never read into: from the last clean read before it to the first clean read after it, the range is marked suspect, which every reader treats like unreadable (scans report it as read errors, previews mark it, copies write zeros and name it), until you forgive it. The edges come last and only when asked (action edges), because each band can cost a reset: from the nearest clean read on each side the probe steps toward the band, halfway each time, and stops at the first slow or failed read, so the band shrinks to the stretch between the last good reads and is never read into. Every read is journaled before it starts: a read the device went away during is marked reset-culprit and never read again, here or by any other tool. Each band reports the resets it has cost. When the drive has reset failingAfterResets times during a probe (default 2) the probe pauses and says so (call again with proceed true to go on), and once the source has reset that often reading becomes careful: every read journaled, none longer than 64 KiB, suspect bands not read. Each call reads at most maxReads blocks (default 64, at most 2000) and for at most maxMillis (default 20000, at most 300000), keeps where it is, and can be continued, also after the app was closed. action: start (begin again with the options, and read the first part of the grid), step (continue the grid; maps no edges), edges (map the edges of the suspect bands, and continue), status (no reads), stop (forget the probe, keep the map), forgive (only the person: forget the health of start..end, suspect bands included, after a repair), unflag (only the person: set the source's reset count back to zero). Only reads.",
+            description: "Finds the bad zones of a failing drive gently, without reading into them, so the drive is not reset again and again. The grid first: one 4 KiB read at every gridBytes (default 1 GiB) and at the last block, each timed. The first read that fails, is slow (over slowMs, default 500) or resets the drive opens a suspect band, and the grid jumps forward skipBytes (default 16 GiB) before it reads again; a read after the jump that is bad, or far slower than the running median, is part of the band, and the jump repeats; the first clean read ends it. A good but slow read just before the first bad one is part of the band too. The grid is finished first, and a band is never read into: from the last clean read before it to the first clean read after it, the range is marked suspect, which every reader treats like unreadable (scans report it as read errors, previews mark it, copies write zeros and name it), until you forgive it. The edges come last and only when asked (action edges), because each band can cost a reset: from the nearest clean read on each side the probe steps toward the band, halfway each time, and stops at the first slow or failed read, so the band shrinks to the stretch between the last good reads and is never read into. Every read is journaled before it starts: a read the device went away during is marked reset-culprit and never read again, here or by any other tool. Each band reports the resets it has cost. When the drive has reset failingAfterResets times during a probe (default 2) the probe pauses and says so (call again with proceed true to go on), and once the source has reset that often reading becomes careful: every read journaled, none longer than 64 KiB, suspect bands not read. Each call reads at most maxReads blocks (default 64, at most 2000) and for at most maxMillis (default 20000, at most 300000), keeps where it is, and can be continued, also after the app was closed. action: start (begin again with the options, and read the first part of the grid), step (continue the grid; maps no edges), edges (map the edges of the suspect bands, and continue), status (no reads), stop (forget the probe, keep the map), forgive (only the person: forget the health of start..end, suspect bands included, after a repair), unflag (only the person: set the source's reset count back to zero), mark_bad (record a zone found outside the probe, such as by reading the drive with dd: start and end in this source's own bytes, state reset-culprit (default), unreadable or suspect, and why, which is kept with who said so; nothing reads it from then on, until it is forgiven). The map, the reset count and the flag of a failing drive belong to the physical disk: a partition and its whole disk share them, so a zone marked or found through one is avoided through the other. Only reads.",
             properties: json!({
                 "diskId": {"type": "string", "description": "ID from open_raw_disk or open_source."},
-                "action": {"type": "string", "description": "start, step, edges, status, stop, forgive or unflag. Default step when a probe is stored, otherwise start."},
+                "action": {"type": "string", "description": "start, step, edges, status, stop, forgive, unflag or mark_bad. Default step when a probe is stored, otherwise start."},
+                "state": {"type": "string", "description": "mark_bad: reset-culprit (default), unreadable or suspect."},
+                "why": {"type": "string", "description": "mark_bad: where the zone was found and how, at most 500 characters. Required."},
                 "gridBytes": integer("Distance between the grid reads, at least 1 MiB. Default 1 GiB. Start only."),
                 "skipBytes": integer("How far the grid jumps after a bad read, so it does not read into the band. Default 16 GiB. Start only."),
                 "edgeBytes": integer("A side stops walking toward a band when its next step is under this. Default 1 MiB. Start only."),
@@ -161,7 +163,7 @@ pub fn call(tool: &str, disk: &RawDisk, args: &Value, is_person: bool) -> Result
                 }
                 "status" => status(health, json!({})),
                 "stop" => {
-                    health.store().clear_probe(health.key())?;
+                    health.store().clear_probe(health.own_key())?;
                     status(health, json!({"stopped": true}))
                 }
                 "forgive" => {
@@ -189,7 +191,21 @@ pub fn call(tool: &str, disk: &RawDisk, args: &Value, is_person: bool) -> Result
                     health.clear_resets();
                     status(health, json!({"resetsCleared": true}))
                 }
-                other => bail!("unknown action {other}: use start, step, edges, status, stop, forgive or unflag"),
+                "mark_bad" => {
+                    let start = args.get("start").and_then(Value::as_u64).context("mark_bad needs start")?;
+                    let end = args.get("end").and_then(Value::as_u64).context("mark_bad needs end")?;
+                    let state = match args.get("state").and_then(Value::as_str).unwrap_or("reset-culprit") {
+                        "reset-culprit" => RangeState::ResetCulprit,
+                        "unreadable" => RangeState::Unreadable,
+                        "suspect" => RangeState::Suspect,
+                        other => bail!("state must be reset-culprit, unreadable or suspect, not {other}"),
+                    };
+                    let why = args.get("why").and_then(Value::as_str).unwrap_or("");
+                    let who = if is_person { "you" } else { "an agent" };
+                    let range = health.mark_bad(start, end, state, who, why)?;
+                    status(health, json!({"marked": range}))
+                }
+                other => bail!("unknown action {other}: use start, step, edges, status, stop, forgive, unflag or mark_bad"),
             }
         }
         _ => bail!("{tool} is not a health tool"),

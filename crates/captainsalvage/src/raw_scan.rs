@@ -14,8 +14,8 @@ mod markers;
 mod rescan;
 use markers::hex;
 pub use markers::{
-    Comparison, Fingerprint, MarkerReader, Sample, Verification, MARKER_BYTES, MARKER_COUNT,
-    MIN_MATCHED_MARKERS, PROBABLE_PERCENT,
+    Comparison, Fingerprint, MarkerReader, Sample, Verification, CAREFUL_MARKER_READS,
+    MARKER_BYTES, MARKER_COUNT, MIN_MATCHED_MARKERS, PROBABLE_PERCENT,
 };
 pub use rescan::{RescanReport, RescanStep};
 

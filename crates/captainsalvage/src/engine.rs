@@ -529,7 +529,10 @@ impl Engine {
 
     /// Opens a device or image as a raw source behind its health guard.
     pub(crate) fn open_device(&self, path: &std::path::Path) -> Result<crate::disk::RawDisk> {
-        crate::disk::RawDisk::open_guarded(path, self.health_store()?)
+        let disk = crate::disk::RawDisk::open_guarded(path, self.health_store()?)?;
+        // A whole disk tells which of its stretches are its partitions, so they share its health.
+        disk.register_partition_links();
+        Ok(disk)
     }
 
     fn raw_disk(&self, args: &Value) -> Result<Arc<crate::disk::RawDisk>> {
@@ -614,6 +617,15 @@ impl Engine {
                     .write()
                     .map_err(|_| anyhow!("raw disk lock poisoned"))? = Some(disk);
                 Ok(overview)
+            }
+            // Only for driving the window in a test: the open raw source acts as if its device was unplugged.
+            #[cfg(feature = "test-hooks")]
+            "test_disconnect_raw" => {
+                if std::env::var_os("SALVAGE_TEST_UI").is_none() {
+                    bail!("this is only for testing");
+                }
+                self.raw_disk(args)?.source.simulate_disconnect();
+                Ok(json!({"ok": true}))
             }
             "discover_raw_disk" => {
                 let disk = self.raw_disk(args)?;

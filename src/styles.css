@@ -246,6 +246,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .scan-bar { height: 4px; background: var(--hover); border-radius: 4px; overflow: hidden; margin-top: 4px; }
 .scan-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 600ms ease; }
 .toolbar-spacer { flex: 1; }
+/* An error hangs below the title row, the whole width of it, in words a person can read. It wraps, and a
+ * very long one scrolls inside itself rather than covering the map. */
+.toolbar .toolbar-error { position: absolute; left: 0; right: 0; top: 100%; z-index: 40; box-sizing: border-box; padding: 7px 16px; max-height: 30vh; overflow-y: auto; background: color-mix(in srgb, var(--critical) 12%, var(--raised)); border-bottom: 0.5px solid var(--critical); color: var(--critical); font-size: 12.5px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; pointer-events: auto; }
 .safety-chip { position: relative; flex: none; }
 .safety-button { display: inline-flex; align-items: center; gap: 6px; background: none; box-shadow: none; padding: 4px 8px; border-radius: 7px; color: var(--good); font-weight: 550; font-size: 12px; }
 .safety-button:hover:not(:disabled) { background: var(--hover); filter: none; }

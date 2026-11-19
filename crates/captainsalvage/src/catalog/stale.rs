@@ -228,6 +228,15 @@ pub(crate) fn rerecord_markers(
     let Some(earlier) = earlier else {
         return Ok(false);
     };
+    // A drive that was read carefully gave few markers: they do not replace the fuller set the source has.
+    if let Some(saved) = earlier
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<Fingerprint>(text).ok())
+    {
+        if current.samples.len() < saved.samples.len() {
+            return Ok(false);
+        }
+    }
     let now = now_millis() as i64;
     if let Some(earlier) = earlier {
         transaction.execute(
