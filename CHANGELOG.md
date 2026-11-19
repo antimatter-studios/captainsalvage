@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-19
+
+### Added
+
+- **NTFS shows and copies what could be read of a damaged file.** When part of an NTFS file's data cannot be read (a damaged or missing run, a run outside the volume, or a read that fails), the text and byte previews now show each unreadable byte as `?` and say which bytes they are, and a copy keeps the file's layout, writes zeros there and the rest as read, is marked partial, and its manifest names the unreadable byte ranges. Before, the whole read failed and a copy made no file. Compressed, encrypted and incomplete streams are not treated this way: they still say why they cannot be read, and no file of zeros is made for them.
+
 ## [0.6.0] — 2026-11-19
 
 ### Added
