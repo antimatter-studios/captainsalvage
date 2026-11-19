@@ -214,6 +214,24 @@ start release/v1.0.0
 echo gathered >CHANGELOG.md
 git add CHANGELOG.md
 check "a release may edit it" "$(commit)" 0
+# The same on the integration branch of a release candidate (issue #252), and only on that.
+start integration/rc-v1.0.0
+echo gathered >CHANGELOG.md
+git add CHANGELOG.md
+check "an integration branch of a release may edit it" "$(commit)" 0
+start integration/rc-v0.4.9
+echo gathered >CHANGELOG.md
+git add CHANGELOG.md
+check "so may the next one" "$(commit)" 0
+start integration/try-things
+echo gathered >CHANGELOG.md
+git add CHANGELOG.md
+check "an integration branch that is not a release is refused" "$(commit)" 1
+check "it says where the entry goes" "$(grep -c 'changelog.d/integration-try-things.md' "$LOG/err")" 1
+start integration/rc-v1.0
+echo gathered >CHANGELOG.md
+git add CHANGELOG.md
+check "a version that is not X.Y.Z is refused" "$(commit)" 1
 
 # A very large change is cut down before it leaves the machine.
 start feat/huge

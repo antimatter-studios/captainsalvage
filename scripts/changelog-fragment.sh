@@ -35,9 +35,12 @@ for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply;
     [ -e "$git_dir/$marker" ] && exit 0
 done
 
-# CHANGELOG.md only changes in a release, so that an entry is a fragment until it ships.
+# CHANGELOG.md only changes in a release, so that an entry is a fragment until it ships. A release
+# is cut on release/vX.Y.Z, or on integration/rc-vX.Y.Z, the branch that collects several pull
+# requests so they are tried together: both are where the release tool's version bump and its gathered
+# CHANGELOG.md are committed (issue #252). Any other integration branch is not a release.
 case "$branch" in
-    release/*) ;;
+    release/* | integration/rc-v[0-9]*.[0-9]*.[0-9]*) ;;
     *)
         if git diff --cached --name-only | grep -qx 'CHANGELOG.md'; then
             cat >&2 <<EOF
