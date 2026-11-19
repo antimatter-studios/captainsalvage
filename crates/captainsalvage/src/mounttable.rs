@@ -57,8 +57,62 @@ pub fn entries() -> Vec<MountEntry> {
     }
 }
 
-/// Every mount the system has now, from `mount`'s output where there is no `getfsstat` to ask.
-#[cfg(not(target_os = "macos"))]
+/// Every mount the system has now, from the kernel's `/proc/self/mounts`, which is a file and not a
+/// process.
+#[cfg(target_os = "linux")]
+pub fn entries() -> Vec<MountEntry> {
+    std::fs::read_to_string("/proc/self/mounts")
+        .map(|text| parse_proc_mounts(&text))
+        .unwrap_or_default()
+}
+
+/// Reads the kernel's mount list: `device mount-point type options 0 0`, with spaces and other
+/// awkward bytes written as octal escapes such as `\040`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn parse_proc_mounts(text: &str) -> Vec<MountEntry> {
+    text.lines()
+        .filter_map(|line| {
+            let mut fields = line.split(' ');
+            let device = unescape_octal(fields.next()?);
+            let mount_point = unescape_octal(fields.next()?);
+            let fs_type = unescape_octal(fields.next()?);
+            Some(MountEntry {
+                device,
+                mount_point,
+                fs_type,
+            })
+        })
+        .collect()
+}
+
+fn unescape_octal(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let escape = bytes.get(at + 1..at + 4).filter(|digits| {
+            bytes[at] == b'\\' && digits.iter().all(|digit| (b'0'..=b'7').contains(digit))
+        });
+        match escape {
+            Some(digits) => {
+                let value = digits
+                    .iter()
+                    .fold(0u32, |value, digit| value * 8 + u32::from(digit - b'0'));
+                out.push(value as u8);
+                at += 4;
+            }
+            None => {
+                out.push(bytes[at]);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Every mount the system has now, from `mount`'s output where the kernel's list cannot be read
+/// without a process.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn entries() -> Vec<MountEntry> {
     let Ok(output) = crate::proc::output(&mut std::process::Command::new("/sbin/mount")) else {
         return Vec::new();
@@ -103,7 +157,18 @@ mod tests {
         assert_eq!(found[1].line(), "/dev/disk7s1 on /Volumes/My Disk (exfat)");
     }
 
-    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_kernels_mount_file_is_read_with_its_escapes() {
+        let found = parse_proc_mounts(
+            "/dev/sda1 / ext4 rw,relatime 0 0\n/dev/loop3 /mnt/My\\040Disk exfat ro 0 0\n",
+        );
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[1].device, "/dev/loop3");
+        assert_eq!(found[1].mount_point, "/mnt/My Disk");
+        assert_eq!(found[1].fs_type, "exfat");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn the_kernels_list_has_the_root_and_starts_no_process() {
         let before = crate::proc::processes_started();
