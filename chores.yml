@@ -85,7 +85,7 @@ tasks:
       - python3 scripts/coverage.py check
 
   coverage:baseline:
-    desc: "Measure and write docs/coverage-baseline.json: a deliberate act, in the pull request that earned it"
+    desc: "Measure and write docs/coverage-baseline.json (refuses outside CI; from CI's numbers use `scripts/coverage.py baseline --from-log`)"
     cmds:
       - python3 scripts/coverage.py baseline
 

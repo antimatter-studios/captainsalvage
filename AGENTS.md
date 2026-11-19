@@ -144,8 +144,11 @@ hand: keeping both sides can join two functions or two tests together.
 
 `scripts/coverage.py` (`chore test:coverage`) measures what the tests run of the engine, the Tauri crate
 and our TypeScript, and CI fails a pull request that takes any part more than half a point under
-`docs/coverage-baseline.json`. Add the tests that were lost; raise the baseline (`chore coverage:baseline`)
-only in a pull request that improved a number, and say so. A change that removes code and its tests may
+`docs/coverage-baseline.json`. Add the tests that were lost; raise the baseline
+only in a pull request that improved a number, and say so. Write it from CI's numbers, never this machine's (CI
+skips the tests that need local tools, so a Mac measures about 0.8 points more engine functions and a local
+baseline fails CI): `gh run view <run> --log --job <coverage job> | scripts/coverage.py baseline --from-log -`.
+`baseline` refuses to measure outside CI unless given `--local`. A change that removes code and its tests may
 lower it, and says why. The VM and window tests are not part of it.
 
 ## Independent oracles
