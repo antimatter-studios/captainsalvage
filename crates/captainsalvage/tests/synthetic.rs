@@ -7476,3 +7476,321 @@ fn unexplained_summary_leaves_out_names_and_text_unless_asked_and_allowed() {
         .any(|name| name == "old file.txt"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---------------------------------------------------------------------------------------------
+// A reassembly checked by a decoder and kept (issue #6).
+
+/// A real MP3 made by ffmpeg, or None where it, or its MP3 encoder, is not installed.
+fn sample_mp3(frequency: u32) -> Option<Vec<u8>> {
+    let tools = captainsalvage::media::detect_tools()?;
+    let path = std::env::temp_dir().join(format!("salvage-{}-{frequency}.mp3", std::process::id()));
+    let made = std::process::Command::new(&tools.ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+        ])
+        .arg(format!("sine=frequency={frequency}:duration=6"))
+        .args([
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "128k",
+            "-id3v2_version",
+            "0",
+            "-write_xing",
+            "0",
+        ])
+        .arg(&path)
+        .status()
+        .ok()?;
+    let bytes = made.success().then(|| std::fs::read(&path).ok()).flatten();
+    let _ = std::fs::remove_file(path);
+    bytes
+}
+
+/// `cut.mp3` is `song`, whose chain stops after its first half. The second half is in a nameless chain at
+/// 100, and `other` (a different tone) in one at 140.
+fn reassembly_volume(song: &[u8], other: &[u8]) -> (Vec<u8>, u64, usize) {
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[fixture_bitmap_entry(&b), upcase_entry(4, &[0; 100])],
+    );
+    let clusters = song.len().div_ceil(CLUSTER);
+    // Cut on a cluster boundary, which is what a chain that stops early does.
+    let half = clusters / 2;
+    for index in 0..clusters {
+        let piece = &song[index * CLUSTER..song.len().min((index + 1) * CLUSTER)];
+        let cluster = if index < half {
+            40 + index
+        } else {
+            100 + index - half
+        } as u32;
+        b.put(cluster, 0, piece);
+    }
+    for (first, count) in [(40u32, half), (100, clusters - half)] {
+        for index in 0..count as u32 - 1 {
+            b.fat(first + index, first + index + 1);
+        }
+        b.fat(first + count as u32 - 1, FAT_END);
+    }
+    // The decoy: another recording from 140 on, as long as the true rest.
+    for index in 0..clusters - half {
+        let from = (index * CLUSTER).min(other.len());
+        let piece = &other[from..other.len().min(from + CLUSTER)];
+        b.put(140 + index as u32, 0, piece);
+    }
+    for index in 0..(clusters - half) as u32 - 1 {
+        b.fat(140 + index, 141 + index);
+    }
+    b.fat(140 + (clusters - half) as u32 - 1, FAT_END);
+    b.directory(
+        28,
+        &[entry_set(
+            "cut.mp3",
+            false,
+            40,
+            song.len() as u64,
+            false,
+            true,
+        )],
+    );
+    (b.image, 100, half)
+}
+
+#[test]
+fn a_reassembly_is_read_from_the_disk_byte_for_byte_and_an_unreadable_cluster_fails_it() {
+    let song = mp3_stream(1, 40 * CLUSTER);
+    let (image, _, half) = reassembly_volume(&song, &mp3_stream(2, 40 * CLUSTER));
+    let (workspace, dir) = temp_workspace("reassembly-bytes");
+    let source = Arc::new(HealingSource {
+        inner: MemorySource::new(image),
+        bad: std::sync::Mutex::new(None),
+    });
+    let session =
+        Session::with_source(Path::new("/test/image"), source.clone(), workspace).unwrap();
+    scan(&session.volume, &session.workspace);
+    let clusters: Vec<u32> = (40..40 + half as u32)
+        .chain(100..100 + (40 - half) as u32)
+        .collect();
+    let all = session
+        .read_cluster_stream(&clusters, song.len() as u64, 0, u64::MAX)
+        .unwrap();
+    assert_eq!(all, song, "the true rest joined to its head is the song");
+    let across = session
+        .read_cluster_stream(
+            &clusters,
+            song.len() as u64,
+            (half * CLUSTER - 100) as u64,
+            300,
+        )
+        .unwrap();
+    assert_eq!(across, &song[half * CLUSTER - 100..half * CLUSTER + 200]);
+    // A cluster that goes bad is an error for any read that touches it, never zeros.
+    let bad = session.volume.cluster_offset(100);
+    *source.bad.lock().unwrap() = Some(bad..bad + CLUSTER as u64);
+    let error = session
+        .read_cluster_stream(&clusters, song.len() as u64, 0, u64::MAX)
+        .unwrap_err();
+    assert!(error.to_string().contains("cannot be read"), "{error}");
+    assert!(session
+        .read_cluster_stream(&clusters, song.len() as u64, 0, 1000)
+        .is_ok());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_decoder_checks_a_reassembly_and_a_verified_one_can_be_kept_in_a_disk_rebuild() {
+    use captainsalvage::media::MediaServer;
+    let (Some(song), Some(other)) = (sample_mp3(440), sample_mp3(880)) else {
+        // Without ffmpeg the tool says so plainly, and does not pretend to have checked.
+        let (engine, _session, dir) = engine_with_image("reassembly-nofmpeg", build_volume());
+        let answer = call(
+            &engine,
+            "media_check",
+            json!({"entryId": 1, "appendExtents": [{"first": 100, "count": 1}]}),
+        );
+        assert!(answer["errors"][0].as_str().is_some(), "{answer}");
+        let _ = std::fs::remove_dir_all(dir);
+        return;
+    };
+    let (image, rest_head, half) = reassembly_volume(&song, &other);
+    let (engine, _session, dir) = engine_with_image("reassembly", image);
+    let media = MediaServer::start(engine.clone()).expect("start");
+    engine.set_media(media);
+    let id = id_named(&engine, "cut.mp3");
+    // The true rest: ffmpeg decodes the whole file without a complaint.
+    let good = call(
+        &engine,
+        "media_check",
+        json!({"entryId": id, "appendChain": {"head": rest_head}, "length": song.len()}),
+    );
+    assert_eq!(good["ffmpeg"], true, "{good}");
+    assert_eq!(good["errors"], json!([]), "{good}");
+    assert!(good["outputBytes"].as_u64().unwrap() > 1000, "{good}");
+    assert_eq!(
+        good["reassembly"]["joins"][0]["offset"],
+        (half * CLUSTER) as u64
+    );
+    assert!(good["duration"].as_f64().unwrap() > 4.0, "{good}");
+    // The other recording from the same place: a decoder has things to say at the join.
+    let decoy = call(
+        &engine,
+        "media_check",
+        json!({"entryId": id, "appendChain": {"head": 140}, "length": song.len()}),
+    );
+    // Both are valid MP3 and cluster boundaries here fall inside frames, so the decoder complains.
+    assert!(
+        decoy["errors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty()),
+        "{decoy}"
+    );
+    // The check leaves nothing behind: the entry is as it was, and the stream is not served again.
+    let after = call(&engine, "media_check", json!({"id": id}));
+    assert!(after.get("reassembly").is_none(), "{after}");
+    assert!(
+        after["duration"].as_f64().unwrap() < 4.0,
+        "the head alone is half the song: {after}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_reassembly_is_kept_by_completing_the_file_and_placing_it_in_a_disk_rebuild() {
+    let song = mp3_stream(1, 40 * CLUSTER);
+    let (image, rest_head, half) = reassembly_volume(&song, &mp3_stream(2, 40 * CLUSTER));
+    let (engine, session, dir) = engine_with_image("reassembly-keep", image);
+    let id = id_named(&engine, "cut.mp3");
+    // As found, the file is the first half and the rest of its length is missing.
+    let before = session.read_entry_range(id, 0, u64::MAX).unwrap();
+    assert_eq!(before.total, (half * CLUSTER) as u64);
+    // The format checks take the same description: materialize reads the whole reassembly (an MP3 has
+    // no picture or text to show, so it says how long it is).
+    let shown = call(
+        &engine,
+        "materialize",
+        json!({"entryId": id, "appendChain": {"head": rest_head}, "length": song.len()}),
+    );
+    assert_eq!(shown["bytes"], song.len() as u64, "{shown}");
+    let rebuild = call_as_person(&engine, "disk_rebuild_create", json!({"name": "Kept"}))["id"]
+        .as_i64()
+        .unwrap();
+    let folder = call_as_person(
+        &engine,
+        "disk_rebuild_folder",
+        json!({"diskRebuild": rebuild, "name": "Music", "place": {}}),
+    )["id"]
+        .as_i64()
+        .unwrap();
+    // Nothing to append, no place, or a place that is not there: refused by name, and nothing changed.
+    for (args, why) in [
+        (
+            json!({"diskRebuild": rebuild, "entryId": id, "place": {"item": folder}}),
+            "give something to append",
+        ),
+        (
+            json!({"diskRebuild": rebuild, "entryId": id, "appendChain": {"head": rest_head}}),
+            "place is required",
+        ),
+        (
+            json!({"diskRebuild": rebuild, "entryId": id, "appendChain": {"head": rest_head}, "place": {"item": 999}}),
+            "there is no item",
+        ),
+    ] {
+        let error = engine
+            .call(
+                "disk_rebuild_place_reassembly",
+                &args,
+                captainsalvage::engine::AUTHOR_USER,
+            )
+            .expect_err(why);
+        assert!(error.to_string().contains(why), "{why}: {error}");
+    }
+    assert!(call(&engine, "list_overlays", json!({}))
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let kept = call_as_person(
+        &engine,
+        "disk_rebuild_place_reassembly",
+        json!({
+            "diskRebuild": rebuild,
+            "entryId": id,
+            "appendChain": {"head": rest_head},
+            "length": song.len(),
+            "place": {"item": folder},
+            "note": "ffmpeg decodes the whole file",
+        }),
+    );
+    assert_eq!(kept["clusters"], 40);
+    assert!(
+        kept["item"].as_i64().is_some() && kept["overlay"].as_i64().is_some(),
+        "{kept}"
+    );
+    // The map now reads the file whole, from the head and the chain, and the Disk Rebuild has it.
+    let after = session.read_entry_range(id, 0, u64::MAX).unwrap();
+    assert_eq!(after.total, song.len() as u64);
+    assert_eq!(after.data, song);
+    let overlays = call(&engine, "list_overlays", json!({}));
+    assert_eq!(overlays[0]["kind"], "file_extents");
+    assert_eq!(overlays[0]["note"], "ffmpeg decodes the whole file");
+    let items = call(
+        &engine,
+        "disk_rebuild_items",
+        json!({"diskRebuild": rebuild}),
+    );
+    assert!(
+        items.to_string().contains(&format!("\"entry\":{id}")),
+        "{items}"
+    );
+    // It copies out like any other piece, whole.
+    let destination = dir.join("out");
+    let args = json!({"diskRebuild": rebuild, "destination": destination.display().to_string()});
+    let plan = call(&engine, "disk_rebuild_copy_plan", args.clone());
+    assert_eq!(plan["files"], 1, "{plan}");
+    call_as_person(&engine, "disk_rebuild_copy_start", args);
+    let status = loop {
+        let status = session.copy_status().expect("status");
+        if status.state != "running" {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(status.state, "finished", "{:?}", status.error);
+    assert_eq!(status.files_done, 1);
+    let target = destination.join("Kept");
+    let found = std::fs::read_dir(&target)
+        .expect("the Disk Rebuild's folder")
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    let path = found
+        .iter()
+        .find(|path| path.join("cut.mp3").is_file())
+        .map(|path| path.join("cut.mp3"))
+        .or_else(|| found.iter().find(|path| path.ends_with("cut.mp3")).cloned())
+        .unwrap_or_else(|| panic!("cut.mp3 is in {found:?}"));
+    let copied = std::fs::read(path).expect("the file was copied");
+    assert_eq!(
+        copied, song,
+        "the copy is the reassembled file, byte for byte"
+    );
+    // And the hypothesis is undone like any other.
+    let overlay = kept["overlay"].as_i64().unwrap();
+    call(&engine, "delete_overlay", json!({"id": overlay}));
+    assert_eq!(
+        session.read_entry_range(id, 0, u64::MAX).unwrap().total,
+        (half * CLUSTER) as u64
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

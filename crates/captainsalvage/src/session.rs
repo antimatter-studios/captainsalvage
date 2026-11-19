@@ -1645,6 +1645,35 @@ impl Session {
         Ok(out)
     }
 
+    /// Reads `length` bytes from `start` of a stream made of `clusters` in this order, `total` bytes long.
+    /// Every byte is the disk's: a cluster that cannot be read is an error, never zeros, so a decoder
+    /// handed these bytes is judging the disk and not a gap this filled in.
+    pub fn read_cluster_stream(
+        &self,
+        clusters: &[u32],
+        total: u64,
+        start: u64,
+        length: u64,
+    ) -> Result<Vec<u8>> {
+        self.require_disk()?;
+        let size = self.volume.geometry.cluster_size();
+        let total = total.min(clusters.len() as u64 * size);
+        let end = start.saturating_add(length).min(total);
+        if start >= end {
+            return Ok(Vec::new());
+        }
+        let ranges =
+            crate::ranges::RangeList::from_clusters(&self.volume.geometry, clusters, total, total);
+        let (data, unreadable) = ranges.read(start, end, size, &mut |offset, count| {
+            self.volume.read_bytes(offset, count as usize).ok()
+        });
+        self.require_disk()?;
+        if let Some(&(from, to)) = unreadable.first() {
+            bail!("bytes {from} to {to} of the stream cannot be read from the disk");
+        }
+        Ok(data)
+    }
+
     /// Tests a possible reassembly: reads it and walks the file format through it.
     pub fn test_stream(&self, name: &str, clusters: &[u32], length: u64) -> Result<StreamTest> {
         let size = self.volume.geometry.cluster_size();
