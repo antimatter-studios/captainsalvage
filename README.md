@@ -1010,7 +1010,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.7 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.8 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1145,6 +1145,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 <!-- changelog:start -->
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
+
+### v0.4.8 — 2026-11-19
+
+**Fixed**
+
+- **A file whose short DOS name has accented letters shows them correctly.** On FAT volumes, a file made by DOS, a camera or another old device, with no long name and letters such as é, ä or ö in its 8.3 name, was listed with replacement characters (`���X.TXT`). The name is now read in the DOS code page 437, so it shows as `éäöX.TXT`.
 
 ### v0.4.7 — 2026-11-19
 
@@ -1423,24 +1429,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
   set them, so the v0.2.0 tag shipped with manifests that still said 0.1.0. It now lives in `VERSION`;
   `release.py sync` copies it everywhere and `release.py check` runs on every pull request. The build
   carries that number, not one worked out from unreleased pull requests.
-
-### v0.2.0 — 2026-11-05
-
-**Added**
-
-- Release every feature and fix automatically ([#60](https://github.com/antimatter-studios/captainsalvage/pull/60))
-- Show the version on the start screen ([#59](https://github.com/antimatter-studios/captainsalvage/pull/59))
-- Show how to keep a disk safe on the start screen, and undo it ([#58](https://github.com/antimatter-studios/captainsalvage/pull/58))
-- Open on a start screen, and never reopen a disk by itself ([#57](https://github.com/antimatter-studios/captainsalvage/pull/57))
-- Show what a zip holds as a file tree, read live from the disk ([#51](https://github.com/antimatter-studios/captainsalvage/pull/51))
-- Warn that macOS writes to a damaged volume, and show the evidence ([#50](https://github.com/antimatter-studios/captainsalvage/pull/50))
-- Show identical files as one in the browse list ([#46](https://github.com/antimatter-studios/captainsalvage/pull/46))
-- Test found files in the background and score them on the result ([#45](https://github.com/antimatter-studios/captainsalvage/pull/45))
-
-**Fixed**
-
-- Say when the disk is disconnected, and keep disks from sleeping ([#56](https://github.com/antimatter-studios/captainsalvage/pull/56))
-- Report what survives in a damaged file, and stop calling text keys broken zips ([#47](https://github.com/antimatter-studios/captainsalvage/pull/47))
 
 <!-- changelog:end -->
 
