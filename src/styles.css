@@ -711,7 +711,11 @@ video.inline-preview { max-height: 380px; background: #000; }
 .start-elsewhere .mount-block-inline { grid-column: 2; }
 .start-volume .start-open { grid-column: 4; justify-self: end; }
 .start-row-note { grid-column: 1 / -1; margin: 0; }
-.start-disk-notices .start-caution, .start-disk-notices .start-needs { margin: 6px 0 4px; padding-left: 10px; border-left: 2px solid var(--line-strong); }
+/* A disk card has two edges: the header's text at the card padding, and everything nested under it on
+   one shared line. The partitions' rule, the "no partitions" note and the notices all start 14px in, and
+   their text 25px in (rule + padding). The notice bar is 2px against the tree's 1px, so it takes 1px
+   less padding: the text stays on the same line. */
+.start-disk-notices .start-caution, .start-disk-notices .start-needs { margin: 6px 0 4px 14px; padding-left: 9px; border-left: 2px solid var(--line-strong); }
 .start-disk-notices .start-caution { border-left-color: var(--chart-caution); }
 .start-disk-notices p { margin: 0 0 4px; font-size: 12px; color: var(--ink-2); }
 .start-disk-notices .start-caution p { color: var(--chart-caution); }

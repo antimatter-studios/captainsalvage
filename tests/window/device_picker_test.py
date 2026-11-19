@@ -10,6 +10,8 @@ a disk with three partitions, and a card reader with one. It checks that:
 - every volume has an inline "Block mount" checkbox that still sets and clears the block, and the
   list has one note about it, not one per row;
 - a disk says once what it needs (unmounting, read permission), however many volumes need it;
+- under a disk's own row, the partitions' rule, the notices' bar and the "no partitions" note start on one
+  vertical line, and partition titles, notice text and notice commands start at one x (within 1px);
 - Open on a whole disk opens all its bytes as raw bytes, and Open on a partition opens exactly that partition's bytes;
 - three disks with their volumes fit on the screen at the app's default window size, with the
   image form still in view.
@@ -112,6 +114,31 @@ try:
     check("no sentence is repeated", probe("(document.body.textContent.match(/Reading needs your permission/g) || []).length"), 2)
     check("each row has one short status again", probe("[...document.querySelectorAll('.start-disk .start-status')].map((status) => status.textContent)"), ["Mounted", "Mounted", "Needs permission", "Needs permission"])
     check("a volume that is mounted or unreadable has no Open button, but its disk does", probe("[document.querySelectorAll('.start-volume .start-open').length, document.querySelectorAll('.start-disk-head .start-open').length]"), [0, 3])
+    # One left edge: under the disk's own row, the partitions' rule, the notices' bar and the "no partitions"
+    # note start on one vertical line, and the partition titles, the notice text and the notice commands
+    # start at one x. Measured, not looked at: a 1px rule against a 2px bar is the easy way to be 1px off.
+    edges = probe("""(() => {
+      const left = (node) => node.getBoundingClientRect().left;
+      return [...document.querySelectorAll('.start-disk')].map((card) => ({
+        head: left(card.querySelector('.start-disk-head strong')),
+        rule: card.querySelector('.start-volumes') ? left(card.querySelector('.start-volumes')) : null,
+        empty: card.querySelector('.start-disk-empty') ? left(card.querySelector('.start-disk-empty')) : null,
+        bars: [...card.querySelectorAll('.start-caution, .start-needs')].map(left),
+        titles: [...card.querySelectorAll('.start-volume strong')].map(left),
+        notices: [...card.querySelectorAll('.start-caution p, .start-needs p')].map(left),
+        commands: [...card.querySelectorAll('.start-caution .command, .start-needs .command')].map(left),
+      }));
+    })()""")
+    near = lambda a, b: abs(a - b) <= 1
+    for number, card in enumerate(edges):
+        name = "disk %d: " % (number + 1)
+        line = card["rule"] if card["rule"] is not None else card["empty"]
+        check(name + "the partitions and the note sit in from the disk's text", line > card["head"] + 8, True)
+        check(name + "every notice bar is on the partitions' line", all(near(bar, line) for bar in card["bars"]), True)
+        check(name + "every notice text starts where the partition titles do", all(near(text, title) for text in card["notices"] for title in card["titles"]), True)
+        check(name + "every notice command starts where the notice text does", all(near(box, text) for box in card["commands"] for text in card["notices"]), True)
+    check("the checks measured a card with partitions and notices, and a card with the note", (len(edges[1]["titles"]), len(edges[1]["notices"]), edges[0]["empty"] is not None), (3, 2, True))
+    check("the 'no partitions' note is on the same line as the partitions of another card", near(edges[0]["empty"], edges[1]["rule"]), True)
     needing = fit()
     print("the same disks needing an unmount and a permission: %s" % needing, flush=True)
     check("they fit too", needing["content"] <= needing["list"], True)
