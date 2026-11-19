@@ -1526,6 +1526,23 @@ impl Engine {
                     minimum,
                 ))?)
             }
+            "unexplained_summary" => {
+                let examples = bool_of(args, "includeExamples", false);
+                if examples && author != AUTHOR_USER && self.names_hidden() {
+                    bail!("includeExamples shows names and text from the disk, which the person has kept back from agents.");
+                }
+                session.unexplained_summary(
+                    u64_of(args, "top").map(|top| top as usize),
+                    u64_of(args, "minClusters").unwrap_or(DEFAULT_MIN_RUN_CLUSTERS) as u32,
+                    u64_of(args, "samples")
+                        .map_or(crate::regions::DEFAULT_SUMMARY_SAMPLES, |value| {
+                            value as usize
+                        }),
+                    u64_of(args, "maxMillis").unwrap_or(crate::regions::DEFAULT_SUMMARY_MILLIS),
+                    bool_of(args, "perRun", false),
+                    examples,
+                )
+            }
             "explain_region" => {
                 let samples =
                     u64_of(args, "samples").map_or(DEFAULT_REGION_SAMPLES, |value| value as usize);
