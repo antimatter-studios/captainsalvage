@@ -366,7 +366,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 | File tests | Supported | Supported | Limited |
 | Disk Rebuilds | Supported | Supported | Limited |
 | Copy out | Limited | Limited | Limited |
-| Mount block | Supported | Supported | Supported |
+| Mount block | Supported | Supported | Missing |
 | Named streams | Not offered | Not offered | Limited |
 | Hard links | Not offered | Not offered | Supported |
 | Attribute lists | Not offered | Not offered | Missing |
@@ -441,7 +441,7 @@ one place, so none of them can claim more than the adapter does.
 | Baseline copy | Supported | Clusters written since the baseline are reported, and a changed volume is read through the saved structures. |
 | Disk Rebuilds | Limited | A rebuild can replace a file's clusters or a folder's parent and is read as clusters. A record, its names and its run list are never altered. |
 | Copy out | Limited | Hashed, never overwrites, complete or partial. A stretch of a stream held in runs that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges. A stream that cannot be read at all (compressed, encrypted, in other records, incomplete, or a record that changed) is reported failed, writes no file and is never filled with zeros. |
-| Mount block | Supported | Decided by volume UUID in Disk Arbitration, not by filesystem, so it applies to whichever NTFS driver would mount the volume. It was not exercised against a live NTFS mount in this change. |
+| Mount block | Missing | The block is set by volume UUID, and macOS reports no volume UUID for an NTFS volume (checked on a throwaway NTFS image, bare and in a GPT partition: `diskutil info` gives a partition UUID only for the GPT partition), so the Block mount checkbox does not appear for one. macOS mounts NTFS read-only itself; only a third-party NTFS driver would write. |
 | Alternate data streams | Limited | Listed in the record details (`captainsalvage_ntfs_entry`), never merged into the file or copied as files of their own. |
 | Hard links | Supported | A file with several names is listed under each, in the folder the name belongs to, with the file's size and bytes, and a copy holds it under every name. Each name is an entry of its own, told apart from the others by its place in the record's names, so a rescan does not duplicate it. |
 | Attribute lists, compression, journal | Missing | A file whose attributes continue in extension records, and an LZNT1-compressed file, are listed but not read ([rust-fs-ntfs#1379](https://github.com/antimatter-studios/rust-fs-ntfs/issues/1379)). `$LogFile` and `$UsnJrnl` are not interpreted. |

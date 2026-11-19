@@ -277,3 +277,28 @@ pub struct MountHistory {
     pub dirty_flag: bool,
     pub baseline_recorded_at_millis: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `diskutil info` printed for a throwaway NTFS image attached with `hdiutil attach -nomount` (bare, and
+    /// again in a GPT partition) on macOS: the volume has a name and a file system, and no volume UUID. A GPT
+    /// partition has a partition UUID, which is not the volume's.
+    const NTFS_INFO: &str = "   Device Identifier:         disk12s1\n   Device Node:               /dev/disk12s1\n   Volume Name:               SALVAGE\n   Mounted:                   No\n   Partition Type:            Microsoft Basic Data\n   File System Personality:   NTFS\n   Type (Bundle):             ntfs\n   Name (User Visible):       Windows NT File System (NTFS)\n   Disk / Partition UUID:     7F5822A3-6F35-40AF-B68E-5A0222B1A55D\n   Media Read-Only:           No\n";
+
+    #[test]
+    fn an_ntfs_volume_has_no_volume_uuid_so_the_mount_block_cannot_name_it() {
+        assert_eq!(parse_volume_uuid(NTFS_INFO), None);
+        assert_eq!(info_field(NTFS_INFO, "Volume Name:"), Some("SALVAGE"));
+    }
+
+    #[test]
+    fn an_exfat_volume_has_one() {
+        let info = "   Volume Name:               GPTTEST\n   File System Personality:   ExFAT\n   Volume UUID:               0F1851BD-9CFE-39A0-8810-B2978FB67A96\n   Disk / Partition UUID:     7F5822A3-6F35-40AF-B68E-5A0222B1A55D\n";
+        assert_eq!(
+            parse_volume_uuid(info).as_deref(),
+            Some("0F1851BD-9CFE-39A0-8810-B2978FB67A96")
+        );
+    }
+}
