@@ -14,6 +14,7 @@ use captainsalvage::workspace::Workspace;
 use fs_ntfs::file::FileAPI;
 use fs_ntfs::volume::{Volume, VolumeAPI};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1113,4 +1114,128 @@ fn write_the_ntfs_volume_for_window_tests() {
     if let Some(destination) = std::env::var_os("SALVAGE_NTFS_IMAGE") {
         std::fs::write(destination, &fixture.image).expect("exported window fixture");
     }
+}
+
+/// One file with three names: `docs/shared.bin` and `docs/second.bin` in one folder, and
+/// `other/third.bin` in another; and a file with one name, beside them.
+fn hard_link_volume() -> (Vec<u8>, Vec<u8>) {
+    let image = format();
+    let content = pattern(31, 30_000);
+    let volume = Volume::open_writable(image.clone()).unwrap();
+    volume.create_directory("/", "docs").unwrap();
+    volume.create_directory("/", "other").unwrap();
+    volume.create_file("/docs", "shared.bin").unwrap();
+    volume
+        .write_file_at("/docs/shared.bin", 0, &content)
+        .unwrap();
+    volume.create_file("/docs", "single.txt").unwrap();
+    volume
+        .write_file_at("/docs/single.txt", 0, b"one name")
+        .unwrap();
+    volume.flush().unwrap();
+    drop(volume);
+    let mut device = image.clone();
+    fs_ntfs::write::link_io(&mut device, "/docs/shared.bin", "/docs", "second.bin").unwrap();
+    fs_ntfs::write::link_io(&mut device, "/docs/shared.bin", "/other", "third.bin").unwrap();
+    let bytes = image.0.lock().unwrap().clone();
+    (bytes, content)
+}
+
+/// Every live file the app lists, by path, with its length.
+fn listed_files(session: &Arc<Session>) -> BTreeMap<String, (i64, u64)> {
+    let rows = session
+        .query_map("SELECT id FROM sets WHERE is_dir = 0 AND in_use = 1 AND checksum_ok = 1")
+        .unwrap();
+    let mut files = BTreeMap::new();
+    for row in rows["rows"].as_array().unwrap() {
+        let id = row["id"].as_i64().unwrap();
+        let entry = session
+            .with_database(|database| Ok(database.entry(id)?.unwrap()))
+            .unwrap();
+        let folder = entry.path.clone().unwrap_or_default();
+        let path = format!("{}/{}", folder.trim_start_matches('/'), entry.name);
+        let path = path.trim_start_matches('/').to_string();
+        if !path.starts_with('$') && !path.contains("/$") {
+            files.insert(path, (id, entry.length));
+        }
+    }
+    files
+}
+
+#[test]
+fn a_file_with_several_hard_links_is_listed_under_each_name_in_its_own_folder() {
+    let (image, content) = hard_link_volume();
+    let session = open(image, "hard-links");
+    scan(&session);
+    let files = listed_files(&session);
+    let names: Vec<&str> = files
+        .keys()
+        .map(String::as_str)
+        .filter(|path| path.starts_with("docs/") || path.starts_with("other/"))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "docs/second.bin",
+            "docs/shared.bin",
+            "docs/single.txt",
+            "other/third.bin"
+        ]
+    );
+    // Each name has the file's size and bytes, and its own entry.
+    let mut ids = BTreeSet::new();
+    for path in ["docs/shared.bin", "docs/second.bin", "other/third.bin"] {
+        let (id, length) = files[path];
+        assert_eq!(length, content.len() as u64, "{path}");
+        let read = session.read_entry_range(id, 0, length + 8).unwrap();
+        assert_eq!(read.data, content, "{path}");
+        assert!(ids.insert(id), "{path} has its own entry");
+    }
+    assert_eq!(files["docs/single.txt"].1, 8);
+    // A rescan finds the same entries and adds none.
+    let before: Vec<i64> = files.values().map(|(id, _)| *id).collect();
+    scan(&session);
+    let again = listed_files(&session);
+    assert_eq!(
+        again.keys().collect::<Vec<_>>(),
+        files.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        again.values().map(|(id, _)| *id).collect::<Vec<_>>(),
+        before
+    );
+}
+
+#[test]
+fn a_copy_holds_a_file_with_several_hard_links_under_every_name() {
+    let (image, content) = hard_link_volume();
+    let session = open(image, "hard-link-copy");
+    scan(&session);
+    let files = listed_files(&session);
+    let ids: Vec<i64> = [
+        "docs/shared.bin",
+        "docs/second.bin",
+        "other/third.bin",
+        "docs/single.txt",
+    ]
+    .iter()
+    .map(|path| files[*path].0)
+    .collect();
+    let destination = session.workspace.dir().join("copied");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: ids,
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    wait_for_copy(&session, 4);
+    let root = destination.join("Volume root");
+    for path in ["docs/shared.bin", "docs/second.bin", "other/third.bin"] {
+        assert_eq!(std::fs::read(root.join(path)).unwrap(), content, "{path}");
+    }
+    assert_eq!(
+        std::fs::read(root.join("docs/single.txt")).unwrap(),
+        b"one name"
+    );
 }

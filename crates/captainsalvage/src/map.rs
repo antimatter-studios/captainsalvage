@@ -622,9 +622,11 @@ fn write_chunk(
     )?;
     for (cluster, set) in found {
         let ntfs = set.ntfs.as_ref();
+        // A further name of the same NTFS file is told apart by its slot.
+        let key = crate::filesystem::source_key(set.offset, set.name_slot);
         insert.execute(params![
             cluster,
-            set.offset as i64,
+            key,
             set.name,
             set.in_use,
             set.checksum_ok,
@@ -641,7 +643,7 @@ fn write_chunk(
         if let Some(entry) = ntfs {
             record_insert.execute(params![
                 cluster,
-                set.offset as i64,
+                key,
                 entry.record_number.map(|value| value as i64),
                 i64::from(entry.sequence),
                 entry.parent_record.map(|value| value as i64),
@@ -652,7 +654,7 @@ fn write_chunk(
         for run in ntfs.map(|entry| entry.runs.as_slice()).unwrap_or_default() {
             extent_insert.execute(params![
                 cluster,
-                set.offset as i64,
+                key,
                 run.vcn as i64,
                 run.lcn.map(|value| value as i64),
                 run.count as i64,
@@ -1614,7 +1616,8 @@ impl MapDb {
             ) {
                 return Ok(EntrySource::Ntfs(
                     crate::filesystem::ntfs_salvage::StreamReference {
-                        record_offset: volume.cluster_offset(cluster) + u64::from(offset),
+                        record_offset: volume.cluster_offset(cluster)
+                            + u64::from(crate::filesystem::record_offset(offset)),
                         record_number: entry.record_number,
                         sequence: entry.sequence.unwrap_or(0),
                         storage: storage.clone(),

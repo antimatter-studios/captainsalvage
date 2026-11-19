@@ -213,7 +213,7 @@ impl FilesystemKind {
                 capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A stream that cannot be read is reported failed, never filled with zeros."),
                 capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
                 capability("named_streams", Limited, "Alternate data streams are listed in the record details, not copied as separate files. Streams held in extension records are not followed."),
-                capability("hard_links", Limited, "A record is one entry under its best name; its other names are listed in the record details."),
+                capability("hard_links", Supported, "A file with several names is listed under each, in the folder the name belongs to, with the file's size and bytes, and a copy holds it under every name. Each name is an entry of its own, told apart from the others by its place in the record's names, so a rescan does not duplicate it."),
                 capability("attribute_lists", Missing, "A file whose attributes continue in extension records is listed, with its size, but its data is not read (rust-fs-ntfs#1379)."),
                 capability("compression", Missing, "NTFS-compressed streams are listed but not decoded (rust-fs-ntfs#1379)."),
                 capability("encryption", Missing, "EFS-encrypted files are listed and marked unreadable. BitLocker volumes are refused."),
@@ -407,6 +407,32 @@ pub struct SalvageEntry {
     /// stored, so saved scans and what scripts and tools report are as they were.
     #[serde(skip)]
     pub ranges: crate::ranges::RangeList,
+    /// NTFS: 0 for the name a FILE record is shown under, and 1, 2, ... for each further hard link
+    /// of the same file, in order of (parent record, name). Each is an entry of its own, in the
+    /// folder its name belongs to, with the file's size and bytes; the slot is what keeps it apart
+    /// from the first in the map (see `source_key`). Every other entry has 0.
+    #[serde(skip_serializing_if = "is_first_name")]
+    pub name_slot: u32,
+}
+
+fn is_first_name(slot: &u32) -> bool {
+    *slot == 0
+}
+
+/// The bits of a stored `source_offset` that say which of a FILE record's names an entry is. A
+/// record's offset in its cluster is below the largest cluster size (2 MiB, 21 bits), and NTFS gives
+/// one file at most 1024 names, so the slot fits in the rest of 32 bits.
+pub const NAME_SLOT_SHIFT: u32 = 21;
+
+/// What identifies an entry in the map: the record's offset in its cluster, and for a further name of
+/// the same file, its slot above that.
+pub fn source_key(offset: usize, slot: u32) -> i64 {
+    (offset as i64) | (i64::from(slot) << NAME_SLOT_SHIFT)
+}
+
+/// The record's offset in its cluster, from a stored `source_offset`.
+pub fn record_offset(source_offset: u32) -> u32 {
+    source_offset & ((1 << NAME_SLOT_SHIFT) - 1)
 }
 
 impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
@@ -428,6 +454,7 @@ impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
             slots: entry.slots,
             ntfs: None,
             ranges: crate::ranges::RangeList::default(),
+            name_slot: 0,
         }
     }
 }

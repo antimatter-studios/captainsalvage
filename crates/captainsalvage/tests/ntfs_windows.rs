@@ -372,8 +372,6 @@ fn diff(path: &str, what: impl Into<String>) -> Diff {
 /// gap that must show on a volume no longer does, so that fixing one means removing it here and
 /// from the README.
 const COMPRESSED: &str = "files compressed by NTFS (LZNT1) are listed but refused (issue #174)";
-const HARD_LINK: &str =
-    "only one name of a file with several hard links is listed, the rest are in its record details (issue #175)";
 const SECTOR_4096: &str =
     "a volume on 4096-byte sectors with 1024-byte records is refused at open (issue #177)";
 
@@ -390,16 +388,6 @@ fn known_gap(want: &Manifest, difference: &Diff) -> Option<&'static str> {
     {
         return Some(COMPRESSED);
     }
-    if want
-        .hard_links
-        .iter()
-        .any(|(_, second)| *second == difference.path)
-        && ["Windows lists it", "not copied"]
-            .iter()
-            .any(|start| difference.what.starts_with(start))
-    {
-        return Some(HARD_LINK);
-    }
     None
 }
 
@@ -410,9 +398,6 @@ fn gaps_expected(want: &Manifest) -> BTreeSet<&'static str> {
         flags.contains("Compressed") && want.extents.get(path).is_some_and(|n| *n > 0)
     }) {
         gaps.insert(COMPRESSED);
-    }
-    if !want.hard_links.is_empty() {
-        gaps.insert(HARD_LINK);
     }
     gaps
 }
@@ -1000,9 +985,7 @@ fn a_changed_hash_or_a_missing_file_in_what_the_app_reports_fails_the_comparison
     // A difference that is not a known gap is reported, and a known one is accepted.
     let unknown = diff("cluster-exact.bin", "SHA-256 Windows a, the app b");
     assert!(known_gap(&want, &unknown).is_none());
+    // A name of a hard link the app does not list is not a known gap: every name is listed (#175).
     let second = &want.hard_links[0].1;
-    assert_eq!(
-        known_gap(&want, &diff(second, "Windows lists it, the app does not")),
-        Some(HARD_LINK)
-    );
+    assert!(known_gap(&want, &diff(second, "Windows lists it, the app does not")).is_none());
 }

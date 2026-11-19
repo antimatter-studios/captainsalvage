@@ -1843,7 +1843,10 @@ impl Session {
         let (Some(cluster), Some(offset)) = (row.source_cluster, row.source_offset) else {
             bail!("entry {id} has no FILE record");
         };
-        access.details(self.volume.cluster_offset(cluster) + u64::from(offset))
+        access.details(
+            self.volume.cluster_offset(cluster)
+                + u64::from(crate::filesystem::record_offset(offset)),
+        )
     }
 
     /// Reads part of an NTFS stream through the driver. A failed read is an error: nothing

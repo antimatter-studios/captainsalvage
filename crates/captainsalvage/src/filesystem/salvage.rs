@@ -414,6 +414,7 @@ pub fn find_entries(
                     length,
                     false,
                 ),
+                name_slot: 0,
             })
         })
         .collect()
