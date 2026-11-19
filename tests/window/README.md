@@ -89,6 +89,12 @@ deleted one), right-clicks the empty file in the Explorer tree, exports it from 
 that Export is offered, the plan counts one file, and an empty file arrives with nothing else (issue
 #176). It needs `emptyfiles.img`, copies only into this folder, and removes what it copied.
 
+`ntfs_flow_test.py` opens a synthetic NTFS image (issue #171), scans it, opens the root and a folder in
+the Explorer tree, reads a file stored in two runs through the window's range read (whole, and a
+range across the join of the runs), reads a file in a folder whole, and exports the fragmented file from
+the right-click menu, checking the copy byte for byte. It needs `ntfs.img`, never mounts or attaches
+anything, copies only into this folder and removes what it copied.
+
 `device_picker_test.py` gives the start screen a made-up list of disks through
 `SALVAGE_TEST_STARTUP_DISKS` (a JSON file in the shape `startup_disks` returns, honoured only
 while `SALVAGE_TEST_UI` is set), so no real disk is listed. Its "devices" are synthetic images:
@@ -116,7 +122,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | Tests | Needs | Covers |
 |---|---|---|
 | `open_door_test.py`, `device_picker_test.py`, `raw_disk_test.py`, `raw_scan_test.py`, `raw_disk_lanes_test.py`, `raw_disk_crowded_test.py` | `jigsaw.img` for the first three and the lanes test | the one Open, the picker, the saved scans, the start screen tree, raw maps and scans |
-| `agent_rebuild_test.py`, `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `empty_export_test.py`, `disk_rebuild_rename_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` (`emptyfiles.img` for `empty_export_test.py`) | the filesystem workspace opened from an image of one volume |
+| `ntfs_flow_test.py`, `agent_rebuild_test.py`, `modes_test.py`, `click_through_test.py`, `copy_guard_test.py`, `empty_export_test.py`, `disk_rebuild_rename_test.py`, `legend_test.py`, `lost_label_test.py`, `types_test.py`, `workbench_test.py`, `isolate_hover_test.py`, `preview_scheme_test.py`, `chat_test.py` | `jigsaw.img` (`emptyfiles.img` for `empty_export_test.py`, `ntfs.img` for `ntfs_flow_test.py`) | the filesystem workspace opened from an image of one volume |
 | `macos_writes_test.py` | `macos.img` | what macOS wrote |
 | `archive_file_test.py` | `arctest.img` | archives |
 | `films_test.py` | `filmtest.img` | films |
@@ -137,6 +143,7 @@ Make the ones a test needs before running it:
 |---|---|
 | `jigsaw.img` | `SALVAGE_JIGSAW_IMAGE=$PWD/tests/window/jigsaw.img cargo test -p captainsalvage --test synthetic write_the_jigsaw` |
 | `emptyfiles.img` | `SALVAGE_EMPTY_IMAGE=$PWD/tests/window/emptyfiles.img cargo test -p captainsalvage --test synthetic write_the_empty` |
+| `ntfs.img` | `SALVAGE_NTFS_IMAGE=$PWD/tests/window/ntfs.img cargo test -p captainsalvage --test ntfs write_the_ntfs` |
 | `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p captainsalvage --test synthetic write_the_macos_visited` |
 | `arctest.img` | `tests/window/make_arctest.sh` (archives) |
 | `filmtest.img` | `tests/window/make_filmtest.sh` (two 70 MB films) |

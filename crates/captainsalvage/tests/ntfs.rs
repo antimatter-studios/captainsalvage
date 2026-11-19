@@ -1092,3 +1092,25 @@ fn an_export_of_an_empty_file_or_a_folder_with_one_makes_the_empty_file() {
         0
     );
 }
+
+/// Writes a synthetic NTFS volume to `SALVAGE_NTFS_IMAGE`, for driving the window against it
+/// (`tests/window/ntfs_flow_test.py`): folders, a picture, a fragmented file and a deleted one.
+/// Run with: SALVAGE_NTFS_IMAGE=/path/ntfs.img cargo test -p captainsalvage --test ntfs write_the_ntfs
+#[test]
+fn write_the_ntfs_volume_for_window_tests() {
+    let fixture = fixture();
+    // What is written is a volume this app opens and reads back whole.
+    let session = open(fixture.image.clone(), "window-fixture");
+    assert_eq!(session.volume.kind, FilesystemKind::Ntfs);
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = find(&engine, "frag.bin");
+    let read = session
+        .read_entry_range(row["id"].as_i64().unwrap(), 0, 30_000)
+        .unwrap();
+    assert_eq!(read.data, fixture.content("/frag.bin"));
+    if let Some(destination) = std::env::var_os("SALVAGE_NTFS_IMAGE") {
+        std::fs::write(destination, &fixture.image).expect("exported window fixture");
+    }
+}
