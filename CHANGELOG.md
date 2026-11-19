@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-11-19
+
+### Maintenance
+
+- The preview of a FAT or exFAT file reads the file's typed ranges, not its cluster list ([#284](https://github.com/antimatter-studios/captainsalvage/pull/284))
+
 ## [0.8.1] — 2026-11-19
 
 ### Maintenance

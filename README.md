@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.8.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.8.2 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.8.2 — 2026-11-19
+
+**Maintenance**
+
+- The preview of a FAT or exFAT file reads the file's typed ranges, not its cluster list ([#284](https://github.com/antimatter-studios/captainsalvage/pull/284))
+
 ### v0.8.1 — 2026-11-19
 
 **Maintenance**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Documentation**
 
 - The README's status note says what is checked against independent tools, names the 4096-byte exFAT limit and no longer says the app is not released ([#265](https://github.com/antimatter-studios/captainsalvage/pull/265))
-
-### v0.4.13 — 2026-11-19
-
-**Fixed**
-
-- **The "Something wrote to this disk" box can be closed.** It had no clear way to close: only a small "Fold away" link among its buttons, and folding it left a red strip across the bottom of every screen for as long as the disk was changed. The box now has a close button (an ×) in its top-right corner, and Escape closes it too. Closing it removes it completely, with no strip. What it said is not lost: the red Check disk safety button at the top right stays red while the disk is changed, and its panel now shows the same findings (what changed, how many clusters and files, the advice about macOS) with Show the files, Rebuild the map now and Check again. If something writes to the disk again later, the box comes back once for that new change.
 
 <!-- changelog:end -->
 
