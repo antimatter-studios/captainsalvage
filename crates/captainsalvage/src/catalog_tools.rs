@@ -53,7 +53,12 @@ fn extent_argument() -> Value {
 fn view_of(disk: &RawDisk, args: &Value) -> Result<RawDisk> {
     match args.get("extent").filter(|value| !value.is_null()) {
         Some(extent) => disk.extent(need_u64(extent, "start")?, need_u64(extent, "length")?),
-        None => RawDisk::with_source(&disk.path, disk.source.clone(), disk.length),
+        None => {
+            let mut view = RawDisk::with_source(&disk.path, disk.source.clone(), disk.length)?;
+            // The same device, so the same health map.
+            view.health = disk.health.clone();
+            Ok(view)
+        }
     }
 }
 

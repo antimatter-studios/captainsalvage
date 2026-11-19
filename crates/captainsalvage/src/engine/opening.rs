@@ -61,6 +61,34 @@ fn legacy_key(view: &RawDisk) -> Option<String> {
     Some(crate::volume::Volume::open(source).ok()?.workspace_name())
 }
 
+/// Tells the health guard of a disk which stored source it is, and the markers the drive is known
+/// by, so the same drive is found again after it went away and came back.
+fn remember_identity(
+    catalog: &Catalog,
+    disk: &RawDisk,
+    whole: Option<&str>,
+    parent: Option<&str>,
+    taken: &crate::raw_scan::Fingerprint,
+) {
+    let Some(view) = disk.health.as_ref() else {
+        return;
+    };
+    match parent {
+        None => {
+            view.health.set_identity(taken.clone());
+            if let Some(id) = whole {
+                view.health.adopt_source(id);
+            }
+        }
+        Some(id) => {
+            if let Ok(Some(stored)) = catalog.fingerprint_of(id) {
+                view.health.set_identity(stored);
+            }
+            view.health.adopt_source(id);
+        }
+    }
+}
+
 fn matches_json(catalog: &Catalog, matches: &[SourceMatch]) -> Result<Vec<Value>> {
     matches
         .iter()
@@ -80,7 +108,24 @@ impl Engine {
         }
         let path = str_of(args, "path")
             .context("open_source needs a path, or the diskId of an open source")?;
-        let disk = Arc::new(RawDisk::open(std::path::Path::new(path))?);
+        // The drive that went away and came back is the same source: its guard is pointed at the
+        // new node, found by its markers, and the node that vanished is let go.
+        let rebound = self
+            .raw_disk
+            .read()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .filter(|current| current.health.is_some() && current.source.is_gone())
+            .and_then(|current| current.rebound(std::path::Path::new(path)).ok());
+        if let Some(rebound) = rebound {
+            let disk = Arc::new(rebound);
+            *self
+                .raw_disk
+                .write()
+                .map_err(|_| anyhow::anyhow!("raw disk lock poisoned"))? = Some(disk.clone());
+            return Ok((disk, false));
+        }
+        let disk = Arc::new(self.open_device(std::path::Path::new(path))?);
         *self
             .raw_disk
             .write()
@@ -136,6 +181,9 @@ impl Engine {
         }
 
         let (disk, _) = self.source_disk(args)?;
+        // Opening reads the drive in places nothing has read before. Each of those reads is
+        // journaled before it starts, so one that resets the device is known the next time.
+        let _journal = disk.health.as_ref().map(|view| view.health.journal_scope());
         let extent = match args.get("extent").filter(|value| !value.is_null()) {
             Some(value) => {
                 let start = need_u64(value, "start")?;
@@ -211,6 +259,17 @@ impl Engine {
                     })
                     .map(|found| found.source.id.clone())
             });
+        remember_identity(
+            &catalog,
+            &disk,
+            if extent.is_none() {
+                matched.as_deref()
+            } else {
+                None
+            },
+            parent.as_deref(),
+            &identification.fingerprint,
+        );
         let stored = match &matched {
             Some(id) => catalog.scans(id)?,
             None => Vec::new(),

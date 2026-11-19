@@ -4,7 +4,7 @@ import { bytes, count, decimal, duration } from "../format";
 import { fromEngine, t } from "../i18n";
 import { useSimple } from "../mode";
 import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
-import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type EvidenceStatus, type RawDiskState, type ScanSnapshot } from "../rawDisk";
+import { MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, MAP_HEALTH_UNREADABLE, mapRowCount, type HealthRange, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type EvidenceStatus, type RawDiskState, type ScanSnapshot } from "../rawDisk";
 import type { ByteExtent, OpenedSource } from "../openedSource";
 import { Icon } from "./icons";
 import { StaleMark } from "./StaleRegions";
@@ -174,6 +174,19 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
     : running && estimate ? t("Scan {percent}%, {speed}/s, {time} left", { percent: decimal(fraction * 100, 1), speed: bytes(estimate.bytesPerSecond), time: duration(estimate.secondsLeft) })
     : running ? t("Scan {percent}%", { percent: decimal(fraction * 100, 1) })
     : t("Scan paused at {percent}%", { percent: decimal(fraction * 100, 1) });
+  // What the read journal and the probe found wrong with the drive, drawn as a lane of the map. A source
+  // opened without a health guard has none, and the lane is not drawn.
+  const [health, setHealth] = useState<HealthRange[]>([]);
+  useEffect(() => {
+    let current = true;
+    const load = () => call<{ ranges: HealthRange[] }>("health_map", { diskId: disk.id })
+      .then((value) => { if (current) setHealth(value.ranges.filter((range) => range.state !== "good")); })
+      .catch(() => { if (current) setHealth([]); });
+    void load();
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => { current = false; window.clearInterval(timer); };
+  }, [disk.id]);
+  const drawn = useMemo(() => ({ ...disk, health }), [disk, health]);
   const mapSource = useMemo<StripSource>(() => {
     const legend = (): LegendItem[] => {
       const palette = legendFor("content");
@@ -185,6 +198,9 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
         { value: MAP_BAND, label: t("Declared partitions"), color: bandA },
         { value: MAP_BAND_ALTERNATE, label: t("Declared partitions"), color: bandB },
         ...SOURCE_FORMATS.map((name, index) => ({ value: MAP_FIRST_FORMAT + index, label: name, color: palette[index].color })),
+        { value: MAP_HEALTH_SLOW, label: t("Slow to read"), color: palette.find((item) => item.value === 5)!.color },
+        { value: MAP_HEALTH_UNREADABLE, label: t("Marked unreadable"), color: palette.find((item) => item.value === 10)!.color },
+        { value: MAP_HEALTH_CULPRIT, label: t("The drive reset here"), color: palette.find((item) => item.value === 9)!.color },
       ];
     };
     const hypotheses = new Map<string, { first: number; count: number }>();
@@ -194,8 +210,8 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
       }
     });
     return {
-      read: (begin, end, buckets) => laneMap(disk, lanes, begin, end, buckets),
-      rows: 1 + BAND_ROWS + lanes.length,
+      read: (begin, end, buckets) => laneMap(drawn, lanes, begin, end, buckets),
+      rows: mapRowCount(drawn, lanes.length),
       lanes: true,
       legend,
       colors: () => {
@@ -208,7 +224,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
       },
       hypotheses: [...hypotheses.values()],
     };
-  }, [disk, lanes]);
+  }, [disk, drawn, lanes]);
 
   useEffect(() => {
     if (center !== "bytes" || !valid) return;
@@ -230,7 +246,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
 
   const mapProps = { layer: "ownership" as const, floor: 0, lens: null, revision: 0,
     highlight: [], marker: null, scanAt: running ? disk.nextOffset : null, clusterSize: 1, source: mapSource };
-  const mapRows = 1 + BAND_ROWS + lanes.length;
+  const mapRows = mapRowCount(drawn, lanes.length);
 
   /** A click on the top map picks what is there: a finding, else the partition, else it moves the magnified view. */
   function pickOnMap(offset: number) {
@@ -264,7 +280,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
         {[0, 0.25, 0.5, 0.75, 1].map((position) => <span key={position} style={{ left: `${position * 100}%` }}>{bytes(Math.round((valid ? first : 0) + (valid ? size : disk.length) * position))}</span>)}
       </div>
       <div className="legend" title={t("Solid marks show observed structures; dashed outlines show possible volume extents.")}>
-        {mapSource.legend().filter((item) => item.value === MAP_NOT_SCANNED || item.value === MAP_EXAMINED || item.value === MAP_UNREADABLE && disk.errors.length > 0 || item.value === MAP_BAND && disk.partitions.length > 0).map((item) =>
+        {mapSource.legend().filter((item) => item.value === MAP_NOT_SCANNED || item.value === MAP_EXAMINED || item.value === MAP_UNREADABLE && disk.errors.length > 0 || item.value === MAP_BAND && disk.partitions.length > 0 || item.value === MAP_HEALTH_SLOW && health.some((range) => range.state === "slow") || item.value === MAP_HEALTH_UNREADABLE && health.some((range) => range.state === "unreadable") || item.value === MAP_HEALTH_CULPRIT && health.some((range) => range.state === "reset-culprit")).map((item) =>
           <span className="legend-item" key={item.value}><span className="legend-swatch" style={{ background: item.color }} />{item.label}</span>)}
         {summary.map((item) => {
           const entry = mapSource.legend().find((candidate) => candidate.label === item.format);

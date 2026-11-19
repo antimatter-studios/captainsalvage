@@ -63,6 +63,11 @@ pub struct Fingerprint {
     /// blank. Absent in version 1 fingerprints, which wanted what they stored.
     #[serde(default)]
     pub markers_wanted: u32,
+    /// The nominal offsets of markers that were taken from another block because their own lay in
+    /// a range the health map marks bad (see [`crate::health`]), so that reading them did not
+    /// reset the drive again. Empty when none was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moved_for_bad_zones: Vec<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -129,6 +134,11 @@ impl<'a> MarkerReader<'a> {
         if !self.may_read() {
             return None;
         }
+        // A range known to be bad is not read: it is unknown, and it is not a failure of the drive.
+        if self.disk.known_bad(offset, length).is_some() {
+            self.cache.insert((offset, length), None);
+            return None;
+        }
         match self.disk.read(offset, length) {
             Ok(data) => {
                 self.failures = 0;
@@ -168,8 +178,26 @@ impl Fingerprint {
         let size = length.min(MARKER_BYTES);
         let targets = nominal_offsets(length);
         let mut samples: Vec<Sample> = Vec::new();
+        let mut moved_for_bad_zones: Vec<u64> = Vec::new();
         for index in 0..targets.len() {
-            for offset in candidates(&targets, index, size) {
+            // A nominal block inside a bad zone is moved to the nearest block outside it, and
+            // the markers are then chosen from there as they would be from the nominal block.
+            let mut shifted = targets.clone();
+            match clear_of_bad(reader.disk, &targets, index, size, targets[index]) {
+                Some(start) if start == targets[index] => {}
+                Some(start) => {
+                    shifted[index] = start;
+                    moved_for_bad_zones.push(targets[index]);
+                }
+                None => {
+                    moved_for_bad_zones.push(targets[index]);
+                    continue;
+                }
+            }
+            for offset in candidates(&shifted, index, size) {
+                let Some(offset) = clear_of_bad(reader.disk, &targets, index, size, offset) else {
+                    continue;
+                };
                 if samples
                     .iter()
                     .any(|taken| taken.offset.abs_diff(offset) < size)
@@ -210,6 +238,7 @@ impl Fingerprint {
             samples,
             sampled_sha256,
             markers_wanted: MARKER_COUNT as u32,
+            moved_for_bad_zones,
         }
     }
 
@@ -384,6 +413,46 @@ fn candidates(targets: &[u64], index: usize, size: u64) -> Vec<u64> {
         }
     }
     found
+}
+
+/// The block of marker `index` at or after `offset` (before it, for the last marker, which looks
+/// backward) that lies outside every range the health map marks bad, still inside the stretch of
+/// the source that marker may use. None when the bad zone fills the rest of the stretch.
+fn clear_of_bad(
+    disk: &RawDisk,
+    targets: &[u64],
+    index: usize,
+    size: u64,
+    offset: u64,
+) -> Option<u64> {
+    let last = index + 1 == targets.len();
+    let floor = if last {
+        index
+            .checked_sub(1)
+            .map_or(0, |previous| targets[previous] + size)
+    } else {
+        targets[index]
+    };
+    let ceiling = if last {
+        targets[index]
+    } else {
+        targets[index + 1].saturating_sub(size)
+    };
+    let mut at = offset;
+    for _ in 0..64 {
+        if at < floor || at > ceiling {
+            return None;
+        }
+        let Some((start, end)) = disk.known_bad(at, size) else {
+            return Some(at);
+        };
+        at = if last {
+            start.checked_sub(size)?
+        } else {
+            end.div_ceil(MARKER_BYTES) * MARKER_BYTES
+        };
+    }
+    None
 }
 
 /// Whether a block can tell one drive from another: not blank, and not a short repeating pattern.

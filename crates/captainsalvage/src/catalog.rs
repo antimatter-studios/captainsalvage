@@ -285,7 +285,8 @@ impl Catalog {
             )?;
             connection.execute_batch(crate::hypotheses::SCHEMA)?;
             connection.execute_batch(crate::raw_scan::SCHEMA)?;
-            connection.execute_batch(SCHEMA)
+            connection.execute_batch(SCHEMA)?;
+            connection.execute_batch(crate::health::store::SCHEMA)
         })?;
         if let Some(backup) = backup {
             connection.execute(

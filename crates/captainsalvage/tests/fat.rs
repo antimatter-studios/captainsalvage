@@ -429,6 +429,112 @@ fn a_copy_keeps_the_layout_writes_zeros_and_names_the_unreadable_ranges_in_the_m
     }
 }
 
+/// `Captain log.txt` over the health guard: nothing is wrong with the device, but the health map
+/// says the sector that holds bytes 512 to 700 of the file is bad, as a probe or a reset would.
+/// The scan runs first when `scan_first` says so.
+fn with_a_known_bad_second_cluster(
+    kind: FilesystemKind,
+    label: &str,
+    scan_first: bool,
+) -> (Arc<Session>, Vec<u8>, i64, Arc<MemorySource>) {
+    use captainsalvage::health::{Health, HealthRange, HealthStore, RangeState};
+    let fixture = Fixture::new(kind);
+    let wanted = fixture.contents.clone();
+    let bad_at = ((fixture.data_sector + 9 - 2) * 512) as u64;
+    let length = fixture.image.len() as u64;
+    let device = Arc::new(MemorySource::new(fixture.image));
+    let workspace = workspace(label);
+    let store = Arc::new(HealthStore::open(workspace.dir()).unwrap());
+    let health = Health::attach(device.clone(), length, store, format!("{label}-key")).unwrap();
+    let mark = || {
+        health.record(HealthRange::new(
+            bad_at,
+            bad_at + 512,
+            RangeState::ResetCulprit,
+            None,
+            "the test marked it",
+        ))
+    };
+    if !scan_first {
+        mark();
+    }
+    let session =
+        Session::with_source(Path::new("/test/fat-known-bad"), health.guard(), workspace).unwrap();
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let rows = call(&engine, "search", json!({"query": "Captain log.txt"}));
+    let id = rows["rows"][0]["id"].as_i64().unwrap();
+    if scan_first {
+        mark();
+    }
+    (session, wanted, id, device)
+}
+
+#[test]
+fn a_range_known_to_be_bad_is_never_read_and_reads_as_unreadable_in_a_preview_and_a_copy() {
+    use captainsalvage::source::BlockSource;
+    for kind in [FilesystemKind::Fat16, FilesystemKind::Fat32] {
+        let (session, wanted, id, device) =
+            with_a_known_bad_second_cluster(kind, &format!("known-bad-copy-{kind}"), true);
+        let before = device.read_stats().operations;
+        let preview = session.read_entry_range(id, 0, 700).unwrap();
+        assert_eq!(preview.data[..512], wanted[..512], "{kind}");
+        assert_eq!(preview.data[512..], [0u8; 188], "{kind}");
+        assert_eq!(
+            preview.unreadable,
+            [captainsalvage::browse::ByteRange {
+                start: 512,
+                end: 700
+            }],
+            "{kind}"
+        );
+        let destination = session.workspace.dir().join("known-bad-copy");
+        session
+            .copy_start(CopyRequest {
+                destination: destination.to_string_lossy().into_owned(),
+                entry_ids: vec![id],
+                include_partial: true,
+                ..CopyRequest::default()
+            })
+            .unwrap();
+        wait_for_copy_with_partial(&session, 1, 1);
+        let copied = std::fs::read(destination.join("Volume root/Captain log.txt")).unwrap();
+        assert_eq!(copied[..512], wanted[..512], "{kind}");
+        assert_eq!(
+            copied[512..],
+            [0u8; 188],
+            "{kind}: zeros where the range is bad"
+        );
+        let manifest =
+            std::fs::read_to_string(destination.join("captain-salvage-manifest.jsonl")).unwrap();
+        let row: Value = serde_json::from_str(manifest.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            row["unreadableRanges"],
+            json!([{"start": 512, "end": 700}]),
+            "{kind}"
+        );
+        assert!(
+            device.read_stats().operations > before,
+            "the good cluster was still read"
+        );
+    }
+}
+
+#[test]
+fn a_scan_of_a_source_with_a_known_bad_range_reports_it_as_unreadable_and_does_not_read_it() {
+    use captainsalvage::map::MapDb;
+    let (session, _, _, device) =
+        with_a_known_bad_second_cluster(FilesystemKind::Fat16, "known-bad-scan", false);
+    let database = MapDb::open(&session.workspace.database()).unwrap();
+    let progress = captainsalvage::scan::read_progress(&database, &session.volume).unwrap();
+    assert_eq!(
+        progress.read_errors, 1,
+        "the one bad cluster is reported, once"
+    );
+    let _ = device;
+}
+
 #[test]
 fn fat_scans_resume_after_restart_without_duplicating_fixed_roots() {
     for kind in [

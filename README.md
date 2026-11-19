@@ -908,6 +908,38 @@ the same drive is an exact match. File test results are not run again by a resca
 marked until the file is tested again. The source is only read.
 
 
+#### A failing drive: where it is bad, and never reading there again
+
+A drive with a bad area can retry inside for seconds. Behind a USB bridge that is long enough for the
+host to reset the whole device, which comes back under another name, and each reset hurts a damaged
+drive further. The app therefore learns where the bad areas are, once, and then does not read them:
+
+- **The read journal** (in the catalog, keyed by the drive's length and the start of its first sector, not
+  by its /dev name) writes "started: offset, length" before the reads that can reach an unknown bad
+  spot (opening a source, probing, and any read of 1 MiB or more) and "done: N ms" after. A read that
+  started and never ended is the one the device went away during: the next time the source is opened
+  its range is marked `reset-culprit`, before anything reads the drive.
+- **The health map** has ranges that are `good`, `slow` (a read took over 500 ms), `unreadable` (a read
+  failed), or `reset-culprit`. Unreadable and reset-culprit ranges are never read again, by anything:
+  the guard that every reader reads through answers with an error without touching the drive, and the
+  readers already treat an error as unreadable bytes. A scan reports them as read errors, a preview marks
+  them, a copy writes zeros there and names them in its manifest, and the fingerprint's markers are taken
+  from the nearest readable block outside them (`movedForBadZones` in the fingerprint says which). A
+  marker in a bad range is unknown when a source is compared, not changed.
+- **`probe_health`** finds the zones on purpose and gently: phase 1 reads one 4 KiB block every GiB
+  (`gridBytes`) and at the end, timing each; phase 2 walks from the nearest good read on each side toward
+  every bad one, halfway each time, and stops at the first read that is slow or fails, so a zone is
+  bounded by good reads and the bytes between are not read. A call reads at most `maxReads` blocks for at
+  most `maxMillis`, keeps where it is and is continued with `step`, also after the app was closed.
+  `health_map` shows the map, the journal and the probe. Only the person can `forgive` a range, after a
+  repair. The window draws the ranges as a lane of the raw-disk map.
+- **`rebind_source`**, and `open_source` with the new path, point an open source whose device went away
+  at the drive when it comes back (found again by its markers, at least a probable match), so the open
+  volume and its map read again. The descriptor on the vanished node is closed when the device is found
+  to be gone.
+
+The older `open_volume` door does not use the guard.
+
 ### Tests
 
 ```sh

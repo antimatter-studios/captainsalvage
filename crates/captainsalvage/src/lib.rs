@@ -20,6 +20,8 @@ pub mod export;
 pub mod exporting;
 pub mod filesystem;
 pub mod filetest;
+pub mod health;
+pub mod health_tools;
 pub mod hypotheses;
 pub mod keep;
 pub mod map;
