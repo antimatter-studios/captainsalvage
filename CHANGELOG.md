@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.14] — 2026-11-19
+
+### Documentation
+
+- The README's status note says what is checked against independent tools, names the 4096-byte exFAT limit and no longer says the app is not released ([#265](https://github.com/antimatter-studios/captainsalvage/pull/265))
+
 ## [0.4.13] — 2026-11-19
 
 ### Fixed
