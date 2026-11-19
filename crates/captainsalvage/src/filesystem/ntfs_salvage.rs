@@ -438,6 +438,44 @@ fn best_name(names: &[FileNameEvidence]) -> Option<&FileNameEvidence> {
         .min_by_key(|name| rank(name))
 }
 
+/// The entries for a file's further hard links: one for each name other than the one the file is
+/// shown under, in the folder that name was linked in, with the file's size, times and data. DOS
+/// names are the short form of another name in the same folder, not links of their own. They are
+/// in order of (parent record, name), so a rescan gives each the same slot and no entry twice.
+fn further_name_entries(record: &RecordEvidence, primary: &SalvageEntry) -> Vec<SalvageEntry> {
+    if primary.is_dir {
+        return Vec::new();
+    }
+    let names = record.file_names();
+    let key = |name: &FileNameEvidence| (name.parent_record, name.name.clone());
+    let shown = best_name(&names).map(key);
+    let mut others: Vec<&FileNameEvidence> = names
+        .iter()
+        .filter(|name| !name.name.is_empty() && name.namespace != 2)
+        .filter(|name| Some(key(name)) != shown)
+        .collect();
+    others.sort_by_key(|name| key(name));
+    others.dedup_by_key(|name| key(name));
+    others
+        .into_iter()
+        .take(MAX_FURTHER_NAMES)
+        .zip(1u32..)
+        .map(|(name, slot)| {
+            let mut entry = primary.clone();
+            entry.name = name.name.clone();
+            entry.name_slot = slot;
+            if let Some(ntfs) = entry.ntfs.as_mut() {
+                ntfs.parent_record = Some(name.parent_record);
+                ntfs.parent_sequence = Some(name.parent_sequence);
+            }
+            entry
+        })
+        .collect()
+}
+
+/// NTFS gives one file at most 1024 names; the first is the one it is shown under.
+const MAX_FURTHER_NAMES: usize = 1023;
+
 struct Data {
     storage: &'static str,
     length: u64,
@@ -598,6 +636,7 @@ pub fn entry_from_record(
         slots: 1,
         ntfs: Some(ntfs),
         ranges,
+        name_slot: 0,
     })
 }
 
@@ -628,6 +667,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
             runs: Vec::new(),
         }),
         ranges: RangeList::default(),
+        name_slot: 0,
     }
 }
 
@@ -654,7 +694,9 @@ pub fn find_entries(
                 sector as u16,
             );
             if let Some(entry) = entry_from_record(&record, offset, geometry) {
+                let further = further_name_entries(&record, &entry);
                 found.push(entry);
+                found.extend(further);
                 offset += record_size;
                 continue;
             }

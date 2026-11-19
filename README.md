@@ -368,7 +368,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 | Copy out | Limited | Limited | Limited |
 | Mount block | Supported | Supported | Supported |
 | Named streams | Not offered | Not offered | Limited |
-| Hard links | Not offered | Not offered | Limited |
+| Hard links | Not offered | Not offered | Supported |
 | Attribute lists | Not offered | Not offered | Missing |
 | Compression | Not offered | Not offered | Missing |
 | Encryption | Not offered | Not offered | Missing |
@@ -442,7 +442,8 @@ one place, so none of them can claim more than the adapter does.
 | Disk Rebuilds | Limited | A rebuild can replace a file's clusters or a folder's parent and is read as clusters. A record, its names and its run list are never altered. |
 | Copy out | Limited | Hashed, never overwrites, complete or partial. A stream that cannot be read is reported failed and writes no file. |
 | Mount block | Supported | Decided by volume UUID in Disk Arbitration, not by filesystem, so it applies to whichever NTFS driver would mount the volume. It was not exercised against a live NTFS mount in this change. |
-| Alternate data streams, hard links | Limited | Listed in the record details (`captainsalvage_ntfs_entry`), never merged into the file or copied as files of their own. |
+| Alternate data streams | Limited | Listed in the record details (`captainsalvage_ntfs_entry`), never merged into the file or copied as files of their own. |
+| Hard links | Supported | A file with several names is listed under each, in the folder the name belongs to, with the file's size and bytes, and a copy holds it under every name. Each name is an entry of its own, told apart from the others by its place in the record's names, so a rescan does not duplicate it. |
 | Attribute lists, compression, journal | Missing | A file whose attributes continue in extension records, and an LZNT1-compressed file, are listed but not read ([rust-fs-ntfs#1379](https://github.com/antimatter-studios/rust-fs-ntfs/issues/1379)). `$LogFile` and `$UsnJrnl` are not interpreted. |
 | Encryption | Missing | EFS files are listed and marked unreadable. BitLocker volumes are refused. |
 | Very large volumes | Limited | Up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters. |
@@ -513,9 +514,7 @@ What was checked against something that is not this app:
 
   What the app does not do, as these volumes show it, is pinned in the test by an issue each, and
   the test fails if one of them stops being true: the data of **NTFS-compressed** files is not
-  read ([#174](https://github.com/antimatter-studios/captainsalvage/issues/174)); **only one name
-  of a hard-linked file** is listed, and the second only in the record details
-  ([#175](https://github.com/antimatter-studios/captainsalvage/issues/175)); and a volume on
+  read ([#174](https://github.com/antimatter-studios/captainsalvage/issues/174)); and a volume on
   **4096-byte sectors** is refused at open, because the pinned driver expects a record of at
   least that size and Windows makes one of 1024 bytes
   ([#177](https://github.com/antimatter-studios/captainsalvage/issues/177)), so that volume is
