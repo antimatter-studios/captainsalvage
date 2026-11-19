@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.5.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.6.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.6.0 — 2026-11-19
+
+**Added**
+
+- **An NTFS file with several names is listed under each of them.** When one file has more than one name (hard links), each name now appears as a file in the folder it belongs to, with the file's size and bytes, so a copy holds the file under every name. Before, only one name was listed and the others were shown only in the file's record details. Each name is an entry of its own, so scanning again does not list it twice.
+
 ### v0.5.1 — 2026-11-19
 
 **Maintenance**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The shared engine asks the filesystem kind what it needs and no longer tests for exFAT, FAT or NTFS by name ([#255](https://github.com/antimatter-studios/captainsalvage/pull/255))
-
-### v0.4.8 — 2026-11-19
-
-**Fixed**
-
-- **A file whose short DOS name has accented letters shows them correctly.** On FAT volumes, a file made by DOS, a camera or another old device, with no long name and letters such as é, ä or ö in its 8.3 name, was listed with replacement characters (`���X.TXT`). The name is now read in the DOS code page 437, so it shows as `éäöX.TXT`.
 
 <!-- changelog:end -->
 
