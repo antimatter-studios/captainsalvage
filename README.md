@@ -935,6 +935,16 @@ The same generator runs on a hosted Windows runner in the `windows-oracle` workf
 request opts into by carrying the `windows-oracle` label. `WINDOWS_ORACLE_DIR=folder` grades a
 folder an earlier run filled.
 
+`chore test:coverage` (`scripts/coverage.py check`) measures what the tests run of our own code: the
+Rust engine (`crates/captainsalvage/src`) and the Tauri crate (`src-tauri/src`) with `cargo llvm-cov`,
+and our TypeScript (`src/`) with Node's coverage, and fails when a part is more than half a percentage
+point under `docs/coverage-baseline.json`. CI runs it on every pull request. The baseline when it was
+captured (19 November 2026, v0.4.6): engine 87.28% of lines, 83.60% of regions; Tauri crate 2.09% of
+lines (the window's commands are driven by the window tests, which CI cannot run); TypeScript 98.82% of
+lines, but only of the 6 files in `src/` that the Node tests load, out of 51 (the 13,131 lines of the
+others, the window's components, are exercised only by the window tests). Raise the baseline with
+`chore coverage:baseline`, in the pull request that earned it.
+
 Treat the existing tests as a regression contract: record the passing tests before a
 driver change, rerun them afterwards, and check that every previously passing test still
 preserves its expected result. When an interface changes, mechanically migrate the
