@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-11-19
+
+### Maintenance
+
+- A saved copy of a volume's structures carries a versioned manifest of its regions, and copies without one read as version 1 ([#238](https://github.com/antimatter-studios/captainsalvage/pull/238))
+
 ## [0.4.1] — 2026-11-19
 
 ### Maintenance
