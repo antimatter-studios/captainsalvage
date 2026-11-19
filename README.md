@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.7.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.8.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.8.0 — 2026-11-19
+
+**Added**
+
+- **Files that NTFS compressed can be previewed, tested and copied.** On an NTFS volume, a file that Windows compressed (a compressed folder, or `compact /c`) was listed with its size and then refused: it could not be previewed, it was left out of a copy, and it showed as partial. The app now reads such a file: it works out which clusters hold each 64 KiB compression unit and has the NTFS driver decode them. A unit that does not decode is marked in the preview as unreadable bytes, and the copy says so and is partial; nothing is made up. A file that is compressed in another way, or whose data continues in another record, is still listed and refused, as before. This is checked on synthetic volumes laid out the way NTFS lays out compressed files, and on volumes that Windows formatted and compressed files on, where every file has the SHA-256 that Windows reports.
+
 ### v0.7.1 — 2026-11-19
 
 **Fixed**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **The parts of a start-screen disk card line up.** Under a disk, the partitions were indented, but the notices below them ("Mounted, so macOS may write to it" and "Reading needs your permission") started at the card's left edge, so the card had three different left edges. The notices now start on the same line as the partitions, and their text and commands start at the same place as the partition names.
-
-### v0.4.11 — 2026-11-19
-
-**Fixed**
-
-- **The start screen follows the disks.** The list of disks and volumes was read once, when the screen opened, so a volume you unmounted still showed as mounted, and a disk you plugged in or took out did not appear or go until you pressed Check again. The screen now keeps itself current: it checks every 10 seconds and when the window comes back into view, so a disk attached or removed, or a volume mounted or unmounted outside the app, shows without a button and without the list flickering or moving. When the app itself sends a command to the system (Unmount, or blocking a volume from being mounted), it reads the state back as soon as the command returns and once more a moment later, because macOS can be slow to update, so the row changes at once. It asks the system for its list of disks and mounts, and rebuilds the report (which looks at each volume) only when that list changed, so a damaged disk is not asked about every few seconds.
 
 <!-- changelog:end -->
 
