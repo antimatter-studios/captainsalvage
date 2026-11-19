@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-11-19
+
+### Documentation
+
+- The README lists what each filesystem supports from the table the app reports, and FAT's notes stop claiming a bitmap ([#220](https://github.com/antimatter-studios/captainsalvage/pull/220))
+
 ## [0.4.6] — 2026-11-19
 
 ### Maintenance
