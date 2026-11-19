@@ -685,6 +685,33 @@ impl MapDb {
     /// (see `disk_rebuild_rename`). One that cannot be renamed opens read-only and unchanged;
     /// `read_only_reason` says why.
     pub fn open(path: &Path) -> Result<Self> {
+        let database = Self::open_without_renaming(path)?;
+        if database.read_only.is_none() {
+            // A stored name with a retired word is renamed once (see `stored_names`). If it cannot be,
+            // the map is as it was and opens all the same.
+            if let Err(error) = disk_rebuild_rename::stored_names::run(path, &database.connection) {
+                eprintln!(
+                    "{} still has a stored name from before 0.4 that could not be renamed: {error:#}",
+                    path.display()
+                );
+            }
+        }
+        Ok(database)
+    }
+
+    /// As `open`, without the rename of stored names: for the tests that make a map as an older build
+    /// left it.
+    #[cfg(test)]
+    pub(crate) fn open_without_renaming(path: &Path) -> Result<Self> {
+        Self::open_prepared(path)
+    }
+
+    #[cfg(not(test))]
+    fn open_without_renaming(path: &Path) -> Result<Self> {
+        Self::open_prepared(path)
+    }
+
+    fn open_prepared(path: &Path) -> Result<Self> {
         if let Prepared::ReadOnly(reason) = disk_rebuild_rename::prepare(path)? {
             eprintln!("{reason}");
             return Ok(Self {

@@ -242,15 +242,15 @@ fn quick_check(connection: &Connection) -> Result<()> {
 }
 
 /// Where the next copy of `path` goes: the first name not taken.
-fn backup_path(path: &Path) -> PathBuf {
+fn backup_path(path: &Path, suffix: &str) -> PathBuf {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned());
     let name = name.unwrap_or_else(|| "map.sqlite".into());
-    let mut candidate = path.with_file_name(format!("{name}{BACKUP_SUFFIX}"));
+    let mut candidate = path.with_file_name(format!("{name}{suffix}"));
     let mut number = 2;
     while candidate.exists() || wal_of(&candidate).exists() {
-        candidate = path.with_file_name(format!("{name}{BACKUP_SUFFIX}.{number}"));
+        candidate = path.with_file_name(format!("{name}{suffix}.{number}"));
         number += 1;
     }
     candidate
@@ -265,7 +265,12 @@ fn wal_of(path: &Path) -> PathBuf {
 /// Copies the database, and its write-ahead log if one holds changes, never over an existing
 /// file. The caller holds the write lock, so nothing is added to the log meanwhile.
 fn back_up(path: &Path) -> Result<PathBuf> {
-    let target = backup_path(path);
+    back_up_with_suffix(path, BACKUP_SUFFIX)
+}
+
+/// As `back_up`, naming the copy with `suffix` instead of the Disk Rebuild rename's.
+pub(crate) fn back_up_with_suffix(path: &Path, suffix: &str) -> Result<PathBuf> {
+    let target = backup_path(path, suffix);
     let log = wal_of(path);
     let log_size = std::fs::metadata(&log).map(|meta| meta.len()).unwrap_or(0);
     let result = copy_one(path, &target).and_then(|()| {
@@ -374,6 +379,8 @@ fn columns_in_order(connection: &Connection, table: &str) -> Result<Vec<String>>
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<_>>()?)
 }
+
+pub mod stored_names;
 
 #[cfg(test)]
 mod tests;
