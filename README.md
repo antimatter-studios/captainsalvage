@@ -12,7 +12,11 @@ finds, and helps you get your files back, without ever writing to the disk.
 > **Early development.** Supports exFAT, FAT12, FAT16, FAT32 and NTFS. exFAT has been tested
 > on one real damaged volume plus synthetic volumes; FAT-family and NTFS integration are
 > tested with synthetic disk images only, so neither has yet recovered a real damaged drive.
-> NTFS has limits, listed under [NTFS volumes](#ntfs-volumes). It is not released yet.
+> Those images include volumes formatted by `mkfs.fat`, `mkfs.exfat` and `mkntfs` and filled by
+> the Linux kernel, whose listings and file hashes the app is compared with in CI. NTFS has
+> limits, listed under [NTFS volumes](#ntfs-volumes), and exFAT volumes with 4096-byte sectors
+> are refused (#234). Every merged change is a tagged version with notes on the
+> [releases page](#releases); no builds are published.
 
 The [illustrated user manual](docs/manual/index.html) shows every part of the app: a safe
 first recovery, the Simple and Investigate modes, and a guide to each screen. Open it directly
