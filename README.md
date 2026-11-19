@@ -1010,7 +1010,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.6 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.7 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1145,6 +1145,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 <!-- changelog:start -->
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
+
+### v0.4.7 — 2026-11-19
+
+**Documentation**
+
+- The README lists what each filesystem supports from the table the app reports, and FAT's notes stop claiming a bitmap ([#220](https://github.com/antimatter-studios/captainsalvage/pull/220))
 
 ### v0.4.6 — 2026-11-19
 
@@ -1435,51 +1441,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 - Say when the disk is disconnected, and keep disks from sleeping ([#56](https://github.com/antimatter-studios/captainsalvage/pull/56))
 - Report what survives in a damaged file, and stop calling text keys broken zips ([#47](https://github.com/antimatter-studios/captainsalvage/pull/47))
-
-### v0.1.0 — 2026-11-05
-
-**Added**
-
-- Show the version, counting builds and releases ([#38](https://github.com/antimatter-studios/captainsalvage/pull/38))
-- Mark the selected spot on the map with arrows ([#37](https://github.com/antimatter-studios/captainsalvage/pull/37))
-- Name the app Captain Salvage and add a light and dark switch ([#35](https://github.com/antimatter-studios/captainsalvage/pull/35))
-- Navigate the sidebar with the arrow keys ([#34](https://github.com/antimatter-studios/captainsalvage/pull/34))
-- Drag the edges of the middle column to resize it ([#33](https://github.com/antimatter-studios/captainsalvage/pull/33))
-- Widen the details panel and preview files in it automatically ([#32](https://github.com/antimatter-studios/captainsalvage/pull/32))
-- Play more formats through an installed ffmpeg ([#31](https://github.com/antimatter-studios/captainsalvage/pull/31))
-- Browse files by type and preview them live from the disk ([#30](https://github.com/antimatter-studios/captainsalvage/pull/30))
-- Add a recovery basket with live progress from any process ([#24](https://github.com/antimatter-studios/captainsalvage/pull/24))
-
-**Fixed**
-
-- Let a resumed copy count files already on the destination ([#26](https://github.com/antimatter-studios/captainsalvage/pull/26))
-- Make lens-scan wait for a basket copy to finish ([#25](https://github.com/antimatter-studios/captainsalvage/pull/25))
-
-**Documentation**
-
-- Name Chris Thomas as the copyright holder ([#29](https://github.com/antimatter-studios/captainsalvage/pull/29))
-- License the project under MIT ([#28](https://github.com/antimatter-studios/captainsalvage/pull/28))
-
-**Other**
-
-- Add a changelog, CI and a release pipeline ([#36](https://github.com/antimatter-studios/captainsalvage/pull/36))
-
-**Screenshots**
-
-<!-- scripts/release.py sync copies this table into the README under v0.1.0, so image paths are relative to the repository root. -->
-Taken from the original damaged test disk, with private file names blurred.
-
-| | |
-|---|---|
-| ![Recovery overview, with a large figure for data found by name above a breakdown of the disk](media/changelog/v0.1.0/overview.png)<br>The overview says what has been found, and the map shows what explains every part of the disk. | ![A lost film selected, with its hex dump and confidence details](media/changelog/v0.1.0/file-and-bytes.png)<br>Pick any file to read its bytes, see why it got its score, and copy it out. |
-| ![Claude answering a question about the selected cluster in the chat sidebar](media/changelog/v0.1.0/ask-claude.png)<br>Select anything and ask Claude, who checks with the same tools the app uses. | ![The Copy out tab, with its destination, salvage drive and confidence floor](media/changelog/v0.1.0/copy-out.png)<br>Copy out checks the destination, and refuses the disk being recovered. |
-| ![An unexplained region selected, zoomed on the map, with its bytes showing an MP4 header](media/changelog/v0.1.0/unexplained-region.png)<br>The Unexplained list zooms the map to free space nothing accounts for yet. | ![The recovery overview in dark mode](media/changelog/v0.1.0/overview-dark.png)<br>It follows your Mac's dark mode too. |
-
-On the way to this release, the map changed twice.
-
-| | |
-|---|---|
-| ![The first version, with a mostly blue map and plain grey panels](media/changelog/v0.1.0/1-first-version.png)<br>The first version worked, but the map hid the 32 GB in use, because each column showed only its largest category. | ![The second version, whose map shows a dark band of in-use data among the blue](media/changelog/v0.1.0/2-proportional-map.png)<br>Next, each map column became a stack showing its real mix, so small things stay visible. |
 
 <!-- changelog:end -->
 
