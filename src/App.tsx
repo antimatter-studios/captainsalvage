@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   call,
   type DiskRebuild,
@@ -36,7 +36,8 @@ import { RecoveryOverview } from "./components/RecoveryOverview";
 import { Command } from "./components/Command";
 import { ModeContext, type Mode } from "./mode";
 import { MountedWarning } from "./components/MountedWarning";
-import { WrittenWarning } from "./components/WrittenWarning";
+import { WrittenDetails, WrittenWarning } from "./components/WrittenWarning";
+import { closedBox } from "./writtenClosing";
 import { Workbench } from "./components/Workbench";
 import { StartScreen } from "./components/StartScreen";
 import { InterpretationPicker } from "./components/InterpretationPicker";
@@ -120,7 +121,7 @@ function DiskGone({ status, onOpen }: { status: Status; onOpen: (path: string) =
  * One calm chip while the disk is safe. Any problem turns it red and opens the list once, so it
  * is seen. The list then closes like any popover, and the chip stays red while the problem lasts.
  */
-function Safety({ status }: { status: Status }) {
+function Safety({ status, clusterSize, onChanged }: { status: Status; clusterSize: number; onChanged: () => void }) {
   const { now: counted, sinceOpen } = status.writes;
   const mountedAgain = status.diskBack?.mounted ?? false;
   const baselineDate = new Date(status.baseline.recordedAtMillis).toLocaleDateString(locale());
@@ -141,6 +142,10 @@ function Safety({ status }: { status: Status }) {
       : []),
   ];
   const safe = checks.every((check) => check.good);
+  // The box that says what was written stays on screen until the person closes it; once it is closed, the
+  // same details are here, for as long as the disk is changed.
+  const closedFor = useSyncExternalStore(closedBox.subscribe, closedBox.get);
+  const showWritten = !status.baseline.unchanged && closedFor === (status.baseline.currentHash ?? "") && clusterSize > 0;
   // Failing checks by a fixed id, so a growing count or a new language does not reopen the list.
   const failing = checks.filter((check) => !check.good).map((check) => check.id);
   const failingKey = failing.join("\n");
@@ -178,11 +183,19 @@ function Safety({ status }: { status: Status }) {
       >
         <Icon name={safe ? "shield" : "alert"} size={15} /> {safe ? t("Disk protected") : t("Check disk safety")}
       </button>
-      {open && <div id="safety-list" className="safety-list">
+      {open && <div id="safety-list" className={showWritten ? "safety-list safety-list-wide" : "safety-list"}>
         {checks.map((check) => (
-          <div key={check.id} className={check.good ? "safety-item" : "safety-item safety-item-bad"}>
-            <span className="safety-mark" aria-hidden="true">{check.good ? "✓" : "!"}</span>
-            {check.good ? check.text : check.danger}
+          <div key={check.id}>
+            <div className={check.good ? "safety-item" : "safety-item safety-item-bad"}>
+              <span className="safety-mark" aria-hidden="true">{check.good ? "✓" : "!"}</span>
+              {check.good ? check.text : check.danger}
+            </div>
+            {/* What the "Something wrote to this disk" box said, so closing the box loses nothing. */}
+            {check.id === "baseline" && !check.good && showWritten && (
+              <div className="safety-detail written-details">
+                <WrittenDetails status={status} clusterSize={clusterSize} onChanged={onChanged} />
+              </div>
+            )}
           </div>
         ))}
         <p className="safety-note">{t("The baseline only covers changes after it was recorded.")}</p>
@@ -333,7 +346,7 @@ function Toolbar({ status, overview, onChanged, onChangeDisk, mode, onMode, pick
       <ModeSwitch mode={mode} onMode={onMode} />
       <LanguageSwitch />
       <ThemeSwitch />
-      {status && <Safety status={status} />}
+      {status && <Safety status={status} clusterSize={overview.geometry.clusterSize} onChanged={onChanged} />}
     </WorkspaceToolbar>
   );
 }

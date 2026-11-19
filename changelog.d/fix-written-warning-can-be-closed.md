@@ -1,0 +1,3 @@
+### Fixed
+
+- **The "Something wrote to this disk" box can be closed.** It had no clear way to close: only a small "Fold away" link among its buttons, and folding it left a red strip across the bottom of every screen for as long as the disk was changed. The box now has a close button (an ×) in its top-right corner, and Escape closes it too. Closing it removes it completely, with no strip. What it said is not lost: the red Check disk safety button at the top right stays red while the disk is changed, and its panel now shows the same findings (what changed, how many clusters and files, the advice about macOS) with Show the files, Rebuild the map now and Check again. If something writes to the disk again later, the box comes back once for that new change.
