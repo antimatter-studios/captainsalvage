@@ -776,3 +776,44 @@ fn bad_sectors_are_still_there_when_the_source_is_opened_again_and_after_the_dri
     let _ = std::fs::remove_file(&renamed);
     assert_eq!(listed["extents"].as_array().unwrap().len(), 3, "{listed}");
 }
+
+/// A raw scan reads its batch through the health guard, whose journal writes to the catalog before
+/// every read. The scan step must not hold the catalog's write lock across those reads, or the
+/// journal waits for the scan and the scan for the journal: the scan froze at 0% on a real drive.
+#[test]
+fn a_raw_scan_step_reads_through_the_journal_without_waiting_for_itself() {
+    let image = Image::new("raw-scan-step", 21);
+    // A failing drive journals every read, which is when the real scan froze.
+    HealthStore::for_user()
+        .unwrap()
+        .add_resets(&image.key(), 2)
+        .unwrap();
+    let engine = Engine::default();
+    let disk = open(&engine, &image);
+    let created = call(
+        &engine,
+        "create_raw_scan",
+        json!({"diskId": disk, "offset": 0, "length": image.1}),
+    );
+    let scan = created["scanId"]
+        .as_str()
+        .or(created["id"].as_str())
+        .unwrap()
+        .to_string();
+    let started = std::time::Instant::now();
+    let step = call(
+        &engine,
+        "scan_raw_batch",
+        json!({"diskId": disk, "scanId": scan}),
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "one batch took {:?}: the journal waited for the scan's write lock",
+        started.elapsed()
+    );
+    let next = step["nextOffset"]
+        .as_u64()
+        .or(step["batch"]["nextOffset"].as_u64())
+        .unwrap_or_else(|| panic!("no nextOffset in {step}"));
+    assert!(next > 0, "the scan did not advance: {step}");
+}
