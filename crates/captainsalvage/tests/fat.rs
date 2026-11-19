@@ -522,6 +522,30 @@ fn a_range_known_to_be_bad_is_never_read_and_reads_as_unreadable_in_a_preview_an
 }
 
 #[test]
+fn the_volume_map_is_told_which_clusters_are_bad_sectors() {
+    let (session, _, _, _) =
+        with_a_known_bad_second_cluster(FilesystemKind::Fat16, "known-bad-map", true);
+    let engine = Engine::new();
+    engine.set_session(session);
+    let answer = call(&engine, "bad_sectors", json!({}));
+    let ranges = answer["ranges"].as_array().unwrap();
+    assert_eq!(ranges.len(), 1, "{answer}");
+    assert_eq!(ranges[0]["state"], "reset-culprit");
+    assert_eq!(
+        (
+            ranges[0]["firstCluster"].clone(),
+            ranges[0]["lastCluster"].clone()
+        ),
+        (json!(9), json!(9))
+    );
+    assert!(
+        ranges[0]["foundMillis"].as_u64().unwrap() > 1_700_000_000_000,
+        "when it was found: {answer}"
+    );
+    assert_eq!(answer["firstCluster"], 2);
+}
+
+#[test]
 fn a_scan_of_a_source_with_a_known_bad_range_reports_it_as_unreadable_and_does_not_read_it() {
     use captainsalvage::map::MapDb;
     let (session, _, _, device) =

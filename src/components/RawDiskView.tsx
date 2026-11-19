@@ -4,6 +4,8 @@ import { bytes, count, decimal, duration } from "../format";
 import { fromEngine, t } from "../i18n";
 import { useSimple } from "../mode";
 import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
+import { BAD_RED, badRanges } from "../badSectors";
+import { BadLegendItem, badSectorsLabel } from "./BadSectors";
 import { MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, MAP_HEALTH_SUSPECT, MAP_HEALTH_UNREADABLE, mapRowCount, type HealthRange, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type EvidenceStatus, type RawDiskState, type ScanSnapshot } from "../rawDisk";
 import type { ByteExtent, OpenedSource } from "../openedSource";
 import { Icon } from "./icons";
@@ -199,9 +201,9 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
         { value: MAP_BAND_ALTERNATE, label: t("Declared partitions"), color: bandB },
         ...SOURCE_FORMATS.map((name, index) => ({ value: MAP_FIRST_FORMAT + index, label: name, color: palette[index].color })),
         { value: MAP_HEALTH_SLOW, label: t("Slow to read"), color: palette.find((item) => item.value === 5)!.color },
-        { value: MAP_HEALTH_SUSPECT, label: t("Suspect, not read"), color: palette.find((item) => item.value === 8)!.color },
-        { value: MAP_HEALTH_UNREADABLE, label: t("Marked unreadable"), color: palette.find((item) => item.value === 10)!.color },
-        { value: MAP_HEALTH_CULPRIT, label: t("The drive reset here"), color: palette.find((item) => item.value === 9)!.color },
+        { value: MAP_HEALTH_SUSPECT, label: t("Suspect, not read"), color: BAD_RED },
+        { value: MAP_HEALTH_UNREADABLE, label: t("Marked unreadable"), color: BAD_RED },
+        { value: MAP_HEALTH_CULPRIT, label: badSectorsLabel(), color: BAD_RED },
       ];
     };
     const hypotheses = new Map<string, { first: number; count: number }>();
@@ -245,7 +247,8 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
     selectRange(offset, width);
   }
 
-  const mapProps = { layer: "ownership" as const, floor: 0, lens: null, revision: 0,
+  const bad = useMemo(() => badRanges(health), [health]);
+  const mapProps = { bad, layer: "ownership" as const, floor: 0, lens: null, revision: 0,
     highlight: [], marker: null, scanAt: running ? disk.nextOffset : null, clusterSize: 1, source: mapSource };
   const mapRows = mapRowCount(drawn, lanes.length);
 
@@ -281,8 +284,9 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
         {[0, 0.25, 0.5, 0.75, 1].map((position) => <span key={position} style={{ left: `${position * 100}%` }}>{bytes(Math.round((valid ? first : 0) + (valid ? size : disk.length) * position))}</span>)}
       </div>
       <div className="legend" title={t("Solid marks show observed structures; dashed outlines show possible volume extents.")}>
-        {mapSource.legend().filter((item) => item.value === MAP_NOT_SCANNED || item.value === MAP_EXAMINED || item.value === MAP_UNREADABLE && disk.errors.length > 0 || item.value === MAP_BAND && disk.partitions.length > 0 || item.value === MAP_HEALTH_SLOW && health.some((range) => range.state === "slow") || item.value === MAP_HEALTH_SUSPECT && health.some((range) => range.state === "suspect") || item.value === MAP_HEALTH_UNREADABLE && health.some((range) => range.state === "unreadable") || item.value === MAP_HEALTH_CULPRIT && health.some((range) => range.state === "reset-culprit")).map((item) =>
+        {mapSource.legend().filter((item) => item.value === MAP_NOT_SCANNED || item.value === MAP_EXAMINED || item.value === MAP_UNREADABLE && disk.errors.length > 0 || item.value === MAP_BAND && disk.partitions.length > 0 || item.value === MAP_HEALTH_SLOW && health.some((range) => range.state === "slow")).map((item) =>
           <span className="legend-item" key={item.value}><span className="legend-swatch" style={{ background: item.color }} />{item.label}</span>)}
+        {bad.length > 0 && <BadLegendItem />}
         {summary.map((item) => {
           const entry = mapSource.legend().find((candidate) => candidate.label === item.format);
           return <span className="legend-item" key={item.format}><span className="legend-swatch" style={{ background: entry?.color }} />{item.format} · {count(item.count)}</span>;

@@ -19,7 +19,7 @@ import {
 } from "../api";
 import { bytes, count, percent, stamp, verdictLabel } from "../format";
 import { fromEngine, t, useLanguage } from "../i18n";
-import { describeRanges, markUnreadable, unreadableMask } from "../unreadable";
+import { describeRanges, hexSegments, textSegments, unreadableMask, type Segment } from "../unreadable";
 import type { ExportHandler } from "./ContextMenu";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
 import { startEntryDrag } from "./RebuildView";
@@ -143,18 +143,6 @@ function Tile({ row, showImage, selected, style, onOpen, onExport }: {
   );
 }
 
-function hexDump(data: Uint8Array, missing: boolean[] = []): string {
-  const lines: string[] = [];
-  for (let offset = 0; offset < data.length; offset += HEX_COLUMNS) {
-    const part = Array.from(data.subarray(offset, offset + HEX_COLUMNS));
-    const gone = (index: number) => missing[offset + index] === true;
-    const hex = part.map((value, index) => (gone(index) ? "??" : value.toString(16).padStart(2, "0"))).join(" ").padEnd(HEX_COLUMNS * 3 - 1);
-    const text = part.map((value, index) => (gone(index) ? "?" : value >= 32 && value < 127 ? String.fromCharCode(value) : ".")).join("");
-    lines.push(`${offset.toString(16).padStart(8, "0")}  ${hex}  ${text}`);
-  }
-  return lines.join("\n");
-}
-
 function looksLikeText(data: Uint8Array): boolean {
   const sample = data.subarray(0, TEXT_SAMPLE_BYTES);
   if (sample.length === 0) return false;
@@ -168,7 +156,7 @@ function looksLikeText(data: Uint8Array): boolean {
 
 /** Text, or the first bytes when a file has no other way to show itself. */
 function RawPreview({ row, note }: { row: BrowseRow; note?: string }) {
-  const [shown, setShown] = useState<{ text: string; isText: boolean; total: number; unreadable: ByteRange[] } | null>(null);
+  const [shown, setShown] = useState<{ lines: Segment[][]; isText: boolean; total: number; unreadable: ByteRange[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
@@ -183,9 +171,9 @@ function RawPreview({ row, note }: { row: BrowseRow; note?: string }) {
           isText,
           total: data.length,
           unreadable,
-          text: isText
-            ? new TextDecoder("utf-8", { fatal: false }).decode(markUnreadable(data, unreadable))
-            : hexDump(data.subarray(0, HEX_PREVIEW_BYTES), unreadableMask(Math.min(data.length, HEX_PREVIEW_BYTES), unreadable)),
+          lines: isText
+            ? [textSegments(data, unreadable, (bytes) => new TextDecoder("utf-8", { fatal: false }).decode(bytes))]
+            : hexSegments(data.subarray(0, HEX_PREVIEW_BYTES), unreadableMask(Math.min(data.length, HEX_PREVIEW_BYTES), unreadable), HEX_COLUMNS),
         });
       })
       .catch((reason) => current && setError(String(reason)));
@@ -202,7 +190,12 @@ function RawPreview({ row, note }: { row: BrowseRow; note?: string }) {
         <p className="warn">{t("Could not be read from the disk, and shown as ?: {ranges}.", { ranges: describeRanges(shown.unreadable) })}</p>
       )}
       {shown && !shown.isText && <p className="muted">First {bytes(Math.min(shown.total, HEX_PREVIEW_BYTES))} of this file, as bytes.</p>}
-      {shown && <pre className={shown.isText ? "preview-sheet" : "preview-sheet preview-hex"}>{shown.text}</pre>}
+      {shown && <pre className={shown.isText ? "preview-sheet" : "preview-sheet preview-hex"}>
+        {shown.lines.map((line, row) => <span key={row}>
+          {line.map((part, index) => part.bad ? <span key={index} className="bad-bytes" title={t("Bad sectors: reading here drops the drive")}>{part.text}</span> : part.text)}
+          {row < shown.lines.length - 1 ? "\n" : ""}
+        </span>)}
+      </pre>}
     </div>
   );
 }

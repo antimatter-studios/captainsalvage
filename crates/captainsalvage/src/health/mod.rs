@@ -690,6 +690,16 @@ impl BlockSource for GuardedSource {
         self.health.device().is_gone()
     }
 
+    fn bad_ranges(&self) -> Vec<HealthRange> {
+        self.health
+            .snapshot()
+            .ranges()
+            .iter()
+            .filter(|range| range.state > RangeState::Good)
+            .cloned()
+            .collect()
+    }
+
     #[cfg(feature = "test-hooks")]
     fn simulate_disconnect(&self) {
         self.health.device().simulate_disconnect();

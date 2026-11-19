@@ -282,6 +282,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .strip-base { image-rendering: pixelated; box-shadow: 0 0 0 0.5px var(--line-strong); animation: develop 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @keyframes develop { from { clip-path: inset(0 100% 0 0 round 7px); } to { clip-path: inset(0 0 0 0 round 7px); } }
 .strip-marks { pointer-events: none; }
+/* Bad sectors: ranges the drive drops out on, drawn in red that pulses once a second. For people who ask
+ * for less motion the red is solid, with a diagonal hatch, so it is still not a plain colour. */
+:root { --bad: #e5202b; --bad-dark: #6b0b12; }
+.strip-bad { position: absolute; inset: 0; pointer-events: none; border-radius: 7px; overflow: hidden; }
+.bad-range { position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--bad); box-shadow: 0 0 0 0.5px var(--bad-dark); animation: bad-pulse 1s ease-in-out infinite; }
+.bad-swatch { background: var(--bad); animation: bad-pulse 1s ease-in-out infinite; }
+.bad-bytes { color: var(--bad); font-weight: 700; animation: bad-pulse 1s ease-in-out infinite; }
+.strip-tip-bad { margin-bottom: 5px; padding-bottom: 5px; border-bottom: 0.5px solid var(--line-strong); }
+@keyframes bad-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .bad-range, .bad-swatch, .bad-bytes { animation: none; opacity: 1; }
+  .bad-range, .bad-swatch { background: repeating-linear-gradient(45deg, var(--bad) 0 3px, var(--bad-dark) 3px 6px); }
+  .bad-bytes { text-decoration: underline; text-decoration-style: wavy; }
+}
+
 /* Outside the map, on the plain background, so they show whatever the map's colour is. */
 .strip-arrow { position: absolute; top: -9px; width: 12px; height: 8px; margin-left: -6px; fill: var(--accent-mark); pointer-events: none; overflow: visible; }
 .strip-arrow-below { top: auto; bottom: -9px; transform: rotate(180deg); }

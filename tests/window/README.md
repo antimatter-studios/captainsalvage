@@ -75,6 +75,14 @@ evidence and a dense run of findings, and checks the map's bands and lanes, the 
 inspector for a picked band and a picked lane, the magnified second graph and the format filter.
 It needs `jigsaw.img` and saves `raw-lanes.png` here.
 
+`bad_sectors_raw_test.py` writes a made-up health map (a place the drive reset during a read, a failed read, a
+suspect band and a slow range) into the test copy's catalog, opens a made-up 24 MiB disk, and checks that the
+raw-disk map draws the three kinds of bad sectors as red marks that flash (a one-second pulse, computed style),
+not the slow one, that the legend has the "Bad sectors: reading here drops the drive" entry, and that the
+tooltip says where, how it was found and when. It saves `bad-sectors-raw.png`. `bad_sectors_volume_test.py`
+does the same on the volume map of `jigsaw.img`, with four bad clusters. The reduced-motion look (solid red with a
+hatch) is a media query the window test cannot switch; `tests/bad_sectors_test.mjs` checks the stylesheet for it.
+
 `agent_rebuild_test.py` is the Rebuild tab with an agent in it. The agent's side is the MCP tools (it
 creates a Disk Rebuild, places pieces, makes a folder, merges a piece); the person's side is the
 window. It checks that the change shows at once with the Agent mark and the bar naming the last

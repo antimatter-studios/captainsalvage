@@ -64,6 +64,9 @@ pub struct HealthRange {
     pub latency_ms: Option<u64>,
     /// Why, in English, for a person or an agent.
     pub note: String,
+    /// When it was first found, in milliseconds since 1970. Zero when it is not known.
+    #[serde(default)]
+    pub found_millis: u64,
 }
 
 impl HealthRange {
@@ -80,6 +83,7 @@ impl HealthRange {
             state,
             latency_ms,
             note: note.into(),
+            found_millis: crate::workspace::now_millis(),
         }
     }
 
@@ -96,6 +100,14 @@ impl HealthRange {
 #[derive(Clone, Debug, Default)]
 pub struct HealthMap {
     ranges: Vec<HealthRange>,
+}
+
+/// The earlier of two times, where zero is not known.
+fn earlier(a: u64, b: u64) -> u64 {
+    match (a, b) {
+        (0, other) | (other, 0) => other,
+        (a, b) => a.min(b),
+    }
 }
 
 fn worse_latency(a: Option<u64>, b: Option<u64>) -> Option<u64> {
@@ -146,6 +158,7 @@ impl HealthMap {
             let winner = if new.state > old.state { &new } else { &old };
             let mut middle = winner.piece(from, to);
             middle.latency_ms = worse_latency(old.latency_ms, new.latency_ms);
+            middle.found_millis = earlier(old.found_millis, new.found_millis);
             out.push(middle);
             cursor = to;
             if old.end > new.end {
@@ -273,6 +286,7 @@ fn coalesce(ranges: Vec<HealthRange>) -> Vec<HealthRange> {
             {
                 last.end = range.end;
                 last.latency_ms = worse_latency(last.latency_ms, range.latency_ms);
+                last.found_millis = earlier(last.found_millis, range.found_millis);
             }
             _ => out.push(range),
         }

@@ -209,3 +209,44 @@ pub fn lane(disk: &RawDisk) -> Value {
         None => json!([]),
     }
 }
+
+/// The ranges of the open volume's source that are bad, as the window draws them on the volume's
+/// map: in the volume's own bytes and in its clusters (numbered as the map numbers them, from 2).
+/// A range that lies before the cluster heap (the boot area and the allocation tables) has bytes and
+/// no clusters.
+pub fn bad_sectors(session: &crate::session::Session) -> Value {
+    use fs_exfat::primitives::FIRST_CLUSTER;
+    let volume = &session.volume;
+    let heap = volume.geometry.heap_offset();
+    let size = volume.geometry.cluster_size().max(1);
+    let count = u64::from(volume.geometry.cluster_count);
+    let ranges: Vec<Value> = volume
+        .source()
+        .bad_ranges()
+        .iter()
+        .map(|range| {
+            let clusters = (range.end > heap)
+                .then(|| {
+                    let first = range.start.saturating_sub(heap) / size;
+                    let last = (range.end - 1 - heap) / size;
+                    (first < count).then(|| {
+                        (
+                            u64::from(FIRST_CLUSTER) + first,
+                            u64::from(FIRST_CLUSTER) + last.min(count - 1),
+                        )
+                    })
+                })
+                .flatten();
+            json!({
+                "start": range.start,
+                "end": range.end,
+                "state": range.state,
+                "latencyMs": range.latency_ms,
+                "foundMillis": range.found_millis,
+                "firstCluster": clusters.map(|(first, _)| first),
+                "lastCluster": clusters.map(|(_, last)| last),
+            })
+        })
+        .collect();
+    json!({"clusterSize": size, "clusterCount": count, "firstCluster": FIRST_CLUSTER, "ranges": ranges})
+}
