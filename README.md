@@ -1010,7 +1010,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.10 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.11 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1146,6 +1146,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.4.11 — 2026-11-19
+
+**Fixed**
+
+- **The start screen follows the disks.** The list of disks and volumes was read once, when the screen opened, so a volume you unmounted still showed as mounted, and a disk you plugged in or took out did not appear or go until you pressed Check again. The screen now keeps itself current: it checks every 10 seconds and when the window comes back into view, so a disk attached or removed, or a volume mounted or unmounted outside the app, shows without a button and without the list flickering or moving. When the app itself sends a command to the system (Unmount, or blocking a volume from being mounted), it reads the state back as soon as the command returns and once more a moment later, because macOS can be slow to update, so the row changes at once. It asks the system for its list of disks and mounts, and rebuilds the report (which looks at each volume) only when that list changed, so a damaged disk is not asked about every few seconds.
+
 ### v0.4.10 — 2026-11-19
 
 **Fixed**
@@ -1199,12 +1205,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - A saved copy of a volume's structures carries a versioned manifest of its regions, and copies without one read as version 1 ([#238](https://github.com/antimatter-studios/captainsalvage/pull/238))
-
-### v0.4.1 — 2026-11-19
-
-**Maintenance**
-
-- Every merged pull request is released: feat raises the minor and everything else raises the patch ([#236](https://github.com/antimatter-studios/captainsalvage/pull/236))
 
 <!-- changelog:end -->
 
