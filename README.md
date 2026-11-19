@@ -1010,7 +1010,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.11 | MIT | captain-salvage |
+| `captainsalvage` | 0.4.12 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1146,6 +1146,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.4.12 — 2026-11-19
+
+**Fixed**
+
+- **The parts of a start-screen disk card line up.** Under a disk, the partitions were indented, but the notices below them ("Mounted, so macOS may write to it" and "Reading needs your permission") started at the card's left edge, so the card had three different left edges. The notices now start on the same line as the partitions, and their text and commands start at the same place as the partition names.
+
 ### v0.4.11 — 2026-11-19
 
 **Fixed**
@@ -1199,12 +1205,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **A file whose data was cross-linked with another file's is no longer shown as recoverable intact.** When two files on a FAT12, FAT16, FAT32, exFAT or NTFS volume claim some of the same clusters, so that one of them would copy out the other's bytes, both are now marked partial, with the shared clusters counted, instead of live.
-
-### v0.4.2 — 2026-11-19
-
-**Maintenance**
-
-- A saved copy of a volume's structures carries a versioned manifest of its regions, and copies without one read as version 1 ([#238](https://github.com/antimatter-studios/captainsalvage/pull/238))
 
 <!-- changelog:end -->
 
