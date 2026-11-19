@@ -402,6 +402,11 @@ pub struct SalvageEntry {
     /// Set for entries found in NTFS FILE records.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ntfs: Option<NtfsEntry>,
+    /// Where the entry's bytes are, as typed ranges derived from the same data as its cluster
+    /// list (issue #212, first slice). Nothing reads it but tests, and it is never serialised or
+    /// stored, so saved scans and what scripts and tools report are as they were.
+    #[serde(skip)]
+    pub ranges: crate::ranges::RangeList,
 }
 
 impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
@@ -422,6 +427,7 @@ impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
             accessed: entry.accessed,
             slots: entry.slots,
             ntfs: None,
+            ranges: crate::ranges::RangeList::default(),
         }
     }
 }

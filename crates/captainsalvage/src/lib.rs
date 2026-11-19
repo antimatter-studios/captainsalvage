@@ -33,6 +33,7 @@ pub mod privacy;
 pub mod proc;
 pub mod range_analysis;
 pub mod range_tools;
+pub mod ranges;
 pub mod raw_scan;
 pub mod rebuild_tools;
 pub mod regions;
