@@ -295,7 +295,7 @@ impl Session {
             "textExcerpts": excerpts,
             "signatureExamples": examples,
         });
-        if self.volume.kind != crate::filesystem::FilesystemKind::Exfat {
+        if !self.volume.kind.keeps_legacy_report_shape() {
             let fields = explanation
                 .as_object_mut()
                 .expect("region explanation is an object");

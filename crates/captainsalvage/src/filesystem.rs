@@ -132,6 +132,37 @@ impl Claims {
 }
 
 impl FilesystemKind {
+    /// exFAT's reports keep the field names, and the missing `filesystem` details, they had before
+    /// other filesystems were added, because the frozen parity references pin them. Every other
+    /// filesystem names its fields for what they are and carries its typed details. The shared
+    /// engine asks this and never tests for exFAT.
+    pub fn keeps_legacy_report_shape(self) -> bool {
+        self == Self::Exfat
+    }
+
+    /// FAT12, FAT16 and FAT32: a folder is a chain of clusters of 32-byte entries, a long name is
+    /// the entries before its short entry, and an entry is placed by its short entry.
+    pub fn is_fat_family(self) -> bool {
+        matches!(self, Self::Fat12 | Self::Fat16 | Self::Fat32)
+    }
+
+    /// exFAT: an entry set is placed by its first entry and may run on into the folder's next
+    /// cluster, which is where the folder's FAT chain says, not always the next on the disk.
+    pub fn places_entry_sets_by_first_entry(self) -> bool {
+        self == Self::Exfat
+    }
+
+    /// FAT12 and FAT16 keep the root folder in a fixed region before the first cluster, which no
+    /// cluster scan reaches, so it is read from the saved structures.
+    pub fn has_fixed_root(self) -> bool {
+        matches!(self, Self::Fat12 | Self::Fat16)
+    }
+
+    /// NTFS clusters can hold file records, which the cluster classes name.
+    pub fn classes_name_file_records(self) -> bool {
+        self == Self::Ntfs
+    }
+
     pub fn claims(self) -> Claims {
         match self {
             Self::Ntfs => Claims::RunList,

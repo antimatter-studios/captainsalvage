@@ -7,7 +7,7 @@
 use crate::content::{
     classify, expected_class, text_head_value, CLASS_READ_ERROR, CLASS_TEXT, TEXT_HEAD_MAX_BYTES,
 };
-use crate::filesystem::{FilesystemKind, SalvageEntry as EntrySet, STORAGE_DAMAGED};
+use crate::filesystem::{SalvageEntry as EntrySet, STORAGE_DAMAGED};
 use crate::map::MapDb;
 use crate::session::DISK_GONE;
 use crate::volume::Volume;
@@ -224,7 +224,7 @@ fn read_chunk(
         let mut sets = volume.find_sets(data, cluster_size as usize);
         // A FAT entry is placed by its short entry, so a long name that began in the cluster before
         // it in the folder is whole only with that cluster's end in front.
-        if is_fat(volume.kind) && sets.iter().any(|set| set.offset < LONG_NAME_REACH) {
+        if volume.kind.is_fat_family() && sets.iter().any(|set| set.offset < LONG_NAME_REACH) {
             if let Some(lead) = long_name_lead(volume, cluster) {
                 let mut joined = lead.clone();
                 joined.extend_from_slice(data);
@@ -242,7 +242,7 @@ fn read_chunk(
         // An exFAT entry set is placed by its first entry, and the driver is given the next
         // `lookahead` bytes of the disk for the rest of it. When the folder goes on in a cluster
         // that is not the next on the disk, the rest is there, so it is read by the FAT chain.
-        if volume.kind == FilesystemKind::Exfat
+        if volume.kind.places_entry_sets_by_first_entry()
             && starts_set_near_end(&data[..cluster_size as usize])
         {
             if let Some(next) = chain_continuation(volume, cluster, lookahead_max as usize) {
@@ -307,13 +307,6 @@ fn chain_continuation(volume: &Volume, cluster: u32, length: usize) -> Option<Ve
     let mut bytes = volume.read_cluster(next).ok()?;
     bytes.truncate(length);
     Some(bytes)
-}
-
-fn is_fat(kind: FilesystemKind) -> bool {
-    matches!(
-        kind,
-        FilesystemKind::Fat12 | FilesystemKind::Fat16 | FilesystemKind::Fat32
-    )
 }
 
 /// The end of the folder cluster that comes before `cluster` in its chain, enough of it to hold the

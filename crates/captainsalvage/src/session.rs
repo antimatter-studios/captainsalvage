@@ -1135,11 +1135,11 @@ impl Session {
                 "freeZeroFat": self.volume.stats.free_zero_fat * size,
             },
             "structureHash": self.volume.structure_hash,
-            "classNames": crate::content::class_names(self.volume.kind == crate::filesystem::FilesystemKind::Ntfs),
+            "classNames": crate::content::class_names(self.volume.kind.classes_name_file_records()),
             "groupNames": GROUP_NAMES,
             "ownershipNames": OWNERSHIP_NAMES,
         });
-        if self.volume.kind != crate::filesystem::FilesystemKind::Exfat {
+        if !self.volume.kind.keeps_legacy_report_shape() {
             overview["filesystem"] =
                 serde_json::to_value(&self.volume.filesystem).unwrap_or(Value::Null);
         }

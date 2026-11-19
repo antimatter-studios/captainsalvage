@@ -111,7 +111,7 @@ impl Volume {
 
     /// What a content class is called on this volume.
     pub fn class_name(&self, class: u8) -> &'static str {
-        crate::content::class_names(self.kind == FilesystemKind::Ntfs)[usize::from(class)]
+        crate::content::class_names(self.kind.classes_name_file_records())[usize::from(class)]
     }
 
     /// The volume's serial number as text: eight hex digits, or sixteen for NTFS.
@@ -136,7 +136,7 @@ impl Volume {
     }
 
     pub fn fixed_root_entries(&self) -> Vec<(u32, SalvageEntry)> {
-        if matches!(self.kind, FilesystemKind::Fat12 | FilesystemKind::Fat16) {
+        if self.kind.has_fixed_root() {
             self.find_sets(&self.structures.root, self.structures.root.len())
                 .into_iter()
                 .map(|entry| (0, entry))
