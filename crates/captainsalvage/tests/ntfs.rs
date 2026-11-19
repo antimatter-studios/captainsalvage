@@ -362,7 +362,8 @@ fn first_data_attribute_flags(record: &mut [u8]) -> &mut [u8] {
 #[test]
 fn compressed_and_encrypted_streams_are_listed_but_never_zero_filled_or_copied() {
     for (label, flag, storage) in [
-        ("compressed", 0x0001u16, "compressed"),
+        // Flagged as compressed with no compression unit: not a layout NTFS makes, so not read.
+        ("compressed", 0x0001u16, "compression-unsupported"),
         ("encrypted", 0x4000, "encrypted"),
     ] {
         let fixture = fixture();
@@ -748,7 +749,7 @@ fn capabilities_and_record_details_are_reported_truthfully_through_the_engine() 
     assert_eq!(named("scan")["support"], "supported");
     assert_eq!(named("preview")["support"], "limited");
     assert_eq!(named("attribute_lists")["support"], "missing");
-    assert_eq!(named("compression")["support"], "missing");
+    assert_eq!(named("compression")["support"], "supported");
     assert_eq!(named("journal")["support"], "missing");
     let tools: Vec<String> = captainsalvage::mcp::tool_definitions()
         .iter()
@@ -1381,4 +1382,356 @@ fn a_copy_of_an_ntfs_file_with_an_unreadable_stretch_writes_zeros_there_and_name
         json!([{"start": 12_288, "end": 16_384}])
     );
     assert_eq!(row["bytesWritten"], 20_000);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Files NTFS compressed (issue #174).
+//
+// The driver's formatter cannot compress, so a volume is made with a plain file and then its data
+// attribute is rewritten the way NTFS lays a compressed one out: 16-cluster units, each stored as
+// its LZNT1 stream in the first clusters with a hole after them, or as it is when compressing did
+// not shrink it, or as a hole when it is all zeros. The independent `ntfs` reader grades the result
+// first, so the layout is what NTFS does and not only what this app reads.
+
+const UNIT_CLUSTERS: usize = 16;
+
+/// An LZNT1 compressed chunk of at most 4096 bytes, or the chunk stored as it is when that is not
+/// smaller. Matches are found by looking back through the chunk for the longest one.
+fn lznt1_chunk(data: &[u8]) -> Vec<u8> {
+    let mut packed = Vec::new();
+    let mut at = 0;
+    while at < data.len() {
+        let flags_at = packed.len();
+        packed.push(0u8);
+        let mut flags = 0u8;
+        for bit in 0..8 {
+            if at >= data.len() {
+                break;
+            }
+            // The split of a token between offset and length depends on how much of the chunk is
+            // already behind it: the offset field is as wide as it takes to address any of those
+            // bytes, never fewer than four bits.
+            let offset_bits =
+                (usize::BITS - at.max(1).saturating_sub(1).leading_zeros()).max(4) as usize;
+            let length_bits = 16 - offset_bits;
+            let longest = (1usize << length_bits) + 2;
+            let farthest = 1usize << offset_bits;
+            let mut best = (0usize, 0usize);
+            for back in 1..=at.min(farthest) {
+                let mut length = 0;
+                while at + length < data.len()
+                    && length < longest
+                    && data[at + length] == data[at + length - back]
+                {
+                    length += 1;
+                }
+                if length > best.1 {
+                    best = (back, length);
+                }
+            }
+            if best.1 >= 3 {
+                let token = (((best.0 - 1) << length_bits) | (best.1 - 3)) as u16;
+                packed.extend_from_slice(&token.to_le_bytes());
+                flags |= 1 << bit;
+                at += best.1;
+            } else {
+                packed.push(data[at]);
+                at += 1;
+            }
+        }
+        packed[flags_at] = flags;
+    }
+    let mut chunk = Vec::new();
+    if packed.len() < data.len() {
+        chunk.extend_from_slice(&(0xB000u16 | (packed.len() - 1) as u16).to_le_bytes());
+        chunk.extend_from_slice(&packed);
+    } else {
+        chunk.extend_from_slice(&(0x3000u16 | (data.len() - 1) as u16).to_le_bytes());
+        chunk.extend_from_slice(data);
+    }
+    chunk
+}
+
+/// The LZNT1 stream of one compression unit, or none when it does not fit in fewer clusters than the
+/// unit has.
+fn lznt1_unit(unit: &[u8]) -> Option<Vec<u8>> {
+    let mut stream: Vec<u8> = unit.chunks(4096).flat_map(lznt1_chunk).collect();
+    stream.extend_from_slice(&[0, 0]);
+    (stream.len().div_ceil(CLUSTER) < UNIT_CLUSTERS).then_some(stream)
+}
+
+/// The bytes of a compressed file: a unit that compresses well, one of noise that does not, a hole of
+/// zeros, and a short last unit that compresses.
+fn compressible(length: usize, seed: u8) -> Vec<u8> {
+    (0..length)
+        .map(|index| b"salvage the compressed bytes; "[(index + seed as usize) % 30])
+        .collect()
+}
+
+fn compressed_content() -> Vec<u8> {
+    let unit = UNIT_CLUSTERS * CLUSTER;
+    let mut content = compressible(unit, 0);
+    // Noise: nothing in it repeats, so no compression makes it smaller.
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    content.extend((0..unit).map(|_| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 24) as u8
+    }));
+    content.extend(std::iter::repeat_n(0u8, unit));
+    content.extend(compressible(10_000, 7));
+    content
+}
+
+/// A volume whose file `docs/packed.txt` holds `compressed_content()` in compressed units. Returns the
+/// image, the content and, for each unit, the first cluster of its stored clusters and how many.
+fn compressed_volume() -> (Vec<u8>, Vec<u8>, Vec<(u64, usize)>) {
+    let content = compressed_content();
+    let image = format();
+    let volume = Volume::open_writable(image.clone()).unwrap();
+    volume.create_directory("/", "docs").unwrap();
+    volume.create_file("/docs", "packed.txt").unwrap();
+    volume
+        .write_file_at("/docs/packed.txt", 0, &content)
+        .unwrap();
+    volume.flush().unwrap();
+    drop(volume);
+    let mut bytes = image.0.lock().unwrap().clone();
+    let probe = open(bytes.clone(), "compressed-probe");
+    scan(&probe);
+    let (_, number) = record_of(&probe, "packed.txt");
+    let mut placed: Vec<(u64, usize)> = Vec::new();
+    let mut writes: Vec<(usize, Vec<u8>)> = Vec::new();
+    let unit_bytes = UNIT_CLUSTERS * CLUSTER;
+    let units = content.len().div_ceil(unit_bytes);
+    let mut device = Image(Arc::new(Mutex::new(bytes.clone())));
+    fs_ntfs::mft_io::update_mft_record_io(&mut device, number, |record| {
+        let found =
+            fs_ntfs::attr_io::find_attribute(record, fs_ntfs::attr_io::AttrType::Data, None)
+                .unwrap();
+        let start = found.attr_offset;
+        let old_length =
+            u32::from_le_bytes(record[start + 4..start + 8].try_into().unwrap()) as usize;
+        let end = start + old_length;
+        assert_eq!(
+            u32::from_le_bytes(record[end..end + 4].try_into().unwrap()),
+            0xFFFF_FFFF,
+            "the data is the last attribute"
+        );
+        let pairs =
+            u16::from_le_bytes(record[start + 0x20..start + 0x22].try_into().unwrap()) as usize;
+        let old_runs = fs_ntfs::data_runs::decode_runs(&record[start + pairs..end]).unwrap();
+        let mut next_lcn = old_runs[0].lcn.unwrap();
+        let available: u64 = old_runs.iter().map(|run| run.length).sum();
+        let mut runs: Vec<fs_ntfs::data_runs::DataRun> = Vec::new();
+        let mut stored_total = 0u64;
+        for unit in 0..units {
+            let mut piece =
+                content[unit * unit_bytes..content.len().min((unit + 1) * unit_bytes)].to_vec();
+            piece.resize(unit_bytes, 0);
+            let vcn = (unit * UNIT_CLUSTERS) as u64;
+            let (data, stored) = if piece.iter().all(|byte| *byte == 0) {
+                (Vec::new(), 0)
+            } else if let Some(stream) = lznt1_unit(&piece) {
+                let stored = stream.len().div_ceil(CLUSTER);
+                (stream, stored)
+            } else {
+                (piece, UNIT_CLUSTERS)
+            };
+            if stored > 0 {
+                runs.push(fs_ntfs::data_runs::DataRun {
+                    starting_vcn: vcn,
+                    length: stored as u64,
+                    lcn: Some(next_lcn),
+                });
+                let mut padded = data;
+                padded.resize(stored * CLUSTER, 0);
+                writes.push((next_lcn as usize * CLUSTER, padded));
+                placed.push((next_lcn, stored));
+                next_lcn += stored as u64;
+                stored_total += stored as u64;
+            } else {
+                placed.push((0, 0));
+            }
+            if stored < UNIT_CLUSTERS {
+                runs.push(fs_ntfs::data_runs::DataRun {
+                    starting_vcn: vcn + stored as u64,
+                    length: (UNIT_CLUSTERS - stored) as u64,
+                    lcn: None,
+                });
+            }
+        }
+        assert!(
+            stored_total <= available,
+            "the compressed units fit in the clusters the file had"
+        );
+        let mapping = fs_ntfs::data_runs::encode_runs(&runs).unwrap();
+        let mut attribute = vec![0u8; 0x48];
+        attribute[..0x40].copy_from_slice(&record[start..start + 0x40]);
+        let length = (0x48 + mapping.len()).next_multiple_of(8);
+        attribute[4..8].copy_from_slice(&(length as u32).to_le_bytes());
+        attribute[0x0A..0x0C].copy_from_slice(&0x48u16.to_le_bytes());
+        attribute[0x0C..0x0E].copy_from_slice(&0x0001u16.to_le_bytes());
+        attribute[0x18..0x20].copy_from_slice(&((units * UNIT_CLUSTERS - 1) as u64).to_le_bytes());
+        attribute[0x20..0x22].copy_from_slice(&0x48u16.to_le_bytes());
+        attribute[0x22..0x24].copy_from_slice(&4u16.to_le_bytes());
+        attribute[0x28..0x30].copy_from_slice(&((units * unit_bytes) as u64).to_le_bytes());
+        attribute[0x30..0x38].copy_from_slice(&(content.len() as u64).to_le_bytes());
+        attribute[0x38..0x40].copy_from_slice(&(content.len() as u64).to_le_bytes());
+        attribute.extend_from_slice(&mapping);
+        attribute.resize(length, 0);
+        let new_end = start + length;
+        assert!(
+            new_end + 8 <= record.len(),
+            "the compressed attribute fits in the record"
+        );
+        record[start..new_end].copy_from_slice(&attribute);
+        record[new_end..new_end + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        record[new_end + 4..].fill(0);
+        record[0x18..0x1C].copy_from_slice(&((new_end + 8) as u32).to_le_bytes());
+        Ok(())
+    })
+    .unwrap();
+    bytes = device.0.lock().unwrap().clone();
+    for (at, data) in writes {
+        bytes[at..at + data.len()].copy_from_slice(&data);
+    }
+    (bytes, content, placed)
+}
+
+/// What the independent `ntfs` reader says of `docs/packed.txt`: whether it sees a compressed
+/// non-resident attribute, its length, and the clusters it maps the value to, read as they are (it
+/// does not decode LZNT1, so it checks the layout and not the decoding).
+fn independent_layout_of_packed(image: &[u8], number: u64) -> (bool, u64, Vec<u8>) {
+    use ntfs::NtfsReadSeek;
+    let mut cursor = std::io::Cursor::new(image.to_vec());
+    let independent = ntfs::Ntfs::new(&mut cursor).unwrap();
+    let file = independent.file(&mut cursor, number).unwrap();
+    let data = file.data(&mut cursor, "").unwrap().unwrap();
+    let attribute = data.to_attribute().unwrap();
+    let compressed = !attribute.is_resident()
+        && attribute
+            .flags()
+            .contains(ntfs::NtfsAttributeFlags::COMPRESSED);
+    let mut value = attribute.value(&mut cursor).unwrap();
+    let mut raw = vec![0; attribute.value_length() as usize];
+    value.read(&mut cursor, &mut raw).unwrap();
+    (compressed, attribute.value_length(), raw)
+}
+
+#[test]
+fn a_file_ntfs_compressed_is_read_whole_and_in_pieces_like_the_independent_reader_reads_it() {
+    let (image, content, placed) = compressed_volume();
+    // The layout is what NTFS does: a compressed unit, a stored one, a hole, a short last unit.
+    assert!(placed[0].1 > 0 && placed[0].1 < UNIT_CLUSTERS, "{placed:?}");
+    assert_eq!(placed[1].1, UNIT_CLUSTERS, "{placed:?}");
+    assert_eq!(placed[2].1, 0, "{placed:?}");
+    assert!(placed[3].1 > 0 && placed[3].1 < UNIT_CLUSTERS, "{placed:?}");
+    let session = open(image.clone(), "compressed");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = find(&engine, "packed.txt");
+    let number = row["recordNumber"].as_u64().unwrap();
+    // The independent reader sees a compressed attribute of the right length whose clusters are where
+    // the units were put: a unit's stored clusters first, a stored unit as it is, a hole as zeros.
+    let (flagged, value_length, raw) = independent_layout_of_packed(&image, number);
+    assert!(flagged && value_length == content.len() as u64);
+    let unit_bytes = UNIT_CLUSTERS * CLUSTER;
+    for (index, (lcn, stored)) in placed.iter().enumerate() {
+        let seen = &raw[index * unit_bytes..(index * unit_bytes + unit_bytes).min(raw.len())];
+        let there = &image[*lcn as usize * CLUSTER..][..stored * CLUSTER];
+        assert_eq!(
+            &seen[..(stored * CLUSTER).min(seen.len())],
+            &there[..(stored * CLUSTER).min(seen.len())],
+            "unit {index} is where it was put"
+        );
+        assert!(
+            seen[(stored * CLUSTER).min(seen.len())..]
+                .iter()
+                .all(|byte| *byte == 0),
+            "unit {index} has a hole after its clusters"
+        );
+    }
+    assert_eq!(row["storage"], "compressed");
+    assert_eq!(row["verdict"], "live");
+    assert_eq!(row["length"].as_u64().unwrap(), content.len() as u64);
+    let id = row["id"].as_i64().unwrap();
+    let whole = session
+        .read_entry_range(id, 0, content.len() as u64 + 100)
+        .unwrap();
+    assert!(whole.unreadable.is_empty(), "{:?}", whole.unreadable);
+    assert_eq!(sha(&whole.data), sha(&content));
+    // Across the join of two units, inside the hole, in the short last unit, and past the end.
+    let unit = (UNIT_CLUSTERS * CLUSTER) as u64;
+    for (start, length) in [
+        (unit - 100, 200u64),
+        (2 * unit + 10, 500),
+        (3 * unit - 4, 20),
+        (content.len() as u64 - 50, 500),
+    ] {
+        let piece = session.read_entry_range(id, start, length).unwrap();
+        let end = (start + length).min(content.len() as u64) as usize;
+        assert_eq!(
+            piece.data,
+            &content[start as usize..end],
+            "bytes {start}+{length}"
+        );
+        assert!(piece.unreadable.is_empty());
+    }
+}
+
+#[test]
+fn a_copy_of_a_file_ntfs_compressed_holds_the_file_byte_for_byte() {
+    let (image, content, _) = compressed_volume();
+    let session = open(image, "compressed-copy");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = find(&engine, "packed.txt");
+    let destination = session.workspace.dir().join("recovered");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![row["id"].as_i64().unwrap()],
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    wait_for_copy(&session, 1);
+    let copied = std::fs::read(destination.join("Volume root/docs/packed.txt"))
+        .or_else(|_| std::fs::read(destination.join("docs/packed.txt")))
+        .expect("the copy wrote packed.txt");
+    assert_eq!(sha(&copied), sha(&content));
+    let status = session.copy_status().unwrap();
+    assert_eq!(
+        (status.files_done, status.files_failed, status.files_partial),
+        (1, 0, 0),
+        "{status:?}"
+    );
+}
+
+#[test]
+fn a_compression_unit_that_does_not_decode_is_marked_and_never_zeros() {
+    let (mut image, content, placed) = compressed_volume();
+    // Spoil the first chunk header of the first unit: its signature bits are wrong.
+    let (lcn, _) = placed[0];
+    image[lcn as usize * CLUSTER + 1] = 0x00;
+    let session = open(image, "compressed-bad-unit");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let row = find(&engine, "packed.txt");
+    let id = row["id"].as_i64().unwrap();
+    let read = session
+        .read_entry_range(id, 0, content.len() as u64)
+        .unwrap();
+    let unit = (UNIT_CLUSTERS * CLUSTER) as u64;
+    assert_eq!(read.unreadable.len(), 1, "{:?}", read.unreadable);
+    assert_eq!(
+        (read.unreadable[0].start, read.unreadable[0].end),
+        (0, unit)
+    );
+    // Every other byte is the file's.
+    assert_eq!(&read.data[unit as usize..], &content[unit as usize..]);
 }

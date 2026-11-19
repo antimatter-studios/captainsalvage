@@ -1882,8 +1882,8 @@ impl Session {
     /// As `read_ntfs_stream`, for a stream NTFS holds in runs, but a stretch that cannot be read
     /// (a damaged or missing run, a run outside the volume, a failed read) is zeros in the bytes
     /// and a range in the second part, in bytes from `offset`, instead of an error for the whole
-    /// read. A stream that is compressed, encrypted, in other records or incomplete, and a record
-    /// that changed, are still errors: they are not a bad spot, and nothing is made up for them.
+    /// read. A stream that is encrypted, compressed in a way this does not decode, in other records or
+    /// incomplete, and a record that changed, are still errors: they are not a bad spot, and nothing is made up for them.
     /// The unit that fails or does not is a cluster.
     pub fn read_ntfs_stream_marked(
         &self,

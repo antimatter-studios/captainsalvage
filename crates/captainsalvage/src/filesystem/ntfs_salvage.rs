@@ -13,8 +13,8 @@
 
 use super::{
     FilesystemDetails, NtfsEntry, NtfsRun, SalvageEntry, VolumeGeometry, STORAGE_ATTRIBUTE_LIST,
-    STORAGE_COMPRESSED, STORAGE_DAMAGED, STORAGE_ENCRYPTED, STORAGE_INCOMPLETE, STORAGE_NONE,
-    STORAGE_RESIDENT, STORAGE_RUNS,
+    STORAGE_COMPRESSED, STORAGE_COMPRESSION_UNSUPPORTED, STORAGE_DAMAGED, STORAGE_ENCRYPTED,
+    STORAGE_INCOMPLETE, STORAGE_NONE, STORAGE_RESIDENT, STORAGE_RUNS,
 };
 use crate::changes::StructureCopy;
 use crate::ranges::RangeList;
@@ -27,7 +27,7 @@ use fs_ntfs::primitives::{
     inspect_file_record, AttributeEvidence, AttributeValue, FileNameEvidence, PrimitiveAPI,
     RecordEvidence,
 };
-use fs_ntfs::volume::{RawVolume, Volume as NtfsVolume};
+use fs_ntfs::volume::{RawVolume, Volume as NtfsVolume, VolumeAPI};
 use serde::Serialize;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
@@ -250,6 +250,30 @@ fn record_of<D: BlockRead>(device: &NtfsVolume<D>, number: u64) -> Result<Record
     device
         .inspect_mft_record(number)
         .with_context(|| format!("reading MFT record {number}"))
+}
+
+/// The largest compression unit this reads: NTFS uses 16 clusters, which is 64 KiB at 4 KiB clusters.
+const MAX_COMPRESSION_UNIT_BYTES: u64 = 4 * 1024 * 1024;
+/// Where a non-resident attribute header says how many clusters make a compression unit, as a power of two.
+const COMPRESSION_UNIT_FIELD: usize = 0x22;
+const MAX_COMPRESSION_UNIT_EXPONENT: u16 = 8;
+
+/// How many clusters make one compression unit of an LZNT1-compressed non-resident attribute, or
+/// none when it is not that: another compression method, a resident value, or no unit given.
+fn lznt1_unit_clusters(record: &RecordEvidence, attribute: &AttributeEvidence) -> Option<u64> {
+    if attribute.flags & attr_flags::COMPRESSION_MASK != attr_flags::COMPRESSED
+        || !matches!(attribute.value, AttributeValue::NonResident { .. })
+    {
+        return None;
+    }
+    let header = record.fixed.as_ref()?;
+    let field = header.get(
+        attribute.offset + COMPRESSION_UNIT_FIELD..attribute.offset + COMPRESSION_UNIT_FIELD + 2,
+    )?;
+    let exponent = u16::from_le_bytes([field[0], field[1]]);
+    (1..=MAX_COMPRESSION_UNIT_EXPONENT)
+        .contains(&exponent)
+        .then(|| 1u64 << exponent)
 }
 
 fn data_stream(record: &RecordEvidence) -> Option<(usize, &AttributeEvidence)> {
@@ -509,7 +533,11 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
         if encrypted || attribute.flags & attr_flags::ENCRYPTED != 0 {
             STORAGE_ENCRYPTED
         } else if compressible && attribute.flags & attr_flags::COMPRESSION_MASK != 0 {
-            STORAGE_COMPRESSED
+            if lznt1_unit_clusters(record, attribute).is_some() {
+                STORAGE_COMPRESSED
+            } else {
+                STORAGE_COMPRESSION_UNSUPPORTED
+            }
         } else {
             fallback
         }
@@ -531,7 +559,10 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
             initialized_size,
         } => {
             let mut storage = transformed(STORAGE_RUNS, true);
-            if storage == STORAGE_RUNS && (record.has_attribute_list() || *first_vcn != 0) {
+            // A run list that continues in another record is partial, compressed or not.
+            if matches!(storage, STORAGE_RUNS | STORAGE_COMPRESSED)
+                && (record.has_attribute_list() || *first_vcn != 0)
+            {
                 storage = if record.has_attribute_list() {
                     STORAGE_ATTRIBUTE_LIST
                 } else {
@@ -800,7 +831,10 @@ impl Access {
 
     fn checked_record(&self, entry: &StreamReference) -> Result<Arc<RecordEvidence>> {
         ensure!(
-            matches!(entry.storage.as_str(), STORAGE_RESIDENT | STORAGE_RUNS),
+            matches!(
+                entry.storage.as_str(),
+                STORAGE_RESIDENT | STORAGE_RUNS | STORAGE_COMPRESSED
+            ),
             "this NTFS stream cannot be read: it is {}",
             entry.storage
         );
@@ -838,6 +872,9 @@ impl Access {
             output[..count].copy_from_slice(&data[start..start + count]);
             return Ok(count);
         }
+        if entry.storage == STORAGE_COMPRESSED {
+            return self.read_compressed(&record, attribute, offset, &mut output[..available]);
+        }
         let count = self
             .volume
             .read_salvage_stream_at(
@@ -849,6 +886,112 @@ impl Access {
             )
             .map_err(|error| anyhow!("{error}"))?;
         Ok(count)
+    }
+
+    /// Reads from an LZNT1-compressed stream. NTFS stores such a stream in compression units of a
+    /// power-of-two number of clusters (16, nearly always). A unit is held one of three ways: all of
+    /// its clusters allocated (the bytes are stored as they are, because compressing did not make
+    /// them smaller), none allocated (a hole: zeros), or its first clusters allocated and the rest a
+    /// hole (the allocated clusters hold the unit's LZNT1 stream). The decoding of that stream is the
+    /// driver's; this only maps a unit to its clusters. A unit that does not decode is an error for
+    /// the read that needs it, never zeros.
+    fn read_compressed(
+        &self,
+        record: &RecordEvidence,
+        attribute: &AttributeEvidence,
+        offset: u64,
+        output: &mut [u8],
+    ) -> Result<usize> {
+        let AttributeValue::NonResident {
+            runs,
+            first_vcn,
+            initialized_size,
+            ..
+        } = &attribute.value
+        else {
+            bail!("a compressed stream held in its record is not decoded");
+        };
+        ensure!(
+            *first_vcn == 0,
+            "the compressed stream continues in another record"
+        );
+        let unit_clusters = lznt1_unit_clusters(record, attribute)
+            .context("this NTFS compression is not LZNT1 with a usable compression unit")?;
+        let cluster = self.geometry.cluster_size;
+        let unit_bytes = unit_clusters * cluster;
+        ensure!(
+            unit_bytes <= MAX_COMPRESSION_UNIT_BYTES,
+            "the compression unit of {unit_bytes} bytes is larger than the {MAX_COMPRESSION_UNIT_BYTES} this reads"
+        );
+        let mut next = 0u64;
+        for run in runs {
+            ensure!(
+                run.starting_vcn == next && run.length != 0,
+                "the compressed stream's run list is discontinuous"
+            );
+            next = next
+                .checked_add(run.length)
+                .context("the compressed stream's run list overflows")?;
+            if let Some(lcn) = run.lcn {
+                ensure!(
+                    lcn.checked_add(run.length)
+                        .and_then(|end| end.checked_mul(cluster))
+                        .is_some_and(|end| end <= self.geometry.volume_size),
+                    "a run of the compressed stream lies outside the volume"
+                );
+            }
+        }
+        let lcn_of = |vcn: u64| fs_ntfs::data_runs::vcn_to_lcn(runs, vcn);
+        let mut done = 0usize;
+        while done < output.len() {
+            let position = offset + done as u64;
+            if position >= *initialized_size {
+                // Past the initialised length NTFS defines the bytes as zeros.
+                output[done..].fill(0);
+                done = output.len();
+                break;
+            }
+            let unit = position / unit_bytes;
+            let first = unit * unit_clusters;
+            // The unit's clusters: those allocated first, then the hole that completes it.
+            let places: Vec<Option<u64>> = (first..first + unit_clusters).map(lcn_of).collect();
+            let stored = places.iter().take_while(|place| place.is_some()).count();
+            ensure!(
+                places[stored..].iter().all(Option::is_none),
+                "compression unit {unit} has an allocated cluster after a hole"
+            );
+            let bytes = if stored == 0 {
+                vec![0u8; unit_bytes as usize]
+            } else {
+                let mut raw = vec![0u8; stored * cluster as usize];
+                for (index, place) in places[..stored].iter().enumerate() {
+                    let at = place.unwrap_or(0) * cluster;
+                    self.volume
+                        .read_volume_bytes(
+                            at,
+                            &mut raw[index * cluster as usize..][..cluster as usize],
+                        )
+                        .map_err(|error| {
+                            anyhow!("reading a cluster of the compressed stream: {error}")
+                        })?;
+                }
+                if stored as u64 == unit_clusters {
+                    raw
+                } else {
+                    let mut decoded =
+                        fs_ntfs::compression::decompress_unit(&raw, unit_bytes as usize).map_err(
+                            |error| anyhow!("decoding compression unit {unit}: {error}"),
+                        )?;
+                    decoded.resize(unit_bytes as usize, 0);
+                    decoded
+                }
+            };
+            let within = (position % unit_bytes) as usize;
+            let count = (bytes.len() - within).min(output.len() - done);
+            output[done..done + count].copy_from_slice(&bytes[within..within + count]);
+            done += count;
+        }
+        Ok(done)
     }
 
     /// Everything the FILE record says, for the typed NTFS panel: every name and where it was

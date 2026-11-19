@@ -13,8 +13,9 @@
 //! the preview, the export, the map and the Disk Rebuilds read. It is never serialised and never
 //! stored, so saved scans and the frozen parity references do not change.
 //!
-//! Reading a range, once something does: only `Sparse` reads as zeros. `Missing` and `Compressed`
-//! are an error, and a `Shared` range reads like `Readable` but says another stream claims it.
+//! Reading a range, once something does: only `Sparse` reads as zeros. `Missing` is an error, a
+//! `Compressed` range is decoded by the format's own reader (an LZNT1 stream is), and a `Shared` range
+//! reads like `Readable` but says another stream claims it.
 
 use crate::allocation::{self, valid_cluster};
 use crate::filesystem::{
@@ -34,7 +35,8 @@ pub enum RangeKind {
     /// Bytes the file has, that cannot be found or cannot be read: the chain ends early, a cluster
     /// is outside the volume, or the format keeps them where this app does not follow.
     Missing,
-    /// Bytes the format stores compressed, which this app does not decode.
+    /// Bytes the format stores compressed: a read decodes them, and a unit that does not decode is
+    /// an error, never zeros.
     Compressed,
     /// Bytes that another stream claims too: readable, but not known to be this stream's.
     Shared,
@@ -564,7 +566,7 @@ mod tests {
         assert_eq!(unwritten.bytes_of(RangeKind::Readable), 8192);
         assert_eq!(unwritten.size(), 8 * 4096);
         assert_eq!(unwritten.ranges().last().unwrap().kind, RangeKind::Sparse);
-        // The formats this app does not follow.
+        // A stream NTFS compresses, and the formats this app does not follow.
         let compressed =
             RangeList::for_ntfs(&ntfs(STORAGE_COMPRESSED, vec![]), &geometry, 9000, 9000);
         assert_eq!(
@@ -573,6 +575,7 @@ mod tests {
         );
         for storage in [
             "encrypted",
+            "compression-unsupported",
             "attribute-list",
             "incomplete",
             "none",
