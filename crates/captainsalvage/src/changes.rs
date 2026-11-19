@@ -425,7 +425,7 @@ pub fn compare_volume(
     last: u32,
 ) -> Result<StructureChanges> {
     let before = salvage::inspect(baseline)?;
-    if before.kind == crate::filesystem::FilesystemKind::Exfat {
+    if before.kind.keeps_legacy_report_shape() {
         return Ok(compare(baseline, current, limits, last));
     }
     let after = salvage::inspect(current)?;
