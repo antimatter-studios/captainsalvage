@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.8.2 | MIT | captain-salvage |
+| `captainsalvage` | 0.8.3 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.8.3 — 2026-11-19
+
+**Fixed**
+
+- **A Disk Rebuild made from the old treasure list no longer carries the retired name.** Version 0.4.0 turned an old treasure list into a Disk Rebuild called "Imported treasure list", with a folder of the same name inside it, and those names are stored in the map, so they kept showing after the treasure list was gone. When a map is opened, that Disk Rebuild and its folder are renamed once to "Files picked before 0.4" (with " (2)", " (3)" and so on when another Disk Rebuild already has that name). Only exactly that name is changed, and only in a map that had the old list imported into it, so a name you chose is never touched. A copy of the map is made first, next to it, named `<map>.before-retired-name`; the change is checked and undone if the check fails. Nothing else in a map or in the saved scans carries a retired word.
+
 ### v0.8.2 — 2026-11-19
 
 **Maintenance**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - A pull request fails when what the tests run of our code falls below a captured baseline ([#267](https://github.com/antimatter-studios/captainsalvage/pull/267))
-
-### v0.4.14 — 2026-11-19
-
-**Documentation**
-
-- The README's status note says what is checked against independent tools, names the 4096-byte exFAT limit and no longer says the app is not released ([#265](https://github.com/antimatter-studios/captainsalvage/pull/265))
 
 <!-- changelog:end -->
 
