@@ -100,6 +100,9 @@ pub const OWNERSHIP_DIRECTORY: u8 = 3;
 pub const OWNERSHIP_NAMELESS_CHAIN: u8 = 4;
 /// Nothing on disk claims it, but a hypothesis says what it is.
 pub const OWNERSHIP_LABELLED: u8 = 5;
+/// Nothing on disk claims it, and it lies in a bad sector of the source, which cannot be read: it is
+/// explained by bad sectors, as a region label would explain it, and is not counted as unexplained.
+pub const OWNERSHIP_BAD_SECTORS: u8 = 6;
 
 /// What a rebuild did: stored its results, or, for a preview, only compared them.
 enum Resolved {
@@ -1364,6 +1367,27 @@ impl MapDb {
                 }
             }
         }
+        // Free clusters in a bad sector of the source: nobody can read them, so nothing is left to explain.
+        let bad = volume.bad_sectors();
+        if !bad.is_empty() {
+            let size = volume.geometry.cluster_size().max(1);
+            let heap = volume.geometry.heap_offset();
+            let last = volume.geometry.last_cluster_exclusive();
+            for (from, to) in bad {
+                if to <= heap {
+                    continue;
+                }
+                let first = FIRST_CLUSTER + (from.saturating_sub(heap) / size) as u32;
+                let end =
+                    (FIRST_CLUSTER as u64 + (to - 1 - heap) / size + 1).min(u64::from(last)) as u32;
+                for cluster in first.max(FIRST_CLUSTER)..end {
+                    let index = (cluster - FIRST_CLUSTER) as usize;
+                    if !volume.is_allocated(cluster) && ownership[index] == OWNERSHIP_UNEXPLAINED {
+                        ownership[index] = OWNERSHIP_BAD_SECTORS;
+                    }
+                }
+            }
+        }
         let computed_millis = started.elapsed().as_millis();
 
         let transaction = self.connection.transaction()?;
@@ -1493,6 +1517,7 @@ impl MapDb {
                 match ownership[(cluster - FIRST_CLUSTER) as usize] {
                     OWNERSHIP_UNEXPLAINED => summary.unexplained_free_clusters += 1,
                     OWNERSHIP_LABELLED => summary.labelled_free_clusters += 1,
+                    OWNERSHIP_BAD_SECTORS => summary.bad_sector_free_clusters += 1,
                     _ => {}
                 }
             }

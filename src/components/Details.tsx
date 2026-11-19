@@ -348,6 +348,7 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
           <dl className="facts">
             <Fact label={t("Nameless chains")}>{count(summary.namelessChains)}, {bytes(summary.namelessClusters * overview.geometry.clusterSize)}</Fact>
             <Fact label={t("Free space unexplained")}>{bytes(summary.unexplainedFreeClusters * overview.geometry.clusterSize)}</Fact>
+            {(summary.badSectorFreeClusters ?? 0) > 0 && <Fact label={t("Free space in bad sectors")}>{bytes((summary.badSectorFreeClusters ?? 0) * overview.geometry.clusterSize)}</Fact>}
             {summary.labelledFreeClusters > 0 && <Fact label={t("Explained by hypotheses")}>{bytes(summary.labelledFreeClusters * overview.geometry.clusterSize)}</Fact>}
             <Fact label={t("Map rebuilt")}>{clock(summary.resolvedAtMillis)}</Fact>
           </dl>

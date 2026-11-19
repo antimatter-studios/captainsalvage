@@ -135,6 +135,7 @@ export function ExportDialog({ item, copy, onClose }: { item: ExportItem; copy: 
             {!plan.refused && <div className="scan-bar"><div className={plan.fits ? "scan-fill" : "scan-fill scan-fill-over"} style={{ width: `${fraction * 100}%` }} /></div>}
             {!plan.fits && !plan.refused && <div className="warn">{t("This does not fit on that disk.")}</div>}
             {plan.skippedPartial > 0 && <div className="muted">{t("{count} partial files left out, {bytes}.", { count: count(plan.skippedPartial), bytes: bytes(plan.skippedPartialBytes) })}</div>}
+          {(plan.badSectorFiles ?? 0) > 0 && <div className="warn"><span className="legend-swatch bad-swatch" /> {t("{count} files have bytes in bad sectors, {bytes} in all. They are copied with zeros there, and the manifest names them.", { count: count(plan.badSectorFiles ?? 0), bytes: bytes(plan.badSectorBytes ?? 0) })}</div>}
             {plan.refused && <p className="warn"><strong>{fromEngine(plan.refused)}</strong></p>}
           </div>
         )}

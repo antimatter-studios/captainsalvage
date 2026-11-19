@@ -10,7 +10,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-pub const TOOLS: &[&str] = &["probe_health", "health_map"];
+pub const TOOLS: &[&str] = &["probe_health", "health_map", "list_extents"];
 
 pub struct Definition {
     pub name: &'static str,
@@ -43,6 +43,17 @@ pub fn definitions() -> Vec<Definition> {
                 "maxMillis": integer("Most milliseconds for this call. Default 20000."),
                 "start": integer("forgive: first byte."),
                 "end": integer("forgive: one past the last byte.")
+            }),
+            required: &["diskId"],
+        },
+        Definition {
+            name: "list_extents",
+            description: "The extents of the open source, in order: the ranges the health map marks as bad sectors (kind bad_sector: suspect, unreadable or reset-culprit, with how each was found, when, and the latency), and the extents of it that were opened as sources of their own (kind source: a partition with its stored scans). Bad sectors are kept in the catalog under the source, so they are listed again after the source is opened again, and after the drive comes back under another name. Nothing is read. A bad_sector extent is never read by anything: a preview shows its bytes as ?, a copy writes zeros there and names the range as bad sectors in its manifest, a scan reports read errors, and an unexplained region inside one counts as explained by bad sectors.",
+            properties: json!({
+                "diskId": {"type": "string", "description": "ID from open_raw_disk or open_source."},
+                "kind": {"type": "string", "description": "Only this kind: bad_sector or source."},
+                "start": integer("Only extents that end after this byte."),
+                "end": integer("Only extents that start before this byte.")
             }),
             required: &["diskId"],
         },
@@ -123,6 +134,38 @@ fn budget_from(args: &Value) -> Budget {
 pub fn call(tool: &str, disk: &RawDisk, args: &Value, is_person: bool) -> Result<Value> {
     let health = health_of(disk)?;
     match tool {
+        "list_extents" => {
+            let from = args.get("start").and_then(Value::as_u64).unwrap_or(0);
+            let to = args.get("end").and_then(Value::as_u64).unwrap_or(u64::MAX);
+            let wanted = args.get("kind").and_then(Value::as_str);
+            let mut extents: Vec<Value> = Vec::new();
+            for extent in health.bad_extents() {
+                extents.push(serde_json::to_value(extent)?);
+            }
+            if let Some(source) = health.source_id() {
+                if let Ok(catalog) = crate::catalog::Catalog::for_user() {
+                    for linked in catalog.extents_of(&source)? {
+                        extents.push(json!({
+                            "kind": "source",
+                            "start": linked.start,
+                            "length": linked.length,
+                            "sourceId": linked.source.id,
+                            "label": linked.source.label,
+                            "scans": linked.scans.len(),
+                        }));
+                    }
+                }
+            }
+            let begin = |extent: &Value| extent["start"].as_u64().unwrap_or(0);
+            let finish = |extent: &Value| begin(extent) + extent["length"].as_u64().unwrap_or(0);
+            extents.retain(|extent| {
+                finish(extent) > from
+                    && begin(extent) < to
+                    && wanted.is_none_or(|kind| extent["kind"] == kind)
+            });
+            extents.sort_by_key(|extent| begin(extent));
+            Ok(json!({"extents": extents, "sourceKey": health.key(), "length": health.length()}))
+        }
         "health_map" => {
             let mut report = status(health, json!({}))?;
             let from = args.get("start").and_then(Value::as_u64).unwrap_or(0);
@@ -265,4 +308,18 @@ pub fn bad_sectors(session: &crate::session::Session) -> Value {
         })
         .collect();
     json!({"clusterSize": size, "clusterCount": count, "firstCluster": FIRST_CLUSTER, "ranges": ranges})
+}
+
+/// The bad-sector extents of a source that touch `start..end`, as the tools that answer about a range of
+/// it list them. A source with no health map has none.
+pub fn bad_extents_in(disk: &RawDisk, start: u64, end: u64) -> Vec<Value> {
+    let Some(view) = disk.health.as_ref() else {
+        return Vec::new();
+    };
+    view.health
+        .bad_extents()
+        .into_iter()
+        .filter(|extent| extent.start + extent.length > start && extent.start < end)
+        .filter_map(|extent| serde_json::to_value(extent).ok())
+        .collect()
 }

@@ -5,6 +5,7 @@ import { undoBar } from "../agentChanges";
 import { bytes, count, lostFolderName, percent, verdictLabel } from "../format";
 import { fromEngine, t } from "../i18n";
 import { ConfidenceRing, fileIcon, Icon, verdictTone } from "./icons";
+import { BadFlag } from "./BadSectors";
 import { DiskRebuildCopy } from "./DiskRebuildCopy";
 import { SimilarPieces } from "./SimilarPieces";
 
@@ -257,6 +258,7 @@ function FolderNode({ folder, path, depth, around, shared, startOpen }: {
             )}
           </span>
           {folder.madeByAgent && <AgentMark />}
+          {(folder.badSectorBytes ?? 0) > 0 && <BadFlag bytesAffected={folder.badSectorBytes ?? 0} files={folder.badSectorFiles ?? 0} />}
           <span className="row-size" title={t("{bytes} likely intact", { bytes: bytes(folder.intactBytes) })}>{folder.bytes > 0 ? bytes(folder.bytes) : ""}</span>
         </button>
         {holding ? (
@@ -335,6 +337,7 @@ function FileNode({ file, path, depth, shared }: { file: RebuiltFile; path: stri
             {file.byPerson && <span className="row-path">{file.madeByAgent ? t("The copy the agent chose") : t("The copy you chose")}</span>}
           </span>
           {file.madeByAgent && <AgentMark />}
+          {(file.badSectorBytes ?? 0) > 0 && <BadFlag bytesAffected={file.badSectorBytes ?? 0} />}
           <span className="row-size">{bytes(row.length)}</span>
           <ConfidenceRing value={row.confidence} tone={verdictTone(row.verdict)} label={t("{verdict}, confidence {percent}", { verdict: verdictLabel(row.verdict), percent: percent(row.confidence) })} />
         </button>

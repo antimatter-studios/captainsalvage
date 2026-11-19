@@ -292,6 +292,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .bad-range { position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--bad); box-shadow: 0 0 0 0.5px var(--bad-dark); animation: bad-pulse 1s ease-in-out infinite; }
 .bad-swatch { background: var(--bad); animation: bad-pulse 1s ease-in-out infinite; }
 .bad-bytes { color: var(--bad); font-weight: 700; animation: bad-pulse 1s ease-in-out infinite; }
+.bad-flag { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px; color: var(--bad); font-weight: 600; white-space: nowrap; }
 .strip-tip-bad { margin-bottom: 5px; padding-bottom: 5px; border-bottom: 0.5px solid var(--line-strong); }
 @keyframes bad-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) {

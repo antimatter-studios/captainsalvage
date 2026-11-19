@@ -106,3 +106,14 @@ export function MarkBadSectors({ diskId, length, onMarked }: { diskId: string; l
     {problem && <p className="warn" role="alert">{fromEngine(problem)}</p>}
   </details>;
 }
+
+/** A small flag for a file or folder of a Disk Rebuild with bytes in a bad sector: the same flashing red,
+ * and how much. It is a flag and not a stop: the bytes copy as zeros. */
+export function BadFlag({ bytesAffected, files }: { bytesAffected: number; files?: number }) {
+  const text = files !== undefined
+    ? t("{files} files, {bytes} in bad sectors", { files: count(files), bytes: formatBytes(bytesAffected) })
+    : t("{bytes} in bad sectors", { bytes: formatBytes(bytesAffected) });
+  return <span className="bad-flag" title={t("Bytes here are in bad sectors, which are not read. A copy writes zeros there and names them in its manifest.")}>
+    <span className="legend-swatch bad-swatch" />{text}
+  </span>;
+}

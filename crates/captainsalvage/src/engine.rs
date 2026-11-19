@@ -1423,9 +1423,12 @@ impl Engine {
                 let path = path_of_names(args)?;
                 let offset = u64_of(args, "offset").unwrap_or(0);
                 let limit = u64_of(args, "limit").unwrap_or(DEFAULT_PAGE);
-                Ok(serde_json::to_value(session.with_database(
-                    |database| database.disk_rebuild_list(disk_rebuild, &path, offset, limit),
-                )?)?)
+                let mut listing = session.with_database(|database| {
+                    database.disk_rebuild_list(disk_rebuild, &path, offset, limit)
+                })?;
+                // Files and folders with bytes in a bad sector are flagged, never blocked.
+                session.flag_bad_sectors(disk_rebuild, &path, &mut listing)?;
+                Ok(serde_json::to_value(listing)?)
             }
             "disk_rebuild_clashes" => {
                 let disk_rebuild = need_rebuild(args)?;

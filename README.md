@@ -964,6 +964,16 @@ ranges earlier journaled reads read well), runs no range analysis, and says so (
 `open_source`). `probe_health` action `mark_bad` records a zone found some other way (the person's or an agent's `dd`
 run), with who and why.
 
+**Bad sectors as extents.** The ranges the health map marks `suspect`, `unreadable` or `reset-culprit` are
+extents of the source with the kind `bad_sector` (`list_extents`, and `badSectors` in `open_source`,
+`list_hypotheses`, `read_layout` and `analyze_range`). Stored with the map, they survive reopening and a
+rebind. Where the typed ranges of a stream (`RangeKind`) land on one, that part is `BadSector`: never read,
+shown as `?` in a preview, written as zeros by a copy and named in the manifest (`badSectorRanges`), which
+is not `Missing`. A free cluster in one counts as explained by bad sectors (ownership class 7, drawn in red),
+so unexplained totals stop counting bytes nobody can read. A Disk Rebuild file, folder or reassembly that
+crosses one is flagged in the tree and the copy plan with the bytes affected, never blocked. A saved marker
+inside one is left out of the match.
+
 The older `open_volume` door does not use the guard.
 
 ### Tests

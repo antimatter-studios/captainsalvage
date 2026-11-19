@@ -32,6 +32,8 @@ export interface MapSummary {
   brokenNamelessChains: number;
   unexplainedFreeClusters: number;
   labelledFreeClusters: number;
+  /** Free clusters in a bad sector of the source: nobody can read them, so they are not unexplained. */
+  badSectorFreeClusters?: number;
 }
 
 export interface ScanProgress {
@@ -256,6 +258,9 @@ export interface CopyPlan {
   skippedPartialBytes: number;
   largest: { name: string; bytes: number; confidence: number }[];
   byVerdict: Record<string, number>;
+  /** Files with bytes in a bad sector of the source, and how many bytes: copied as zeros there, never refused. */
+  badSectorFiles?: number;
+  badSectorBytes?: number;
 }
 
 export interface VolumeChoice {
@@ -399,6 +404,9 @@ export interface RebuiltFolder {
   intactBytes: number;
   /** An agent made or changed one of the items this folder is made of. */
   madeByAgent: boolean;
+  /** Files below it with bytes in a bad sector of the source, and how many bytes. */
+  badSectorFiles?: number;
+  badSectorBytes?: number;
 }
 
 export interface RebuiltFile {
@@ -412,6 +420,8 @@ export interface RebuiltFile {
   copies: Row[];
   /** An agent placed this file on its own, or chose its copy. */
   madeByAgent: boolean;
+  /** Bytes of the chosen copy in a bad sector of the source. */
+  badSectorBytes?: number;
 }
 
 export interface DiskRebuildListing {

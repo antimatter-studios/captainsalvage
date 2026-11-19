@@ -14,7 +14,8 @@
 //! export, the map and the Disk Rebuilds read. It is never serialised and never stored, so saved scans
 //! and the frozen parity references do not change.
 //!
-//! Reading a range, once something does: only `Sparse` reads as zeros. `Missing` is an error, a
+//! Reading a range, once something does: only `Sparse` reads as zeros. `BadSector` is never read: it is
+//! zeros that the caller is told are not the stream's bytes, and are named as bad sectors. `Missing` is an error, a
 //! `Compressed` range is decoded by the format's own reader (an LZNT1 stream is), and a `Shared` range
 //! reads like `Readable` but says another stream claims it.
 
@@ -41,6 +42,11 @@ pub enum RangeKind {
     Compressed,
     /// Bytes that another stream claims too: readable, but not known to be this stream's.
     Shared,
+    /// Bytes whose place on the source is in a range the health map says must not be read, because the
+    /// drive reset or a read failed there, or a probe jumped over it (see [`crate::health`]). They are
+    /// never read: they come back as zeros and are named as bad sectors, which is not what `Missing` is
+    /// (bytes the format does not lead to). The place they have on the source is kept in `provenance`.
+    BadSector,
 }
 
 /// Where the bytes of a range are.
@@ -177,6 +183,88 @@ impl RangeList {
             }
         }
         self.ranges = marked;
+    }
+
+    /// Marks as `BadSector` the readable and shared bytes whose place on the source falls inside one
+    /// of `bad`, as `(start, end)` source ranges, splitting ranges where it changes. Nothing else is
+    /// touched: a hole, a missing or a compressed range has no place on the source to be bad.
+    pub fn mark_bad(&mut self, bad: &[(u64, u64)]) {
+        if bad.is_empty() {
+            return;
+        }
+        let mut marked: Vec<Range> = Vec::new();
+        for range in &self.ranges {
+            let (RangeKind::Readable | RangeKind::Shared, Some(Provenance::Source { offset, .. })) =
+                (range.kind, range.provenance)
+            else {
+                marked.push(*range);
+                continue;
+            };
+            let end = offset + range.length;
+            let mut at = offset;
+            // The bad ranges that touch this one, in order.
+            let mut touching: Vec<(u64, u64)> = bad
+                .iter()
+                .copied()
+                .filter(|(from, to)| *from < end && *to > offset)
+                .map(|(from, to)| (from.max(offset), to.min(end)))
+                .collect();
+            touching.sort_unstable();
+            let mut pieces: Vec<(u64, u64, bool)> = Vec::new();
+            for (from, to) in touching {
+                if to <= at {
+                    continue;
+                }
+                let from = from.max(at);
+                if from > at {
+                    pieces.push((at, from, false));
+                }
+                pieces.push((from, to, true));
+                at = to;
+            }
+            if at < end {
+                pieces.push((at, end, false));
+            }
+            for (from, to, is_bad) in pieces {
+                push_merged(
+                    &mut marked,
+                    Range {
+                        start: range.start + (from - offset),
+                        length: to - from,
+                        kind: if is_bad {
+                            RangeKind::BadSector
+                        } else {
+                            range.kind
+                        },
+                        provenance: Some(Provenance::Source {
+                            offset: from,
+                            length: to - from,
+                        }),
+                    },
+                );
+            }
+        }
+        self.ranges = marked;
+    }
+
+    /// The stretches of `start..end` of the stream that are bad sectors, as `(start, end)`.
+    pub fn bad_sector_ranges(&self, start: u64, end: u64) -> Vec<(u64, u64)> {
+        let mut found: Vec<(u64, u64)> = Vec::new();
+        for range in self
+            .ranges
+            .iter()
+            .filter(|range| range.kind == RangeKind::BadSector)
+        {
+            let (from, to) = (range.start.max(start), range.end().min(end));
+            if from >= to {
+                continue;
+            }
+            match found.last_mut() {
+                Some(last) if last.1 == from => last.1 = to,
+                _ => found.push((from, to)),
+            }
+        }
+        found
     }
 
     /// The bytes from `valid` on are unwritten: they read as zeros whatever clusters hold them.
@@ -526,6 +614,62 @@ mod tests {
             kind,
             provenance: offset.map(|offset| Provenance::Source { offset, length }),
         }
+    }
+
+    #[test]
+    fn bytes_on_a_bad_sector_are_split_out_marked_and_never_read() {
+        let mut list = RangeList::new(
+            vec![
+                range(0, 300, RangeKind::Readable, Some(1000)),
+                range(300, 50, RangeKind::Sparse, None),
+                range(350, 100, RangeKind::Shared, Some(5000)),
+                range(450, 10, RangeKind::Missing, None),
+            ],
+            460,
+        )
+        .unwrap();
+        // Source bytes 1100 to 1200 are bad, and 5050 to 5400 (which runs past the range that holds 5000 to 5100).
+        list.mark_bad(&[(5050, 5400), (1100, 1200)]);
+        assert_eq!(
+            list.ranges(),
+            [
+                range(0, 100, RangeKind::Readable, Some(1000)),
+                range(100, 100, RangeKind::BadSector, Some(1100)),
+                range(200, 100, RangeKind::Readable, Some(1200)),
+                range(300, 50, RangeKind::Sparse, None),
+                range(350, 50, RangeKind::Shared, Some(5000)),
+                range(400, 50, RangeKind::BadSector, Some(5050)),
+                range(450, 10, RangeKind::Missing, None),
+            ]
+        );
+        assert_eq!(list.size(), 460);
+        assert_eq!(list.bytes_of(RangeKind::BadSector), 150);
+        assert_eq!(list.bad_sector_ranges(0, 460), vec![(100, 200), (400, 450)]);
+        assert_eq!(
+            list.bad_sector_ranges(150, 410),
+            vec![(150, 200), (400, 410)]
+        );
+        // Reading: the bad bytes are zeros and are reported as not the stream's, and the source is not asked for them.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let (data, unreadable) = list.read(80, 220, 10, &mut |offset, length| {
+            asked.borrow_mut().push((offset, length));
+            Some(vec![7; length as usize])
+        });
+        assert_eq!(unreadable, vec![(100, 200)]);
+        assert!(data[..20].iter().all(|byte| *byte == 7));
+        assert!(data[20..120].iter().all(|byte| *byte == 0));
+        assert!(data[120..].iter().all(|byte| *byte == 7));
+        assert!(
+            asked
+                .borrow()
+                .iter()
+                .all(|(offset, length)| offset + length <= 1100 || *offset >= 1200),
+            "{asked:?}"
+        );
+        // Nothing bad: nothing changes.
+        let before = list.clone();
+        list.mark_bad(&[]);
+        assert_eq!(list, before);
     }
 
     #[test]

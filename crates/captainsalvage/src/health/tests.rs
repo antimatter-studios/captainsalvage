@@ -773,6 +773,8 @@ fn a_comparison_does_not_read_a_marker_in_a_bad_zone_and_calls_it_unknown() {
     assert_eq!(comparison.state, crate::raw_scan::Verification::Exact);
     // (A zone where the drive reset makes it a careful open, which reads fewer markers still.)
     assert!(comparison.total >= 1 && comparison.total < saved.samples.len());
+    // (A zone where the drive reset makes it a careful open, which reads fewer markers still.)
+    assert!(comparison.total >= 1 && comparison.total < saved.samples.len());
     assert!(
         comparison.summary.contains("lie in bad sectors"),
         "{}",
