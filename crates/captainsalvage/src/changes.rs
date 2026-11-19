@@ -17,14 +17,53 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 
-/// The copy's files, in the order the structure hash covers them.
-const COPY_FILES: [&str; 5] = [
-    "boot_main.bin",
-    "boot_backup.bin",
-    "fat.bin",
-    "bitmap.bin",
-    "root.bin",
+/// The manifest's file name, beside the copied bytes.
+const MANIFEST_FILE: &str = "manifest.json";
+
+/// What a copy's manifest says now. Version 1 is a copy with no manifest: the five files below,
+/// which every copy made before manifests was.
+const MANIFEST_VERSION: u32 = 2;
+
+/// The regions of a version 1 copy, in the order the structure hash covers them: file name and
+/// what the bytes are.
+const REGIONS_V1: [(&str, &str); 5] = [
+    ("boot_main.bin", "the main boot region"),
+    ("boot_backup.bin", "the backup boot region"),
+    ("fat.bin", "the allocation table"),
+    ("bitmap.bin", "the allocation bitmap"),
+    ("root.bin", "the root directory"),
 ];
+
+/// One named region of a copy: where its bytes are kept, how long they are, their hash and what
+/// they are.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Region {
+    pub name: String,
+    pub file: String,
+    /// Where the region starts in the source, when the adapter that read it knows.
+    pub offset: Option<u64>,
+    pub length: u64,
+    pub sha256: String,
+    pub what: String,
+}
+
+/// What a copy holds, stored beside its bytes as `manifest.json`. The structure hash covers the
+/// regions in this order, so a filesystem with other metadata regions adds regions here and not
+/// fixed fields.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureManifest {
+    pub version: u32,
+    pub regions: Vec<Region>,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// The volume's structures, byte for byte, as the structure hash covers them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +110,28 @@ impl StructureCopy {
         ]
     }
 
+    /// What this copy holds, region by region.
+    pub fn manifest(&self) -> StructureManifest {
+        StructureManifest {
+            version: MANIFEST_VERSION,
+            regions: REGIONS_V1
+                .iter()
+                .zip(self.parts())
+                .map(|((file, what), part)| Region {
+                    name: file.trim_end_matches(".bin").to_string(),
+                    file: (*file).to_string(),
+                    offset: None,
+                    length: part.len() as u64,
+                    sha256: hex(part),
+                    what: (*what).to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The hash of the regions, in the manifest's order. It is the same for a version 1 copy and
+    /// for the version 2 copy of the same bytes, so a baseline hash recorded before manifests
+    /// still matches.
     pub fn hash(&self) -> String {
         let mut hasher = Sha256::new();
         for part in self.parts() {
@@ -85,21 +146,75 @@ impl StructureCopy {
 
     pub fn save(&self, dir: &Path) -> Result<()> {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        for (name, part) in COPY_FILES.iter().zip(self.parts()) {
-            fs::write(dir.join(name), part).with_context(|| format!("writing {name}"))?;
+        let manifest = self.manifest();
+        for (region, part) in manifest.regions.iter().zip(self.parts()) {
+            fs::write(dir.join(&region.file), part)
+                .with_context(|| format!("writing {}", region.file))?;
         }
+        // The manifest goes last: a copy that stopped part way has none, so it reads as a
+        // version 1 copy, and is then kept only if its bytes still hash to the baseline.
+        fs::write(
+            dir.join(MANIFEST_FILE),
+            serde_json::to_string_pretty(&manifest)?,
+        )
+        .with_context(|| format!("writing {MANIFEST_FILE}"))?;
         Ok(())
     }
 
-    /// The copy in `dir`, if every file is there.
+    /// The copy in `dir`, if every region is there. A copy with no manifest is version 1 and is
+    /// read as it is, never rewritten. One with a manifest must hold exactly the regions it
+    /// names, each with the length and hash it records.
     pub fn load(dir: &Path) -> Option<Self> {
-        let mut parts = COPY_FILES.iter().map(|name| fs::read(dir.join(name)).ok());
+        let manifest = match fs::read_to_string(dir.join(MANIFEST_FILE)) {
+            Ok(text) => serde_json::from_str::<StructureManifest>(&text).ok()?,
+            Err(_) => Self::version_one(dir)?,
+        };
+        if manifest.version > MANIFEST_VERSION {
+            return None;
+        }
+        let mut parts = Vec::new();
+        for (region, (file, _)) in manifest.regions.iter().zip(REGIONS_V1) {
+            if region.file != file {
+                return None;
+            }
+            let bytes = fs::read(dir.join(&region.file)).ok()?;
+            if bytes.len() as u64 != region.length || hex(&bytes) != region.sha256 {
+                return None;
+            }
+            parts.push(bytes);
+        }
+        if manifest.regions.len() != REGIONS_V1.len() {
+            return None;
+        }
+        let mut parts = parts.into_iter();
         Some(Self {
-            main: parts.next()??,
-            backup: parts.next()??,
-            fat: parts.next()??,
-            bitmap: parts.next()??,
-            root: parts.next()??,
+            main: parts.next()?,
+            backup: parts.next()?,
+            fat: parts.next()?,
+            bitmap: parts.next()?,
+            root: parts.next()?,
+        })
+    }
+
+    /// The manifest a copy with only its five files has, worked out from the files.
+    fn version_one(dir: &Path) -> Option<StructureManifest> {
+        let regions = REGIONS_V1
+            .iter()
+            .map(|(file, what)| {
+                let bytes = fs::read(dir.join(file)).ok()?;
+                Some(Region {
+                    name: file.trim_end_matches(".bin").to_string(),
+                    file: (*file).to_string(),
+                    offset: None,
+                    length: bytes.len() as u64,
+                    sha256: hex(&bytes),
+                    what: (*what).to_string(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(StructureManifest {
+            version: 1,
+            regions,
         })
     }
 }
@@ -339,4 +454,125 @@ pub fn compare_volume(
         ),
     );
     Ok(changes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copy() -> StructureCopy {
+        StructureCopy {
+            main: vec![1; 512],
+            backup: vec![2; 512],
+            fat: vec![3; 1024],
+            bitmap: vec![4; 64],
+            root: vec![5; 96],
+        }
+    }
+
+    fn folder(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "captainsalvage-manifest-{}-{label}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A copy as the code before manifests kept it: five files, in the order the hash covers.
+    fn write_version_one(dir: &Path, copy: &StructureCopy) {
+        for (file, part) in [
+            "boot_main.bin",
+            "boot_backup.bin",
+            "fat.bin",
+            "bitmap.bin",
+            "root.bin",
+        ]
+        .iter()
+        .zip(copy.parts())
+        {
+            fs::write(dir.join(file), part).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_saved_copy_has_a_manifest_naming_every_region() {
+        let dir = folder("saved");
+        let copy = copy();
+        copy.save(&dir).unwrap();
+        let manifest: StructureManifest =
+            serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest, copy.manifest());
+        assert_eq!(manifest.version, 2);
+        let names: Vec<&str> = manifest.regions.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["boot_main", "boot_backup", "fat", "bitmap", "root"]);
+        assert_eq!(manifest.regions[2].length, 1024);
+        assert_eq!(manifest.regions[2].sha256, hex(&copy.fat));
+        assert_eq!(StructureCopy::load(&dir), Some(copy));
+    }
+
+    #[test]
+    fn a_copy_made_before_manifests_is_version_one_and_is_not_rewritten() {
+        let dir = folder("version-one");
+        let copy = copy();
+        write_version_one(&dir, &copy);
+        let before: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(StructureCopy::load(&dir), Some(copy.clone()));
+        // Reading it adds nothing and changes nothing.
+        let mut after: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        let mut before = before;
+        before.sort();
+        after.sort();
+        assert_eq!(before, after);
+        assert!(!dir.join("manifest.json").exists());
+        assert_eq!(
+            StructureCopy::version_one(&dir).unwrap().version,
+            1,
+            "a copy with no manifest is version 1"
+        );
+        // The hash is the one recorded for the same bytes before manifests existed.
+        let mut hasher = Sha256::new();
+        for part in copy.parts() {
+            hasher.update(part);
+        }
+        assert_eq!(
+            copy.hash(),
+            hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn a_copy_that_does_not_match_its_manifest_is_not_read() {
+        let dir = folder("tampered");
+        copy().save(&dir).unwrap();
+        fs::write(dir.join("fat.bin"), vec![9; 1024]).unwrap();
+        assert_eq!(StructureCopy::load(&dir), None);
+        copy().save(&dir).unwrap();
+        fs::remove_file(dir.join("root.bin")).unwrap();
+        assert_eq!(StructureCopy::load(&dir), None);
+        copy().save(&dir).unwrap();
+        let mut manifest = copy().manifest();
+        manifest.version = 3;
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            StructureCopy::load(&dir),
+            None,
+            "a manifest from a newer version is not guessed at"
+        );
+    }
 }
