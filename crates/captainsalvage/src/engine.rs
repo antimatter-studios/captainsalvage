@@ -674,9 +674,12 @@ impl Engine {
                         return Ok(serde_json::from_slice(&std::fs::read(file)?)?);
                     }
                 }
-                Ok(serde_json::to_value(crate::startup::startup_report(
-                    internal,
-                )?)?)
+                // With `since` (the fingerprint of the report last shown), the report is built only
+                // when the disks or their mounts are not what that report saw.
+                match crate::startup::startup_report_since(internal, str_of(args, "since"))? {
+                    Some(report) => Ok(serde_json::to_value(report)?),
+                    None => Ok(json!({"unchanged": true})),
+                }
             }
             "agent_privacy" => Ok(json!({"namesHidden": self.names_hidden()})),
             "set_agent_privacy" => {

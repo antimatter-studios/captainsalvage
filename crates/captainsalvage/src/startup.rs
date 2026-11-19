@@ -123,6 +123,10 @@ pub struct StartupReport {
     pub elsewhere: Vec<KnownVolume>,
     /// macOS's `disksleep` setting, in minutes. Zero means disks never sleep.
     pub disk_sleep_minutes: Option<u32>,
+    /// What the disks and mounts looked like when this was built (see `startup_fingerprint`). Ask
+    /// again with it as `since` and nothing is rebuilt unless something changed.
+    #[serde(default)]
+    pub fingerprint: String,
 }
 
 /// Finds partitions in `diskutil list` output, which name them at the end of each line.
@@ -278,14 +282,120 @@ fn can_read(device: &str) -> bool {
     }
 }
 
-fn list_volumes(place: &str) -> (Vec<StartupDisk>, Vec<StartupVolume>) {
-    let Ok(output) = Command::new(DISKUTIL)
-        .args(["list", place, "physical"])
+/// What `diskutil list` is asked for: the external physical disks, and the internal ones when
+/// wanted. A window test (in a test-hooks build, with `SALVAGE_TEST_UI`) can name instead the one
+/// disk it attached, in a file whose text is its identifier, so no real disk is ever listed. A
+/// missing or empty file lists nothing.
+fn list_requests(include_internal: bool) -> Vec<Vec<String>> {
+    #[cfg(feature = "test-hooks")]
+    if std::env::var_os("SALVAGE_TEST_UI").is_some() {
+        if let Some(file) = std::env::var_os("SALVAGE_TEST_STARTUP_DISK_FILE") {
+            let disk = fs::read_to_string(file).unwrap_or_default();
+            let disk = disk.trim().trim_start_matches("/dev/");
+            return if is_whole_disk(disk) {
+                vec![vec![format!("/dev/{disk}")]]
+            } else {
+                Vec::new()
+            };
+        }
+    }
+    let mut places = vec![vec!["external".to_string(), "physical".to_string()]];
+    if include_internal {
+        places.push(vec!["internal".to_string(), "physical".to_string()]);
+    }
+    places
+}
+
+fn diskutil_list(request: &[String]) -> Option<String> {
+    let output = Command::new(DISKUTIL)
+        .arg("list")
+        .args(request)
         .output()
-    else {
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// A short text that is the same while the start screen's disks are the same: the lists of disks and
+/// partitions `diskutil` gives, which of those are mounted and where (from `mount`, for the listed
+/// devices only), and the settings the report shows beside them. It asks the operating system's
+/// list of disks and mounts and nothing else: no disk is read, and no volume is looked at one by one.
+pub(crate) fn fingerprint_of(lists: &[String], mounts: &str, settings: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut listed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for list in lists {
+        listed.extend(parse_disks(list));
+        listed.extend(parse_partitions(list));
+    }
+    let mut mounted: Vec<&str> = mounts
+        .lines()
+        .filter(|line| {
+            line.split_once(" on ")
+                .and_then(|(device, _)| device.strip_prefix("/dev/"))
+                .is_some_and(|device| listed.contains(device))
+        })
+        .collect();
+    mounted.sort_unstable();
+    let mut hasher = Sha256::new();
+    for list in lists {
+        hasher.update(list.as_bytes());
+        hasher.update([0]);
+    }
+    for line in mounted {
+        hasher.update(line.as_bytes());
+        hasher.update([0]);
+    }
+    hasher.update(settings.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The fingerprint of the disks attached now: one `diskutil list` per place and one `mount`.
+pub fn startup_fingerprint(include_internal: bool) -> String {
+    let lists: Vec<String> = list_requests(include_internal)
+        .iter()
+        .filter_map(|request| diskutil_list(request))
+        .collect();
+    let mounts = Command::new("/sbin/mount")
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    let settings = format!(
+        "{}\n{:?}",
+        fs::read_to_string(FSTAB).unwrap_or_default(),
+        crate::mountblock::list()
+    );
+    fingerprint_of(&lists, &mounts, &settings)
+}
+
+/// Whether a report has to be built for someone who last saw the one with fingerprint `since`.
+pub(crate) fn report_needed(since: Option<&str>, now: &str) -> bool {
+    since != Some(now)
+}
+
+/// The report, unless `since` is the fingerprint of the disks as they are now, when nothing has
+/// changed and `None` says so. The fingerprint is taken before the report, so a change that
+/// happens while the report is built shows on the next ask.
+pub fn startup_report_since(
+    include_internal: bool,
+    since: Option<&str>,
+) -> Result<Option<StartupReport>> {
+    let fingerprint = startup_fingerprint(include_internal);
+    if !report_needed(since, &fingerprint) {
+        return Ok(None);
+    }
+    let mut report = startup_report(include_internal)?;
+    report.fingerprint = fingerprint;
+    Ok(Some(report))
+}
+
+fn list_volumes(request: &[String]) -> (Vec<StartupDisk>, Vec<StartupVolume>) {
+    let Some(list) = diskutil_list(request) else {
         return (Vec::new(), Vec::new());
     };
-    let list = String::from_utf8_lossy(&output.stdout);
     let disks = parse_disks(&list)
         .iter()
         .filter_map(|id| parse_disk(&diskutil_info(id)?))
@@ -440,13 +550,14 @@ pub fn join_known(mut volumes: Vec<StartupVolume>, known: Vec<KnownVolume>) -> S
         disks: Vec::new(),
         elsewhere,
         disk_sleep_minutes: None,
+        fingerprint: String::new(),
     }
 }
 
 pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
-    let (mut disks, mut volumes) = list_volumes("external");
-    if include_internal {
-        let (more_disks, more_volumes) = list_volumes("internal");
+    let (mut disks, mut volumes) = (Vec::new(), Vec::new());
+    for request in list_requests(include_internal) {
+        let (more_disks, more_volumes) = list_volumes(&request);
         disks.extend(more_disks);
         volumes.extend(more_volumes);
     }
@@ -469,4 +580,68 @@ pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
         .ok()
         .and_then(|output| parse_disk_sleep(&String::from_utf8_lossy(&output.stdout)));
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LIST: &str = "/dev/disk7 (external, physical):\n   #:                       TYPE NAME                    SIZE       IDENTIFIER\n   0:     FDisk_partition_scheme                        *2.0 TB     disk7\n   1:               Windows_NTFS seagate_2tb             1.4 TB     disk7s1\n";
+    const MOUNTS: &str = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n/dev/disk7s1 on /Volumes/seagate_2tb (ntfs, local, nodev, nosuid, read-only, noowners)\nmap auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n";
+
+    fn print(list: &str, mounts: &str) -> String {
+        fingerprint_of(&[list.to_string()], mounts, "")
+    }
+
+    #[test]
+    fn the_same_disks_and_mounts_give_the_same_fingerprint() {
+        assert_eq!(print(LIST, MOUNTS), print(LIST, MOUNTS));
+    }
+
+    #[test]
+    fn a_volume_that_was_unmounted_changes_it() {
+        let unmounted: String = MOUNTS
+            .lines()
+            .filter(|line| !line.starts_with("/dev/disk7s1"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert_ne!(print(LIST, MOUNTS), print(LIST, &unmounted));
+    }
+
+    #[test]
+    fn a_volume_that_was_mounted_somewhere_else_changes_it() {
+        let moved = MOUNTS.replace("/Volumes/seagate_2tb", "/Volumes/seagate_2tb 1");
+        assert_ne!(print(LIST, MOUNTS), print(LIST, &moved));
+    }
+
+    #[test]
+    fn a_disk_attached_or_removed_changes_it() {
+        let more = format!("{LIST}\n/dev/disk9 (external, physical):\n   0:     FDisk_partition_scheme                        *1.0 GB     disk9\n");
+        assert_ne!(print(LIST, MOUNTS), print(&more, MOUNTS));
+        assert_ne!(print(&more, MOUNTS), print("", MOUNTS));
+    }
+
+    #[test]
+    fn mounts_of_things_that_are_not_listed_do_not_change_it() {
+        // The system volume's snapshots, a network share and the like come and go without any disk
+        // on the start screen having changed.
+        let busy = format!(
+            "{MOUNTS}/dev/disk3s5 on /System/Volumes/Data (apfs, local)\n//user@host/share on /Volumes/share (smbfs)\n"
+        );
+        assert_eq!(print(LIST, MOUNTS), print(LIST, &busy));
+    }
+
+    #[test]
+    fn a_changed_setting_changes_it() {
+        let one = fingerprint_of(&[LIST.to_string()], MOUNTS, "UUID=A none ntfs rw,noauto");
+        let two = fingerprint_of(&[LIST.to_string()], MOUNTS, "");
+        assert_ne!(one, two);
+    }
+
+    #[test]
+    fn the_report_is_only_rebuilt_when_the_fingerprint_is_not_the_one_asked_about() {
+        assert!(report_needed(None, "abc"));
+        assert!(report_needed(Some("xyz"), "abc"));
+        assert!(!report_needed(Some("abc"), "abc"));
+    }
 }
