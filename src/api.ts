@@ -156,6 +156,8 @@ export interface StartupReport {
   disks: StartupDisk[];
   elsewhere: KnownVolume[];
   diskSleepMinutes: number | null;
+  /** What the disks and mounts looked like for this report; ask again with it as `since`. */
+  fingerprint?: string;
 }
 
 export interface ZipMember {

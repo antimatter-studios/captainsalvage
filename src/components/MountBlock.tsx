@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "../api";
 import { fromEngine, t } from "../i18n";
+import { afterSystemCommand } from "../systemCommand";
 
 export interface MountBlockEntry {
   uuid: string;
@@ -38,7 +39,7 @@ export function MountBlockToggle({ uuid, name, mounted, compact = false }: { uui
   const change = (next: boolean) => {
     setBusy(true);
     setError(null);
-    call("mount_block_set", { uuid, name, blocked: next })
+    afterSystemCommand(() => call("mount_block_set", { uuid, name, blocked: next }))
       .then(() => window.dispatchEvent(new Event(CHANGED)))
       .catch((reason) => setError(String(reason)))
       .finally(() => setBusy(false));

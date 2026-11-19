@@ -1,13 +1,20 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { call, type DiskAccess, type KnownVolume, type StartupReport, type StartupVolume } from "../api";
 import { bytes, count } from "../format";
 import { fromEngine, locale, t } from "../i18n";
 import { diskGroups, shortDevice, type DiskGroup } from "../diskTree";
+import { DiskFollower, type Answer } from "../startupFollow";
+import { onSystemCommand } from "../systemCommand";
 import { Command } from "./Command";
 import { MountBlockToggle } from "./MountBlock";
 
+/** How often the list of disks is checked while the start screen is shown. A check asks the operating
+ * system for its list of disks and mounts, and nothing is rebuilt or read from a disk unless that changed.
+ * A command the app itself sends (unmounting, blocking a mount) is read back at once and again 1.5 s later,
+ * so this interval is only for changes made outside the app. */
+const FOLLOW_MILLIS = 10_000;
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 900;
 /** The disk's own island, in the middle of the chart. */
@@ -332,16 +339,59 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
     getVersion().then(setVersion).catch(() => undefined);
   }, []);
 
-  const look = useCallback((includeInternal: boolean) => {
+  // What is on screen as text, so a list that has not changed is not set again and nothing moves.
+  const shown = useRef("");
+  // The follower of the current choice of disks: an answer to one that was replaced (the
+  // internal-disks switch changed) is not shown.
+  const current = useRef<DiskFollower<StartupReport> | null>(null);
+  const follower = useMemo(() => {
+    const made: DiskFollower<StartupReport> = new DiskFollower<StartupReport>(
+      (since) => call<Answer<StartupReport>>("startup_disks", { includeInternal: internal, since }),
+      (next) => {
+        const text = JSON.stringify(next);
+        if (current.current === made && text !== shown.current) {
+          shown.current = text;
+          setReport(next);
+        }
+      },
+    );
+    return made;
+  }, [internal]);
+  useEffect(() => {
+    current.current = follower;
+  }, [follower]);
+
+  /** A look the person asked for, or the screen opening: it says it is looking, and builds a report. */
+  const look = useCallback(() => {
     setLooking(true);
     setLookError(null);
-    call<StartupReport>("startup_disks", { includeInternal })
-      .then(setReport)
+    follower
+      .look()
       .catch((reason) => setLookError(String(reason)))
       .finally(() => setLooking(false));
-  }, []);
+  }, [follower]);
 
-  useEffect(() => look(internal), [look, internal]);
+  useEffect(() => look(), [look]);
+  // While the screen is shown, the list follows the disks: a disk attached or removed, a volume
+  // mounted or unmounted, within a few seconds and when the window comes back into view, without a
+  // button, without "Looking", and without the list moving unless something changed.
+  useEffect(() => {
+    const quietly = () => {
+      if (!document.hidden) void follower.refresh();
+    };
+    const timer = window.setInterval(quietly, FOLLOW_MILLIS);
+    // After a command the app sent: read the state back now, and again a moment later. A look that is
+    // running when the command returns is followed by this one, not replaced by it.
+    const stopListening = onSystemCommand(() => void follower.refresh({ queue: true }));
+    window.addEventListener("focus", quietly);
+    document.addEventListener("visibilitychange", quietly);
+    return () => {
+      window.clearInterval(timer);
+      stopListening();
+      window.removeEventListener("focus", quietly);
+      document.removeEventListener("visibilitychange", quietly);
+    };
+  }, [follower]);
   useEffect(() => setPath(imagePath), [imagePath]);
   useEffect(() => {
     if (failure && path) call<DiskAccess>("disk_access", { path }).then(setAccess).catch(() => undefined);
@@ -383,7 +433,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
           <label className="check start-internal">
             <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> {t("Show internal disks")}
           </label>
-          <button onClick={() => look(internal)} disabled={looking}>{looking ? t("Looking") : t("Check again")}</button>
+          <button onClick={look} disabled={looking}>{looking ? t("Looking") : t("Check again")}</button>
         </div>
 
         {lookError && <p className="warn">{fromEngine(lookError)}</p>}

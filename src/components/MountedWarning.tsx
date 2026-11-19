@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "../api";
 import { t } from "../i18n";
+import { afterSystemCommand, onSystemCommand } from "../systemCommand";
 
 interface MountedAnyway {
   uuid: string;
@@ -31,7 +32,10 @@ export function MountedWarning() {
     refresh();
     const timer = window.setInterval(refresh, CHECK_EVERY_MILLIS);
     window.addEventListener("focus", refresh);
+    // Any command the app sends (this button, a mount block) is read back at once and again soon after.
+    const stopListening = onSystemCommand(refresh);
     return () => {
+      stopListening();
       window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
     };
@@ -43,7 +47,7 @@ export function MountedWarning() {
     setBusy(volume.uuid);
     setProblem(null);
     try {
-      await call("mount_block_unmount", { uuid: volume.uuid });
+      await afterSystemCommand(() => call("mount_block_unmount", { uuid: volume.uuid }));
     } catch (reason) {
       setProblem(String(reason));
     } finally {
