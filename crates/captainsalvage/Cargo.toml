@@ -19,7 +19,7 @@ bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
 fs-core = { package = "rust-fs-core", version = "=0.4.3" }
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f" }
-fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "371ed7e91459dded57bf717992928ebe303d4e5f" }
+fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "5e25ce40e37d4b878b36b4caa47d0a38b3caa656" }
 fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
