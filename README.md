@@ -1024,7 +1024,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.4.15 | MIT | captain-salvage |
+| `captainsalvage` | 0.5.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1160,6 +1160,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.5.0 — 2026-11-19
+
+**Added**
+
+- **A preview shows where a file's bytes could not be read.** On exFAT and FAT volumes, when a cluster of a file cannot be read from the disk, the text and byte previews now show each of its bytes as `?` and say which bytes they are, instead of showing zeros that look like the file's own data. A copy of such a file keeps its layout, writes zeros where nothing could be read, is marked partial, and its manifest now names the unreadable byte ranges. Images and films still show those places as zeros.
+
 ### v0.4.15 — 2026-11-19
 
 **Maintenance**
@@ -1213,12 +1219,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Documentation**
 
 - The README lists what each filesystem supports from the table the app reports, and FAT's notes stop claiming a bitmap ([#220](https://github.com/antimatter-studios/captainsalvage/pull/220))
-
-### v0.4.6 — 2026-11-19
-
-**Maintenance**
-
-- A window test opens a synthetic NTFS image, scans, browses, previews a fragmented file and copies it out ([#246](https://github.com/antimatter-studios/captainsalvage/pull/246))
 
 <!-- changelog:end -->
 
