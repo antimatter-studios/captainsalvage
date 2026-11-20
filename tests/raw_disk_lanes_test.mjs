@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, MAP_HEALTH_UNREADABLE, MAP_UNREADABLE, evidenceStatus, evidenceSummary, itemAt, laneMap, mapRowCount } from "../src/rawDisk.ts";
+import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, MAP_HEALTH_SUSPECT, MAP_HEALTH_UNREADABLE, MAP_UNREADABLE, evidenceStatus, evidenceSummary, itemAt, laneMap, mapRowCount } from "../src/rawDisk.ts";
 
 function finding(offset, format, extra = {}) {
   return { offset, length: 512, format, structure: "boot sector", confidence: "plausible geometry; filesystem not yet opened",
@@ -90,4 +90,14 @@ test("a drive with known damage gets a health lane under the scan row, worst sta
   assert.equal(mapRowCount(fine, 2), 1 + BAND_ROWS + 2);
   assert.equal(laneMap(fine, lanes, 0, 8192, 8).length, (1 + BAND_ROWS + 2) * 8);
   assert.equal(mapRowCount(disk(), 2), 1 + BAND_ROWS + 2);
+});
+
+test("a suspect band is drawn under a slow read and over nothing, and under a worse state", () => {
+  const damaged = { ...disk(), health: [
+    { start: 1024, end: 5120, state: "suspect", latencyMs: null, note: "" },
+    { start: 2048, end: 3072, state: "reset-culprit", latencyMs: null, note: "" },
+    { start: 0, end: 2048, state: "slow", latencyMs: 700, note: "" },
+  ] };
+  const map = rows(laneMap(damaged, [], 0, 8192, 8), 8);
+  assert.deepEqual(map[1], [MAP_HEALTH_SLOW, MAP_HEALTH_SUSPECT, MAP_HEALTH_CULPRIT, MAP_HEALTH_SUSPECT, MAP_HEALTH_SUSPECT, 0, 0, 0]);
 });

@@ -262,3 +262,95 @@ fn a_probe_that_was_stopped_and_a_source_without_a_probe_say_so() {
         "{error:#}"
     );
 }
+
+#[test]
+fn a_suspect_band_is_not_read_the_failing_flag_is_shown_and_only_the_person_clears_it() {
+    let image = Image::new("suspect", 5);
+    let store = HealthStore::for_user().unwrap();
+    store
+        .save_map(
+            &image.key(),
+            None,
+            &HealthMap::from_ranges(vec![HealthRange::new(
+                2 * MIB,
+                4 * MIB,
+                RangeState::Suspect,
+                None,
+                "a probe jumped over it",
+            )]),
+        )
+        .unwrap();
+    // Two resets in an earlier run make it a failing drive.
+    store.add_resets(&image.key(), 2).unwrap();
+    let engine = Engine::default();
+    let disk = open(&engine, &image);
+    let map = call(&engine, "health_map", json!({"diskId": disk}));
+    assert_eq!(map["suspect"]["ranges"], 1);
+    assert_eq!(
+        (map["resets"].clone(), map["failing"].clone()),
+        (json!(2), json!(true))
+    );
+    let refused = engine
+        .call(
+            "read_raw_disk",
+            &json!({"diskId": disk, "offset": 3 * MIB, "length": 512}),
+            AUTHOR_USER,
+        )
+        .expect_err("a suspect band is not read");
+    assert!(format!("{refused:#}").contains("suspect"), "{refused:#}");
+
+    let unflag = json!({"diskId": disk, "action": "unflag"});
+    assert!(
+        engine.call("probe_health", &unflag, AUTHOR_CLAUDE).is_err(),
+        "an agent may not clear the count"
+    );
+    let cleared = call(&engine, "probe_health", unflag);
+    assert_eq!(
+        (cleared["resets"].clone(), cleared["failing"].clone()),
+        (json!(0), json!(false))
+    );
+    // The band is still there until it is forgiven.
+    assert_eq!(
+        call(&engine, "health_map", json!({"diskId": disk}))["suspect"]["ranges"],
+        1
+    );
+    call(
+        &engine,
+        "probe_health",
+        json!({"diskId": disk, "action": "forgive", "start": 2 * MIB, "end": 4 * MIB}),
+    );
+    assert_eq!(
+        call(&engine, "health_map", json!({"diskId": disk}))["suspect"]["ranges"],
+        0
+    );
+    let freed = call(
+        &engine,
+        "read_raw_disk",
+        json!({"diskId": disk, "offset": 3 * MIB, "length": 512}),
+    );
+    assert!(freed.is_object());
+}
+
+#[test]
+fn the_edges_wait_for_the_person_through_the_tools() {
+    let image = Image::new("edges", 6);
+    let engine = Engine::default();
+    let disk = open(&engine, &image);
+    // Nothing is bad on a healthy image: the grid finishes and there is nothing to map.
+    let done = call(
+        &engine,
+        "probe_health",
+        json!({"diskId": disk, "gridBytes": MIB, "skipBytes": 2 * MIB, "maxReads": 100}),
+    );
+    assert_eq!(done["step"]["finished"], true);
+    assert_eq!(done["step"]["bands"], 0);
+    let edges = call(
+        &engine,
+        "probe_health",
+        json!({"diskId": disk, "action": "edges"}),
+    );
+    assert_eq!(
+        edges["step"]["finished"], true,
+        "edges with nothing to map is harmless"
+    );
+}

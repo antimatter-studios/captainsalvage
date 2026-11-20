@@ -14,6 +14,10 @@ pub enum RangeState {
     Good,
     /// Read, but slower than the threshold: the drive retried inside.
     Slow,
+    /// Not read, and not to be: it lies inside a band where a probe found a read that failed, was
+    /// slow, or reset the device, and the stretch between the reads that were good has not been
+    /// mapped. Nothing reads it until its edges are mapped, or the person forgives it.
+    Suspect,
     /// A read failed.
     Unreadable,
     /// The device went away during a read of this range, or a read of it started and never
@@ -24,13 +28,14 @@ pub enum RangeState {
 impl RangeState {
     /// A range in this state is not read again by anything that reads the source.
     pub fn blocks(self) -> bool {
-        self >= RangeState::Unreadable
+        self >= RangeState::Suspect
     }
 
     pub fn name(self) -> &'static str {
         match self {
             RangeState::Good => "good",
             RangeState::Slow => "slow",
+            RangeState::Suspect => "suspect",
             RangeState::Unreadable => "unreadable",
             RangeState::ResetCulprit => "reset-culprit",
         }
@@ -40,6 +45,7 @@ impl RangeState {
         Some(match text {
             "good" => RangeState::Good,
             "slow" => RangeState::Slow,
+            "suspect" => RangeState::Suspect,
             "unreadable" => RangeState::Unreadable,
             "reset-culprit" => RangeState::ResetCulprit,
             _ => return None,
@@ -180,11 +186,37 @@ impl HealthMap {
 
     /// The first range that blocks reading and overlaps `start..end`.
     pub fn blocked(&self, start: u64, end: u64) -> Option<&HealthRange> {
+        self.blocked_with(start, end, true)
+    }
+
+    /// [`HealthMap::blocked`], where a suspect range blocks only when `suspect_blocks`: the probe
+    /// reads through a suspect band, on purpose, when it maps the band's edges.
+    pub fn blocked_with(&self, start: u64, end: u64, suspect_blocks: bool) -> Option<&HealthRange> {
         let first = self.ranges.partition_point(|range| range.end <= start);
         self.ranges[first..]
             .iter()
             .take_while(|range| range.start < end)
-            .find(|range| range.state.blocks())
+            .find(|range| {
+                range.state.blocks() && (suspect_blocks || range.state != RangeState::Suspect)
+            })
+    }
+
+    /// Forgets the suspect pieces inside `start..end` and nothing else there.
+    pub fn clear_suspect(&mut self, start: u64, end: u64) {
+        let mut out = Vec::with_capacity(self.ranges.len());
+        for old in std::mem::take(&mut self.ranges) {
+            if old.state != RangeState::Suspect || old.end <= start || old.start >= end {
+                out.push(old);
+                continue;
+            }
+            if old.start < start {
+                out.push(old.piece(old.start, start));
+            }
+            if old.end > end {
+                out.push(old.piece(end, old.end));
+            }
+        }
+        self.ranges = out;
     }
 
     /// The blocking ranges inside `start..end`, cut to it.
@@ -301,6 +333,36 @@ mod tests {
         assert_eq!(map.blocked(25, 31).map(|r| r.start), Some(30));
         assert!(map.blocked(40, 50).is_none());
         assert_eq!(map.blocked_within(0, 35), vec![(30, 35)]);
+    }
+
+    #[test]
+    fn a_suspect_range_blocks_between_slow_and_unreadable_and_a_probe_can_read_through_it() {
+        assert!(
+            RangeState::Slow < RangeState::Suspect && RangeState::Suspect < RangeState::Unreadable
+        );
+        let mut map = HealthMap::default();
+        map.record(range(0, 100, RangeState::Suspect));
+        map.record(range(40, 50, RangeState::ResetCulprit));
+        assert_eq!(
+            map.blocked(10, 20).map(|r| r.state),
+            Some(RangeState::Suspect)
+        );
+        assert!(
+            map.blocked_with(10, 20, false).is_none(),
+            "a probe reads through suspect"
+        );
+        assert_eq!(
+            map.blocked_with(30, 45, false).map(|r| r.state),
+            Some(RangeState::ResetCulprit)
+        );
+        // Clearing the suspect pieces leaves what is worse than suspect.
+        map.clear_suspect(0, 100);
+        let shown: Vec<_> = map
+            .ranges()
+            .iter()
+            .map(|r| (r.start, r.end, r.state))
+            .collect();
+        assert_eq!(shown, vec![(40, 50, RangeState::ResetCulprit)]);
     }
 
     #[test]

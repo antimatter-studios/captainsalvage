@@ -61,6 +61,7 @@ const strings: Record<string, string> = {
   "Source bytes": "Octets de la source",
   "Start byte": "Octet de début",
   "Unreadable regions": "Zones illisibles",
+  "Suspect, not read": "Suspect, non lu",
   "Slow to read": "Lecture lente",
   "Marked unreadable": "Marqué illisible",
   "The drive reset here": "Le disque s'est réinitialisé ici",
