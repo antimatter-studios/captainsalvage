@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.10.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.11.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.11.0 — 2026-11-20
+
+**Added**
+
+- **A bridge can be verified by a decoder, and a verified one can be kept.** The `media_check` tool (which has ffmpeg read a file and reports its exact errors) and the `materialize` tool now take a reassembly the way `test_stream` does: an entry (or clusters) plus `appendExtents`, `appendChain` or `appendChains`. ffmpeg then reads the clusters in that order as one file, every byte from the disk (a cluster that cannot be read fails the check, it is not filled in), and the answer says what was joined where. A new `disk_rebuild_place_reassembly` tool keeps one: it completes the file with the appended clusters as a hypothesis the map then reads (which `delete_overlay` undoes) and places the file in a Disk Rebuild, so a copy of the Disk Rebuild holds it whole.
+
 ### v0.10.0 — 2026-11-20
 
 **Added**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **NTFS shows and copies what could be read of a damaged file.** When part of an NTFS file's data cannot be read (a damaged or missing run, a run outside the volume, or a read that fails), the text and byte previews now show each unreadable byte as `?` and say which bytes they are, and a copy keeps the file's layout, writes zeros there and the rest as read, is marked partial, and its manifest names the unreadable byte ranges. Before, the whole read failed and a copy made no file. Compressed, encrypted and incomplete streams are not treated this way: they still say why they cannot be read, and no file of zeros is made for them.
-
-### v0.6.0 — 2026-11-19
-
-**Added**
-
-- **An NTFS file with several names is listed under each of them.** When one file has more than one name (hard links), each name now appears as a file in the folder it belongs to, with the file's size and bytes, so a copy holds the file under every name. Before, only one name was listed and the others were shown only in the file's record details. Each name is an entry of its own, so scanning again does not list it twice.
 
 <!-- changelog:end -->
 
