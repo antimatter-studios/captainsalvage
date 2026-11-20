@@ -1,5 +1,6 @@
 import type { Layer } from "./api";
 import { decimal } from "./format";
+import { BAD_RED } from "./badSectors";
 import { t } from "./i18n";
 
 export type Rgb = [number, number, number];
@@ -91,6 +92,7 @@ export function legendFor(layer: Layer): LegendItem[] {
         { value: 5, label: t("FAT chain with no name"), color: colors.series[3] },
         { value: 6, label: t("Explained by a hypothesis"), color: colors.series[4] },
         { value: 1, label: t("Nothing explains it"), color: colors.neutral },
+        { value: 7, label: t("Explained by bad sectors"), color: BAD_RED },
       ];
     default:
       return [];

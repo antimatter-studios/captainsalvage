@@ -546,6 +546,224 @@ fn the_volume_map_is_told_which_clusters_are_bad_sectors() {
 }
 
 #[test]
+fn a_disk_rebuild_flags_what_crosses_a_bad_sector_in_the_tree_and_the_copy_plan_and_blocks_nothing()
+{
+    for kind in [FilesystemKind::Fat16, FilesystemKind::Fat32] {
+        let (session, _, id, _) =
+            with_a_known_bad_second_cluster(kind, &format!("known-bad-rebuild-{kind}"), true);
+        let destination = session
+            .workspace
+            .dir()
+            .join("rebuild-copy")
+            .display()
+            .to_string();
+        std::fs::create_dir_all(&destination).unwrap();
+        let engine = Engine::new();
+        engine.set_session(session.clone());
+        let person = |tool: &str, args: Value| {
+            engine
+                .call(tool, &args, AUTHOR_USER)
+                .unwrap_or_else(|error| panic!("{tool}: {error:#}"))
+        };
+        let rebuild = person("disk_rebuild_create", json!({"name": "Mine"}))["id"]
+            .as_i64()
+            .unwrap();
+        let top = person(
+            "disk_rebuild_folder",
+            json!({"diskRebuild": rebuild, "name": "Top", "place": {}}),
+        )["id"]
+            .as_i64()
+            .unwrap();
+        let inner = person(
+            "disk_rebuild_folder",
+            json!({"diskRebuild": rebuild, "name": "Inner", "place": {"item": top}}),
+        )["id"]
+            .as_i64()
+            .unwrap();
+        person(
+            "disk_rebuild_place_file",
+            json!({"diskRebuild": rebuild, "entry": id, "place": {"item": inner}}),
+        );
+
+        // The file's own listing says how many of its bytes are in a bad sector (bytes 512 to 700).
+        let tree = person(
+            "disk_rebuild_tree",
+            json!({"diskRebuild": rebuild, "path": ["Inner"]}),
+        );
+        assert_eq!(tree["files"][0]["badSectorBytes"], 188, "{kind}: {tree}");
+        // The folder above it counts what is below it, and so does the one above that.
+        let root = person("disk_rebuild_tree", json!({"diskRebuild": rebuild}));
+        assert_eq!(root["folders"][0]["badSectorFiles"], 1, "{kind}: {root}");
+        assert_eq!(root["folders"][0]["badSectorBytes"], 188, "{kind}");
+        // The copy plan says how many bytes of how many files, and is not refused for it.
+        let plan = person(
+            "disk_rebuild_copy_plan",
+            json!({"diskRebuild": rebuild, "destination": destination, "includePartial": true}),
+        );
+        assert_eq!(plan["badSectorFiles"], 1, "{kind}: {plan}");
+        assert_eq!(plan["badSectorBytes"], 188, "{kind}");
+        assert_eq!(plan["files"], 1);
+        assert!(
+            plan["refused"].is_null(),
+            "{kind}: a bad sector blocks nothing: {plan}"
+        );
+        // The copy itself goes ahead, zeros where the sector is, and names it.
+        session
+            .disk_rebuild_copy_start(
+                rebuild,
+                &captainsalvage::exporting::RebuildCopyOptions {
+                    destination: destination.clone(),
+                    min_confidence: 0.0,
+                    include_partial: true,
+                },
+            )
+            .unwrap();
+        wait_for_copy_with_partial(&session, 1, 1);
+        let manifest = std::fs::read_to_string(
+            Path::new(&destination).join("Mine/captain-salvage-manifest.jsonl"),
+        )
+        .or_else(|_| {
+            std::fs::read_to_string(Path::new(&destination).join("captain-salvage-manifest.jsonl"))
+        })
+        .unwrap_or_else(|_| {
+            // The copy goes in a folder named after the rebuild: find the manifest wherever it is.
+            let mut found = String::new();
+            for entry in walk(Path::new(&destination)) {
+                if entry
+                    .file_name()
+                    .is_some_and(|name| name == "captain-salvage-manifest.jsonl")
+                {
+                    found = std::fs::read_to_string(entry).unwrap();
+                }
+            }
+            found
+        });
+        let row: Value =
+            serde_json::from_str(manifest.lines().next().expect("a manifest line")).unwrap();
+        assert_eq!(
+            row["badSectorRanges"],
+            json!([{"start": 512, "end": 700}]),
+            "{kind}"
+        );
+    }
+}
+
+fn walk(folder: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(folder) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(walk(&path));
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn the_typed_ranges_of_a_file_say_which_of_its_bytes_are_bad_sectors() {
+    use captainsalvage::ranges::RangeKind;
+    for kind in [FilesystemKind::Fat16, FilesystemKind::Fat32] {
+        let (session, _, _, _) =
+            with_a_known_bad_second_cluster(kind, &format!("known-bad-typed-{kind}"), false);
+        let entries = session.volume.fixed_root_entries();
+        let found: Vec<_> = if entries.is_empty() {
+            Vec::new()
+        } else {
+            entries
+                .iter()
+                .filter(|(_, entry)| entry.name == "Captain log.txt")
+                .collect()
+        };
+        // FAT32 keeps its root in a cluster, which the scan finds: read it from the volume.
+        let entry = if let Some((_, entry)) = found.first() {
+            entry.clone()
+        } else {
+            let root = session
+                .volume
+                .read_cluster(session.volume.root_clusters[0])
+                .unwrap();
+            session
+                .volume
+                .find_sets(&root, root.len())
+                .into_iter()
+                .find(|entry| entry.name == "Captain log.txt")
+                .unwrap()
+        };
+        assert_eq!(
+            entry.ranges.bytes_of(RangeKind::BadSector),
+            188,
+            "{kind}: bytes 512 to 700"
+        );
+        assert_eq!(entry.ranges.bytes_of(RangeKind::Readable), 512, "{kind}");
+        assert_eq!(
+            entry.ranges.bad_sector_ranges(0, 700),
+            vec![(512, 700)],
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn free_clusters_in_a_bad_sector_count_as_explained_by_bad_sectors_not_as_unexplained() {
+    use captainsalvage::health::{Health, HealthRange, HealthStore, RangeState};
+    let fixture = Fixture::new(FilesystemKind::Fat16);
+    let first_bad = ((fixture.data_sector + 40 - 2) * 512) as u64;
+    let length = fixture.image.len() as u64;
+    let device = Arc::new(MemorySource::new(fixture.image));
+    let workspace = workspace("bad-sector-ownership");
+    let store = Arc::new(HealthStore::open(workspace.dir()).unwrap());
+    let health = Health::attach(device, length, store, "ownership-key".into()).unwrap();
+    let session = Session::with_source(
+        Path::new("/test/fat-bad-ownership"),
+        health.guard(),
+        workspace,
+    )
+    .unwrap();
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session);
+    let before = call(&engine, "resolve", json!({}));
+    let unexplained = before["unexplainedFreeClusters"].as_u64().unwrap();
+    assert!(unexplained >= 4, "{before}");
+    assert!(
+        before.get("badSectorFreeClusters").is_none(),
+        "nothing is bad yet: the answer is as it was"
+    );
+
+    // Four free clusters become bad sectors; the map is rebuilt.
+    health.record(HealthRange::new(
+        first_bad,
+        first_bad + 4 * 512,
+        RangeState::ResetCulprit,
+        None,
+        "a test",
+    ));
+    let after = call(&engine, "resolve", json!({}));
+    assert_eq!(after["badSectorFreeClusters"], 4, "{after}");
+    assert_eq!(
+        after["unexplainedFreeClusters"].as_u64().unwrap(),
+        unexplained - 4,
+        "bytes nobody can read stop counting"
+    );
+    let region = call(
+        &engine,
+        "region_stats",
+        json!({"startCluster": 40, "endCluster": 44}),
+    );
+    assert_eq!(region["ownership"]["explainedByBadSectors"], 4, "{region}");
+    assert_eq!(region["ownership"]["unexplained"], 0, "{region}");
+    let runs = call(&engine, "unexplained_runs", json!({"minClusters": 1}));
+    assert!(
+        !runs.to_string().contains("\"startCluster\":40"),
+        "no unexplained run starts in the bad zone: {runs}"
+    );
+}
+
+#[test]
 fn a_scan_of_a_source_with_a_known_bad_range_reports_it_as_unreadable_and_does_not_read_it() {
     use captainsalvage::map::MapDb;
     let (session, _, _, device) =

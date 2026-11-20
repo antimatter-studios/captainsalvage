@@ -620,8 +620,9 @@ impl Session {
             crate::map::EntrySource::Ntfs(stream) => (stream.length, Vec::new(), Some(stream)),
         };
         let valid = row.valid_length.min(row.length);
-        let ranges =
+        let mut ranges =
             crate::ranges::RangeList::from_clusters(&self.volume.geometry, &clusters, total, valid);
+        ranges.mark_bad(&self.volume.bad_sectors());
         let stream = Arc::new(EntryStream {
             id,
             total,

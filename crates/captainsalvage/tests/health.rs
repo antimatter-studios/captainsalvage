@@ -586,3 +586,193 @@ fn a_zone_is_marked_with_who_and_why_and_a_bad_request_is_refused() {
         .starts_with("marked by an agent:"));
     assert_eq!(blocked(&engine, &disk).len(), 2);
 }
+
+fn marked(image: &Image) {
+    HealthStore::for_user()
+        .unwrap()
+        .save_map(
+            &image.key(),
+            None,
+            &HealthMap::from_ranges(vec![
+                HealthRange::new(
+                    MIB,
+                    MIB + MIB / 2,
+                    RangeState::Slow,
+                    Some(900),
+                    "slow, not bad",
+                ),
+                HealthRange::new(
+                    2 * MIB,
+                    3 * MIB,
+                    RangeState::ResetCulprit,
+                    None,
+                    "the drive reset",
+                ),
+                HealthRange::new(
+                    5 * MIB,
+                    6 * MIB,
+                    RangeState::Suspect,
+                    None,
+                    "a probe jumped over it",
+                ),
+                HealthRange::new(
+                    7 * MIB,
+                    7 * MIB + 4096,
+                    RangeState::Unreadable,
+                    None,
+                    "a read failed",
+                ),
+            ]),
+        )
+        .unwrap();
+}
+
+#[test]
+fn bad_sectors_are_extents_of_the_source_listed_with_the_others_and_seen_by_the_range_tools() {
+    let image = Image::new("extents", 7);
+    marked(&image);
+    let engine = Engine::default();
+    let disk = open(&engine, &image);
+
+    let listed = call(&engine, "list_extents", json!({"diskId": disk}));
+    let kinds: Vec<(u64, &str, &str)> = listed["extents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extent| {
+            (
+                extent["start"].as_u64().unwrap(),
+                extent["kind"].as_str().unwrap(),
+                extent["state"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (2 * MIB, "bad_sector", "reset-culprit"),
+            (5 * MIB, "bad_sector", "suspect"),
+            (7 * MIB, "bad_sector", "unreadable")
+        ],
+        "slow is not a bad sector: it reads"
+    );
+    assert_eq!(listed["extents"][0]["length"], MIB);
+    assert!(listed["extents"][0]["foundMillis"].as_u64().unwrap() > 0);
+    let narrowed = call(
+        &engine,
+        "list_extents",
+        json!({"diskId": disk, "start": 3 * MIB, "end": 6 * MIB, "kind": "bad_sector"}),
+    );
+    assert_eq!(narrowed["extents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        call(
+            &engine,
+            "list_extents",
+            json!({"diskId": disk, "kind": "source"})
+        )["extents"],
+        json!([])
+    );
+
+    // Opening a source answers with them, and so do the range tools.
+    let opened = call(&engine, "open_source", json!({"diskId": disk}));
+    assert_eq!(
+        opened["badSectors"].as_array().unwrap().len(),
+        3,
+        "{opened}"
+    );
+    assert_eq!(
+        call(&engine, "list_hypotheses", json!({"diskId": disk}))["badSectors"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let analysed = call(
+        &engine,
+        "analyze_range",
+        json!({"diskId": disk, "offset": MIB, "length": 3 * MIB, "step": 4096, "signatures": false}),
+    );
+    let inside = analysed["badSectors"].as_array().unwrap();
+    assert_eq!(inside.len(), 1, "only the one in the range: {analysed}");
+    assert_eq!(inside[0]["start"], 2 * MIB);
+    assert!(
+        analysed["unreadable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|failure| failure["offset"].as_u64().unwrap() >= 2 * MIB
+                && failure["offset"].as_u64().unwrap() < 3 * MIB),
+        "the analysis did not read the bad sectors, and says they are unreadable: {analysed}"
+    );
+    assert!(!analysed["unreadable"].as_array().unwrap().is_empty());
+    let saved = call(
+        &engine,
+        "save_hypothesis",
+        json!({"diskId": disk, "format": "exFAT", "start": 0, "length": 8 * MIB}),
+    );
+    assert!(saved["saved"]["id"].is_string());
+    let layout = call(
+        &engine,
+        "read_layout",
+        json!({"diskId": disk, "offset": 0, "length": 512}),
+    );
+    assert_eq!(layout["badSectors"].as_array().unwrap().len(), 3);
+    let refused = engine
+        .call(
+            "read_layout",
+            &json!({"diskId": disk, "offset": 2 * MIB + 4096, "length": 512}),
+            AUTHOR_USER,
+        )
+        .expect_err("a layout read that touches a bad sector is refused, not zeros");
+    assert!(format!("{refused:#}").contains("not read"), "{refused:#}");
+}
+
+#[test]
+fn bad_sectors_are_still_there_when_the_source_is_opened_again_and_after_the_drive_is_rebound() {
+    let image = Image::new("reopen", 8);
+    marked(&image);
+    let first = Engine::default();
+    let disk = open(&first, &image);
+    assert_eq!(
+        call(
+            &first,
+            "list_extents",
+            json!({"diskId": disk, "kind": "bad_sector"})
+        )["extents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    drop(first);
+    // A new run of the app: the same drive, found by what is in it, has the same bad sectors.
+    let second = Engine::default();
+    let disk = open(&second, &image);
+    let again = call(
+        &second,
+        "list_extents",
+        json!({"diskId": disk, "kind": "bad_sector"}),
+    );
+    assert_eq!(again["extents"].as_array().unwrap().len(), 3);
+    // Stored under the source's key, which is in the bytes and not in the device's name.
+    assert_eq!(again["sourceKey"], image.key());
+    let stored = HealthStore::for_user()
+        .unwrap()
+        .bad_extents(&image.key())
+        .unwrap();
+    assert_eq!(
+        stored.iter().map(|extent| extent.start).collect::<Vec<_>>(),
+        vec![2 * MIB, 5 * MIB, 7 * MIB]
+    );
+    // A copy of the image under another name is the same drive: it has them too (the rebind case in the guard tests).
+    let renamed = std::env::temp_dir().join(format!(
+        "captainsalvage-health-{}-reopen-renamed.img",
+        std::process::id()
+    ));
+    std::fs::copy(&image.0, &renamed).unwrap();
+    let third = Engine::default();
+    let opened = call(&third, "open_raw_disk", json!({"path": renamed}));
+    let listed = call(&third, "list_extents", json!({"diskId": opened["id"]}));
+    let _ = std::fs::remove_file(&renamed);
+    assert_eq!(listed["extents"].as_array().unwrap().len(), 3, "{listed}");
+}

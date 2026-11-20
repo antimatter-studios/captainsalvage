@@ -86,6 +86,7 @@ export function DiskRebuildCopy({ diskRebuild, copy, revision, onClose }: {
           {!plan.refused && <div className="muted detail-path">{t("It goes in {path}", { path: plan.destination })}</div>}
           {!plan.fits && !plan.refused && <div className="warn">{t("This does not fit on that disk.")}</div>}
           {plan.skippedPartial > 0 && <div className="muted">{t("{count} partial files left out, {bytes}.", { count: count(plan.skippedPartial), bytes: bytes(plan.skippedPartialBytes) })}</div>}
+          {(plan.badSectorFiles ?? 0) > 0 && <div className="warn"><span className="legend-swatch bad-swatch" /> {t("{count} files have bytes in bad sectors, {bytes} in all. They are copied with zeros there, and the manifest names them.", { count: count(plan.badSectorFiles ?? 0), bytes: bytes(plan.badSectorBytes ?? 0) })}</div>}
           {plan.refused && <p className="warn"><strong>{fromEngine(plan.refused)}</strong></p>}
         </div>
       )}

@@ -147,9 +147,21 @@ pub fn call(tool: &str, disk: &RawDisk, args: &Value) -> Result<Value> {
                 &options,
                 &mut |_, _| true,
             )?;
-            Ok(serde_json::to_value(report)?)
+            let mut answer = serde_json::to_value(report)?;
+            // The bad sectors in the range: the analysis did not read them.
+            let offset = need_u64(args, "offset")?;
+            answer["badSectors"] = json!(crate::health_tools::bad_extents_in(
+                disk,
+                offset,
+                offset.saturating_add(need_u64(args, "length")?)
+            ));
+            Ok(answer)
         }
-        "list_hypotheses" => listing(HypothesisStore::for_user()?.list(disk)?),
+        "list_hypotheses" => {
+            let mut answer = listing(HypothesisStore::for_user()?.list(disk)?)?;
+            answer["badSectors"] = json!(crate::health_tools::bad_extents_in(disk, 0, u64::MAX));
+            Ok(answer)
+        }
         "save_hypothesis" => {
             let new: NewHypothesis =
                 serde_json::from_value(args.clone()).context("the hypothesis is not valid")?;
@@ -183,7 +195,9 @@ pub fn call(tool: &str, disk: &RawDisk, args: &Value) -> Result<Value> {
             let mut data = vec![0; length as usize];
             crate::source::BlockSource::read_exact_at(&device, offset, &mut data)?;
             Ok(
-                json!({"offset": offset, "hex": data.iter().map(|byte| format!("{byte:02x}")).collect::<String>()}),
+                json!({"offset": offset, "hex": data.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                    // In the source's own offsets: a read that touches one is refused, not zeros.
+                    "badSectors": crate::health_tools::bad_extents_in(disk, 0, u64::MAX)}),
             )
         }
         other => anyhow::bail!("unknown range tool {other}"),

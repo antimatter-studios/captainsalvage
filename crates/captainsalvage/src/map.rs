@@ -395,6 +395,14 @@ pub struct MapSummary {
     pub broken_nameless_chains: u64,
     pub unexplained_free_clusters: u64,
     pub labelled_free_clusters: u64,
+    /// Free clusters that nothing explains and that lie in a bad sector of the source: nobody can read
+    /// them, so they are not counted as unexplained. Left out of the answer when there are none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bad_sector_free_clusters: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1014,6 +1022,7 @@ impl MapDb {
             broken_nameless_chains: broken_nameless_chains as u64,
             unexplained_free_clusters: 0,
             labelled_free_clusters: 0,
+            bad_sector_free_clusters: 0,
         })
     }
 

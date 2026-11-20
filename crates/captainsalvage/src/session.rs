@@ -15,8 +15,8 @@ use crate::map::{
 };
 use crate::mount::{DiskReturn, DiskWrites, MountHistory, ReturnWatch, WriteWatch};
 use crate::resolve::{
-    OWNERSHIP_DIRECTORY, OWNERSHIP_LABELLED, OWNERSHIP_NAMELESS_CHAIN, OWNERSHIP_ONE_ENTRY,
-    OWNERSHIP_SEVERAL_ENTRIES, OWNERSHIP_UNEXPLAINED,
+    OWNERSHIP_BAD_SECTORS, OWNERSHIP_DIRECTORY, OWNERSHIP_LABELLED, OWNERSHIP_NAMELESS_CHAIN,
+    OWNERSHIP_ONE_ENTRY, OWNERSHIP_SEVERAL_ENTRIES, OWNERSHIP_UNEXPLAINED,
 };
 use crate::scan::{read_progress, run_scan, ScanOptions, ScanProgress};
 use crate::source::{mount_line, os_denies_writes, BlockSource, FileSource, ReadStats};
@@ -45,13 +45,14 @@ const FIND_TIME_LIMIT: Duration = Duration::from_secs(90);
 const MIN_RATE_SAMPLE: Duration = Duration::from_secs(3);
 pub(crate) const DISK_GONE: &str =
     "The disk has been disconnected, so nothing can be read from it.";
-const OWNERSHIP_NAMES: [&str; 6] = [
+const OWNERSHIP_NAMES: [&str; 7] = [
     "unexplained",
     "claimed by one entry",
     "claimed by several entries",
     "directory",
     "nameless FAT chain",
     "explained by a hypothesis",
+    "explained by bad sectors",
 ];
 
 /// Where a byte offset is measured from.
@@ -1137,7 +1138,8 @@ impl Session {
             "structureHash": self.volume.structure_hash,
             "classNames": crate::content::class_names(self.volume.kind.classes_name_file_records()),
             "groupNames": GROUP_NAMES,
-            "ownershipNames": OWNERSHIP_NAMES,
+            // The seventh name is there only when the source has bad sectors, so every other answer is as it was.
+            "ownershipNames": if self.volume.bad_sectors().is_empty() { &OWNERSHIP_NAMES[..6] } else { &OWNERSHIP_NAMES[..] },
         });
         if !self.volume.kind.keeps_legacy_report_shape() {
             overview["filesystem"] =
@@ -1245,9 +1247,9 @@ impl Session {
                     stack_column(&ordered, &CONTENT_STACK_ORDER, rows)
                 }
                 Layer::Ownership => {
-                    let mut counts = [0u32; 6];
+                    let mut counts = [0u32; 7];
                     for &value in &maps.ownership[indexes] {
-                        counts[usize::from(value).min(5)] += 1;
+                        counts[usize::from(value).min(6)] += 1;
                     }
                     let ordered: Vec<u32> = OWNERSHIP_STACK_ORDER
                         .iter()
@@ -1295,9 +1297,9 @@ impl Session {
                 dominant(&counts)
             }
             Layer::Ownership => {
-                let mut counts = [0u32; 6];
+                let mut counts = [0u32; 7];
                 for &value in &maps.ownership[indexes] {
-                    counts[usize::from(value).min(5)] += 1;
+                    counts[usize::from(value).min(6)] += 1;
                 }
                 dominant(&counts) + 1
             }
@@ -1376,14 +1378,14 @@ impl Session {
         let maps = self.cluster_maps();
         let mut allocation = [0u64; 4];
         let mut groups = [0u64; GROUP_COUNT];
-        let mut ownership = [0u64; 6];
+        let mut ownership = [0u64; 7];
         let mut entropy_bins = [0u64; 16];
         let mut confidence_bins = [0u64; 11];
         for cluster in first..last {
             let index = (cluster - FIRST_CLUSTER) as usize;
             allocation[usize::from(self.volume.allocation_class(cluster))] += 1;
             groups[usize::from(content_group(maps.classes[index]))] += 1;
-            ownership[usize::from(maps.ownership[index]).min(5)] += 1;
+            ownership[usize::from(maps.ownership[index]).min(6)] += 1;
             entropy_bins[usize::from(maps.entropy[index] >> 4)] += 1;
             confidence_bins[usize::from(maps.confidence[index]) * 10 / 255] += 1;
         }
@@ -1404,6 +1406,7 @@ impl Session {
                 "directory": ownership[usize::from(OWNERSHIP_DIRECTORY)],
                 "namelessChain": ownership[usize::from(OWNERSHIP_NAMELESS_CHAIN)],
                 "explainedByHypothesis": ownership[usize::from(OWNERSHIP_LABELLED)],
+                "explainedByBadSectors": ownership[usize::from(OWNERSHIP_BAD_SECTORS)],
             },
             "entropyHistogram16Bins": entropy_bins,
             "confidenceHistogramTenths": confidence_bins,
@@ -1511,7 +1514,7 @@ impl Session {
             island,
             content_class: self.volume.class_name(class).to_string(),
             entropy_bits: entropy_bits(&data),
-            ownership: OWNERSHIP_NAMES[usize::from(ownership).min(5)].to_string(),
+            ownership: OWNERSHIP_NAMES[usize::from(ownership).min(6)].to_string(),
             confidence: f64::from(confidence) / 255.0,
             sets,
             owners,
@@ -1662,8 +1665,9 @@ impl Session {
         if start >= end {
             return Ok(Vec::new());
         }
-        let ranges =
+        let mut ranges =
             crate::ranges::RangeList::from_clusters(&self.volume.geometry, clusters, total, total);
+        ranges.mark_bad(&self.volume.bad_sectors());
         let (data, unreadable) = ranges.read(start, end, size, &mut |offset, count| {
             self.volume.read_bytes(offset, count as usize).ok()
         });
@@ -1920,6 +1924,22 @@ impl Session {
         offset: u64,
         length: u64,
     ) -> Result<(Vec<u8>, Vec<crate::browse::ByteRange>)> {
+        let (data, missing, _) = self.read_ntfs_stream_marked_bad(stream, offset, length)?;
+        Ok((data, missing))
+    }
+
+    /// [`Session::read_ntfs_stream_marked`], and which of the stretches it could not read lie in a bad
+    /// sector of the source (the third part, in bytes from `offset` too): those were not tried again.
+    pub fn read_ntfs_stream_marked_bad(
+        &self,
+        stream: &crate::filesystem::ntfs_salvage::StreamReference,
+        offset: u64,
+        length: u64,
+    ) -> Result<(
+        Vec<u8>,
+        Vec<crate::browse::ByteRange>,
+        Vec<crate::browse::ByteRange>,
+    )> {
         let access = self
             .volume
             .ntfs
@@ -1927,28 +1947,47 @@ impl Session {
             .context("this volume is not NTFS")?;
         access.verify(stream)?;
         if let Ok(data) = self.read_ntfs_stream(stream, offset, length) {
-            return Ok((data, Vec::new()));
+            return Ok((data, Vec::new(), Vec::new()));
         }
         self.require_disk()?;
+        let zones = self.volume.bad_sectors();
         let size = self.volume.geometry.cluster_size();
         let end = stream.length.min(offset.saturating_add(length));
         let mut data = Vec::with_capacity(end.saturating_sub(offset) as usize);
         let mut missing = Vec::new();
+        let mut bad = Vec::new();
         let mut at = offset;
         while at < end {
             let piece = (size - at % size).min(end - at);
-            match self.read_ntfs_stream(stream, at, piece) {
+            // Known to be bad: not read, and named as such.
+            let in_bad_sector = !zones.is_empty()
+                && access
+                    .source_ranges(stream, at, piece)
+                    .is_some_and(|places| {
+                        places.iter().any(|(from, to)| {
+                            zones.iter().any(|(start, stop)| start < to && stop > from)
+                        })
+                    });
+            let read = if in_bad_sector {
+                Err(anyhow!("in a bad sector"))
+            } else {
+                self.read_ntfs_stream(stream, at, piece)
+            };
+            match read {
                 Ok(bytes) => data.extend_from_slice(&bytes),
                 Err(_) => {
                     // A source that went away is not a bad cluster.
                     self.require_disk()?;
                     crate::browse::push_range(&mut missing, at - offset, at - offset + piece);
+                    if in_bad_sector {
+                        crate::browse::push_range(&mut bad, at - offset, at - offset + piece);
+                    }
                     data.resize(data.len() + piece as usize, 0);
                 }
             }
             at += piece;
         }
-        Ok((data, missing))
+        Ok((data, missing, bad))
     }
 
     pub fn entropy_map(&self) -> Vec<u8> {
@@ -1989,7 +2028,7 @@ struct ClusterMaps {
 
 /// Bands from the top of a map column down: rarest and most telling first.
 const CONTENT_STACK_ORDER: [u8; GROUP_COUNT] = [10, 9, 3, 4, 5, 6, 7, 8, 2, 1, 0];
-const OWNERSHIP_STACK_ORDER: [u8; 6] = [3, 2, 1, 4, 5, 0];
+const OWNERSHIP_STACK_ORDER: [u8; 7] = [6, 3, 2, 1, 4, 5, 0];
 
 /// Splits `rows` among categories in proportion to their counts. Any category
 /// present keeps at least one row. Returns one display value per row.

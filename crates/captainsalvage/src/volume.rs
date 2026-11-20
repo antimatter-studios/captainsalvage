@@ -131,8 +131,30 @@ impl Volume {
         &self.source
     }
 
+    /// The ranges of this volume (`(start, end)` in its own bytes) that the health map of its source
+    /// says must not be read: suspect, unreadable and reset-culprit. Empty for a source with no health
+    /// map, which is every source in the command-line tools and the tests that do not make one.
+    pub fn bad_sectors(&self) -> Vec<(u64, u64)> {
+        self.source
+            .bad_ranges()
+            .into_iter()
+            .filter(|range| range.state.blocks())
+            .map(|range| (range.start, range.end))
+            .collect()
+    }
+
+    /// The entries found in `data`, with the bytes of each that lie in a bad sector of the source marked
+    /// as such in its typed ranges.
     pub fn find_sets(&self, data: &[u8], start_limit: usize) -> Vec<SalvageEntry> {
-        salvage::find_entries(self.kind, &self.geometry, &self.fat, data, start_limit)
+        let mut entries =
+            salvage::find_entries(self.kind, &self.geometry, &self.fat, data, start_limit);
+        let bad = self.bad_sectors();
+        if !bad.is_empty() {
+            for entry in &mut entries {
+                entry.ranges.mark_bad(&bad);
+            }
+        }
+        entries
     }
 
     pub fn fixed_root_entries(&self) -> Vec<(u32, SalvageEntry)> {

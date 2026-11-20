@@ -102,6 +102,17 @@ pub struct RebuiltFolder {
     pub intact_bytes: u64,
     /// An agent made or changed one of the items this folder is made of.
     pub made_by_agent: bool,
+    /// How many of its files (anywhere below it) have bytes in a bad sector of the source, and how many
+    /// bytes. Left out when none do, and when the source has no health map. Never a reason to refuse
+    /// anything: the files are still placed and copied, their bad bytes as zeros.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bad_sector_files: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bad_sector_bytes: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// One file of the rebuilt tree, with every copy of it that the pieces hold.
@@ -121,6 +132,10 @@ pub struct RebuiltFile {
     pub copies: Vec<Row>,
     /// An agent placed this file on its own, or chose its copy.
     pub made_by_agent: bool,
+    /// The bytes of the chosen copy that lie in a bad sector of the source (clusters the rebuild or a
+    /// reassembly takes from there included). Left out when none do.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bad_sector_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -914,6 +929,7 @@ fn rebuild_files(
                     .is_some_and(|layer| agent.file_layers.contains(layer));
             // The name is the chosen copy's, since copies can differ in case.
             RebuiltFile {
+                bad_sector_bytes: 0,
                 made_by_agent,
                 name: chosen.name.clone(),
                 by_person,
@@ -947,7 +963,7 @@ pub struct ClashPage {
 
 impl MapDb {
     /// Visits every file of the rebuilt tree with its folders' path names and shown names.
-    fn walk_disk_rebuild(
+    pub(crate) fn walk_disk_rebuild(
         &self,
         disk_rebuild: i64,
         mut visit: impl FnMut(&[String], &[String], RebuiltFile),
@@ -1709,6 +1725,8 @@ impl<'a> Tree<'a> {
             intact_files: 0,
             intact_bytes: 0,
             made_by_agent: false,
+            bad_sector_files: 0,
+            bad_sector_bytes: 0,
         };
         let mut made = 0;
         let mut placed = 0;

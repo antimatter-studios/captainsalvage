@@ -183,6 +183,12 @@ impl HealthStore {
         Ok(())
     }
 
+    /// The bad zones stored for a source key, as extents. They are the same whichever run of the app, and
+    /// whichever name the device has, wrote them.
+    pub fn bad_extents(&self, key: &str) -> Result<Vec<super::BadExtent>> {
+        Ok(super::bad_extents(self.load_map(key)?.ranges()))
+    }
+
     pub fn load_map(&self, key: &str) -> Result<HealthMap> {
         let catalog = self.lock();
         let mut statement = catalog.connection().prepare(

@@ -91,6 +91,16 @@ pub struct CopyPlan {
     pub skipped_partial_bytes: u64,
     pub largest: Vec<Value>,
     pub by_verdict: HashMap<String, u64>,
+    /// Files in the plan with bytes in a bad sector of the source, and how many bytes. The copy writes
+    /// zeros for them and names them in the manifest. Left out when none, never a reason to refuse.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bad_sector_files: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bad_sector_bytes: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -145,6 +155,10 @@ pub struct ManifestRow {
     /// the copy. Empty for a file with none, and for a manifest line from before this was kept.
     #[serde(default)]
     pub unreadable_ranges: Vec<ByteRange>,
+    /// The part of `unreadable_ranges` that lies in a bad sector: a range the health map of the source
+    /// marks, which was not read at all (see `crate::health`). The rest were tried and failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bad_sector_ranges: Vec<ByteRange>,
     pub format: Option<String>,
     pub format_valid_fraction: Option<f64>,
     pub format_breaks: Option<u64>,
@@ -735,7 +749,20 @@ impl Session {
             0
         };
 
+        let zones = self.volume.bad_sectors();
+        let (mut bad_sector_files, mut bad_sector_bytes) = (0u64, 0u64);
+        if !zones.is_empty() {
+            for row in &selected {
+                let bad = self.bad_sector_bytes_of(row, &zones);
+                if bad > 0 {
+                    bad_sector_files += 1;
+                    bad_sector_bytes += bad;
+                }
+            }
+        }
         Ok(CopyPlan {
+            bad_sector_files,
+            bad_sector_bytes,
             files: selected.len() as u64,
             bytes,
             already_copied_bytes,
@@ -750,6 +777,100 @@ impl Session {
             largest,
             by_verdict,
         })
+    }
+
+    /// How many bytes of a file lie in a bad sector of the source (`zones`, in volume bytes): the clusters it
+    /// is read from, after any rebuild or reassembly changed them, that fall in a zone. Whole clusters
+    /// count as far as the file's length goes. A stream this cannot place counts none.
+    pub fn bad_sector_bytes_of(&self, row: &Row, zones: &[(u64, u64)]) -> u64 {
+        if zones.is_empty() {
+            return 0;
+        }
+        let size = self.volume.geometry.cluster_size();
+        let in_zone = |from: u64, to: u64| {
+            zones
+                .iter()
+                .any(|(start, stop)| *start < to && *stop > from)
+        };
+        match self.with_database(|database| database.entry_source(&self.volume, row)) {
+            Ok(crate::map::EntrySource::Clusters(clusters)) => {
+                let mut claimed = 0u64;
+                let mut bad = 0u64;
+                for cluster in clusters {
+                    if claimed >= row.length {
+                        break;
+                    }
+                    let bytes = size.min(row.length - claimed);
+                    let place = self.volume.cluster_offset(cluster);
+                    if crate::allocation::valid_cluster(&self.volume.geometry, cluster)
+                        && in_zone(place, place + size)
+                    {
+                        bad += bytes;
+                    }
+                    claimed += bytes;
+                }
+                bad
+            }
+            Ok(crate::map::EntrySource::Ntfs(stream)) => self
+                .volume
+                .ntfs
+                .as_ref()
+                .and_then(|access| access.source_ranges(&stream, 0, stream.length))
+                .map_or(0, |places| {
+                    places
+                        .iter()
+                        .filter(|(from, to)| in_zone(*from, *to))
+                        .map(|(from, to)| to - from)
+                        .sum()
+                }),
+            Err(_) => 0,
+        }
+    }
+
+    /// Marks the files and folders of a Disk Rebuild listing that have bytes in a bad sector of the
+    /// source: the files on this page by their chosen copy, and each folder by everything below it.
+    /// Nothing is refused or changed: it is a flag and a count. A source without bad sectors costs nothing.
+    pub fn flag_bad_sectors(
+        &self,
+        rebuild: i64,
+        path: &[String],
+        listing: &mut crate::disk_rebuild::Listing,
+    ) -> Result<()> {
+        let zones = self.volume.bad_sectors();
+        if zones.is_empty() {
+            return Ok(());
+        }
+        for file in &mut listing.files {
+            file.bad_sector_bytes = self.bad_sector_bytes_of(&file.chosen, &zones);
+        }
+        if listing.folders.is_empty() {
+            return Ok(());
+        }
+        // Everything below each folder: walk the tree once, then measure outside the database's lock.
+        let mut below: Vec<(String, Row)> = Vec::new();
+        self.with_database(|database| {
+            database.walk_disk_rebuild(rebuild, |names, _shown, file| {
+                if names.len() > path.len() && names.starts_with(path) {
+                    below.push((names[path.len()].clone(), file.chosen));
+                }
+            })
+        })?;
+        let mut totals: HashMap<String, (u64, u64)> = HashMap::new();
+        for (folder, row) in below {
+            let bad = self.bad_sector_bytes_of(&row, &zones);
+            if bad > 0 {
+                let total = totals.entry(folder).or_insert((0, 0));
+                total.0 += 1;
+                total.1 += bad;
+            }
+        }
+        for folder in &mut listing.folders {
+            if let Some((files, bytes)) = totals.get(&folder.path_name) {
+                folder.bad_sector_files = *files;
+                folder.bad_sector_bytes = *bytes;
+            }
+        }
+        Ok(())
     }
 
     /// The newest copy this volume knows about, whichever process is running it. A
@@ -1050,6 +1171,8 @@ impl Session {
         let mut written = 0u64;
         let mut unreadable = 0u64;
         let mut unreadable_ranges: Vec<ByteRange> = Vec::new();
+        let mut bad_sector_ranges: Vec<ByteRange> = Vec::new();
+        let bad_zones = self.volume.bad_sectors();
         let valid = row.valid_length.min(row.length);
         let mut index = 0;
         // An NTFS stream is read through the driver in pieces. A stretch of a stream held in runs
@@ -1066,8 +1189,13 @@ impl Session {
                     return Ok(None);
                 }
                 let wanted = (row.length - written).min(MAX_RUN_BYTES);
-                let mut chunk = match self.read_ntfs_stream_marked(stream, written, wanted) {
-                    Ok((chunk, missing)) if !chunk.is_empty() => {
+                let mut chunk = match self.read_ntfs_stream_marked_bad(stream, written, wanted) {
+                    Ok((chunk, missing, bad)) if !chunk.is_empty() => {
+                        for range in bad {
+                            let (from, to) =
+                                (written + range.start, (written + range.end).min(valid));
+                            push_range(&mut bad_sector_ranges, from, to);
+                        }
                         for range in missing {
                             // Only what the file has written: zeros past its valid length are
                             // NTFS's own.
@@ -1143,6 +1271,17 @@ impl Session {
                                     first,
                                     (first + cluster_size).min(row.length),
                                 );
+                                let place = self.volume.cluster_offset(cluster);
+                                if bad_zones
+                                    .iter()
+                                    .any(|(from, to)| *from < place + cluster_size && *to > place)
+                                {
+                                    push_range(
+                                        &mut bad_sector_ranges,
+                                        first,
+                                        (first + cluster_size).min(row.length),
+                                    );
+                                }
                                 pieces.resize(pieces.len() + cluster_size as usize, 0);
                             }
                         }
@@ -1236,6 +1375,7 @@ impl Session {
             clusters_needed: row.length.div_ceil(cluster_size),
             unreadable_clusters: unreadable,
             unreadable_ranges,
+            bad_sector_ranges,
             format,
             format_valid_fraction: valid_fraction,
             format_breaks: breaks,

@@ -888,6 +888,39 @@ impl Access {
         Ok(count)
     }
 
+    /// Where `offset..offset + length` of an entry's data stream is on the source, as `(start, end)`
+    /// ranges in volume bytes, for a stream held in plain runs. None for any other, which has no
+    /// place to be bad.
+    pub fn source_ranges(
+        &self,
+        entry: &StreamReference,
+        offset: u64,
+        length: u64,
+    ) -> Option<Vec<(u64, u64)>> {
+        if entry.storage != STORAGE_RUNS {
+            return None;
+        }
+        let record = self.checked_record(entry).ok()?;
+        let (_, attribute) = data_stream(&record)?;
+        let AttributeValue::NonResident { runs, .. } = &attribute.value else {
+            return None;
+        };
+        let cluster = self.geometry.cluster_size;
+        let end = offset.saturating_add(length);
+        let mut places = Vec::new();
+        let mut at = offset;
+        while at < end {
+            let within = at % cluster;
+            let piece = (cluster - within).min(end - at);
+            if let Some(lcn) = fs_ntfs::data_runs::vcn_to_lcn(runs, at / cluster) {
+                let start = lcn * cluster + within;
+                places.push((start, start + piece));
+            }
+            at += piece;
+        }
+        Some(places)
+    }
+
     /// Reads from an LZNT1-compressed stream. NTFS stores such a stream in compression units of a
     /// power-of-two number of clusters (16, nearly always). A unit is held one of three ways: all of
     /// its clusters allocated (the bytes are stored as they are, because compressing did not make

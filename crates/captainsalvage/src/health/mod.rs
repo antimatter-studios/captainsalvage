@@ -93,6 +93,43 @@ pub(crate) fn owner_is_alive(owner: &str) -> bool {
     found == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// The kind a bad zone has as an extent of its source, beside the other kinds of extent.
+pub const BAD_SECTOR_KIND: &str = "bad_sector";
+
+/// A bad zone as an extent of its source: a range the health map says must not be read. They are kept in
+/// the catalog under the source's key, so they are there when the source is opened again, and when the
+/// drive comes back under another name.
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BadExtent {
+    /// Always `bad_sector`.
+    pub kind: &'static str,
+    pub start: u64,
+    pub length: u64,
+    /// How it was found: `reset-culprit`, `unreadable` or `suspect`.
+    pub state: RangeState,
+    pub latency_ms: Option<u64>,
+    pub found_millis: u64,
+    pub note: String,
+}
+
+/// The bad-sector extents among `ranges`: the ones that block reading.
+pub fn bad_extents(ranges: &[HealthRange]) -> Vec<BadExtent> {
+    ranges
+        .iter()
+        .filter(|range| range.state.blocks())
+        .map(|range| BadExtent {
+            kind: BAD_SECTOR_KIND,
+            start: range.start,
+            length: range.end - range.start,
+            state: range.state,
+            latency_ms: range.latency_ms,
+            found_millis: range.found_millis,
+            note: range.note.clone(),
+        })
+        .collect()
+}
+
 /// What a read of a range known to be bad is answered with, without reading the device.
 #[derive(Debug)]
 pub struct KnownBadRange {
@@ -549,6 +586,11 @@ impl Health {
             .lock()
             .ok()
             .and_then(|identity| identity.clone())
+    }
+
+    /// The bad zones of this source as extents, in order.
+    pub fn bad_extents(&self) -> Vec<BadExtent> {
+        bad_extents(self.snapshot().ranges())
     }
 
     /// The map as this device sees it, in its own offsets.

@@ -562,6 +562,8 @@ impl Engine {
                 "analysisSkipped": true,
                 "summary": "This drive has reset, so opening it did not read fresh markers across the disk and did not analyse it: it was recognised from the few stored markers that lie in places known to read. Analysing a range is yours to ask for.",
             })),
+            // The ranges of the source that must not be read, as extents of kind bad_sector.
+            "badSectors": crate::health_tools::bad_extents_in(&disk, 0, u64::MAX),
             "interpretation": opened_scan.as_ref().filter(|scan| scan.kind == ScanKind::Filesystem).map(|scan| json!({
                 "format": scan.format, "start": scan.start, "length": scan.length,
                 "bootOffset": scan.boot_offset, "origin": scan.origin, "confidence": scan.confidence,
