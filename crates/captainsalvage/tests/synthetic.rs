@@ -7272,3 +7272,207 @@ fn an_id_given_out_is_never_given_out_again_so_old_marks_and_snapshots_never_lan
     assert_ne!(second, first);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A volume with 64 free clusters nothing explains, from 100 to 164: sixteen that were directories (each
+/// holding a valid entry set), sixteen of noise, sixteen of zeros and sixteen starting a JPEG.
+fn unexplained_volume() -> Vec<u8> {
+    let mut b = Builder::new();
+    for cluster in [BITMAP_CLUSTER, ROOT_CLUSTER, 4] {
+        b.allocate(cluster);
+    }
+    b.fat(ROOT_CLUSTER, FAT_END);
+    b.directory(
+        ROOT_CLUSTER,
+        &[fixture_bitmap_entry(&b), upcase_entry(4, &[0; 100])],
+    );
+    for cluster in 100..116u32 {
+        b.directory(
+            cluster,
+            &[entry_set("old file.txt", false, 30, 5000, true, true)],
+        );
+    }
+    for cluster in 116..132u32 {
+        b.put(cluster, 0, &noise(cluster, CLUSTER));
+    }
+    for cluster in 148..164u32 {
+        b.put(cluster, 0, &[0xFF, 0xD8, 0xFF, 0xE0]);
+        b.put(cluster, 16, &noise(cluster, CLUSTER - 16));
+    }
+    b.image
+}
+
+#[test]
+fn unexplained_summary_counts_the_whole_unexplained_space_in_one_call() {
+    let (engine, _session, dir) = engine_with_image("unexplained", unexplained_volume());
+    let runs = call(&engine, "unexplained_runs", json!({"minClusters": 8}));
+    let run = &runs[0];
+    let unexplained = run["unexplainedClusters"].as_u64().unwrap();
+    let summary = call(
+        &engine,
+        "unexplained_summary",
+        json!({"minClusters": 8, "samples": 1000, "perRun": true}),
+    );
+    assert_eq!(summary["regions"]["total"], 1);
+    assert_eq!(summary["regions"]["unexplainedClusters"], unexplained);
+    assert_eq!(
+        summary["regions"]["unexplainedBytes"],
+        unexplained * CLUSTER as u64
+    );
+    // Bytes by main content add up to the bytes of the regions considered.
+    let by_content: u64 = summary["bytesByMainContent"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|bytes| bytes.as_u64().unwrap())
+        .sum();
+    assert_eq!(by_content, unexplained * CLUSTER as u64);
+    // The sample was big enough to take every unexplained cluster.
+    assert_eq!(summary["sample"]["clusters"], unexplained);
+    assert_eq!(summary["sample"]["readErrors"], 0);
+    assert_eq!(summary["sample"]["stoppedBecause"], serde_json::Value::Null);
+    assert_eq!(
+        summary["sampled"]["signaturesAtClusterStart"]["JPEG start"], 16,
+        "{summary}"
+    );
+    assert_eq!(
+        summary["sampled"]["highEntropy"], 32,
+        "noise and JPEG pictures"
+    );
+    assert_eq!(summary["perRun"][0]["sampled"], unexplained);
+    // The directories the scan found are explained, so none is counted here.
+    assert_eq!(summary["sampled"]["holdingValidDirectoryEntries"], 0);
+    assert_eq!(summary["scan"]["status"], "complete");
+    // Bounded: a small budget samples no more than it was given (and every region some), and `top` limits regions.
+    let small = call(
+        &engine,
+        "unexplained_summary",
+        json!({"minClusters": 8, "samples": 10}),
+    );
+    assert!(
+        small["sample"]["clusters"].as_u64().unwrap() <= 10,
+        "{small}"
+    );
+    assert!(small["sample"]["clusters"].as_u64().unwrap() >= 1);
+    let none = call(
+        &engine,
+        "unexplained_summary",
+        json!({"minClusters": 100_000}),
+    );
+    assert_eq!(none["regions"]["total"], 0);
+    assert_eq!(none["sample"]["clusters"], 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A source that reads like the image except where it is told a stretch is bad.
+struct HealingSource {
+    inner: MemorySource,
+    bad: std::sync::Mutex<Option<std::ops::Range<u64>>>,
+}
+
+impl captainsalvage::source::BlockSource for HealingSource {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        if let Some(bad) = self.bad.lock().unwrap().clone() {
+            if offset < bad.end && offset + buffer.len() as u64 > bad.start {
+                return Err(std::io::Error::from_raw_os_error(5));
+            }
+        }
+        self.inner.read_exact_at(offset, buffer)
+    }
+
+    fn read_stats(&self) -> captainsalvage::source::ReadStats {
+        self.inner.read_stats()
+    }
+}
+
+#[test]
+fn clusters_holding_valid_directory_entries_in_unexplained_space_say_why_the_scan_missed_them() {
+    // Sixteen clusters that were directories, of which the scan could not read the first eight. The disk
+    // reads fine afterwards, so they now hold valid entry sets that the map calls unexplained.
+    let image = unexplained_volume();
+    let (workspace, dir) = temp_workspace("unexplained-missed");
+    let source = Arc::new(HealingSource {
+        inner: MemorySource::new(image),
+        bad: std::sync::Mutex::new(None),
+    });
+    let session =
+        Session::with_source(Path::new("/test/image"), source.clone(), workspace).expect("session");
+    let first = session.volume.cluster_offset(100);
+    *source.bad.lock().unwrap() = Some(first..first + 8 * CLUSTER as u64);
+    scan(&session.volume, &session.workspace);
+    *source.bad.lock().unwrap() = None;
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let summary = call(
+        &engine,
+        "unexplained_summary",
+        json!({"minClusters": 8, "samples": 1000}),
+    );
+    assert_eq!(
+        summary["sampled"]["holdingValidDirectoryEntries"], 8,
+        "{summary}"
+    );
+    assert_eq!(
+        summary["sampled"]["holdingValidDirectoryEntriesByClassAtScan"],
+        json!({"read error": 8}),
+        "{summary}"
+    );
+    assert_eq!(
+        summary["sampled"]["holdingValidDirectoryEntriesNotYetScanned"],
+        0
+    );
+    assert_eq!(summary["sampled"]["validDirectoryEntrySets"], 8);
+    assert_eq!(summary["scan"]["readErrors"], 8);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn unexplained_summary_leaves_out_names_and_text_unless_asked_and_allowed() {
+    let image = unexplained_volume();
+    let (workspace, dir) = temp_workspace("unexplained-privacy");
+    let source = Arc::new(HealingSource {
+        inner: MemorySource::new(image),
+        bad: std::sync::Mutex::new(None),
+    });
+    let session =
+        Session::with_source(Path::new("/test/image"), source.clone(), workspace).expect("session");
+    let first = session.volume.cluster_offset(100);
+    *source.bad.lock().unwrap() = Some(first..first + 4 * CLUSTER as u64);
+    scan(&session.volume, &session.workspace);
+    *source.bad.lock().unwrap() = None;
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    engine.set_names_hidden(true);
+    let plain = call(
+        &engine,
+        "unexplained_summary",
+        json!({"minClusters": 8, "samples": 1000}),
+    );
+    let text = plain.to_string();
+    assert!(plain.get("examples").is_none());
+    assert!(
+        !text.contains("old file"),
+        "no names without asking: {text}"
+    );
+    // An agent is refused names while they are kept back; the person is not.
+    let refused = engine
+        .call(
+            "unexplained_summary",
+            &json!({"minClusters": 8, "includeExamples": true}),
+            AUTHOR_CLAUDE,
+        )
+        .expect_err("refused");
+    assert!(refused.to_string().contains("kept back"), "{refused}");
+    let allowed = engine
+        .call(
+            "unexplained_summary",
+            &json!({"minClusters": 8, "samples": 1000, "includeExamples": true}),
+            AUTHOR_USER,
+        )
+        .expect("the person may");
+    assert!(allowed["examples"]["directoryNames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|name| name == "old file.txt"));
+    let _ = std::fs::remove_dir_all(dir);
+}
