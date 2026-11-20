@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-11-20
+
+### Maintenance
+
+- Every job takes its runner from a gate job on the runner gate ([#312](https://github.com/antimatter-studios/captainsalvage/pull/312))
+
 ## [0.15.1] — 2026-11-20
 
 ### Fixed
