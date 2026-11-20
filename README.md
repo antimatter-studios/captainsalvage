@@ -941,8 +941,11 @@ point under `docs/coverage-baseline.json`. CI runs it on every pull request. The
 captured (19 November 2026, v0.4.6): engine 87.28% of lines, 83.60% of regions; Tauri crate 2.09% of
 lines (the window's commands are driven by the window tests, which CI cannot run); TypeScript 98.82% of
 lines, but only of the 6 files in `src/` that the Node tests load, out of 51 (the 13,131 lines of the
-others, the window's components, are exercised only by the window tests). Raise the baseline with
-`chore coverage:baseline`, in the pull request that earned it.
+others, the window's components, are exercised only by the window tests). Raise the baseline in the pull
+request that earned it, from CI's numbers, not this machine's (CI skips the tests that need local tools, so a
+Mac measures about 0.8 points more of the engine's functions): `gh run view <run id> --log --job <coverage job id> |
+scripts/coverage.py baseline --from-log -` writes it from the table the coverage job printed, and
+`baseline` run anywhere but CI refuses unless given `--local`.
 
 Treat the existing tests as a regression contract: record the passing tests before a
 driver change, rerun them afterwards, and check that every previously passing test still
