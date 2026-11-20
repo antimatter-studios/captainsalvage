@@ -1,3 +1,0 @@
-### Added
-
-- **A bridge can be verified by a decoder, and a verified one can be kept.** The `media_check` tool (which has ffmpeg read a file and reports its exact errors) and the `materialize` tool now take a reassembly the way `test_stream` does: an entry (or clusters) plus `appendExtents`, `appendChain` or `appendChains`. ffmpeg then reads the clusters in that order as one file, every byte from the disk (a cluster that cannot be read fails the check, it is not filled in), and the answer says what was joined where. A new `disk_rebuild_place_reassembly` tool keeps one: it completes the file with the appended clusters as a hypothesis the map then reads (which `delete_overlay` undoes) and places the file in a Disk Rebuild, so a copy of the Disk Rebuild holds it whole.
