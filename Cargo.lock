@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "captain-salvage"
-version = "0.8.4"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "block2",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "captainsalvage"
-version = "0.8.4"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bzip2",

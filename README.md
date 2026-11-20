@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.8.4 | MIT | captain-salvage |
+| `captainsalvage` | 0.9.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.9.0 — 2026-11-20
+
+**Added**
+
+- **An agent can test a bridge in one call.** The `test_stream` tool takes `appendChain: {head}` (and `appendChains: [{head}, ...]`) and follows the chain in the FAT itself, so a chain from `bridge_candidates` can be tested without walking it first and passing its extents; with several chains the answer has a `joins` entry for each. `bridge_candidates` takes `test: true` and then tests each of its first candidates as the file's continuation (5 by default, at most 20, within a read budget of 64 MiB unless `testBudgetBytes` says otherwise) and gives each row the verdict: whether the stream crosses the join cleanly and how much of it is valid.
+
 ### v0.8.4 — 2026-11-20
 
 **Fixed**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The shared engine has a typed range model, and the FAT, exFAT and NTFS adapters fill it for every entry beside the cluster lists ([#272](https://github.com/antimatter-studios/captainsalvage/pull/272))
-
-### v0.5.0 — 2026-11-19
-
-**Added**
-
-- **A preview shows where a file's bytes could not be read.** On exFAT and FAT volumes, when a cluster of a file cannot be read from the disk, the text and byte previews now show each of its bytes as `?` and say which bytes they are, instead of showing zeros that look like the file's own data. A copy of such a file keeps its layout, writes zeros where nothing could be read, is marked partial, and its manifest now names the unreadable byte ranges. Images and films still show those places as zeros.
 
 <!-- changelog:end -->
 
