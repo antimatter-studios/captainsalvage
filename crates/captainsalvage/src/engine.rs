@@ -73,6 +73,8 @@ const ACTIVITY_DETAIL_CHARS: usize = 300;
 /// Tools called constantly, or only about the window, stay out of the activity log.
 const QUIET_TOOLS: &[&str] = &[
     "status",
+    "bad_sectors",
+    "health_map",
     "get_selection",
     "set_selection",
     "activity",
@@ -1599,6 +1601,7 @@ impl Engine {
                     minimum,
                 ))?)
             }
+            "bad_sectors" => Ok(crate::health_tools::bad_sectors(&session)),
             "unexplained_summary" => {
                 let examples = bool_of(args, "includeExamples", false);
                 if examples && author != AUTHOR_USER && self.names_hidden() {

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { mapLayer, type Extent, type Layer, type Lens } from "../api";
 import { count, bytes as formatBytes } from "../format";
 import { t } from "../i18n";
+import { badAt, type BadRange } from "../badSectors";
+import { BadLegendItem, BadMarks, BadTip } from "./BadSectors";
 import { colorTable, describeValue, legendFor, onThemeChange, rampGradient, sequentialCaption, type LegendItem, type Rgb } from "../palette";
 
 const MIN_WINDOW_CLUSTERS = 64;
@@ -17,6 +19,8 @@ const SCRUB_STAGE_FACTOR = 10;
 const SCRUB_PICK_MILLIS = 150;
 /** Height of one band unit in a stacked map column, in CSS pixels. */
 const CSS_PIXELS_PER_ROW = 2;
+/** The pointer is on a bad range from this many pixels away. */
+const BAD_PICK_PIXELS = 3;
 
 /** How faint the other categories are drawn while one is isolated, out of 255. */
 const ISOLATED_OTHERS_ALPHA = 40;
@@ -52,6 +56,8 @@ export interface StripSource {
 }
 
 interface StripProps {
+  /** Bad sectors, in the units of `start` and `end`: drawn as red marks that flash, and named in the tooltip. */
+  bad?: BadRange[];
   layer: Layer;
   start: number;
   end: number;
@@ -85,7 +91,7 @@ export function Strip(props: StripProps) {
   const values = useRef<{ data: Uint8Array; buckets: number; rows: number }>({ data: new Uint8Array(), buckets: 0, rows: 1 });
   const dragging = useRef<{ x: number; moved: boolean; lastX: number } | null>(null);
   const [width, setWidth] = useState(0);
-  const [hover, setHover] = useState<{ x: number; cluster: number; parts: { label: string; color?: string; share: number | null }[] } | null>(null);
+  const [hover, setHover] = useState<{ x: number; cluster: number; bad: BadRange[]; parts: { label: string; color?: string; share: number | null }[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragBox, setDragBox] = useState<[number, number] | null>(null);
   const [themeTick, setThemeTick] = useState(0);
@@ -212,9 +218,12 @@ export function Strip(props: StripProps) {
     }
     const parts = [...tally.entries()].sort((a, b) => b[1] - a[1]);
     const legend = source ? source.legend() : legendFor(layer);
+    // A mark is at least a few pixels wide, so the pointer finds a small zone from a few pixels away.
+    const tolerance = ((end - start) / Math.max(rectangle.width, 1)) * BAD_PICK_PIXELS;
     setHover({
       x: event.clientX - rectangle.left,
       cluster,
+      bad: props.bad ? badAt(props.bad, cluster, tolerance) : [],
       parts: parts.slice(0, 5).map(([value, share]) => ({
         label: source ? legend.find((item) => item.value === value)?.label ?? String(value) : describeValue(layer, value),
         color: legend.find((item) => item.value === value)?.color,
@@ -277,6 +286,7 @@ export function Strip(props: StripProps) {
       >
         <canvas ref={base} className="strip-base" />
         <canvas ref={marks} className="strip-marks" />
+        {props.bad && props.bad.length > 0 && <BadMarks bad={props.bad} start={start} end={end} />}
         {marker !== null && marker >= start && marker < end && (
           <>
             <MarkerArrow left={`${((marker - start) / span) * 100}%`} />
@@ -293,6 +303,7 @@ export function Strip(props: StripProps) {
           <div className={`strip-tip ${hover.x > width - 240 ? "strip-tip-left" : ""}`} style={{ left: hover.x }}>
             <strong>{source ? formatBytes(hover.cluster) : t("Cluster {cluster}", { cluster: count(hover.cluster) })}</strong>
             <div className="strip-tip-sub">{t("{bytes} into the volume", { bytes: formatBytes(source ? hover.cluster : (hover.cluster - 2) * clusterSize) })}</div>
+            {hover.bad.length > 0 && <BadTip ranges={hover.bad} unit={source ? "bytes" : "clusters"} />}
             {hover.parts.map((part) => (
               <div key={part.label} className="strip-tip-row">
                 {part.color && <span className="legend-swatch" style={{ background: part.color }} />}
@@ -323,6 +334,8 @@ export interface StripsProps {
   /** Where a running scan is reading, or null when none runs. */
   scanAt: number | null;
   onPick: (cluster: number) => void;
+  /** Bad sectors of the volume, in clusters. */
+  bad?: BadRange[];
 }
 
 /** The disk as one ribbon, plus a magnified view of whichever part is in focus. */
@@ -467,6 +480,7 @@ export function Strips(props: StripsProps) {
         isolate={isolate}
         onValues={heard("whole")}
         clusterSize={clusterSize}
+        bad={props.bad}
         label={t("Whole volume. Drag to choose a region")}
         windowBox={view[0] <= first && view[1] >= last ? null : view}
         onPick={(cluster) => {
@@ -500,6 +514,7 @@ export function Strips(props: StripsProps) {
         scanAt={props.scanAt}
         isolate={isolate}
         onValues={heard("focus")}
+        bad={props.bad}
         clusterSize={clusterSize}
         label={t("Magnified, {count} clusters. Scroll to zoom, drag to move, click to inspect, arrows to scrub", { count: count(view[1] - view[0]) })}
         onPick={onPick}
@@ -527,6 +542,7 @@ export function Strips(props: StripsProps) {
             {item.label}
           </button>
         ))}
+        {props.bad && props.bad.length > 0 && <BadLegendItem />}
         {caption && (
           <span className="legend-item">
             {caption[0]}

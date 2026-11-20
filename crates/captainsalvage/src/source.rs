@@ -32,6 +32,11 @@ pub trait BlockSource: Send + Sync {
     fn is_gone(&self) -> bool {
         false
     }
+    /// What is known about the health of this source: its ranges that are not good, in this source's
+    /// own offsets (see [`crate::health`]). Empty for a source with no health map.
+    fn bad_ranges(&self) -> Vec<crate::health::HealthRange> {
+        Vec::new()
+    }
     /// For testing the window against a real device: acts as if it has been unplugged.
     #[cfg(feature = "test-hooks")]
     fn simulate_disconnect(&self) {}

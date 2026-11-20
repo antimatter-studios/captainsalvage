@@ -47,6 +47,7 @@ import type { RescanResult } from "./stale";
 import { RawDiskView } from "./components/RawDiskView";
 import { WorkspaceToolbar } from "./components/WorkspaceToolbar";
 import type { RawDiskState } from "./rawDisk";
+import { volumeBad as volumeBadRanges, type BadRange, type VolumeBad } from "./badSectors";
 import type { ByteExtent, ChoiceId, NeedsChoice, OpenResult, OpenedSource } from "./openedSource";
 import { isArchiveName, ZipView } from "./components/ZipView";
 import { Strips } from "./components/Strips";
@@ -518,6 +519,20 @@ export default function App() {
     };
   }, [diskRebuild, diskRebuildRevision]);
 
+  // The bad sectors of the open volume, in its clusters, drawn on its map as red marks that flash. A
+  // source without a health map has none.
+  const [volumeBad, setVolumeBad] = useState<BadRange[]>([]);
+  useEffect(() => {
+    if (!overview) { setVolumeBad([]); return; }
+    let current = true;
+    const load = () => call<VolumeBad>("bad_sectors")
+      .then((answer) => { if (current) setVolumeBad(volumeBadRanges(answer)); })
+      .catch(() => { if (current) setVolumeBad([]); });
+    void load();
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => { current = false; window.clearInterval(timer); };
+  }, [overview?.device, revision]);
+
   /** Applies what `open_source` answered: the raw source is always there, and the interpretation
    * decides whether the filesystem workspace or the byte map is what shows first. */
   const adopt = useCallback((result: OpenedSource, how: "open" | "switch" | "extent") => {
@@ -917,6 +932,7 @@ export default function App() {
         marker={cluster}
         scanAt={scanning && status ? status.scan.nextCluster : null}
         onPick={pickCluster}
+        bad={volumeBad}
       />}
       <Explorer
         floor={floor}

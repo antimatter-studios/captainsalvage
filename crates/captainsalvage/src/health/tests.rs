@@ -850,3 +850,49 @@ fn journaling_a_read_costs_microseconds_not_a_disk_flush() {
     );
     assert_eq!(store.recent(health.key(), 10_000).unwrap().len(), 500);
 }
+
+#[test]
+fn a_region_of_a_guarded_source_reports_the_bad_ranges_in_its_own_offsets() {
+    let root = Root::new();
+    let drive = FakeDrive::new(patterned(8 * MIB as usize, 15), vec![]);
+    let health = health_of(&drive, &root.store());
+    health.record(HealthRange::new(
+        3 * MIB,
+        4 * MIB,
+        RangeState::Unreadable,
+        None,
+        "a test",
+    ));
+    health.record(HealthRange::new(
+        MIB / 2,
+        2 * MIB,
+        RangeState::Slow,
+        Some(900),
+        "a test",
+    ));
+    let region = crate::disk::RegionSource::new(health.guard(), 8 * MIB, MIB, 4 * MIB).unwrap();
+    let ranges = region.bad_ranges();
+    let shown: Vec<_> = ranges
+        .iter()
+        .map(|range| (range.start, range.end, range.state))
+        .collect();
+    // The slow range is cut at the region's start, the unreadable one is moved by it.
+    assert_eq!(
+        shown,
+        vec![
+            (0, MIB, RangeState::Slow),
+            (2 * MIB, 3 * MIB, RangeState::Unreadable)
+        ]
+    );
+    assert!(ranges.iter().all(|range| range.found_millis > 0));
+    // The store keeps when it was found.
+    let again = health_of(
+        &FakeDrive::new(patterned(8 * MIB as usize, 15), vec![]),
+        &root.store(),
+    );
+    assert!(again
+        .snapshot()
+        .ranges()
+        .iter()
+        .all(|range| range.found_millis > 0));
+}

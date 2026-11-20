@@ -181,7 +181,7 @@ impl HealthStore {
     pub fn load_map(&self, key: &str) -> Result<HealthMap> {
         let catalog = self.lock();
         let mut statement = catalog.connection().prepare(
-            "SELECT start, end, state, latency_ms, note FROM health_ranges WHERE source_key = ?1 ORDER BY start",
+            "SELECT start, end, state, latency_ms, note, updated_millis FROM health_ranges WHERE source_key = ?1 ORDER BY start",
         )?;
         let rows = statement.query_map([key], range_row)?;
         Ok(HealthMap::from_ranges(
@@ -200,7 +200,7 @@ impl HealthStore {
     ) -> Result<Vec<HealthRange>> {
         let catalog = self.lock();
         let mut statement = catalog.connection().prepare(
-            "SELECT start, end, state, latency_ms, note FROM health_ranges
+            "SELECT start, end, state, latency_ms, note, updated_millis FROM health_ranges
              WHERE source_id = ?1 AND source_key != ?2 ORDER BY start",
         )?;
         let rows = statement.query_map(params![source_id, except_key], range_row)?;
@@ -216,7 +216,6 @@ impl HealthStore {
         let catalog = self.lock();
         let transaction = catalog.connection().unchecked_transaction()?;
         transaction.execute("DELETE FROM health_ranges WHERE source_key = ?1", [key])?;
-        let now = now_millis() as i64;
         for range in map.ranges() {
             transaction.execute(
                 "INSERT INTO health_ranges (source_key, source_id, start, end, state, latency_ms, note, updated_millis)
@@ -229,7 +228,7 @@ impl HealthStore {
                     range.state.name(),
                     range.latency_ms.map(|ms| ms as i64),
                     range.note,
-                    now
+                    range.found_millis as i64
                 ],
             )?;
         }
@@ -348,5 +347,6 @@ fn range_row(row: &rusqlite::Row) -> rusqlite::Result<Option<HealthRange>> {
             .flatten()
             .map(|ms| ms as u64),
         note: row.get(4).unwrap_or_default(),
+        found_millis: row.get::<_, i64>(5).unwrap_or(0) as u64,
     }))
 }

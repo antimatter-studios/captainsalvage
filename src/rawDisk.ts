@@ -46,6 +46,8 @@ export interface HealthRange {
   state: HealthState;
   latencyMs: number | null;
   note: string;
+  /** When it was first found, in milliseconds since 1970. Zero when it is not known. */
+  foundMillis?: number;
 }
 
 export interface RawDiskState extends RawDiskOverview {

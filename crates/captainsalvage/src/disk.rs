@@ -192,6 +192,19 @@ impl BlockSource for RegionSource {
     fn is_gone(&self) -> bool {
         self.source.is_gone()
     }
+    fn bad_ranges(&self) -> Vec<crate::health::HealthRange> {
+        let end = self.start + self.length;
+        self.source
+            .bad_ranges()
+            .into_iter()
+            .filter(|range| range.end > self.start && range.start < end)
+            .map(|range| crate::health::HealthRange {
+                start: range.start.max(self.start) - self.start,
+                end: range.end.min(end) - self.start,
+                ..range
+            })
+            .collect()
+    }
     #[cfg(feature = "test-hooks")]
     fn simulate_disconnect(&self) {
         self.source.simulate_disconnect();
