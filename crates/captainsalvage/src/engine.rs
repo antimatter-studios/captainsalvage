@@ -120,19 +120,73 @@ pub(crate) fn need_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
         .with_context(|| format!("argument {key} is required and must be a string"))
 }
 
-/// How close to a join a break must be to count as the join's fault: a few frames or chunks.
+/// How close to a join a break must be to count as the join's fault: a few frames or chunks. It is
+/// also how far either side of the join valid structure must run for a crossing to be clean.
 const JOIN_MARGIN_BYTES: u64 = 4096;
+/// Below this share of valid bytes, a stream is not valid enough to say anything about a join.
+const JOIN_VALID_FLOOR: f64 = 0.05;
 
-/// Whether a stream runs straight across the join between a file's own clusters and the ones
-/// appended to it. A walker that resyncs, as MP3's does, finds valid frames in any audio, so a
-/// high valid fraction proves nothing about a bridge: on a real volume, every MP3 bridge that
-/// scored 98% valid broke at or just after the join. Only a clean crossing is evidence.
-fn join_crossing(join: u64, breaks: &[u64], reached_end: bool) -> &'static str {
+/// Whether a stream runs validly across the join between a file's own clusters and the ones appended
+/// to it, from what the format walker found.
+///
+/// A clean crossing means the format runs through the join: valid structure ends at or just before it
+/// and continues from it, without a break, for a few frames or chunks either side. A walker that
+/// resyncs, as MP3's does, finds valid frames in any audio, so a high valid fraction proves nothing
+/// about a bridge, and a stream that is not valid on either side says nothing either way (on a real
+/// volume, a file whose data walked as MP3 for 0.0016% of its bytes, with a chain appended, was called
+/// clean because no break happened to fall at the join). The answers are:
+///
+/// - `clean`: valid structure runs unbroken across the join, for the margin either side;
+/// - `breaks`: valid structure is there on at least one side, and not through the join;
+/// - `invalid-both-sides`: there is no valid structure either side of the join, so the join is not
+///   evidence of anything;
+/// - `unknown`: the walker stopped before it reached the join and cannot say.
+///
+/// A walker that notes where its valid structure is (`valid_spans`) is read directly. One that does not
+/// is read by its breaks and valid bytes: a break near the join, and no valid bytes to speak of, are
+/// not clean, and a clean one needs every byte before the join to have been valid.
+pub(crate) fn join_crossing(report: &crate::verify::VerifyReport, join: u64) -> &'static str {
+    let total = report.bytes_examined;
+    if join == 0 || join >= total {
+        return "unknown";
+    }
+    let before = JOIN_MARGIN_BYTES.min(join);
+    let after = JOIN_MARGIN_BYTES.min(total - join);
+    if report.has_valid_spans {
+        if report
+            .valid_spans
+            .iter()
+            .any(|&(from, to)| from <= join - before && to >= join + after)
+        {
+            return "clean";
+        }
+        let valid_in = |from: u64, to: u64| -> u64 {
+            report
+                .valid_spans
+                .iter()
+                .map(|&(start, end)| end.min(to).saturating_sub(start.max(from)))
+                .sum()
+        };
+        let left = valid_in(join - before, join);
+        let right = valid_in(join, join + after);
+        return if left * 2 < before && right * 2 < after {
+            "invalid-both-sides"
+        } else {
+            "breaks"
+        };
+    }
     let near = |offset: &u64| offset.abs_diff(join) <= JOIN_MARGIN_BYTES;
-    if breaks.iter().any(near) {
-        "breaks"
-    } else if reached_end || breaks.iter().any(|&offset| offset > join) {
+    if report.breaks.iter().any(near) {
+        return "breaks";
+    }
+    let reached = report.reached_end || report.breaks.iter().any(|&offset| offset > join);
+    if !reached {
+        return "unknown";
+    }
+    if report.valid_bytes >= join {
         "clean"
+    } else if report.valid_fraction < JOIN_VALID_FLOOR {
+        "invalid-both-sides"
     } else {
         "unknown"
     }
@@ -1625,16 +1679,11 @@ impl Engine {
         clusters.extend(append);
         let length = u64_of(args, "length").unwrap_or(default_length);
         let name = str_of(args, "name").map_or(name, str::to_string);
-        let mut answer = serde_json::to_value(session.test_stream(&name, &clusters, length)?)?;
-        if let Some(join) = join {
-            let report = &answer["report"];
-            let breaks: Vec<u64> = report["breaks"]
-                .as_array()
-                .map(|items| items.iter().filter_map(Value::as_u64).collect())
-                .unwrap_or_default();
-            let reached_end = report["reachedEnd"].as_bool().unwrap_or(false);
-            answer["join"] =
-                json!({"offset": join, "crossing": join_crossing(join, &breaks, reached_end)});
+        let test = session.test_stream(&name, &clusters, length)?;
+        let crossing = join.map(|join| (join, join_crossing(&test.report, join)));
+        let mut answer = serde_json::to_value(&test)?;
+        if let Some((join, crossing)) = crossing {
+            answer["join"] = json!({"offset": join, "crossing": crossing});
         }
         Ok(answer)
     }
@@ -1669,5 +1718,237 @@ impl Engine {
     pub fn whole_disk(&self) -> Option<String> {
         let session = self.session().ok()?;
         whole_disk_path(&session.path).map(|path| path.display().to_string())
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::join_crossing;
+    use crate::verify::{verify_jpeg, verify_mp3, verify_png, verify_stream};
+
+    /// Bytes that nothing repeats in: no walker finds structure in them.
+    fn noise(seed: u64, length: usize) -> Vec<u8> {
+        let mut state = seed | 1;
+        (0..length)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
+    /// MPEG-1 Layer III frames at 128 kbit/s and 44.1 kHz, each 417 bytes, with payloads that are not
+    /// frame headers.
+    fn mp3_frames(seed: u64, count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|n| {
+                let mut frame = vec![0xFF, 0xFB, 0x90, 0x64];
+                frame.extend(noise(seed + n as u64, 413).into_iter().map(|byte| {
+                    if byte == 0xFF {
+                        0x7F
+                    } else {
+                        byte
+                    }
+                }));
+                frame
+            })
+            .collect()
+    }
+
+    fn crc32(parts: &[&[u8]]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for part in parts {
+            for &byte in *part {
+                crc ^= u32::from(byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 {
+                        (crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+        }
+        !crc
+    }
+
+    fn png_chunk(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut chunk = (body.len() as u32).to_be_bytes().to_vec();
+        chunk.extend_from_slice(kind);
+        chunk.extend_from_slice(body);
+        chunk.extend_from_slice(&crc32(&[kind, body]).to_be_bytes());
+        chunk
+    }
+
+    /// A PNG whose pixel data is in chunks of 1000 bytes, so a join falls in or beside a short chunk.
+    fn png(seed: u64, pieces: usize) -> Vec<u8> {
+        let mut file = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut header = vec![0, 0, 0, 64, 0, 0, 0, 64, 8, 2, 0, 0, 0];
+        header.truncate(13);
+        file.extend(png_chunk(b"IHDR", &header));
+        for piece in 0..pieces {
+            file.extend(png_chunk(b"IDAT", &noise(seed + piece as u64, 1000)));
+        }
+        file.extend(png_chunk(b"IEND", &[]));
+        file
+    }
+
+    /// A JPEG: the markers, and scan data with no 0xFF in it.
+    fn jpeg(seed: u64, scan: usize) -> Vec<u8> {
+        let mut file = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 16];
+        file.extend_from_slice(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+        file.extend_from_slice(&[0xFF, 0xDA, 0, 12, 3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]);
+        file.extend(
+            noise(seed, scan)
+                .into_iter()
+                .map(|byte| if byte == 0xFF { 0x7E } else { byte }),
+        );
+        file.extend_from_slice(&[0xFF, 0xD9]);
+        file
+    }
+
+    fn crossing(name: &str, head: &[u8], rest: &[u8]) -> &'static str {
+        let mut stream = head.to_vec();
+        stream.extend_from_slice(rest);
+        join_crossing(&verify_stream(name, &stream), head.len() as u64)
+    }
+
+    #[test]
+    fn a_stream_of_noise_with_a_join_says_nothing_about_the_join() {
+        let report = verify_mp3(&noise(1, 400_000));
+        assert_eq!(
+            join_crossing(&report, 200_000),
+            "invalid-both-sides",
+            "{report:?}"
+        );
+        assert_eq!(
+            crossing("x.mp3", &noise(2, 300_000), &noise(3, 300_000)),
+            "invalid-both-sides"
+        );
+        assert_eq!(
+            crossing("x.bin", &noise(2, 3_000), &noise(3, 3_000)),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_is_valid_mp3_in_one_stretch_in_a_hundred_thousand_bytes_is_not_clean() {
+        // What the real case looked like: a frame pair here and there, the walker resyncing every 64 KiB,
+        // and a join that fell between two breaks.
+        let mut stream = Vec::new();
+        for piece in 0..16u64 {
+            stream.extend(mp3_frames(piece * 50, 2));
+            stream.extend(noise(piece + 900, 65_536 - 2 * 417));
+        }
+        let join = stream.len() as u64 - 10_000;
+        stream.extend(noise(77, 30_000));
+        let report = verify_mp3(&stream);
+        assert!(report.valid_fraction < 0.05, "{report:?}");
+        assert_eq!(join_crossing(&report, join), "invalid-both-sides");
+    }
+
+    #[test]
+    fn valid_mp3_that_stops_at_the_join_is_breaks_and_not_invalid() {
+        let mut stream = mp3_frames(1, 30);
+        let join = stream.len() as u64 + 200;
+        stream.extend(noise(5, 20_000));
+        let report = verify_mp3(&stream);
+        assert_eq!(join_crossing(&report, join), "breaks");
+        // And frames that start where noise ends are valid on one side only.
+        let mut stream = noise(6, 20_000);
+        let join = stream.len() as u64 - 200;
+        stream.extend(mp3_frames(2, 30));
+        assert_eq!(join_crossing(&verify_mp3(&stream), join), "breaks");
+    }
+
+    #[test]
+    fn an_mp3_cut_and_joined_again_is_clean_and_joined_to_other_data_breaks() {
+        let song = mp3_frames(5, 1200);
+        for cut in [417 * 300, 417 * 300 + 123, 417 * 700 + 400] {
+            assert_eq!(
+                crossing("a.mp3", &song[..cut], &song[cut..]),
+                "clean",
+                "cut at {cut}"
+            );
+        }
+        // Another song joined in the middle of a frame: the frame that straddles the join is not one.
+        let other = mp3_frames(900, 800);
+        for cut in [417 * 300 + 123, 417 * 700 + 400] {
+            assert_eq!(
+                crossing("a.mp3", &song[..cut], &other),
+                "breaks",
+                "cut at {cut}"
+            );
+        }
+        // Noise joined to a song that stops being valid at once.
+        assert_eq!(
+            crossing("a.mp3", &song[..417 * 300 + 5], &noise(3, 40_000)),
+            "breaks"
+        );
+        // A song joined to noise before it, valid on one side only.
+        assert_eq!(
+            crossing("a.mp3", &noise(4, 40_000), &song[..417 * 300]),
+            "breaks"
+        );
+    }
+
+    #[test]
+    fn a_png_cut_and_joined_again_is_clean_and_joined_to_wrong_data_breaks() {
+        let file = png(1, 40);
+        for cut in [4_000, 20_345, 33_333] {
+            let report = verify_png(&file);
+            assert!(report.reached_end);
+            assert_eq!(
+                crossing("a.png", &file[..cut], &file[cut..]),
+                "clean",
+                "cut at {cut}"
+            );
+        }
+        let other = png(500, 40);
+        for cut in [4_000, 20_345, 33_333] {
+            let wrong = &other[cut..];
+            assert_eq!(
+                crossing("a.png", &file[..cut], wrong),
+                "breaks",
+                "cut at {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_jpeg_cut_and_joined_again_is_clean_and_joined_to_wrong_data_breaks() {
+        let file = jpeg(1, 60_000);
+        assert!(verify_jpeg(&file).reached_end);
+        for cut in [2_000, 30_001] {
+            assert_eq!(
+                crossing("a.jpg", &file[..cut], &file[cut..]),
+                "clean",
+                "cut at {cut}"
+            );
+        }
+        // Wrong data with a stray marker in it (0xFF 0x01 is not one): the walker stops there. A JPEG's
+        // picture data has no checksum, so other picture data would not be told from this one's.
+        let stray: Vec<u8> = (0..4_000).flat_map(|_| [0x41, 0xFF, 0x01]).collect();
+        for cut in [2_000, 30_001] {
+            let mut stream = file[..cut].to_vec();
+            stream.extend_from_slice(&stray);
+            let report = verify_stream("a.jpg", &stream);
+            assert_eq!(
+                join_crossing(&report, cut as u64),
+                "breaks",
+                "cut at {cut}: {report:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_join_past_what_was_read_or_at_the_start_is_unknown() {
+        let song = mp3_frames(5, 100);
+        let report = verify_mp3(&song);
+        assert_eq!(join_crossing(&report, 0), "unknown");
+        assert_eq!(join_crossing(&report, song.len() as u64), "unknown");
+        assert_eq!(join_crossing(&report, song.len() as u64 + 5), "unknown");
     }
 }

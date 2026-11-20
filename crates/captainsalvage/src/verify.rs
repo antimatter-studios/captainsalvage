@@ -70,9 +70,38 @@ pub struct VerifyReport {
     pub breaks: Vec<u64>,
     pub reached_end: bool,
     pub notes: Vec<String>,
+    /// Where the walker found valid structure, as (start, end) byte ranges in order, with ranges that
+    /// touch joined. Only a walker that resyncs after a break fills it (MP3 does), and says so in
+    /// `has_valid_spans`; it is not serialised, so the report a tool gives is as it was.
+    #[serde(skip)]
+    pub valid_spans: Vec<(u64, u64)>,
+    #[serde(skip)]
+    pub has_valid_spans: bool,
 }
 
+/// The most valid ranges a report keeps. A stream that is mostly noise has a range for every frame
+/// the walker happens upon; past this many the report says it has none, rather than a wrong list.
+const MAX_VALID_SPANS: usize = 50_000;
+
 impl VerifyReport {
+    /// Notes that bytes `start` to `end` are valid structure, joining a range that touches the last.
+    fn add_span(&mut self, start: usize, end: usize) {
+        if !self.has_valid_spans || start >= end {
+            return;
+        }
+        match self.valid_spans.last_mut() {
+            Some(last) if last.1 == start as u64 => last.1 = end as u64,
+            _ => {
+                if self.valid_spans.len() >= MAX_VALID_SPANS {
+                    self.has_valid_spans = false;
+                    self.valid_spans.clear();
+                } else {
+                    self.valid_spans.push((start as u64, end as u64));
+                }
+            }
+        }
+    }
+
     fn finish(mut self, total: usize) -> Self {
         self.bytes_examined = total as u64;
         self.valid_fraction = if total == 0 {
@@ -200,6 +229,7 @@ fn mpeg_frame_length(header: &[u8]) -> Option<usize> {
 pub fn verify_mp3(data: &[u8]) -> VerifyReport {
     let mut report = VerifyReport {
         format: "mp3".into(),
+        has_valid_spans: true,
         ..VerifyReport::default()
     };
     let mut position = 0;
@@ -224,6 +254,7 @@ pub fn verify_mp3(data: &[u8]) -> VerifyReport {
         });
         position += padding;
         report.valid_bytes += position.min(data.len()) as u64;
+        report.add_span(0, position.min(data.len()));
     }
     while position + MPEG_HEADER_BYTES <= data.len() {
         // A frame counts only if another valid header follows it, a tag or padding that
@@ -237,11 +268,13 @@ pub fn verify_mp3(data: &[u8]) -> VerifyReport {
         if let Some(length) = frame {
             report.units += 1;
             report.valid_bytes += length.min(data.len() - position) as u64;
+            report.add_span(position, position + length.min(data.len() - position));
             position += length;
             continue;
         }
         if let Some(kind) = mp3_trailer(&data[position..]) {
             report.valid_bytes += (data.len() - position) as u64;
+            report.add_span(position, data.len());
             report.notes.push(format!("{kind} at the end."));
             position = data.len();
             break;
