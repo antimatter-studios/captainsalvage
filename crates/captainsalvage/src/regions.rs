@@ -134,7 +134,7 @@ impl Session {
         let classes = self.class_map();
         let entropy = self.entropy_map();
         let unexplained = |cluster: u32| {
-            !self.volume.is_allocated(cluster)
+            self.volume.is_free(cluster)
                 && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
 
@@ -353,7 +353,7 @@ impl Session {
 
         let ownership = self.ownership_map();
         let unexplained = |cluster: u32| {
-            !self.volume.is_allocated(cluster)
+            self.volume.is_free(cluster)
                 && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
         // What the scan made of each cluster, and how far it got: a cluster that holds valid directory

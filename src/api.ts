@@ -34,6 +34,8 @@ export interface MapSummary {
   labelledFreeClusters: number;
   /** Free clusters in a bad sector of the source: nobody can read them, so they are not unexplained. */
   badSectorFreeClusters?: number;
+  /** Clusters nothing explains on a volume whose allocation is unknown: not free space, and not counted in `unexplainedFreeClusters`. */
+  unexplainedUnknownClusters?: number;
 }
 
 export interface ScanProgress {
@@ -497,6 +499,8 @@ export interface ClusterInfo {
   offset: number;
   diskOffset: number | null;
   allocated: boolean;
+  /** The volume's bitmap could not be read, so `allocated` says nothing. */
+  allocationUnknown?: boolean;
   fatValue: number;
   fatMeaning: string;
   predecessor: number | null;
@@ -561,12 +565,19 @@ export interface Overview {
     allocated: number;
     freeWithFat: number;
     freeZeroFat: number;
+    /** Clusters whose allocation is not known. Absent when the bitmap was read. */
+    unknown?: number;
     crossLinks: number;
     freeChains: { chains: number; clusters: number; longest: number };
     allocatedChains: { chains: number; clusters: number; longest: number };
     mixedChains: { chains: number; clusters: number; longest: number };
   };
-  allocationBytes: { allocated: number; freeWithFat: number; freeZeroFat: number };
+  allocationBytes: { allocated: number; freeWithFat: number; freeZeroFat: number; unknown?: number };
+  /** False, and only then present, when the volume's bitmap could not be read: no cluster is free or in use. */
+  allocationKnown?: boolean;
+  allocationNote?: string;
+  /** What is wrong with the volume's own structures, in words. Absent when nothing is. */
+  structureDamage?: string[];
   structureHash: string;
   classNames: string[];
   groupNames: string[];

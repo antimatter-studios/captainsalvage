@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 pub use crate::allocation::{
     AllocationStats, ChainGroup, Island, StreamClusters, ALLOC_ALLOCATED, ALLOC_FREE_FAT,
-    ALLOC_FREE_ZERO, ISLAND_END_BROKEN, ISLAND_END_EOF, ISLAND_END_JOINS_ANOTHER,
+    ALLOC_FREE_ZERO, ALLOC_UNKNOWN, ISLAND_END_BROKEN, ISLAND_END_EOF, ISLAND_END_JOINS_ANOTHER,
 };
 pub use crate::filesystem::salvage::FilesystemBoot;
 pub use fs_exfat::primitives::BootCheck;
@@ -27,6 +27,11 @@ pub struct Volume {
     pub kind: FilesystemKind,
     pub filesystem: FilesystemDetails,
     pub dirty_flag: bool,
+    /// False when the volume's allocation bitmap could not be read (an NTFS volume with a damaged `$Bitmap`). Then no cluster
+    /// is known to be free or in use, `bitmap` says nothing, and nothing may call a cluster free.
+    pub allocation_known: bool,
+    /// What is wrong with the volume's own structures, in words, for the person to be told.
+    pub damage: Vec<String>,
     pub fat: Vec<u32>,
     pub bitmap: Vec<u8>,
     pub root_clusters: Vec<u32>,
@@ -65,6 +70,8 @@ impl Volume {
             kind,
             details,
             dirty_flag,
+            allocation_known,
+            damage,
             fat,
             bitmap,
             root_clusters,
@@ -86,6 +93,8 @@ impl Volume {
             kind,
             filesystem: details,
             dirty_flag,
+            allocation_known,
+            damage,
             fat,
             bitmap,
             root_clusters,
@@ -179,12 +188,24 @@ impl Volume {
         primitives::valid_cluster(&self.geometry, cluster)
     }
 
+    /// Whether the bitmap says this cluster is in use. False for a cluster of a volume whose allocation is unknown, which is
+    /// not known to be in use.
     pub fn is_allocated(&self, cluster: u32) -> bool {
-        primitives::is_allocated(&self.bitmap, cluster)
+        self.allocation_known && primitives::is_allocated(&self.bitmap, cluster)
     }
 
-    /// Non-zero FAT entries count here, including values outside the valid range.
+    /// Whether the bitmap says this cluster is free. False for a cluster of a volume whose allocation is unknown: unknown is
+    /// never free, so nothing is called free space, unclaimed or overwritten by it.
+    pub fn is_free(&self, cluster: u32) -> bool {
+        self.allocation_known && !primitives::is_allocated(&self.bitmap, cluster)
+    }
+
+    /// Non-zero FAT entries count here, including values outside the valid range. `ALLOC_UNKNOWN` for every cluster of a
+    /// volume whose allocation is unknown.
     pub fn allocation_class(&self, cluster: u32) -> u8 {
+        if !self.allocation_known {
+            return primitives::ALLOC_UNKNOWN;
+        }
         if !self.claims().has_links() {
             // There are no links to be left behind by a cleared allocation, only the bitmap.
             return if primitives::is_allocated(&self.bitmap, cluster) {
@@ -311,6 +332,12 @@ impl Volume {
     }
 
     fn compute_stats(&self) -> AllocationStats {
+        if !self.allocation_known {
+            return AllocationStats {
+                unknown: u64::from(self.geometry.cluster_count),
+                ..AllocationStats::default()
+            };
+        }
         if !self.claims().has_links() {
             let mut stats = AllocationStats::default();
             for cluster in 2..self.geometry.last_cluster_exclusive() {

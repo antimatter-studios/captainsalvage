@@ -399,6 +399,10 @@ pub struct MapSummary {
     /// them, so they are not counted as unexplained. Left out of the answer when there are none.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub bad_sector_free_clusters: u64,
+    /// Clusters that nothing explains on a volume whose allocation is unknown: they are not free space, and they are not
+    /// counted in `unexplained_free_clusters`. Left out of the answer when there are none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unexplained_unknown_clusters: u64,
 }
 
 fn is_zero(value: &u64) -> bool {
@@ -1023,6 +1027,7 @@ impl MapDb {
             unexplained_free_clusters: 0,
             labelled_free_clusters: 0,
             bad_sector_free_clusters: 0,
+            unexplained_unknown_clusters: 0,
         })
     }
 

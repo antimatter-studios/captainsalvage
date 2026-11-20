@@ -41,6 +41,11 @@ pub struct Inspected {
     pub kind: FilesystemKind,
     pub details: FilesystemDetails,
     pub dirty_flag: bool,
+    /// Whether the allocation bitmap was read. It is only not for an NTFS volume whose `$Bitmap` is unreadable,
+    /// and then `bitmap` is all zeros and says nothing.
+    pub allocation_known: bool,
+    /// What is wrong with the volume's own structures that the person is told of, in words.
+    pub damage: Vec<String>,
 }
 
 fn structure_error(error: StructureError) -> anyhow::Error {
@@ -200,6 +205,7 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
         fat,
         bitmap: Vec::new(),
         root,
+        unread: Vec::new(),
     })
 }
 
@@ -217,6 +223,8 @@ pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
             kind: FilesystemKind::Ntfs,
             details: inspected.details,
             dirty_flag: inspected.dirty,
+            allocation_known: inspected.allocation_known,
+            damage: inspected.damage,
         });
     }
     if structures.main.get(3..11) != Some(b"EXFAT   ") {
@@ -270,6 +278,8 @@ pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
                 kind: fat_kind(boot.kind),
                 details,
                 dirty_flag,
+                allocation_known: true,
+                damage: Vec::new(),
             });
         }
     }
@@ -307,6 +317,8 @@ pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
         kind: FilesystemKind::Exfat,
         details: FilesystemDetails::Exfat,
         dirty_flag,
+        allocation_known: true,
+        damage: Vec::new(),
     })
 }
 

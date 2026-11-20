@@ -174,7 +174,7 @@ function ClusterDetails({ info, onCluster, onEntry }: { info: ClusterInfo; onClu
     <div className="detail">
       <h3 className="detail-name">{t("Cluster {cluster}", { cluster: count(info.cluster) })}</h3>
       <dl className="facts">
-        <Fact label={t("Bitmap")}>{info.allocated ? t("In use") : t("Marked free")}</Fact>
+        <Fact label={t("Bitmap")}>{info.allocationUnknown ? t("Allocation unknown") : info.allocated ? t("In use") : t("Marked free")}</Fact>
         <Fact label={t("FAT entry")}>{fromEngine(info.fatMeaning)}</Fact>
         <Fact label={t("Chain start")}>
           {info.chainHead === info.cluster ? t("This cluster") : <button className="link" onClick={() => onCluster(info.chainHead)}>{count(info.chainHead)}</button>}
@@ -297,10 +297,12 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
   return (
     <div className="detail">
       <FilesystemDetailsPanel details={overview.filesystem} />
+      {(overview.structureDamage ?? []).map((text) => <p key={text} className="warn">{fromEngine(text)}</p>)}
       <h4>{t("Space")}</h4>
       <dl className="facts">
-        <Fact label={t("In use")}>{bytes(overview.allocationBytes.allocated)}</Fact>
-        {overview.filesystem.kind === "ntfs" ? (
+        {overview.allocationKnown === false && <Fact label={t("Allocation unknown")}>{bytes(overview.allocationBytes.unknown ?? 0)}</Fact>}
+        {overview.allocationKnown !== false && <Fact label={t("In use")}>{bytes(overview.allocationBytes.allocated)}</Fact>}
+        {overview.allocationKnown === false ? null : overview.filesystem.kind === "ntfs" ? (
           <Fact label={t("Free")}>{bytes(overview.allocationBytes.freeZeroFat)}</Fact>
         ) : (
           <>
@@ -347,7 +349,11 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
           </table>
           <dl className="facts">
             <Fact label={t("Nameless chains")}>{count(summary.namelessChains)}, {bytes(summary.namelessClusters * overview.geometry.clusterSize)}</Fact>
-            <Fact label={t("Free space unexplained")}>{bytes(summary.unexplainedFreeClusters * overview.geometry.clusterSize)}</Fact>
+            {overview.allocationKnown === false ? (
+              <Fact label={t("Unexplained, allocation unknown")}>{bytes((summary.unexplainedUnknownClusters ?? 0) * overview.geometry.clusterSize)}</Fact>
+            ) : (
+              <Fact label={t("Free space unexplained")}>{bytes(summary.unexplainedFreeClusters * overview.geometry.clusterSize)}</Fact>
+            )}
             {(summary.badSectorFreeClusters ?? 0) > 0 && <Fact label={t("Free space in bad sectors")}>{bytes((summary.badSectorFreeClusters ?? 0) * overview.geometry.clusterSize)}</Fact>}
             {summary.labelledFreeClusters > 0 && <Fact label={t("Explained by hypotheses")}>{bytes(summary.labelledFreeClusters * overview.geometry.clusterSize)}</Fact>}
             <Fact label={t("Map rebuilt")}>{clock(summary.resolvedAtMillis)}</Fact>
@@ -429,7 +435,7 @@ function LensTab({ overview, lens, onLens, revision, onChanged }: { overview: Ov
     onChanged();
   }
 
-  const allocation = [t("In use"), t("Free, chain remains"), t("Free, no chain")];
+  const allocation = [t("In use"), t("Free, chain remains"), t("Free, no chain"), ...(overview.allocationKnown === false ? [t("Allocation unknown")] : [])];
   return (
     <div className="detail">
       <p className="muted">{t("A lens brings the clusters you choose into focus on the map. Everything else drops away.")}</p>

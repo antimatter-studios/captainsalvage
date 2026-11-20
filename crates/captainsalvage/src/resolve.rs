@@ -629,7 +629,10 @@ impl Context<'_> {
         let allocated = stream
             .clusters
             .iter()
-            .filter(|&&c| self.volume.is_allocated(c))
+            // With the allocation unknown, a current file's clusters are taken as in use, and a deleted one's are not said to be.
+            .filter(|&&c| {
+                self.volume.is_allocated(c) || (set.in_use && !self.volume.allocation_known)
+            })
             .count() as u64;
         // A shared cluster is held by this file, was reused by a later file, or
         // is contested: claimed with nothing to settle who wrote it last.
@@ -782,6 +785,12 @@ impl Context<'_> {
         let confidence = trust * coverage * clean * content_factor * guessed;
 
         let mut sentences = Vec::new();
+        if !self.volume.allocation_known && !set.in_use {
+            sentences.push(
+                "The volume's bitmap could not be read, so whether its clusters are in use now is not known."
+                    .to_string(),
+            );
+        }
         if set.accepted {
             sentences.push("An overlay accepted this entry.".to_string());
         } else if !set.checksum_ok {
@@ -1362,7 +1371,7 @@ impl MapDb {
             let last = volume.geometry.last_cluster_exclusive();
             for cluster in (start.max(i64::from(FIRST_CLUSTER)) as u32)..end.min(last) {
                 let index = (cluster - FIRST_CLUSTER) as usize;
-                if !volume.is_allocated(cluster) && ownership[index] == OWNERSHIP_UNEXPLAINED {
+                if volume.is_free(cluster) && ownership[index] == OWNERSHIP_UNEXPLAINED {
                     ownership[index] = OWNERSHIP_LABELLED;
                 }
             }
@@ -1382,7 +1391,7 @@ impl MapDb {
                     (FIRST_CLUSTER as u64 + (to - 1 - heap) / size + 1).min(u64::from(last)) as u32;
                 for cluster in first.max(FIRST_CLUSTER)..end {
                     let index = (cluster - FIRST_CLUSTER) as usize;
-                    if !volume.is_allocated(cluster) && ownership[index] == OWNERSHIP_UNEXPLAINED {
+                    if volume.is_free(cluster) && ownership[index] == OWNERSHIP_UNEXPLAINED {
                         ownership[index] = OWNERSHIP_BAD_SECTORS;
                     }
                 }
@@ -1513,13 +1522,18 @@ impl MapDb {
 
         let mut summary = self.compute_summary()?;
         for cluster in FIRST_CLUSTER..volume.geometry.last_cluster_exclusive() {
-            if !volume.is_allocated(cluster) {
+            if volume.is_free(cluster) {
                 match ownership[(cluster - FIRST_CLUSTER) as usize] {
                     OWNERSHIP_UNEXPLAINED => summary.unexplained_free_clusters += 1,
                     OWNERSHIP_LABELLED => summary.labelled_free_clusters += 1,
                     OWNERSHIP_BAD_SECTORS => summary.bad_sector_free_clusters += 1,
                     _ => {}
                 }
+            } else if !volume.allocation_known
+                && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
+            {
+                // Not counted as free, and not hidden: nothing explains these, and whether they are free is not known.
+                summary.unexplained_unknown_clusters += 1;
             }
         }
         self.set_state("summary", &serde_json::to_string(&summary)?)?;
@@ -1614,7 +1628,7 @@ impl MapDb {
             if ntfs {
                 // A record that says it is in use but sits in a free cluster is an old copy of
                 // the MFT, not the volume's own.
-                in_use &= volume.is_allocated(source_cluster);
+                in_use &= !volume.is_free(source_cluster);
             }
             Ok(LoadedSet {
                 id: row.get(0)?,
