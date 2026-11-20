@@ -24,8 +24,8 @@ the others do not.
 A part fails when it is more than TOLERANCE percentage points under the baseline. Going up never
 fails. Raise the baseline on purpose with `baseline`, in the pull request that earned it.
 
-The baseline is CI's number, not this machine's. CI skips the tests that need local tools (ffmpeg, the
-oracle tools), so a Mac measures about 0.8 points more of the Rust engine's functions than CI does, and
+The baseline is CI's number, not this machine's. CI installs ffmpeg, but it skips the tests that need the
+oracle tools, so a Mac measures about 0.8 points more of the Rust engine's functions than CI does, and
 a baseline written here would fail the check in CI. So `baseline` measures only inside CI (where the CI
 variable is set), unless `--local` says that a local number is meant. To raise the baseline from a pull
 request's own CI run, take the table its coverage job printed:
