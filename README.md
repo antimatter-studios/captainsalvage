@@ -1084,7 +1084,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.14.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.14.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1220,6 +1220,18 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.14.1 — 2026-11-20
+
+**Added**
+
+- **A zone found outside the probe can be marked.** `probe_health` has a `mark_bad` action, and the raw-disk view a "Mark bad sectors" form, to record a zone found some other way, such as by reading the drive with `dd`: its first and last byte, what happened (the drive reset, a read failed, or keep out) and why. It is kept with who marked it and when, and nothing reads it afterwards.
+- **A disk that has reset is opened carefully.** Once a disk has a zone where the drive reset, a zone a probe jumped over, or has reset twice, opening it does not read fresh markers across the whole disk and does not run a range analysis: it is recognised from at most five of its stored markers that lie where earlier reads went well, and the window says so. Analysing a range stays the person's to ask for.
+- **The bad zones and the reset count belong to the physical disk.** A whole disk and its partitions share one map, one reset count and one failing flag, so a zone found through a partition is avoided from the whole disk and the other way round, and a drive that reset once through each is failing. A GPT disk's own GUID is part of its key, so two disks of one model are two disks. A read that failed because the device had already gone no longer marks the place it was asked for as the cause: only the read in flight when the device went away can.
+
+**Fixed**
+
+- **An error under the source header is readable.** An error such as "The disk has been disconnected; scan not started." was squeezed into the narrow column of the progress bar beside "Saved scans", one or two words to a line, and ran off the top of the window. It now has a line of its own under the title row, the whole width of the window, and a very long one wraps and scrolls inside itself.
+
 ### v0.14.0 — 2026-11-20
 
 **Added**
@@ -1275,12 +1287,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **A Disk Rebuild made from the old treasure list no longer carries the retired name.** Version 0.4.0 turned an old treasure list into a Disk Rebuild called "Imported treasure list", with a folder of the same name inside it, and those names are stored in the map, so they kept showing after the treasure list was gone. When a map is opened, that Disk Rebuild and its folder are renamed once to "Files picked before 0.4" (with " (2)", " (3)" and so on when another Disk Rebuild already has that name). Only exactly that name is changed, and only in a map that had the old list imported into it, so a name you chose is never touched. A copy of the map is made first, next to it, named `<map>.before-retired-name`; the change is checked and undone if the check fails. Nothing else in a map or in the saved scans carries a retired word.
-
-### v0.8.2 — 2026-11-19
-
-**Maintenance**
-
-- The preview of a FAT or exFAT file reads the file's typed ranges, not its cluster list ([#284](https://github.com/antimatter-studios/captainsalvage/pull/284))
 
 <!-- changelog:end -->
 
