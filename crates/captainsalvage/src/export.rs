@@ -1184,7 +1184,6 @@ impl Session {
         let mut bad_sector_ranges: Vec<ByteRange> = Vec::new();
         let bad_zones = self.volume.bad_sectors();
         let valid = row.valid_length.min(row.length);
-        let mut index = 0;
         // An NTFS stream is read through the driver in pieces. A stretch of a stream held in runs
         // that cannot be read is zeros in the copy and a range in the manifest, as on FAT and exFAT.
         // A stream that cannot be read at all (compressed, encrypted, in other records, incomplete,
@@ -1248,74 +1247,56 @@ impl Session {
             let _ = fs::remove_file(&temporary);
             bail!("nothing of this NTFS stream could be read, so no file was made: {error}");
         }
-        while ntfs.is_none() && index < clusters.len() && written < row.length {
-            if self.should_stop() {
-                drop(file);
-                let _ = fs::remove_file(&temporary);
-                return Ok(None);
-            }
-            // Group clusters that follow each other on disk into one read.
-            let mut run = 1;
-            while index + run < clusters.len()
-                && clusters[index + run] == clusters[index + run - 1] + 1
-                && (run as u64 + 1) * cluster_size <= MAX_RUN_BYTES
-            {
-                run += 1;
-            }
-            let run_bytes = run as u64 * cluster_size;
-            let data = match self.volume.read_bytes(
-                self.volume.cluster_offset(clusters[index]),
-                run_bytes as usize,
-            ) {
-                Ok(data) => data,
-                Err(_) => {
-                    let mut pieces = Vec::with_capacity(run_bytes as usize);
-                    for (place, &cluster) in clusters[index..index + run].iter().enumerate() {
-                        match self.volume.read_cluster(cluster) {
-                            Ok(data) => pieces.extend_from_slice(&data),
-                            Err(_) => {
-                                unreadable += 1;
-                                let first = written + place as u64 * cluster_size;
-                                push_range(
-                                    &mut unreadable_ranges,
-                                    first,
-                                    (first + cluster_size).min(row.length),
-                                );
-                                let place = self.volume.cluster_offset(cluster);
-                                if bad_zones
-                                    .iter()
-                                    .any(|(from, to)| *from < place + cluster_size && *to > place)
-                                {
-                                    push_range(
-                                        &mut bad_sector_ranges,
-                                        first,
-                                        (first + cluster_size).min(row.length),
-                                    );
-                                }
-                                pieces.resize(pieces.len() + cluster_size as usize, 0);
-                            }
+        // A FAT or exFAT stream is read from its typed ranges, as the preview reads it: readable bytes from the disk (a cluster
+        // that cannot be read is zeros in the copy and a range in the manifest, so one bad cluster never costs the rest of the
+        // file), and bytes past the valid length are zeros by definition. The stream ends where its clusters do.
+        if ntfs.is_none() {
+            let total = row.length.min(clusters.len() as u64 * cluster_size);
+            let ranges = crate::ranges::RangeList::from_clusters(
+                &self.volume.geometry,
+                &clusters,
+                total,
+                valid,
+            );
+            while written < total {
+                if self.should_stop() {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Ok(None);
+                }
+                let end = (written + MAX_RUN_BYTES).min(total);
+                let (chunk, missing) =
+                    ranges.read(written, end, cluster_size, &mut |offset, length| {
+                        self.volume.read_bytes(offset, length as usize).ok()
+                    });
+                for (from, to) in missing {
+                    unreadable += (to - from).div_ceil(cluster_size);
+                    push_range(&mut unreadable_ranges, from, to);
+                    // A cluster that could not be read and lies in a bad sector of the source is named as one.
+                    for place in (from / cluster_size)..=((to - 1) / cluster_size) {
+                        let disk = self.volume.cluster_offset(clusters[place as usize]);
+                        if bad_zones
+                            .iter()
+                            .any(|(first, last)| *first < disk + cluster_size && *last > disk)
+                        {
+                            push_range(
+                                &mut bad_sector_ranges,
+                                place * cluster_size,
+                                ((place + 1) * cluster_size).min(row.length),
+                            );
                         }
                     }
-                    pieces
                 }
-            };
-            if let Err(error) = self.require_disk() {
-                drop(file);
-                let _ = fs::remove_file(&temporary);
-                return Err(error);
+                if let Err(error) = self.require_disk() {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error);
+                }
+                file.write_all(&chunk)?;
+                hasher.update(&chunk);
+                written += chunk.len() as u64;
+                self.update_copy(|status| status.bytes_done += chunk.len() as u64);
             }
-            let take = (row.length - written).min(run_bytes) as usize;
-            let mut chunk = data[..take].to_vec();
-            // Bytes past the valid length are undefined on disk, and read as zeros.
-            if written + take as u64 > valid {
-                let keep = valid.saturating_sub(written) as usize;
-                chunk[keep..].fill(0);
-            }
-            file.write_all(&chunk)?;
-            hasher.update(&chunk);
-            written += take as u64;
-            index += run;
-            self.update_copy(|status| status.bytes_done += take as u64);
         }
         push_to_destination(&file)?;
         drop(file);
