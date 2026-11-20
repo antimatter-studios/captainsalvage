@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.2 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,16 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.2 — 2026-11-20
+
+**Fixed**
+
+- **Opening a source no longer fails with "database is locked" when the catalog is busy for a moment.** The health records of a source (its link to the disk, its reset count and its map) are written again after a short lock clears, instead of the open failing or the record being lost. A read of the device still never waits on the catalog.
+
+**Maintenance**
+
+- Every job takes its runner from a gate job on the runner gate ([#312](https://github.com/antimatter-studios/captainsalvage/pull/312))
+
 ### v0.15.1 — 2026-11-20
 
 **Fixed**
@@ -1294,12 +1304,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **An agent can summarise all the unexplained space in one call.** The new `unexplained_summary` tool samples the free clusters that nothing explains, across every region (or the biggest N), within a sample budget (2048 clusters by default) and a time limit, and gives the totals in one answer: how many regions and bytes, bytes by main content, and what the sample holds (clusters with valid directory entries, clusters that mix older and newer data, file signatures at a cluster's start and inside it, NTFS records, zeros, read errors), as counts, shares and estimates. For clusters that hold valid directory entries and are still unexplained it also says what the scan made of them (for example, it could not read them) and whether the scan had got that far. It gives no names or text unless asked, and an agent is refused them while the person keeps names back.
-
-### v0.9.0 — 2026-11-20
-
-**Added**
-
-- **An agent can test a bridge in one call.** The `test_stream` tool takes `appendChain: {head}` (and `appendChains: [{head}, ...]`) and follows the chain in the FAT itself, so a chain from `bridge_candidates` can be tested without walking it first and passing its extents; with several chains the answer has a `joins` entry for each. `bridge_candidates` takes `test: true` and then tests each of its first candidates as the file's continuation (5 by default, at most 20, within a read budget of 64 MiB unless `testBudgetBytes` says otherwise) and gives each row the verdict: whether the stream crosses the join cleanly and how much of it is valid.
 
 <!-- changelog:end -->
 
