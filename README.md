@@ -1070,7 +1070,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.12.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.13.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1206,6 +1206,13 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.13.0 — 2026-11-20
+
+**Added**
+
+- **The damage probe jumps over a bad band instead of walking into it, and maps its edges only when you say.** On a drive whose bad area is a wide band with readable islands, every read inside it can reset the drive. `probe_health` now marks a band as soon as a grid read fails, is slow or resets the drive, jumps 16 GiB (`skipBytes`) before it reads again, and counts a read that is far slower than the running median, near the band, as part of it. The whole grid is read first, and the band between the last clean read before it and the first clean read after it is marked suspect: nothing reads it, scans report it as read errors, previews mark it, copies write zeros there and name it, until you forgive it. Mapping the edges of the bands costs resets, so it waits for `action: edges`, and each band reports how many resets it has cost.
+- **A drive that keeps resetting is called failing.** The app counts how many times the device went away while a source was read. After two (`failingAfterResets`) the probe pauses and says so, and the source is read carefully from then on: every read journaled, none longer than 64 KiB, suspect bands never read. `health_map` shows the count, and only the person clears it.
+
 ### v0.12.0 — 2026-11-20
 
 **Added**
@@ -1260,12 +1267,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The changelog hook lets the integration branch of a release commit the release tool's CHANGELOG.md, so a candidate can be cut from it (#252) ([#282](https://github.com/antimatter-studios/captainsalvage/pull/282))
-
-### v0.8.0 — 2026-11-19
-
-**Added**
-
-- **Files that NTFS compressed can be previewed, tested and copied.** On an NTFS volume, a file that Windows compressed (a compressed folder, or `compact /c`) was listed with its size and then refused: it could not be previewed, it was left out of a copy, and it showed as partial. The app now reads such a file: it works out which clusters hold each 64 KiB compression unit and has the NTFS driver decode them. A unit that does not decode is marked in the preview as unreadable bytes, and the copy says so and is partial; nothing is made up. A file that is compressed in another way, or whose data continues in another record, is still listed and refused, as before. This is checked on synthetic volumes laid out the way NTFS lays out compressed files, and on volumes that Windows formatted and compressed files on, where every file has the SHA-256 that Windows reports.
 
 <!-- changelog:end -->
 

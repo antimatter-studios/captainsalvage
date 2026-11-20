@@ -8,6 +8,13 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-20
+
+### Added
+
+- **The damage probe jumps over a bad band instead of walking into it, and maps its edges only when you say.** On a drive whose bad area is a wide band with readable islands, every read inside it can reset the drive. `probe_health` now marks a band as soon as a grid read fails, is slow or resets the drive, jumps 16 GiB (`skipBytes`) before it reads again, and counts a read that is far slower than the running median, near the band, as part of it. The whole grid is read first, and the band between the last clean read before it and the first clean read after it is marked suspect: nothing reads it, scans report it as read errors, previews mark it, copies write zeros there and name it, until you forgive it. Mapping the edges of the bands costs resets, so it waits for `action: edges`, and each band reports how many resets it has cost.
+- **A drive that keeps resetting is called failing.** The app counts how many times the device went away while a source was read. After two (`failingAfterResets`) the probe pauses and says so, and the source is read carefully from then on: every read journaled, none longer than 64 KiB, suspect bands never read. `health_map` shows the count, and only the person clears it.
+
 ## [0.12.0] — 2026-11-20
 
 ### Added
