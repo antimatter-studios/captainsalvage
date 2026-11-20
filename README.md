@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.14.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,15 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.0 — 2026-11-20
+
+**Added**
+
+- **Bad sectors are a kind of extent, `bad_sector`, like the others.** The ranges the health map marks as bad (suspect, unreadable or reset-culprit) are now extents of the source with that kind, kept in the catalog under the source, so they are there when it is opened again and when the drive comes back under another name. The new `list_extents` tool lists them with the source's other extents (filter by kind or range), and `open_source`, `list_hypotheses`, `read_layout` and `analyze_range` answer with the ones that matter to them (`badSectors`). A file whose bytes lie in a bad sector now has them as `BadSector` in its typed ranges: a preview shows them as `?`, and a copy writes zeros there and names the ranges as `badSectorRanges` in its manifest, apart from the bytes that were tried and failed.
+- **Free space nobody can read is no longer unexplained.** A free cluster in a bad sector counts as explained by bad sectors, as a region label would explain it, in the cluster map (a new legend entry, in red), in the region counts and in the unexplained totals and runs; the map summary says how many (`badSectorFreeClusters`). It shows after the map is rebuilt.
+- **A Disk Rebuild flags what crosses a bad sector, and blocks nothing.** A file, a folder (by everything below it) or a reassembly with bytes in a bad sector shows a flashing red flag with the bytes affected in the tree of the Rebuild tab, and the copy plan counts the files and the bytes. The copy goes ahead, with zeros there.
+- **A drive with a known bad zone is still an exact match.** A saved marker that lies in a bad sector is not read and says nothing either way, so it is left out of what the match is counted over: when everything that can be read matches, the source is recognised exactly, and the comparison says how many markers lay in bad sectors.
+
 ### v0.14.1 — 2026-11-20
 
 **Added**
@@ -1291,12 +1300,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **A bridge test no longer calls a join "clean" when the data is not valid on either side.** The `test_stream` tool (used by agents to test whether a chain continues a broken file) reported `clean` for a join whenever no break happened to fall beside it, even when the stream was not a valid file at all: on a real volume, a file whose data walked as MP3 for 0.0016% of its bytes, with a chain appended, came back `clean`. A clean crossing now needs valid structure running unbroken across the join, a few frames or chunks either side. The other answers are `breaks` (valid on at least one side, not through the join), `invalid-both-sides` (nothing valid there, so the join proves nothing) and `unknown`.
-
-### v0.8.3 — 2026-11-19
-
-**Fixed**
-
-- **A Disk Rebuild made from the old treasure list no longer carries the retired name.** Version 0.4.0 turned an old treasure list into a Disk Rebuild called "Imported treasure list", with a folder of the same name inside it, and those names are stored in the map, so they kept showing after the treasure list was gone. When a map is opened, that Disk Rebuild and its folder are renamed once to "Files picked before 0.4" (with " (2)", " (3)" and so on when another Disk Rebuild already has that name). Only exactly that name is changed, and only in a map that had the old list imported into it, so a name you chose is never touched. A copy of the map is made first, next to it, named `<map>.before-retired-name`; the change is checked and undone if the check fails. Nothing else in a map or in the saved scans carries a retired word.
 
 <!-- changelog:end -->
 
