@@ -8,6 +8,13 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-20
+
+### Added
+
+- **The app finds the bad zones of a failing drive without resetting it again and again, and then never reads them.** A drive that retries inside a bad area for seconds makes a USB bridge reset the whole device, and each reset hurts a damaged drive further. The app now writes a journal of the reads that can reach an unknown bad spot (opening a source, probing, any large read) before each starts, so a read that never finished, because the device went away during it, is marked as the likely cause the next time the drive is opened, before anything reads it. The new `probe_health` tool finds the zones on purpose and gently, bounded and resumable: it reads one block a GiB, then walks toward each bad block from the good side on both sides and stops at the first slow or failed read, so a zone is bounded without reading into it. `health_map` shows what is known, and the window draws it as a lane of the raw-disk map. Ranges marked unreadable or as a reset are not read again by anything: scans report them as read errors, previews mark them, copies write zeros there and name them in the manifest, and the markers that recognise the drive are taken from outside them.
+- **A drive that went away and came back is the same source.** The app lets go of the vanished device node as soon as it finds the device gone, and `rebind_source` (or opening the new path) points the open source at the drive when it returns, found again by its markers, so the open volume and its map read again.
+
 ## [0.11.1] — 2026-11-20
 
 ### Maintenance
