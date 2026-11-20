@@ -50,6 +50,19 @@ const MAX_FOLLOW_CLUSTERS: u64 = 100_000;
 /// A chain appended to a stream: its head, and its clusters.
 type AppendedChain = (u32, Vec<u32>);
 
+/// A stream described by an agent: clusters in an order, and how long the file they make is.
+struct Reassembly {
+    name: String,
+    clusters: Vec<u32>,
+    length: u64,
+    /// The entry it starts from, when it does.
+    entry: Option<i64>,
+    /// Where each appended piece starts, and the head of the chain when it was one.
+    joins: Vec<(u64, Option<u32>)>,
+    chains: Vec<AppendedChain>,
+    cut: bool,
+}
+
 /// How many bridge candidates `bridge_candidates` tests when asked to, and the most it will.
 const DEFAULT_BRIDGE_TESTS: u64 = 5;
 const MAX_BRIDGE_TESTS: usize = 20;
@@ -1037,7 +1050,6 @@ impl Engine {
                 )?)
             }
             "media_check" => {
-                let id = need_i64(args, "id")?;
                 let start = f64_of(args, "at", 0.0);
                 let media = self
                     .media
@@ -1045,6 +1057,26 @@ impl Engine {
                     .map_err(|_| anyhow!("media lock poisoned"))?
                     .clone()
                     .context("the media port did not start")?;
+                if Self::describes_a_reassembly(args) {
+                    // A file and a chain tried together, as test_stream would: what ffmpeg makes of it.
+                    let made = Self::reassembly(&session, args)?;
+                    let mut answer = serde_json::to_value(media.check_clusters(
+                        made.clusters.clone(),
+                        made.length,
+                        start,
+                    ))?;
+                    answer["reassembly"] = json!({
+                        "clusters": made.clusters.len(),
+                        "length": made.length,
+                        "joins": made.joins.iter().map(|&(offset, head)| json!({"offset": offset, "appendedChainHead": head})).collect::<Vec<_>>(),
+                    });
+                    return Ok(answer);
+                }
+                let id = args
+                    .get("id")
+                    .or_else(|| args.get("entryId"))
+                    .and_then(Value::as_i64)
+                    .context("argument id (or entryId) is required")?;
                 Ok(serde_json::to_value(media.check(id, start))?)
             }
             "browse_types" => {
@@ -1390,6 +1422,7 @@ impl Engine {
                     |database| database.disk_rebuild_unused(disk_rebuild, offset, limit),
                 )?)?)
             }
+            "disk_rebuild_place_reassembly" => self.place_reassembly(&session, args, author),
             tool if crate::rebuild_tools::changes_a_disk_rebuild(tool) => {
                 let result = if author == AUTHOR_USER {
                     session.with_database(|database| {
@@ -1758,9 +1791,13 @@ impl Engine {
         Ok((chains, cut))
     }
 
-    fn test_stream(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
+    /// The stream an agent describes: an entry's clusters (or `extents`), then `appendExtents`, then
+    /// the chains of `appendChain` and `appendChains`, each followed through the FAT. The same
+    /// description serves every tool that judges or keeps a possible reassembly.
+    fn reassembly(session: &Arc<Session>, args: &Value) -> Result<Reassembly> {
         let size = session.volume.geometry.cluster_size();
         let (name, mut clusters, entry_length) = Self::stream_start(session, args)?;
+        let entry = args.get("entryId").and_then(Value::as_i64);
         // Where each appended piece starts in the stream: a join is tested there.
         let mut joins: Vec<(u64, Option<u32>)> = Vec::new();
         let append = extents_of(args, "appendExtents")?.unwrap_or_default();
@@ -1777,28 +1814,121 @@ impl Engine {
             .or(entry_length)
             .unwrap_or(clusters.len() as u64 * size);
         let name = str_of(args, "name").map_or(name, str::to_string);
-        let test = session.test_stream(&name, &clusters, length)?;
+        Ok(Reassembly {
+            name,
+            clusters,
+            length,
+            entry,
+            joins,
+            chains,
+            cut,
+        })
+    }
+
+    /// Whether the arguments describe a stream made of clusters (an entry plus something appended, or
+    /// clusters given directly) rather than one entry by itself.
+    fn describes_a_reassembly(args: &Value) -> bool {
+        ["appendExtents", "appendChain", "appendChains", "extents"]
+            .iter()
+            .any(|key| args.get(*key).is_some())
+    }
+
+    fn test_stream(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
+        let made = Self::reassembly(session, args)?;
+        let test = session.test_stream(&made.name, &made.clusters, made.length)?;
         let mut answer = serde_json::to_value(&test)?;
-        if let Some(&(first, _)) = joins.first() {
+        if let Some(&(first, _)) = made.joins.first() {
             answer["join"] =
                 json!({"offset": first, "crossing": join_crossing(&test.report, first)});
         }
-        if !chains.is_empty() {
-            answer["joins"] = joins
+        if !made.chains.is_empty() {
+            answer["joins"] = made
+                .joins
                 .iter()
                 .map(|&(offset, head)| {
                     json!({"offset": offset, "appendedChainHead": head, "crossing": join_crossing(&test.report, offset)})
                 })
                 .collect();
-            answer["appendedChains"] = chains
+            answer["appendedChains"] = made
+                .chains
                 .iter()
                 .map(|(head, chain)| json!({"head": head, "clusters": chain.len()}))
                 .collect();
-            if cut {
+            if made.cut {
                 answer["appendedChainsCut"] = json!(MAX_FOLLOW_CLUSTERS);
             }
         }
         Ok(answer)
+    }
+
+    /// Keeps a reassembly: the entry's file gets the clusters of the stream as a hypothesis (a
+    /// `file_extents` overlay, which is how the map reads the file from then on), and the file is placed
+    /// in a Disk Rebuild, so a copy of the Disk Rebuild holds it whole.
+    fn place_reassembly(
+        &self,
+        session: &Arc<Session>,
+        args: &Value,
+        author: &str,
+    ) -> Result<Value> {
+        let made = Self::reassembly(session, args)?;
+        let entry = made
+            .entry
+            .context("entryId is required: the reassembly completes that file")?;
+        if made.joins.is_empty() {
+            bail!("give something to append (appendExtents, appendChain or appendChains): a file with nothing added is already placed with disk_rebuild_place_file");
+        }
+        let size = session.volume.geometry.cluster_size();
+        if made.length > made.clusters.len() as u64 * size {
+            bail!(
+                "the reassembly holds {} bytes in {} clusters, fewer than the file's {} bytes",
+                made.clusters.len() as u64 * size,
+                made.clusters.len(),
+                made.length
+            );
+        }
+        let note = str_of(args, "note").map(str::to_string).unwrap_or_else(|| {
+            format!(
+                "Reassembled: {} clusters, joined at {}",
+                made.clusters.len(),
+                made.joins
+                    .iter()
+                    .map(|(offset, _)| offset.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        });
+        let place = args.get("place").cloned().context("place is required")?;
+        let rebuild = need_rebuild(args)?;
+        // The placement first: it refuses a file at the top of the tree, and nothing has changed yet.
+        let placed = self.call(
+            "disk_rebuild_place_file",
+            &json!({"diskRebuild": rebuild, "entry": entry, "place": place}),
+            author,
+        )?;
+        let payload = json!({"extents": to_extents(&made.clusters)});
+        let overlay = session.with_database(|database| {
+            database.add_overlay(
+                crate::map::OVERLAY_FILE_EXTENTS,
+                Some(entry),
+                &payload,
+                &note,
+                author,
+            )
+        })?;
+        let summary = if bool_of(args, "resolve", true) {
+            Some(session.resolve()?)
+        } else {
+            None
+        };
+        self.emit("map-changed", json!({"reason": "overlay", "id": overlay}));
+        Ok(json!({
+            "item": placed.get("id"),
+            "overlay": overlay,
+            "entryId": entry,
+            "clusters": made.clusters.len(),
+            "length": made.length,
+            "summary": summary,
+        }))
     }
 
     /// Adds to the first candidates of a ranking the verdict of testing each as the continuation of the
@@ -1858,10 +1988,25 @@ impl Engine {
     /// Reads clusters in a chosen order as one file, to show it: a picture, or the start of a
     /// text. Nothing is written; the plan is only data until saved as a hypothesis.
     fn materialize(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
-        let clusters = extents_of(args, "extents")?.context("extents are required")?;
-        let name = str_of(args, "name").unwrap_or("");
         let size = session.volume.geometry.cluster_size();
-        let length = u64_of(args, "length").unwrap_or(clusters.len() as u64 * size);
+        let (clusters, name_owned, length) = if args.get("entryId").is_some()
+            || args.get("appendExtents").is_some()
+            || args.get("appendChain").is_some()
+            || args.get("appendChains").is_some()
+        {
+            // An entry (with something appended) or clusters with something appended: as test_stream.
+            let made = Self::reassembly(session, args)?;
+            (made.clusters, made.name, made.length)
+        } else {
+            let clusters = extents_of(args, "extents")?.context("extents are required")?;
+            let length = u64_of(args, "length").unwrap_or(clusters.len() as u64 * size);
+            (
+                clusters,
+                str_of(args, "name").unwrap_or("").to_string(),
+                length,
+            )
+        };
+        let name = name_owned.as_str();
         let Some((kind, mime)) = crate::archive::preview_kind(name) else {
             return Ok(json!({"kind": crate::archive::PREVIEW_NONE, "bytes": length}));
         };

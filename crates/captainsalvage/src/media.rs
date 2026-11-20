@@ -286,6 +286,8 @@ struct EntryReader {
     session: Arc<Session>,
     cache: Arc<Mutex<ChunkCache>>,
     id: i64,
+    /// Set for a stream that is no entry (a negative id).
+    stream: Option<Arc<ClusterStream>>,
     position: u64,
     end: u64,
 }
@@ -296,11 +298,24 @@ impl EntryReader {
         if let Some(found) = self.cache.lock().ok().and_then(|cache| cache.get(key)) {
             return Ok(found);
         }
-        let part = self
-            .session
-            .read_entry_range(self.id, index * CACHE_CHUNK_BYTES, CACHE_CHUNK_BYTES)
-            .map_err(std::io::Error::other)?;
-        let data = Arc::new(part.data);
+        let data = match &self.stream {
+            Some(stream) => self
+                .session
+                .read_cluster_stream(
+                    &stream.clusters,
+                    stream.length,
+                    index * CACHE_CHUNK_BYTES,
+                    CACHE_CHUNK_BYTES,
+                )
+                .map_err(std::io::Error::other)?,
+            None => {
+                self.session
+                    .read_entry_range(self.id, index * CACHE_CHUNK_BYTES, CACHE_CHUNK_BYTES)
+                    .map_err(std::io::Error::other)?
+                    .data
+            }
+        };
+        let data = Arc::new(data);
         if let Ok(mut cache) = self.cache.lock() {
             cache.insert(key, data.clone());
         }
@@ -361,6 +376,16 @@ pub struct MediaServer {
     probes: Mutex<HashMap<i64, Probe>>,
     cache: Arc<Mutex<ChunkCache>>,
     file_requests: AtomicU64,
+    /// Streams that are no entry: a file and a chain tried together, served for one check. Their ids
+    /// are negative, so they never name an entry.
+    streams: Mutex<HashMap<i64, Arc<ClusterStream>>>,
+    next_stream: std::sync::atomic::AtomicI64,
+}
+
+/// A stream made of clusters in a chosen order, which ffmpeg reads as a file.
+struct ClusterStream {
+    clusters: Vec<u32>,
+    length: u64,
 }
 
 /// The open disk's serial number as the Finder helper names it.
@@ -430,6 +455,8 @@ impl MediaServer {
             probes: Mutex::new(HashMap::new()),
             cache: Arc::new(Mutex::new(ChunkCache::default())),
             file_requests: AtomicU64::new(0),
+            streams: Mutex::new(HashMap::new()),
+            next_stream: std::sync::atomic::AtomicI64::new(-1),
         });
         let serving = media.clone();
         std::thread::spawn(move || {
@@ -530,6 +557,30 @@ impl MediaServer {
         }
         report.seconds_taken = began.elapsed().as_secs_f64();
         report.file_requests = self.file_requests.load(Ordering::Relaxed) - requests_before;
+        report
+    }
+
+    /// As `check`, for a stream that is no entry: `clusters` in this order, `length` bytes of them, as
+    /// ffmpeg would read the file they make. Nothing is saved, and the stream is served for this
+    /// call only.
+    pub fn check_clusters(&self, clusters: Vec<u32>, length: u64, start: f64) -> MediaCheck {
+        let id = self
+            .next_stream
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut streams) = self.streams.lock() {
+            streams.insert(id, Arc::new(ClusterStream { clusters, length }));
+        }
+        let report = self.check(id, start);
+        if let Ok(mut streams) = self.streams.lock() {
+            streams.remove(&id);
+        }
+        if let Ok(mut probes) = self.probes.lock() {
+            probes.remove(&id);
+        }
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.items.retain(|(entry, _), _| *entry != id);
+            cache.order.retain(|(entry, _)| *entry != id);
+        }
         report
     }
 
@@ -659,7 +710,24 @@ impl MediaServer {
     fn serve_file(&self, id: i64, headers: &[Header]) -> Result<Answer> {
         let session = self.engine.session()?;
         session.note_viewing();
-        let (total, _) = session.entry_total(id)?;
+        let stream = if id < 0 {
+            Some(
+                self.streams
+                    .lock()
+                    .map_err(|_| anyhow!("stream list poisoned"))?
+                    .get(&id)
+                    .cloned()
+                    .context("that stream is no longer served")?,
+            )
+        } else {
+            None
+        };
+        let total = match &stream {
+            Some(stream) => stream
+                .length
+                .min(stream.clusters.len() as u64 * session.volume.geometry.cluster_size()),
+            None => session.entry_total(id)?.0,
+        };
         let range = headers
             .iter()
             .find(|item| item.field.equiv("Range"))
@@ -694,6 +762,7 @@ impl MediaServer {
             session,
             cache: self.cache.clone(),
             id,
+            stream,
             position: start,
             end: start + length,
         };
