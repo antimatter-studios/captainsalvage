@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.8.3 | MIT | captain-salvage |
+| `captainsalvage` | 0.8.4 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.8.4 — 2026-11-20
+
+**Fixed**
+
+- **A bridge test no longer calls a join "clean" when the data is not valid on either side.** The `test_stream` tool (used by agents to test whether a chain continues a broken file) reported `clean` for a join whenever no break happened to fall beside it, even when the stream was not a valid file at all: on a real volume, a file whose data walked as MP3 for 0.0016% of its bytes, with a chain appended, came back `clean`. A clean crossing now needs valid structure running unbroken across the join, a few frames or chunks either side. The other answers are `breaks` (valid on at least one side, not through the join), `invalid-both-sides` (nothing valid there, so the join proves nothing) and `unknown`.
+
 ### v0.8.3 — 2026-11-19
 
 **Fixed**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **A preview shows where a file's bytes could not be read.** On exFAT and FAT volumes, when a cluster of a file cannot be read from the disk, the text and byte previews now show each of its bytes as `?` and say which bytes they are, instead of showing zeros that look like the file's own data. A copy of such a file keeps its layout, writes zeros where nothing could be read, is marked partial, and its manifest now names the unreadable byte ranges. Images and films still show those places as zeros.
-
-### v0.4.15 — 2026-11-19
-
-**Maintenance**
-
-- A pull request fails when what the tests run of our code falls below a captured baseline ([#267](https://github.com/antimatter-studios/captainsalvage/pull/267))
 
 <!-- changelog:end -->
 
