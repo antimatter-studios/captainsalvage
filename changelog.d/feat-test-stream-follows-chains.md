@@ -1,3 +1,0 @@
-### Added
-
-- **An agent can test a bridge in one call.** The `test_stream` tool takes `appendChain: {head}` (and `appendChains: [{head}, ...]`) and follows the chain in the FAT itself, so a chain from `bridge_candidates` can be tested without walking it first and passing its extents; with several chains the answer has a `joins` entry for each. `bridge_candidates` takes `test: true` and then tests each of its first candidates as the file's continuation (5 by default, at most 20, within a read budget of 64 MiB unless `testBudgetBytes` says otherwise) and gives each row the verdict: whether the stream crosses the join cleanly and how much of it is valid.
