@@ -98,6 +98,8 @@ pub struct Engine {
     raw_disk: RwLock<Option<Arc<crate::disk::RawDisk>>>,
     /// The stored source of the whole disk that is open, as (raw source ID, source ID).
     source_of_disk: RwLock<Option<(String, String)>>,
+    /// Where the read journal and the health maps of the sources are kept, opened on first use.
+    health_store: Mutex<Option<Arc<crate::health::HealthStore>>>,
     selection: Mutex<Value>,
     sink: RwLock<Option<UiSink>>,
     screenshot: RwLock<Option<ScreenshotHook>>,
@@ -509,6 +511,25 @@ impl Engine {
         }
     }
 
+    /// The catalog's health store: the read journal and the health maps.
+    pub(crate) fn health_store(&self) -> Result<Arc<crate::health::HealthStore>> {
+        let mut slot = self
+            .health_store
+            .lock()
+            .map_err(|_| anyhow!("health store lock poisoned"))?;
+        if let Some(store) = slot.as_ref() {
+            return Ok(store.clone());
+        }
+        let store = Arc::new(crate::health::HealthStore::for_user()?);
+        *slot = Some(store.clone());
+        Ok(store)
+    }
+
+    /// Opens a device or image as a raw source behind its health guard.
+    pub(crate) fn open_device(&self, path: &std::path::Path) -> Result<crate::disk::RawDisk> {
+        crate::disk::RawDisk::open_guarded(path, self.health_store()?)
+    }
+
     fn raw_disk(&self, args: &Value) -> Result<Arc<crate::disk::RawDisk>> {
         let disk = self
             .raw_disk
@@ -583,9 +604,8 @@ impl Engine {
         }
         match tool {
             "open_raw_disk" => {
-                let disk = Arc::new(crate::disk::RawDisk::open(std::path::Path::new(need_str(
-                    args, "path",
-                )?))?);
+                let disk =
+                    Arc::new(self.open_device(std::path::Path::new(need_str(args, "path")?))?);
                 let overview = serde_json::to_value(disk.overview())?;
                 *self
                     .raw_disk
@@ -610,6 +630,26 @@ impl Engine {
             "open_stored_scan" => self.open_stored_scan(args),
             "rescan_changed_regions" => self.rescan_changed_regions(args, author),
             "open_source" => self.open_source(args, author),
+            tool if crate::health_tools::TOOLS.contains(&tool) => {
+                let disk = self.raw_disk(args)?;
+                crate::health_tools::call(tool, &disk, args, author == AUTHOR_USER)
+            }
+            "rebind_source" => {
+                let current = self.raw_disk(args)?;
+                let path = std::path::PathBuf::from(need_str(args, "path")?);
+                let rebound = Arc::new(current.rebound(&path)?);
+                let answer = json!({
+                    "rebound": true,
+                    "diskId": rebound.id,
+                    "path": rebound.path,
+                    "health": crate::health_tools::lane(&rebound),
+                });
+                *self
+                    .raw_disk
+                    .write()
+                    .map_err(|_| anyhow!("raw disk lock poisoned"))? = Some(rebound);
+                Ok(answer)
+            }
             tool if crate::range_tools::TOOLS.contains(&tool) => {
                 let disk = self.raw_disk(args)?;
                 crate::range_tools::call(tool, &disk, args)

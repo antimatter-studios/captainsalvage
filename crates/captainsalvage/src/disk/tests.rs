@@ -598,3 +598,65 @@ fn backup_metadata_must_fit_the_selected_region_before_it_can_be_read() {
     request.boot_offset = 0;
     assert!(disk.interpretation(&request).is_err());
 }
+
+fn noise(length: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..length)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 24) as u8
+        })
+        .collect()
+}
+
+#[test]
+fn a_device_that_went_away_is_let_go_and_the_same_drive_is_found_again_at_another_node() {
+    let data = noise(4 * 1024 * 1024, 21);
+    let first = TestFile::new(&data);
+    let same_drive_again = TestFile::new(&data);
+    let another_drive = TestFile::new(&noise(data.len(), 22));
+    let root = TestFile::new(b"");
+    let store = Arc::new(crate::health::HealthStore::from_catalog(
+        crate::catalog::Catalog::open_unmigrated(root.0.parent().unwrap()).unwrap(),
+    ));
+    let device = Arc::new(DiskFile::open(&first.0).unwrap());
+    let length = data.len() as u64;
+    let disk = RawDisk::with_source_guarded(&first.0, device.clone(), length, store).unwrap();
+    disk.health
+        .as_ref()
+        .unwrap()
+        .health
+        .set_identity(crate::raw_scan::Fingerprint::read(&disk));
+    assert!(device.holds_descriptor());
+    assert!(disk.read(0, 4096).is_ok());
+
+    // The first read that finds the device gone lets go of the node. Nothing keeps it open.
+    device.release();
+    assert!(!device.holds_descriptor());
+    assert!(disk.read(0, 4096).is_err());
+    assert!(disk.source.is_gone());
+
+    // Another drive of the same size is refused, and the source stays as it was.
+    let refused = disk
+        .rebound(&another_drive.0)
+        .err()
+        .expect("another drive is refused");
+    assert!(
+        format!("{refused:#}").contains("does not look like the drive"),
+        "{refused:#}"
+    );
+    assert!(disk.source.is_gone());
+
+    // The same drive, found by its markers at its new node: the same source, reading again.
+    let back = disk.rebound(&same_drive_again.0).unwrap();
+    assert_eq!(back.id, disk.id);
+    assert_eq!(back.path, same_drive_again.0);
+    assert_eq!(back.read(8192, 4096).unwrap(), data[8192..12288]);
+    assert!(
+        !disk.source.is_gone(),
+        "what holds the old view reads from the new node"
+    );
+    assert_eq!(disk.read(8192, 4096).unwrap(), data[8192..12288]);
+}

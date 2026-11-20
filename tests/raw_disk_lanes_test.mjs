@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_UNREADABLE, evidenceStatus, evidenceSummary, itemAt, laneMap } from "../src/rawDisk.ts";
+import { BAND_ROWS, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, MAP_HEALTH_UNREADABLE, MAP_UNREADABLE, evidenceStatus, evidenceSummary, itemAt, laneMap, mapRowCount } from "../src/rawDisk.ts";
 
 function finding(offset, format, extra = {}) {
   return { offset, length: 512, format, structure: "boot sector", confidence: "plausible geometry; filesystem not yet opened",
@@ -69,4 +69,25 @@ test("the finding under the click wins over a nearer edge of another", () => {
   assert.equal(itemAt(source, 6600, 200).item, source.findings[1]);
   assert.equal(itemAt(source, 7200, 200).item, source.findings[2]);
   assert.equal(itemAt(source, 7300, 100), null);
+});
+
+test("a drive with known damage gets a health lane under the scan row, worst state on top, and none otherwise", () => {
+  const damaged = { ...disk(), health: [
+    { start: 0, end: 4096, state: "slow", latencyMs: 900, note: "" },
+    { start: 2048, end: 3072, state: "reset-culprit", latencyMs: null, note: "" },
+    { start: 5120, end: 6144, state: "unreadable", latencyMs: null, note: "" },
+    { start: 7168, end: 8192, state: "good", latencyMs: 3, note: "" },
+  ] };
+  const lanes = ["exFAT", "NTFS"];
+  assert.equal(mapRowCount(damaged, lanes.length), 2 + BAND_ROWS + lanes.length);
+  const map = rows(laneMap(damaged, lanes, 0, 8192, 8), 8);
+  assert.equal(map.length, 2 + BAND_ROWS + lanes.length);
+  assert.deepEqual(map[1], [MAP_HEALTH_SLOW, MAP_HEALTH_SLOW, MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, 0, MAP_HEALTH_UNREADABLE, 0, 0]);
+  // The rows below are the ones there were: bands, then a lane for each format.
+  for (let row = 2; row < 2 + BAND_ROWS; row++) assert.deepEqual(map[row], [MAP_BAND, MAP_BAND, MAP_BAND_ALTERNATE, MAP_BAND_ALTERNATE, 0, 0, 0, 0]);
+  // Good ranges alone draw nothing, and a source without a health map keeps the map it had.
+  const fine = { ...disk(), health: [{ start: 0, end: 4096, state: "good", latencyMs: 2, note: "" }] };
+  assert.equal(mapRowCount(fine, 2), 1 + BAND_ROWS + 2);
+  assert.equal(laneMap(fine, lanes, 0, 8192, 8).length, (1 + BAND_ROWS + 2) * 8);
+  assert.equal(mapRowCount(disk(), 2), 1 + BAND_ROWS + 2);
 });

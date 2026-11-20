@@ -1,4 +1,6 @@
 use crate::filesystem::probe::{self, Evidence};
+use crate::health::{Health, HealthStore};
+use crate::raw_scan::{MarkerReader, Verification};
 use crate::source::{BlockSource, ReadStats};
 use anyhow::{ensure, Context, Result};
 use fs_core::BlockRead;
@@ -7,7 +9,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub const DISCOVERY_BATCH_BYTES: u64 = 16 * 1024 * 1024;
 const SCAN_CHUNK_BYTES: u64 = 64 * 1024;
@@ -17,7 +19,10 @@ const MAX_EVIDENCE: usize = 256;
 static NEXT_DISK_ID: AtomicU64 = AtomicU64::new(1);
 
 struct DiskFile {
-    device: fs_core::FileDevice,
+    /// The open device, until it goes: then the descriptor is closed, so the app does not keep a
+    /// node that no longer exists open (and a disk that comes back is opened again by name).
+    device: RwLock<Option<Arc<fs_core::FileDevice>>>,
+    size: u64,
     bytes: AtomicU64,
     operations: AtomicU64,
     errors: AtomicU64,
@@ -29,7 +34,10 @@ impl BlockSource for DiskFile {
         if self.is_gone() {
             return Err(io::Error::from_raw_os_error(libc::ENXIO));
         }
-        let size = self.device.size_bytes();
+        let size = self.size;
+        let Some(device) = self.device.read().ok().and_then(|device| device.clone()) else {
+            return Err(io::Error::from_raw_os_error(libc::ENXIO));
+        };
         let end = offset
             .checked_add(buffer.len() as u64)
             .filter(|end| *end <= size)
@@ -43,13 +51,12 @@ impl BlockSource for DiskFile {
             .saturating_mul(IO_ALIGNMENT)
             .min(size);
         let mut aligned = vec![0; (aligned_end - aligned_start) as usize];
-        let result =
-            self.device
-                .read_at(aligned_start, &mut aligned)
-                .map_err(|error| match error {
-                    fs_core::Error::Io(error) => error,
-                    error => io::Error::other(error),
-                });
+        let result = device
+            .read_at(aligned_start, &mut aligned)
+            .map_err(|error| match error {
+                fs_core::Error::Io(error) => error,
+                error => io::Error::other(error),
+            });
         self.operations.fetch_add(1, Ordering::Relaxed);
         match &result {
             Ok(()) => {
@@ -60,7 +67,8 @@ impl BlockSource for DiskFile {
             Err(error) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 if crate::source::means_device_gone(error) {
-                    self.gone.store(true, Ordering::Relaxed);
+                    drop(device);
+                    self.release();
                 }
             }
         }
@@ -77,6 +85,42 @@ impl BlockSource for DiskFile {
 
     fn is_gone(&self) -> bool {
         self.gone.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn simulate_disconnect(&self) {
+        self.release();
+    }
+}
+
+impl DiskFile {
+    /// The device has gone: remember it, and let go of the node that no longer exists, so the app
+    /// does not keep it open.
+    fn release(&self) {
+        self.gone.store(true, Ordering::Relaxed);
+        if let Ok(mut open) = self.device.write() {
+            *open = None;
+        }
+    }
+
+    fn open(path: &Path) -> Result<Self> {
+        let device = fs_core::FileDevice::open(path)
+            .with_context(|| format!("opening {} read-only", path.display()))?;
+        let size = device.size_bytes();
+        Ok(Self {
+            device: RwLock::new(Some(Arc::new(device))),
+            size,
+            bytes: AtomicU64::new(0),
+            operations: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+            gone: AtomicBool::new(false),
+        })
+    }
+
+    /// Whether the descriptor on the device is still held.
+    #[cfg(test)]
+    fn holds_descriptor(&self) -> bool {
+        self.device.read().is_ok_and(|device| device.is_some())
     }
 }
 
@@ -200,27 +244,139 @@ pub struct DiscoveryBatch {
     pub evidence_limit_reached: bool,
 }
 
+/// The health of the source a [`RawDisk`] reads, and where this view starts in it.
+#[derive(Clone)]
+pub struct HealthView {
+    pub health: Arc<Health>,
+    /// This view's byte 0 is the source's byte `base`.
+    pub base: u64,
+}
+
 pub struct RawDisk {
     pub id: String,
     pub path: PathBuf,
     pub length: u64,
     pub source: Arc<dyn BlockSource>,
     pub(crate) scan_tokens: Mutex<HashMap<String, String>>,
+    /// Set when the source reads through the guard of the health map ([`crate::health`]).
+    pub health: Option<HealthView>,
 }
 
 impl RawDisk {
     pub fn open(path: &Path) -> Result<Self> {
-        let device = fs_core::FileDevice::open(path)
-            .with_context(|| format!("opening {} read-only", path.display()))?;
-        let length = device.size_bytes();
-        let source = Arc::new(DiskFile {
-            device,
-            bytes: AtomicU64::new(0),
-            operations: AtomicU64::new(0),
-            errors: AtomicU64::new(0),
-            gone: AtomicBool::new(false),
-        });
+        let source = Arc::new(DiskFile::open(path)?);
+        let length = source.size;
         Self::with_source(path, source, length)
+    }
+
+    /// Opens `path` with its health guard: what is known to be bad on this drive is never read,
+    /// and what the opening finds out is remembered. Reads that started and never ended in an
+    /// earlier run are marked before anything reads the drive.
+    pub fn open_guarded(path: &Path, store: Arc<HealthStore>) -> Result<Self> {
+        let source = Arc::new(DiskFile::open(path)?);
+        let length = source.size;
+        Self::with_source_guarded(path, source, length, store)
+    }
+
+    /// `with_source`, read through the guard of the health map.
+    pub fn with_source_guarded(
+        path: &Path,
+        source: Arc<dyn BlockSource>,
+        length: u64,
+        store: Arc<HealthStore>,
+    ) -> Result<Self> {
+        ensure!(length > 0, "raw source is empty");
+        let key = crate::health::source_key(source.as_ref(), length);
+        let health = Health::attach(source, length, store, key)?;
+        let mut disk = Self::with_source(path, health.guard(), length)?;
+        disk.health = Some(HealthView { health, base: 0 });
+        Ok(disk)
+    }
+
+    /// This source as it is after the drive came back at `path`: the same ID and guard, so what
+    /// holds the source keeps reading, now from the new node. The new device must be the same
+    /// drive, found by its markers; when it is not, the old device is put back and an error says
+    /// how far the markers agree.
+    pub fn rebound(&self, path: &Path) -> Result<Self> {
+        let view = self
+            .health
+            .as_ref()
+            .context("this source was opened without a health guard, so it cannot be rebound")?;
+        ensure!(
+            view.base == 0,
+            "only a whole source is rebound, not one extent of it"
+        );
+        ensure!(
+            self.source.is_gone(),
+            "the device still answers; a source is rebound only after its device has gone"
+        );
+        ensure!(
+            view.health.identity().is_some(),
+            "the markers of this source were not taken, so the drive cannot be recognised"
+        );
+        let device = Arc::new(DiskFile::open(path)?);
+        ensure!(
+            device.size == self.length,
+            "{} is {} bytes and the source that went away was {}: it is another drive",
+            path.display(),
+            device.size,
+            self.length
+        );
+        self.rebound_with(device, path)
+    }
+
+    /// [`RawDisk::rebound`], with the device already open.
+    pub(crate) fn rebound_with(&self, device: Arc<dyn BlockSource>, path: &Path) -> Result<Self> {
+        let view = self
+            .health
+            .as_ref()
+            .context("this source was opened without a health guard, so it cannot be rebound")?;
+        ensure!(
+            view.base == 0,
+            "only a whole source is rebound, not one extent of it"
+        );
+        let identity = view.health.identity().context(
+            "the markers of this source were not taken, so the drive cannot be recognised",
+        )?;
+        let before = view.health.device_handle();
+        view.health.rebind(device);
+        let comparison = identity.compare(&mut MarkerReader::new(self));
+        if !matches!(
+            comparison.state,
+            Verification::Exact | Verification::Probable
+        ) {
+            view.health.rebind(before);
+            anyhow::bail!(
+                "{} does not look like the drive that went away: {}",
+                path.display(),
+                comparison.summary
+            );
+        }
+        Ok(Self {
+            id: self.id.clone(),
+            path: path.into(),
+            length: self.length,
+            source: self.source.clone(),
+            scan_tokens: Mutex::new(
+                self.scan_tokens
+                    .lock()
+                    .map(|tokens| tokens.clone())
+                    .unwrap_or_default(),
+            ),
+            health: self.health.clone(),
+        })
+    }
+
+    /// The bytes of `offset..offset + length` of this view that are marked bad, as the first
+    /// such range, in the view's own offsets.
+    pub fn known_bad(&self, offset: u64, length: u64) -> Option<(u64, u64)> {
+        let view = self.health.as_ref()?;
+        let start = view.base + offset;
+        let bad = view.health.blocked(start, start + length)?;
+        Some((
+            bad.start.saturating_sub(view.base),
+            bad.end.saturating_sub(view.base),
+        ))
     }
 
     pub fn with_source(path: &Path, source: Arc<dyn BlockSource>, length: u64) -> Result<Self> {
@@ -231,6 +387,7 @@ impl RawDisk {
             source,
             length,
             scan_tokens: Mutex::new(HashMap::new()),
+            health: None,
         })
     }
 
@@ -239,7 +396,12 @@ impl RawDisk {
     /// are recognised as one.
     pub fn extent(&self, start: u64, length: u64) -> Result<RawDisk> {
         let region = RegionSource::new(self.source.clone(), self.length, start, length)?;
-        Self::with_source(&self.path, Arc::new(region), length)
+        let mut view = Self::with_source(&self.path, Arc::new(region), length)?;
+        view.health = self.health.as_ref().map(|health| HealthView {
+            health: health.health.clone(),
+            base: health.base + start,
+        });
+        Ok(view)
     }
 
     pub fn overview(&self) -> DiskOverview {
