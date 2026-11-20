@@ -7614,6 +7614,7 @@ fn a_decoder_checks_a_reassembly_and_a_verified_one_can_be_kept_in_a_disk_rebuil
     let (Some(song), Some(other)) = (sample_mp3(440), sample_mp3(880)) else {
         // Without ffmpeg the tool says so plainly, and does not pretend to have checked.
         let (engine, _session, dir) = engine_with_image("reassembly-nofmpeg", build_volume());
+        engine.set_media(MediaServer::start(engine.clone()).expect("start"));
         let answer = call(
             &engine,
             "media_check",
