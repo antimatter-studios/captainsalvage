@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-20
+
+### Added
+
+- **An agent can summarise all the unexplained space in one call.** The new `unexplained_summary` tool samples the free clusters that nothing explains, across every region (or the biggest N), within a sample budget (2048 clusters by default) and a time limit, and gives the totals in one answer: how many regions and bytes, bytes by main content, and what the sample holds (clusters with valid directory entries, clusters that mix older and newer data, file signatures at a cluster's start and inside it, NTFS records, zeros, read errors), as counts, shares and estimates. For clusters that hold valid directory entries and are still unexplained it also says what the scan made of them (for example, it could not read them) and whether the scan had got that far. It gives no names or text unless asked, and an agent is refused them while the person keeps names back.
+
 ## [0.9.0] — 2026-11-20
 
 ### Added

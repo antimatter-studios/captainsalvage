@@ -1023,7 +1023,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.9.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.10.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1159,6 +1159,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.10.0 — 2026-11-20
+
+**Added**
+
+- **An agent can summarise all the unexplained space in one call.** The new `unexplained_summary` tool samples the free clusters that nothing explains, across every region (or the biggest N), within a sample budget (2048 clusters by default) and a time limit, and gives the totals in one answer: how many regions and bytes, bytes by main content, and what the sample holds (clusters with valid directory entries, clusters that mix older and newer data, file signatures at a cluster's start and inside it, NTFS records, zeros, read errors), as counts, shares and estimates. For clusters that hold valid directory entries and are still unexplained it also says what the scan made of them (for example, it could not read them) and whether the scan had got that far. It gives no names or text unless asked, and an agent is refused them while the person keeps names back.
+
 ### v0.9.0 — 2026-11-20
 
 **Added**
@@ -1212,12 +1218,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **An NTFS file with several names is listed under each of them.** When one file has more than one name (hard links), each name now appears as a file in the folder it belongs to, with the file's size and bytes, so a copy holds the file under every name. Before, only one name was listed and the others were shown only in the file's record details. Each name is an entry of its own, so scanning again does not list it twice.
-
-### v0.5.1 — 2026-11-19
-
-**Maintenance**
-
-- The shared engine has a typed range model, and the FAT, exFAT and NTFS adapters fill it for every entry beside the cluster lists ([#272](https://github.com/antimatter-studios/captainsalvage/pull/272))
 
 <!-- changelog:end -->
 
