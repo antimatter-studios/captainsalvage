@@ -1275,8 +1275,9 @@ fn mp3_stream(seed: u32, bytes: usize) -> Vec<u8> {
     out
 }
 
-#[test]
-fn a_bridge_counts_only_when_the_stream_crosses_the_join() {
+/// A volume with `cut.mp3`, whose chain stops after two of its four clusters, its true rest in a chain
+/// at 170 and another song's in a chain at 180.
+fn bridge_volume() -> Vec<u8> {
     let mut b = Builder {
         image: build_volume(),
     };
@@ -1303,7 +1304,13 @@ fn a_bridge_counts_only_when_the_stream_crosses_the_join() {
             true,
         )],
     );
-    let (engine, _session, dir) = engine_with_image("join", b.image);
+    b.image
+}
+
+#[test]
+fn a_bridge_counts_only_when_the_stream_crosses_the_join() {
+    let image = bridge_volume();
+    let (engine, _session, dir) = engine_with_image("join", image);
     let id = id_named(&engine, "cut.mp3");
     let try_bridge = |first: u32| {
         call(
@@ -1325,6 +1332,109 @@ fn a_bridge_counts_only_when_the_stream_crosses_the_join() {
         json!({"entryId": id, "summary": true}),
     );
     assert!(plain.get("join").is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_stream_follows_chains_itself_and_bridge_candidates_can_test_each_one() {
+    let (engine, _session, dir) = engine_with_image("chains", bridge_volume());
+    let id = id_named(&engine, "cut.mp3");
+    for (head, crossing) in [(170u32, "clean"), (180, "breaks")] {
+        let by_chain = call(
+            &engine,
+            "test_stream",
+            json!({"entryId": id, "appendChain": {"head": head}, "summary": true}),
+        );
+        let by_extents = call(
+            &engine,
+            "test_stream",
+            json!({"entryId": id, "appendExtents": [{"first": head, "count": 2}], "summary": true}),
+        );
+        assert_eq!(by_chain["join"], by_extents["join"], "head {head}");
+        assert_eq!(by_chain["join"]["crossing"], crossing, "{by_chain}");
+        assert_eq!(
+            by_chain["report"], by_extents["report"],
+            "the same stream was tested"
+        );
+        assert_eq!(by_chain["joins"][0]["appendedChainHead"], head);
+        assert_eq!(
+            by_chain["appendedChains"],
+            json!([{"head": head, "clusters": 2}])
+        );
+    }
+    // Several chains: a join for each, at the place each starts.
+    let both = call(
+        &engine,
+        "test_stream",
+        json!({"entryId": id, "appendChains": [{"head": 170}, {"head": 180}], "summary": true}),
+    );
+    let joins = both["joins"].as_array().expect("joins");
+    assert_eq!(joins.len(), 2, "{both}");
+    assert_eq!(joins[0]["offset"], 2 * CLUSTER);
+    assert_eq!(joins[1]["offset"], 4 * CLUSTER);
+    assert_eq!(joins[0]["appendedChainHead"], 170);
+    assert_eq!(joins[1]["appendedChainHead"], 180);
+    // A head outside the volume is refused by name.
+    let refused = engine
+        .call(
+            "test_stream",
+            &json!({"entryId": id, "appendChain": {"head": 4_000_000}}),
+            captainsalvage::engine::AUTHOR_USER,
+        )
+        .expect_err("outside the volume");
+    assert!(
+        refused.to_string().contains("outside the volume"),
+        "{refused}"
+    );
+    // One call ranks and tests: each row has its verdict, and a row not asked about has none.
+    let ranked = call(
+        &engine,
+        "bridge_candidates",
+        json!({"entryId": id, "test": true}),
+    );
+    let rows = ranked.as_array().expect("rows");
+    let row = |head: u32| {
+        rows.iter()
+            .find(|row| row["island"]["head"] == head)
+            .unwrap_or_else(|| panic!("no candidate at {head}: {ranked}"))
+    };
+    assert_eq!(row(170)["test"]["crossing"], "clean", "{ranked}");
+    assert_eq!(row(180)["test"]["crossing"], "breaks", "{ranked}");
+    assert_eq!(row(170)["test"]["joinOffset"], 2 * CLUSTER);
+    assert!(row(170)["test"]["validFraction"].as_f64().unwrap() > 0.9);
+    assert!(row(170)["test"]["validFractionAfterJoin"].as_f64().unwrap() > 0.9);
+    let plain = call(&engine, "bridge_candidates", json!({"entryId": id}));
+    assert!(plain
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row.get("test").is_none()));
+    // The reads are bounded: with no budget a candidate is skipped and says so, and testLimit counts.
+    let none = call(
+        &engine,
+        "bridge_candidates",
+        json!({"entryId": id, "test": true, "testBudgetBytes": 1}),
+    );
+    assert!(
+        none.as_array()
+            .unwrap()
+            .iter()
+            .take(2)
+            .all(|row| row["test"]["skipped"].is_string()),
+        "{none}"
+    );
+    let one = call(
+        &engine,
+        "bridge_candidates",
+        json!({"entryId": id, "test": true, "testLimit": 1}),
+    );
+    let tested = one
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row.get("test").is_some())
+        .count();
+    assert_eq!(tested, 1, "{one}");
     let _ = std::fs::remove_dir_all(dir);
 }
 

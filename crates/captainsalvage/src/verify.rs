@@ -84,6 +84,20 @@ pub struct VerifyReport {
 const MAX_VALID_SPANS: usize = 50_000;
 
 impl VerifyReport {
+    /// The share of the bytes from `from` to the end that are valid structure, when the walker noted
+    /// where its valid structure is.
+    pub fn valid_fraction_after(&self, from: u64) -> Option<f64> {
+        if !self.has_valid_spans || from >= self.bytes_examined {
+            return None;
+        }
+        let valid: u64 = self
+            .valid_spans
+            .iter()
+            .map(|&(start, end)| end.saturating_sub(start.max(from)))
+            .sum();
+        Some(valid as f64 / (self.bytes_examined - from) as f64)
+    }
+
     /// Notes that bytes `start` to `end` are valid structure, joining a range that touches the last.
     fn add_span(&mut self, start: usize, end: usize) {
         if !self.has_valid_spans || start >= end {

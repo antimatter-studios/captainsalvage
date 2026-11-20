@@ -47,6 +47,14 @@ const DEFAULT_PAGE: u64 = 100;
 const MAX_MATERIALIZE_IMAGE_BYTES: u64 = 24 * 1024 * 1024;
 const MAX_MATERIALIZE_TEXT_BYTES: u64 = 512 * 1024;
 const MAX_FOLLOW_CLUSTERS: u64 = 100_000;
+/// A chain appended to a stream: its head, and its clusters.
+type AppendedChain = (u32, Vec<u32>);
+
+/// How many bridge candidates `bridge_candidates` tests when asked to, and the most it will.
+const DEFAULT_BRIDGE_TESTS: u64 = 5;
+const MAX_BRIDGE_TESTS: usize = 20;
+/// The bytes all those tests together may read, unless the caller says otherwise.
+const DEFAULT_BRIDGE_TEST_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_FIND_LIMIT: u64 = 200;
 const ACTIVITY_DETAIL_CHARS: usize = 300;
 /// Tools called constantly, or only about the window, stay out of the activity log.
@@ -858,9 +866,14 @@ impl Engine {
                 let id = need_i64(args, "entryId")?;
                 let limit = u64_of(args, "limit").unwrap_or(20) as usize;
                 let entropy = session.entropy_map();
-                Ok(serde_json::to_value(session.with_database(
-                    |database| database.bridge_candidates(&session.volume, id, &entropy, limit),
-                )?)?)
+                let candidates = session.with_database(|database| {
+                    database.bridge_candidates(&session.volume, id, &entropy, limit)
+                })?;
+                let mut rows = serde_json::to_value(&candidates)?;
+                if bool_of(args, "test", false) {
+                    self.test_bridge_candidates(&session, id, &candidates, &mut rows, args)?;
+                }
+                Ok(rows)
             }
 
             "roots" => {
@@ -1653,39 +1666,176 @@ impl Engine {
         }))
     }
 
+    /// The clusters a stream starts from: an entry's (after overlays) or the ones given.
+    fn stream_start(
+        session: &Arc<Session>,
+        args: &Value,
+    ) -> Result<(String, Vec<u32>, Option<u64>)> {
+        if let Some(id) = args.get("entryId").and_then(Value::as_i64) {
+            session.with_database(|database| {
+                let row = database
+                    .entry(id)?
+                    .with_context(|| format!("no entry with id {id}"))?;
+                let clusters = database.entry_clusters(&session.volume, &row)?;
+                Ok((row.name, clusters, Some(row.length)))
+            })
+        } else {
+            let clusters =
+                extents_of(args, "extents")?.context("give either entryId or extents")?;
+            Ok((
+                str_of(args, "name").unwrap_or("").to_string(),
+                clusters,
+                None,
+            ))
+        }
+    }
+
+    /// The clusters of the chain that starts at `head`, at most `limit` of them.
+    fn chain_clusters(session: &Arc<Session>, head: u32, limit: u64) -> Result<Vec<u32>> {
+        if !session.volume.valid_cluster(head) {
+            bail!("cluster {head} is outside the volume");
+        }
+        if !session.volume.claims().has_links() {
+            bail!("NTFS keeps no chain of links between clusters, so there is no chain to append. Use appendExtents.");
+        }
+        let size = session.volume.geometry.cluster_size();
+        let wanted = limit.min(u64::from(session.volume.geometry.cluster_count));
+        Ok(session
+            .volume
+            .clusters_for(head, wanted * size, false)
+            .clusters)
+    }
+
+    /// The chains `appendChain` and `appendChains` name, as (head, clusters), each followed through the
+    /// FAT. Together they add at most `MAX_FOLLOW_CLUSTERS` clusters, and the answer says when that cut one.
+    fn appended_chains(session: &Arc<Session>, args: &Value) -> Result<(Vec<AppendedChain>, bool)> {
+        let mut heads: Vec<u32> = Vec::new();
+        let head_of = |value: &Value| -> Result<u32> {
+            let head = value
+                .get("head")
+                .and_then(Value::as_u64)
+                .and_then(|head| u32::try_from(head).ok())
+                .context("a chain to append is {head: cluster}")?;
+            Ok(head)
+        };
+        if let Some(value) = args.get("appendChain") {
+            heads.push(head_of(value)?);
+        }
+        if let Some(values) = args.get("appendChains") {
+            for value in values
+                .as_array()
+                .context("appendChains must be a list of {head}")?
+            {
+                heads.push(head_of(value)?);
+            }
+        }
+        let mut left = MAX_FOLLOW_CLUSTERS;
+        let mut cut = false;
+        let mut chains = Vec::new();
+        for head in heads {
+            let clusters = Self::chain_clusters(session, head, left)?;
+            cut |= clusters.len() as u64 == left;
+            left -= clusters.len() as u64;
+            chains.push((head, clusters));
+        }
+        Ok((chains, cut))
+    }
+
     fn test_stream(&self, session: &Arc<Session>, args: &Value) -> Result<Value> {
+        let size = session.volume.geometry.cluster_size();
+        let (name, mut clusters, entry_length) = Self::stream_start(session, args)?;
+        // Where each appended piece starts in the stream: a join is tested there.
+        let mut joins: Vec<(u64, Option<u32>)> = Vec::new();
         let append = extents_of(args, "appendExtents")?.unwrap_or_default();
-        let (name, mut clusters, default_length) =
-            if let Some(id) = args.get("entryId").and_then(Value::as_i64) {
-                session.with_database(|database| {
-                    let row = database
-                        .entry(id)?
-                        .with_context(|| format!("no entry with id {id}"))?;
-                    let clusters = database.entry_clusters(&session.volume, &row)?;
-                    Ok((row.name, clusters, row.length))
-                })?
-            } else {
-                let clusters =
-                    extents_of(args, "extents")?.context("give either entryId or extents")?;
-                let size = session.volume.geometry.cluster_size();
-                (
-                    str_of(args, "name").unwrap_or("").to_string(),
-                    clusters.clone(),
-                    clusters.len() as u64 * size,
-                )
-            };
-        let join = (!append.is_empty())
-            .then(|| clusters.len() as u64 * session.volume.geometry.cluster_size());
-        clusters.extend(append);
-        let length = u64_of(args, "length").unwrap_or(default_length);
+        if !append.is_empty() {
+            joins.push((clusters.len() as u64 * size, None));
+            clusters.extend(append);
+        }
+        let (chains, cut) = Self::appended_chains(session, args)?;
+        for (head, chain) in &chains {
+            joins.push((clusters.len() as u64 * size, Some(*head)));
+            clusters.extend_from_slice(chain);
+        }
+        let length = u64_of(args, "length")
+            .or(entry_length)
+            .unwrap_or(clusters.len() as u64 * size);
         let name = str_of(args, "name").map_or(name, str::to_string);
         let test = session.test_stream(&name, &clusters, length)?;
-        let crossing = join.map(|join| (join, join_crossing(&test.report, join)));
         let mut answer = serde_json::to_value(&test)?;
-        if let Some((join, crossing)) = crossing {
-            answer["join"] = json!({"offset": join, "crossing": crossing});
+        if let Some(&(first, _)) = joins.first() {
+            answer["join"] =
+                json!({"offset": first, "crossing": join_crossing(&test.report, first)});
+        }
+        if !chains.is_empty() {
+            answer["joins"] = joins
+                .iter()
+                .map(|&(offset, head)| {
+                    json!({"offset": offset, "appendedChainHead": head, "crossing": join_crossing(&test.report, offset)})
+                })
+                .collect();
+            answer["appendedChains"] = chains
+                .iter()
+                .map(|(head, chain)| json!({"head": head, "clusters": chain.len()}))
+                .collect();
+            if cut {
+                answer["appendedChainsCut"] = json!(MAX_FOLLOW_CLUSTERS);
+            }
         }
         Ok(answer)
+    }
+
+    /// Adds to the first candidates of a ranking the verdict of testing each as the continuation of the
+    /// entry: the join's crossing and how much of the stream is valid. Reads are bounded: at most
+    /// `testLimit` candidates (default 5, at most 20), and a read budget in bytes for all of them
+    /// (`testBudgetBytes`, default 64 MiB); a candidate that would go over it is skipped, and says so.
+    fn test_bridge_candidates(
+        &self,
+        session: &Arc<Session>,
+        id: i64,
+        candidates: &[crate::map::BridgeCandidate],
+        rows: &mut Value,
+        args: &Value,
+    ) -> Result<()> {
+        let size = session.volume.geometry.cluster_size();
+        let test_limit = (u64_of(args, "testLimit").unwrap_or(DEFAULT_BRIDGE_TESTS) as usize)
+            .min(MAX_BRIDGE_TESTS);
+        let mut budget = u64_of(args, "testBudgetBytes").unwrap_or(DEFAULT_BRIDGE_TEST_BYTES);
+        let (name, own, length) = Self::stream_start(session, &json!({"entryId": id}))?;
+        let length = length.unwrap_or(own.len() as u64 * size);
+        let join = own.len() as u64 * size;
+        for (row, candidate) in rows
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .zip(candidates)
+            .take(test_limit)
+        {
+            let chain = Self::chain_clusters(
+                session,
+                candidate.island.head,
+                candidate.island.length.min(MAX_FOLLOW_CLUSTERS),
+            )?;
+            let wanted = length.min((own.len() + chain.len()) as u64 * size);
+            if wanted > budget {
+                row["test"] = json!({"skipped": "over the read budget (testBudgetBytes)", "wouldRead": wanted});
+                continue;
+            }
+            budget -= wanted;
+            let mut clusters = own.clone();
+            clusters.extend_from_slice(&chain);
+            let test = session.test_stream(&name, &clusters, wanted)?;
+            row["test"] = json!({
+                "crossing": join_crossing(&test.report, join),
+                "joinOffset": join,
+                "format": test.report.format,
+                "validFraction": test.report.valid_fraction,
+                "validFractionAfterJoin": test.report.valid_fraction_after(join),
+                "reachedEnd": test.report.reached_end,
+                "bytesRead": wanted,
+                "breaksNearJoin": test.report.breaks.iter().filter(|&&offset| offset.abs_diff(join) <= JOIN_MARGIN_BYTES).count(),
+            });
+        }
+        Ok(())
     }
 
     /// Reads clusters in a chosen order as one file, to show it: a picture, or the start of a
