@@ -301,3 +301,91 @@ fn captainsalvage_sha(bytes: &[u8]) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+
+/// The shared fixture with a deleted file written around a live one: `GONE.TXT` (1500 bytes) starts at cluster 21, and cluster 22,
+/// which would be its next, holds the live file `LIVE.TXT`, so the rest of it is in clusters 23 and 24. The FAT cleared its chain.
+fn written_around_a_live_file(kind: FilesystemKind) -> (Fixture, Vec<u8>) {
+    let mut fixture = Fixture::new(kind);
+    // The root's entries so far: the long-named file, ARCHIVE, the end marker and the deleted `_OST.TXT`.
+    let used = long_entry("Captain log.txt", b"CAPTAI~1TXT", 5, 700).len() + 32 + 32 + 32;
+    let mut entries = short_entry(b"\xE5ONE    TXT", 0x20, 21, 1500);
+    entries.extend(short_entry(b"LIVE    TXT", 0x20, 22, 512));
+    let at = fixture.root_sector * 512 + used;
+    fixture.image[at..at + entries.len()].copy_from_slice(&entries);
+    fixture.fat(22, u32::MAX);
+    fixture.put_cluster(21, &[b'A'; 512]);
+    fixture.put_cluster(22, &[b'L'; 512]);
+    fixture.put_cluster(23, &[b'B'; 512]);
+    fixture.put_cluster(24, &[b'C'; 476]);
+    let whole = [vec![b'A'; 512], vec![b'B'; 512], vec![b'C'; 476]].concat();
+    (fixture, whole)
+}
+
+#[test]
+fn a_deleted_file_written_around_a_live_file_is_copied_byte_for_byte_by_skipping_the_live_one() {
+    for kind in KINDS {
+        let (fixture, whole) = written_around_a_live_file(kind);
+        let session = session(&fixture, &format!("around-{kind}"), false);
+        let engine = Engine::new();
+        engine.set_session(session.clone());
+        let gone = find(&engine, "_ONE.TXT");
+        let live = find(&engine, "LIVE.TXT");
+        assert_eq!(
+            (gone["inUse"].as_bool(), live["inUse"].as_bool()),
+            (Some(false), Some(true)),
+            "{kind}"
+        );
+        // Its three clusters are the next free ones: 21, 23 and 24, and the live file's 22 is left out.
+        assert_eq!(gone["guessed"], true, "{kind}");
+        assert_eq!(gone["clustersFound"], 3, "{kind}: {gone}");
+        let (destination, manifest) = copy(
+            &session,
+            vec![gone["id"].as_i64().unwrap(), live["id"].as_i64().unwrap()],
+            &format!("around-{kind}"),
+        );
+        assert_eq!(
+            std::fs::read(destination.join("Volume root/_ONE.TXT")).unwrap(),
+            whole,
+            "{kind}: the deleted file, byte for byte"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("Volume root/LIVE.TXT")).unwrap(),
+            vec![b'L'; 512],
+            "{kind}: the live file is not touched"
+        );
+        let line = |name: &str| manifest.iter().find(|row| row["name"] == name).unwrap();
+        assert_eq!(line("_ONE.TXT")["extentsGuessed"], true, "{kind}");
+        assert!(line("LIVE.TXT").get("extentsGuessed").is_none(), "{kind}");
+        // What the engine reads, and what the driver's own copy makes, are the same bytes.
+        assert_eq!(
+            session
+                .read_entry_range(gone["id"].as_i64().unwrap(), 0, 1600)
+                .unwrap()
+                .data,
+            whole,
+            "{kind}"
+        );
+
+        // The one-run guess of the earlier pin is the old adapter with its fallback on: it runs into the live file.
+        let old = self::session(&fixture, &format!("around-old-{kind}"), true);
+        let old_engine = Engine::new();
+        old_engine.set_session(old.clone());
+        old_engine
+            .call(
+                "set_parameters",
+                &json!({"chainFallbackContiguous": true}),
+                AUTHOR_USER,
+            )
+            .unwrap();
+        let old_gone = find(&old_engine, "_ONE.TXT");
+        let contiguous = old
+            .read_entry_range(old_gone["id"].as_i64().unwrap(), 0, 1600)
+            .unwrap()
+            .data;
+        assert_ne!(contiguous, whole, "{kind}");
+        assert!(
+            contiguous.contains(&b'L'),
+            "{kind}: a contiguous run takes the live file's bytes"
+        );
+    }
+}
