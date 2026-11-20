@@ -6,6 +6,11 @@ name: CI
 # so branch protection keeps one required check. The third job runs the independent NTFS, FAT and exFAT
 # oracles in a Linux VM, and the fourth checks what the tests run of our code against its baseline.
 # Documentation-only changes skip all of it.
+#
+# The Linux jobs that run no VM (`engine and window`, and the gate) ask the org's runner gate for a self-hosted runner, as the
+# driver repositories do, and fall back to GitHub's when it has none free, is not asked (a change not made by the owner), or
+# does not answer. The VM job stays on GitHub's runner, which gives KVM, as rust-fs-exfat's and rust-fs-fat's VM jobs do. The
+# macOS jobs stay on macOS.
 on:
   pull_request:
     paths-ignore: ["**.md", "media/**", "LICENSE"]
@@ -24,13 +29,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  runners:
+    # Which runner each Linux job that can use a self-hosted one gets, as JSON the jobs read in `runs-on`. It runs on
+    # GitHub's runner, because it decides where the others run, and a pick is only held for the job that asked for it.
+    name: pick runners
+    runs-on: ubuntu-latest
+    outputs:
+      runners: ${{ steps.runners.outputs.runners || '{}' }}
+    steps:
+      - name: Pick runners
+        id: runners
+        env:
+          ORG: ${{ github.repository_owner }}
+          ACTOR: ${{ github.triggering_actor }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          SENDER: ${{ github.event.sender.login }}
+          GH_ACTOR: ${{ github.actor }}
+          JOBS: engine ci
+        run: |
+          set -euo pipefail
+          ours=true
+          for who in "$ACTOR" "$GH_ACTOR" "$SENDER" "$AUTHOR"; do
+            [ -z "$who" ] || [ "$who" = christhomas ] || ours=false
+          done
+          pick() {
+            $ours || { echo ubuntu-24.04; return; }
+            r=$(curl -fsS --max-time 10 --get https://runner-gate.antimatter-studios.com/pick \
+                  --data-urlencode "org=$ORG" --data-urlencode prefer=antimatter-vps-linux-x64 \
+                  --data-urlencode fallback=ubuntu-24.04 --data-urlencode "actor=$ACTOR" --data-urlencode "author=$AUTHOR" \
+                  --data-urlencode "run=${{ github.run_id }}" --data-urlencode "attempt=${{ github.run_attempt }}" \
+                  --data-urlencode "job=$1") || r=ubuntu-24.04
+            case "$r" in antimatter-vps-linux-x64|ubuntu-24.04) echo "$r" ;; *) echo ubuntu-24.04 ;; esac
+          }
+          runners='{}'
+          for job in $JOBS; do runners=$(jq -c --arg j "$job" --arg r "$(pick "$job")" '. + {($j): $r}' <<<"$runners"); done
+          echo "$runners" | jq . | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "runners=$runners" >> "$GITHUB_OUTPUT"
+
   engine:
     name: engine and window
-    runs-on: ubuntu-latest
+    needs: runners
+    runs-on: ${{ fromJSON(needs.runners.outputs.runners)['engine'] || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The self-hosted image has no compiler toolchain for the crates that build C.
+      - name: C toolchain for the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
         with:
           toolchain: 1.95.0
@@ -195,12 +242,12 @@ jobs:
 
   ci:
     name: CI
-    needs: [engine, app, oracle, coverage]
+    needs: [runners, engine, app, oracle, coverage]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.runners.outputs.runners || '{}')['ci'] || 'ubuntu-latest' }}
     steps:
       - name: all passed
         run: |
-          for result in '${{ needs.engine.result }}' '${{ needs.app.result }}' '${{ needs.oracle.result }}' '${{ needs.coverage.result }}'; do
+          for result in '${{ needs.runners.result }}' '${{ needs.engine.result }}' '${{ needs.app.result }}' '${{ needs.oracle.result }}' '${{ needs.coverage.result }}'; do
             case "$result" in success) ;; *) echo "::error::a job ended with $result"; exit 1 ;; esac
           done
