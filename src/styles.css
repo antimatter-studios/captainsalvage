@@ -966,3 +966,6 @@ video.inline-preview { max-height: 380px; background: #000; }
 .interp-stale { margin-left: 10px; }
 .interp-stale .warn { font-weight: 600; }
 .stale-mark { flex: none; margin-left: 6px; padding: 0 6px; border: 0.5px solid var(--critical); border-radius: 8px; color: var(--critical); font-size: 10.5px; line-height: 16px; white-space: nowrap; }
+
+/* A weak candidate: found by its content only. */
+.row-weak { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted, #7a7f8a); border: 1px solid currentColor; vertical-align: 1px; }

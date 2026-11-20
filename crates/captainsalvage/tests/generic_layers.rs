@@ -126,13 +126,22 @@ fn generic_side(generic: &Fat) -> Vec<Seen> {
     seen
 }
 
+/// The old FAT adapter's session: the generic one is the default now, so these comparisons ask for the old one, which is
+/// chosen when the volume is opened. The environment is the process's, so the opening takes turns.
 fn scanned(fixture: &Fixture, label: &str) -> Arc<Session> {
-    let session = Session::with_source(
-        Path::new("/test/fat-image"),
-        Arc::new(MemorySource::new(fixture.image.clone())),
-        workspace(label),
-    )
-    .unwrap();
+    static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let session = {
+        let _turn = TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::env::set_var("SALVAGE_FAT_ADAPTER", "legacy");
+        let opened = Session::with_source(
+            Path::new("/test/fat-image"),
+            Arc::new(MemorySource::new(fixture.image.clone())),
+            workspace(label),
+        );
+        std::env::remove_var("SALVAGE_FAT_ADAPTER");
+        opened.unwrap()
+    };
+    assert_eq!(session.overview()["fatAdapter"], "legacy");
     run_scan(
         &session.volume,
         &session.workspace,

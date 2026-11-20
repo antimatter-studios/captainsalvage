@@ -48,6 +48,8 @@ const FOLDER_NOT_FOUND_PENALTY: f64 = 0.2;
 const CONTESTED_LIVE_CONFIDENCE: f64 = 0.3;
 const LINK_OVERLAY: f64 = 0.9;
 const CONFIDENCE_SCALE: f64 = 255.0;
+/// How much less sure an entry is that the FAT driver found by its content only, or as the only entry of its cluster.
+const WEAK_CANDIDATE_FACTOR: f64 = 0.5;
 
 /// Stable codes for why an entry got its verdict, stored beside the reason so tools can group
 /// by them. The reason sentence says the same in words, with the numbers.
@@ -157,6 +159,8 @@ struct LoadedSet {
     modified: Option<String>,
     /// NTFS: where the FILE record says this entry sits, and how its bytes are held.
     ntfs: Option<LoadedNtfs>,
+    /// A FAT entry the driver found by its content only (`unchecked`, or `lone_entry`): a weak candidate.
+    weak: Option<String>,
 }
 
 struct LoadedNtfs {
@@ -253,6 +257,28 @@ struct Totals {
     bytes: u64,
     intact_files: u64,
     intact_bytes: u64,
+}
+
+/// How much less sure an entry is that the FAT driver found by its content only, or as the only entry of its cluster: half.
+fn weak_factor(set: &LoadedSet) -> f64 {
+    if set.weak.is_some() {
+        WEAK_CANDIDATE_FACTOR
+    } else {
+        1.0
+    }
+}
+
+/// An entry the FAT driver found by its content only (a weak candidate) is said to be, and is half as sure whatever else is
+/// true of it, a zero-length file included.
+fn mark_weak(mut assessment: Assessment, set: &LoadedSet) -> Assessment {
+    let said = match set.weak.as_deref() {
+        Some("lone_entry") => "The FAT driver found this entry by its content, as the only entry in its cluster and not through a folder that names it, so it may be file bytes that look like an entry.",
+        Some(_) => "The FAT driver found this entry by its content and not through a folder that names it, so it is not verified.",
+        None => return assessment,
+    };
+    assessment.reason = format!("{said} {}", assessment.reason);
+    assessment.confidence *= WEAK_CANDIDATE_FACTOR;
+    assessment
 }
 
 struct Assessment {
@@ -782,7 +808,12 @@ impl Context<'_> {
         } else {
             1.0
         };
-        let confidence = trust * coverage * clean * content_factor * guessed;
+        let weak_factor = if set.weak.is_some() {
+            WEAK_CANDIDATE_FACTOR
+        } else {
+            1.0
+        };
+        let confidence = trust * coverage * clean * content_factor * guessed * weak_factor;
 
         let mut sentences = Vec::new();
         if !self.volume.allocation_known && !set.in_use {
@@ -1281,7 +1312,7 @@ impl MapDb {
                 }) {
                     assessment = apply_file_test(assessment, test);
                 }
-                let scaled = (assessment.confidence * CONFIDENCE_SCALE)
+                let scaled = (assessment.confidence * weak_factor(set) * CONFIDENCE_SCALE)
                     .round()
                     .min(CONFIDENCE_SCALE) as u8;
                 for cluster in &stream.clusters {
@@ -1290,6 +1321,7 @@ impl MapDb {
                 }
                 assessment
             };
+            let assessment = mark_weak(assessment, set);
             if let Some(node) = node {
                 if counts_as_file(assessment.verdict) && !set.is_dir {
                     let total = totals.entry(node).or_default();
@@ -1617,8 +1649,9 @@ impl MapDb {
         let mut statement = self.connection.prepare(
             "SELECT s.id, s.source_cluster, s.name, s.in_use, s.checksum_ok, s.is_dir, s.first_cluster, s.length, \
              s.no_fat_chain, s.created, s.modified, s.source_offset, r.record_number, r.sequence, r.parent_record, \
-             r.parent_sequence, r.storage FROM sets s LEFT JOIN ntfs_records r \
-             ON r.source_cluster = s.source_cluster AND r.source_offset = s.source_offset",
+             r.parent_sequence, r.storage, w.mark FROM sets s LEFT JOIN ntfs_records r \
+             ON r.source_cluster = s.source_cluster AND r.source_offset = s.source_offset \
+             LEFT JOIN fat_weak w ON w.source_cluster = s.source_cluster AND w.source_offset = s.source_offset",
         )?;
         let rows = statement.query_map([], |row| {
             let source_cluster: u32 = row.get(1)?;
@@ -1643,6 +1676,7 @@ impl MapDb {
                 no_fat_chain: row.get(8)?,
                 created: row.get(9)?,
                 modified: row.get(10)?,
+                weak: row.get(17)?,
                 ntfs: storage.map(|storage| LoadedNtfs {
                     record_number: row.get::<_, Option<u32>>(12).ok().flatten(),
                     sequence: row.get::<_, Option<u16>>(13).ok().flatten().unwrap_or(0),

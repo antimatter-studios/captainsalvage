@@ -427,6 +427,7 @@ pub fn find_entries(
                     false,
                 ),
                 name_slot: 0,
+                weak: None,
             })
         })
         .collect()

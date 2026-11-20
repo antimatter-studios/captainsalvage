@@ -744,6 +744,7 @@ pub fn entry_from_record(
         ntfs: Some(ntfs),
         ranges,
         name_slot: 0,
+        weak: None,
     })
 }
 
@@ -775,6 +776,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
         }),
         ranges: RangeList::default(),
         name_slot: 0,
+        weak: None,
     }
 }
 

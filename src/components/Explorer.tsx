@@ -76,7 +76,7 @@ function FileRow({ row, selected, onSelect, showPath, onExport, depth }: { row: 
     >
       <span className="row-icon"><Icon name={row.kind === "file" ? fileIcon(row.name) : "folder"} /></span>
       <span className="row-main">
-        <span className="row-name">{row.name}{row.stale && <StaleMark />}</span>
+        <span className="row-name">{row.name}{row.stale && <StaleMark />}{row.weak && <span className="row-weak" title={row.weak === "lone_entry" ? t("Found by its content only, as the only entry in its cluster. It may be file bytes that look like an entry.") : t("Found by its content only, not through a folder that names it.")}>{t("Weak")}</span>}</span>
         {showPath && row.path !== null && <span className="row-path">{displayPath(row.path, simple)}</span>}
       </span>
       <span className="row-size">{row.kind === "file" ? bytes(row.length) : ""}</span>

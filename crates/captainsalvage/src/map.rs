@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS ntfs_records (
     storage TEXT NOT NULL,
     PRIMARY KEY (source_cluster, source_offset)
 );
+CREATE TABLE IF NOT EXISTS fat_weak (
+    source_cluster INTEGER NOT NULL,
+    source_offset INTEGER NOT NULL,
+    mark TEXT NOT NULL,
+    PRIMARY KEY (source_cluster, source_offset)
+);
 CREATE TABLE IF NOT EXISTS ntfs_extents (
     source_cluster INTEGER NOT NULL,
     source_offset INTEGER NOT NULL,
@@ -453,6 +459,10 @@ pub struct Row {
     /// (`compressed`, `encrypted`, `attribute-list`, `incomplete`, `none`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage: Option<String>,
+    /// A weak candidate: a FAT entry the driver found by its content only (`unchecked`), or as the only entry of its cluster
+    /// (`lone_entry`), so it may be file bytes that look like an entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weak: Option<String>,
 }
 
 /// What a lost folder's own files mostly are, by type, so the window can suggest a label such
@@ -537,10 +547,11 @@ pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_le
     COALESCE(confidence, 0), \
     (SELECT record_number FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
     (SELECT sequence FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
-    (SELECT storage FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset)";
+    (SELECT storage FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
+    (SELECT mark FROM fat_weak w WHERE w.source_cluster = sets.source_cluster AND w.source_offset = sets.source_offset)";
 
 /// Position of `node` when a query appends it to `FILE_COLUMNS`.
-pub(crate) const FILE_NODE_INDEX: usize = 23;
+pub(crate) const FILE_NODE_INDEX: usize = 24;
 
 pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let is_dir: bool = row.get(18)?;
@@ -572,6 +583,7 @@ pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         record_number: row.get::<_, Option<i64>>(20)?.map(|value| value as u64),
         sequence: row.get::<_, Option<i64>>(21)?.map(|value| value as u16),
         storage: row.get(22)?,
+        weak: row.get(23)?,
         ..Row::default()
     })
 }
@@ -628,6 +640,9 @@ fn write_chunk(
         "INSERT OR IGNORE INTO ntfs_records (source_cluster, source_offset, record_number, sequence, \
          parent_record, parent_sequence, storage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
+    let mut weak_insert = transaction.prepare_cached(
+        "INSERT OR REPLACE INTO fat_weak (source_cluster, source_offset, mark) VALUES (?1, ?2, ?3)",
+    )?;
     let mut extent_insert = transaction.prepare_cached(
         "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -652,6 +667,10 @@ fn write_chunk(
             set.modified,
             set.accessed,
         ])?;
+        // A weak candidate is told apart in a table of its own, so a map of any other filesystem is as it was.
+        if let Some(mark) = &set.weak {
+            weak_insert.execute(params![cluster, key, mark])?;
+        }
         if let Some(entry) = ntfs {
             record_insert.execute(params![
                 cluster,
@@ -969,6 +988,10 @@ impl MapDb {
         )?;
         transaction.execute(
             "DELETE FROM ntfs_records WHERE source_cluster >= ?1 AND source_cluster < ?2",
+            params![first, end],
+        )?;
+        transaction.execute(
+            "DELETE FROM fat_weak WHERE source_cluster >= ?1 AND source_cluster < ?2",
             params![first, end],
         )?;
         transaction.execute(
