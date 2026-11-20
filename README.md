@@ -1070,7 +1070,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.13.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.14.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1206,6 +1206,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.14.0 — 2026-11-20
+
+**Added**
+
+- **Bad sectors are drawn as flashing red, everywhere the window draws the disk.** Ranges the health map calls reset-culprit (the drive reset during a read there), unreadable (a read there failed) or suspect (inside a band the damage probe jumped over) are drawn in red that pulses once a second: on the raw-disk map (over every row, and in the legend as "Bad sectors: reading here drops the drive"), on the volume map (the bad clusters, on both the whole-volume and the magnified strip), and in a preview, where the `?` for each byte that could not be read is red and pulsing. Resting the pointer on one says where it is, how it was found (the drive reset during a read, a read failed, or a band the probe jumped over) and when. Slow ranges stay amber and do not flash. For people who ask macOS for reduced motion nothing flashes: the red is solid, with a diagonal hatch. The new `bad_sectors` tool gives the volume's bad clusters. The strings are translated into German, Spanish and French.
+
 ### v0.13.0 — 2026-11-20
 
 **Added**
@@ -1261,12 +1267,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The preview of a FAT or exFAT file reads the file's typed ranges, not its cluster list ([#284](https://github.com/antimatter-studios/captainsalvage/pull/284))
-
-### v0.8.1 — 2026-11-19
-
-**Maintenance**
-
-- The changelog hook lets the integration branch of a release commit the release tool's CHANGELOG.md, so a candidate can be cut from it (#252) ([#282](https://github.com/antimatter-studios/captainsalvage/pull/282))
 
 <!-- changelog:end -->
 
