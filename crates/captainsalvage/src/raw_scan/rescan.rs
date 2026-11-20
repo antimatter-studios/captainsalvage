@@ -125,10 +125,9 @@ impl ScanStore {
         let scan = self
             .catalog_scan_of(id)?
             .context("This scan is not registered in the catalog, so it has no stale regions.")?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved_token: String = transaction.query_row(
+        // Read without the write lock, as `step` does: the disk is read before it is taken, and what was read is
+        // only written when the region is still where it was.
+        let saved_token: String = self.connection.query_row(
             "SELECT source_token FROM raw_scans WHERE id = ?1",
             [id],
             |row| row.get(0),
@@ -137,7 +136,7 @@ impl ScanStore {
             *token == saved_token,
             "This scan was opened elsewhere; verify and load it again."
         );
-        let Some(region) = stale::stale_regions(&transaction, &scan)?
+        let Some(region) = stale::stale_regions(&self.connection, &scan)?
             .into_iter()
             .next()
         else {
@@ -151,6 +150,18 @@ impl ScanStore {
         ensure!(
             batch.next_offset > position && batch.next_offset <= span.end,
             "Discovery did not advance within the stale region."
+        );
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let again = stale::stale_regions(&transaction, &scan)?
+            .into_iter()
+            .next();
+        ensure!(
+            again.is_some_and(
+                |now| now.span() == span && now.done_to.clamp(span.start, span.end) == position
+            ),
+            "The stale region moved while the disk was being read; step again."
         );
         transaction.execute(
             "DELETE FROM raw_findings WHERE scan_id = ?1 AND offset >= ?2 AND offset < ?3",

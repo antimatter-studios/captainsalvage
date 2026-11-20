@@ -1391,3 +1391,119 @@ fn two_gpt_disks_of_one_size_are_two_disks_and_what_was_stored_before_the_guid_m
     store.save_map(&legacy, None, &map).unwrap();
     assert!(!store.rekey(&legacy, &key_one).unwrap());
 }
+
+/// Runs `work` on its own thread and says whether it finished within `seconds`: a deadlock shows as a timeout,
+/// not as a test that never ends.
+fn finishes_within<T: Send + 'static>(
+    seconds: u64,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(seconds))
+        .ok()
+}
+
+#[test]
+fn a_journaled_read_never_waits_on_a_write_lock_that_the_catalog_has_elsewhere() {
+    let root = Root::new();
+    let store = root.store();
+    let drive = FakeDrive::new(patterned(2 * MIB as usize, 51), vec![]);
+    let health = health_of(&drive, &store);
+    // Another connection to the catalog, as a raw scan's, holds the write lock for as long as it likes.
+    let other = rusqlite::Connection::open(root.0.join("raw-scans.sqlite")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let h = health.clone();
+    let done = finishes_within(5, move || {
+        let _journal = h.journal_scope();
+        let read = read(&h, 8192, 4096);
+        // What the status tools ask while the read goes on.
+        let probe = probe::load(&h);
+        let report = h.report();
+        (read.is_ok(), probe.is_ok(), report["length"].as_u64())
+    });
+    assert_eq!(
+        done,
+        Some((true, true, Some(2 * MIB))),
+        "a read, and the status of the source, waited on the catalog's write lock"
+    );
+    drop(other);
+}
+
+#[test]
+fn a_raw_scan_step_does_not_hold_the_catalog_while_it_reads_the_device() {
+    // The real freeze: a step took the write lock, then read the disk through the guard, whose journal wanted it too.
+    let root = Root::new();
+    let store = root.store();
+    let length = 2 * MIB;
+    let drive = FakeDrive::new(patterned(length as usize, 52), vec![]);
+    let disk = RawDisk::with_source_guarded(
+        Path::new("/dev/rdisk7"),
+        drive.clone(),
+        length,
+        store.clone(),
+    )
+    .unwrap();
+    // A drive that has reset reads carefully: every read is journaled.
+    let key = disk.health.as_ref().unwrap().health.key().to_string();
+    store.add_resets(&key, 2).unwrap();
+    disk.health.as_ref().unwrap().health.reload();
+    assert!(disk.health.as_ref().unwrap().health.failing());
+    let mut scans = crate::raw_scan::ScanStore::open_in(&root.0).unwrap();
+    let scan = scans.create(&disk, 0, length).unwrap();
+    let id = scan.scan_id.clone();
+    let done = finishes_within(8, move || {
+        let step = scans.step(&disk, &id);
+        step.map(|step| step.batch.next_offset)
+            .map_err(|error| format!("{error:#}"))
+    });
+    let next = done
+        .expect("the step froze: it held the catalog while the journal wanted it")
+        .expect("the step");
+    assert!(next > 0);
+}
+
+#[test]
+fn the_journal_gives_up_quickly_and_goes_on_when_it_cannot_write() {
+    let root = Root::new();
+    let store = root.store();
+    // Whatever holds the journal's own file, a read is not delayed by more than a moment.
+    let journal = rusqlite::Connection::open(root.0.join("read-journal.sqlite")).unwrap();
+    journal.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS read_journal (id INTEGER PRIMARY KEY AUTOINCREMENT, source_key TEXT NOT NULL, source_id TEXT, owner TEXT NOT NULL, start INTEGER NOT NULL, length INTEGER NOT NULL, started_millis INTEGER NOT NULL, finished_millis INTEGER, elapsed_ms INTEGER, outcome TEXT); BEGIN IMMEDIATE;").unwrap();
+    let began = Instant::now();
+    let s = store.clone();
+    let wrote = finishes_within(5, move || s.started("k", "1:1", 0, 4096));
+    assert!(wrote.is_some(), "writing the journal waited without end");
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        began.elapsed()
+    );
+    // The read is remembered in memory, and written when the file is free again.
+    journal.execute_batch("COMMIT").unwrap();
+    let row = wrote.unwrap().unwrap();
+    store.done(row, 3, "ok").unwrap();
+    let rows = store.recent("k", 5).unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["outcome"], "ok");
+}
+
+#[test]
+fn the_end_of_a_read_is_not_lost_when_the_journal_is_busy_so_no_false_open_row_reads_as_a_reset() {
+    let root = Root::new();
+    let store = root.store();
+    let row = store.started("k", "9999999:1", 0, 4096).unwrap();
+    assert!(row > 0, "the file was free: a real row");
+    // Held by another writer at the moment the read ends.
+    let other = rusqlite::Connection::open(root.0.join("read-journal.sqlite")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let s = store.clone();
+    assert!(finishes_within(5, move || s.done(row, 4, "ok")).is_some_and(|result| result.is_ok()));
+    other.execute_batch("COMMIT").unwrap();
+    // Written at the next call, and not left open: a run that started later finds no read to blame.
+    assert_eq!(store.recent("k", 3).unwrap()[0]["outcome"], "ok");
+    assert!(store.abandoned("k").unwrap().is_empty());
+}
