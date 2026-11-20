@@ -103,6 +103,16 @@ range across the join of the runs), reads a file in a folder whole, and exports 
 the right-click menu, checking the copy byte for byte. It needs `ntfs.img`, never mounts or attaches
 anything, copies only into this folder and removes what it copied.
 
+`ntfs_mount_block_test.py` (issue #171) checks the mount block of an NTFS volume that macOS gives no volume UUID. For an
+MBR layout and a GPT layout, it makes a throwaway image with `hdiutil create`, writes `ntfs.img` into the attached
+image's partition 1 with `dd` (on the node `attach` printed, nothing else), and lists only that one disk
+(`SALVAGE_TEST_STARTUP_DISK_FILE`). It checks the volume is listed as NTFS with no UUID and a place key, that the Block
+mount checkbox is offered, that a block set while the volume is mounted shows the app's Unmount warning (which only
+the person's button clears), that `diskutil mount` is then refused, that the image attached again under another disk
+number is not mounted by macOS, that another disk of the same size and layout (another NTFS serial) mounts as usual,
+and that the person's click on the checkbox lets the volume mount again. It needs `ntfs.img`, `hdiutil` and `diskutil`,
+touches no real disk, and removes its images.
+
 `start_follows_disks_test.py` (issue #250) makes a small synthetic exFAT disk image of its own, starts the app on
 the start screen with a list that names only the one disk the test attached (`SALVAGE_TEST_STARTUP_DISK_FILE`, a
 file holding that disk's identifier, honoured in a test-hooks build with `SALVAGE_TEST_UI`, so no real disk is ever
@@ -143,6 +153,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | `archive_file_test.py` | `arctest.img` | archives |
 | `films_test.py` | `filmtest.img` | films |
 | `mounted_warning_test.py` | `hdiutil` | the mounted warning, on a throwaway image |
+| `ntfs_mount_block_test.py` | `ntfs.img`, `hdiutil` | the mount block of an NTFS volume with no UUID, on throwaway images |
 | `browse_probe.py`, `browse_first_probe.py`, `mount_block_probe.py`, `mount_block_race.py` | as above | probes: they print and have no pass count; read their output |
 
 A test that opens an image through `harness.open_image` or `scan_and_reopen` opens **an image of one

@@ -87,6 +87,9 @@ pub struct StartupVolume {
     pub external: bool,
     pub mount_point: Option<String>,
     pub uuid: Option<String>,
+    /// What names this volume in the mount block: its UUID, or, when macOS gives it none, its place
+    /// (see `mountblock::Placement`). Absent where the volume cannot be described.
+    pub mount_block_key: Option<String>,
     pub can_open: bool,
     pub readable: bool,
     pub known: Option<KnownVolume>,
@@ -259,6 +262,7 @@ pub fn parse_volume(info: &str) -> Option<StartupVolume> {
             .and_then(|uuid| fstab_line(uuid, format)),
         protected: false,
         mount_blocked: false,
+        mount_block_key: parse_volume_uuid(info),
         uuid: parse_volume_uuid(info),
         readable: can_read(&device),
         device,
@@ -569,8 +573,15 @@ pub fn startup_report(include_internal: bool) -> Result<StartupReport> {
             .uuid
             .as_deref()
             .is_some_and(|uuid| is_protected(&fstab, uuid));
+        // A volume macOS gives no UUID is named by its place. That is asked of Disk Arbitration, which
+        // describes it without reading the disk.
+        if volume.mount_block_key.is_none() {
+            volume.mount_block_key = crate::mountblock::bsd_name(&volume.device)
+                .and_then(|bsd| crate::mountblock::describe_place(&bsd, false))
+                .map(|place| place.key());
+        }
         volume.mount_blocked = volume
-            .uuid
+            .mount_block_key
             .as_deref()
             .is_some_and(crate::mountblock::is_blocked);
     }

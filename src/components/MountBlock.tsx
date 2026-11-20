@@ -30,8 +30,10 @@ const CHANGED = "salvage-mount-blocks-changed";
  * The person's switch for keeping one volume unmounted. While Captain Salvage is open, macOS
  * refuses to mount a blocked volume, however the mount is asked for. The compact form is a small
  * inline checkbox for a row; its note and error are siblings for the row to lay out below it.
+ * `uuid` is the volume's UUID, or the key of its place when macOS gives it none, and then `device` names
+ * the volume so that its place is read when it is blocked.
  */
-export function MountBlockToggle({ uuid, name, mounted, compact = false }: { uuid: string; name: string; mounted: boolean; compact?: boolean }) {
+export function MountBlockToggle({ uuid, device, name, mounted, compact = false }: { uuid: string; device?: string; name: string; mounted: boolean; compact?: boolean }) {
   const [blocked] = useMountBlocks();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,7 +41,7 @@ export function MountBlockToggle({ uuid, name, mounted, compact = false }: { uui
   const change = (next: boolean) => {
     setBusy(true);
     setError(null);
-    afterSystemCommand(() => call("mount_block_set", { uuid, name, blocked: next }))
+    afterSystemCommand(() => call("mount_block_set", { uuid, device, name, blocked: next }))
       .then(() => window.dispatchEvent(new Event(CHANGED)))
       .catch((reason) => setError(String(reason)))
       .finally(() => setBusy(false));

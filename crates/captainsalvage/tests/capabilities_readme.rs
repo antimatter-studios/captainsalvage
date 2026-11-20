@@ -101,7 +101,7 @@ fn the_three_fat_variants_report_one_table_and_no_filesystem_claims_a_feature_of
 }
 
 #[test]
-fn the_mount_block_is_not_claimed_for_ntfs_because_macos_gives_it_no_volume_uuid() {
+fn the_mount_block_of_ntfs_is_limited_for_a_volume_macos_gives_no_uuid() {
     use captainsalvage::filesystem::Support;
     let row = |kind: FilesystemKind| {
         kind.capabilities()
@@ -113,6 +113,8 @@ fn the_mount_block_is_not_claimed_for_ntfs_because_macos_gives_it_no_volume_uuid
         assert_eq!(row(kind).support, Support::Supported, "{kind}");
     }
     let ntfs = row(FilesystemKind::Ntfs);
-    assert_eq!(ntfs.support, Support::Missing);
-    assert!(ntfs.note.contains("no volume UUID"), "{}", ntfs.note);
+    assert_eq!(ntfs.support, Support::Limited);
+    for said in ["volume UUID", "offset and length", "fingerprint"] {
+        assert!(ntfs.note.contains(said), "{said}: {}", ntfs.note);
+    }
 }

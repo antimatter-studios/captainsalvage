@@ -138,6 +138,8 @@ export interface StartupVolume {
   external: boolean;
   mountPoint: string | null;
   uuid: string | null;
+  /** What names the volume in the mount block: its UUID, or, when macOS gives none, its place on the disk. */
+  mountBlockKey?: string | null;
   canOpen: boolean;
   readable: boolean;
   known: KnownVolume | null;

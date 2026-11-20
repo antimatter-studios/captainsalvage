@@ -216,6 +216,10 @@ export const ENGINE_TEXT: string[] = [
   // Keeping volumes unmounted.
   "Only the person using the app can let a volume mount again.",
   "A volume UUID is needed.",
+  "A volume with no UUID is blocked by naming its device, so that its place can be read.",
+  "{name} is not a disk volume.",
+  "macOS did not describe {name}, so its place cannot be used to keep it unmounted.",
+  "{name} is not the volume that was shown; look at the disks again.",
   "blocked must be true or false",
   "saving the mount blocks",
   // Looking inside other kinds of archive.
