@@ -1107,6 +1107,7 @@ The libraries the app names itself:
 | `rhai` | 1.27.0 | MIT OR Apache-2.0 | captainsalvage |
 | `rusqlite` | 0.41.1 | MIT | captainsalvage |
 | `rust-fs-core` | 0.4.3 | MIT | captainsalvage |
+| `rust-fs-core` | 0.5.0 | MIT | captainsalvage |
 | `rust-fs-exfat` | 0.1.0 | MIT | captainsalvage |
 | `rust-fs-fat32` | 0.1.0 | MIT | captainsalvage |
 | `rust-fs-ntfs` | 0.11.0 | MIT OR Apache-2.0 | captainsalvage |

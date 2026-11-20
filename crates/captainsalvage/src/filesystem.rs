@@ -12,8 +12,11 @@ pub(crate) mod salvage;
 
 use anyhow::{bail, Context, Result};
 use fs_core::BlockRead;
+// The FAT driver's own file trait is deprecated for `fs_core::layers::FileAPI` and goes in its next release. The generic
+// adapter over those layers (`filesystem::generic`) is what replaces its use here; until then it is the one thing read
+// through it, the root directory and the open of an entry.
+#[allow(deprecated)]
 use fs_fat32::file::FileAPI as FatFileAPI;
-use fs_fat32::primitives::PrimitiveAPI as FatPrimitiveAPI;
 use serde::Serialize;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -317,7 +320,12 @@ pub struct FileEntry {
     driver_entry: DriverEntry,
 }
 
-enum DriverVolume<Device: BlockRead> {
+/// A device both generations of rust-fs-core read: the exFAT and NTFS drivers use 0.4's `BlockRead`, the FAT driver 0.5's.
+pub trait DriverDevice: BlockRead + fs_core_layers::BlockRead {}
+
+impl<T: BlockRead + fs_core_layers::BlockRead> DriverDevice for T {}
+
+enum DriverVolume<Device: DriverDevice> {
     Exfat(Box<fs_exfat::volume::Volume<std::sync::Arc<Device>>>),
     Fat(fs_fat32::Volume<std::sync::Arc<Device>>),
 }
@@ -526,19 +534,18 @@ pub enum FilesystemDetails {
     },
 }
 
-pub struct FilesystemVolume<Device: BlockRead> {
+pub struct FilesystemVolume<Device: DriverDevice> {
     kind: FilesystemKind,
     volume_id: u64,
     device: std::sync::Arc<Device>,
     driver: DriverVolume<Device>,
 }
 
-impl<Device: BlockRead> FilesystemVolume<Device> {
+impl<Device: DriverDevice> FilesystemVolume<Device> {
     pub fn open(device: Device) -> Result<Self> {
         let device = std::sync::Arc::new(device);
         let mut boot_sector = [0; 512];
-        device
-            .read_at(0, &mut boot_sector)
+        BlockRead::read_at(&*device, 0, &mut boot_sector)
             .context("reading filesystem boot sector")?;
         let kind = FilesystemKind::detect_boot_sector(&boot_sector)?;
         if kind == FilesystemKind::Exfat {
@@ -639,7 +646,7 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
         if end > self.geometry().volume_size {
             bail!("volume read exceeds the declared filesystem size");
         }
-        self.device.read_at(offset, output)?;
+        BlockRead::read_at(&*self.device, offset, output)?;
         Ok(())
     }
 
@@ -723,6 +730,7 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
                     driver_entry: DriverEntry::Exfat(entry),
                 })
                 .collect()),
+            #[allow(deprecated)]
             DriverVolume::Fat(volume) => Ok(volume
                 .root_directory()?
                 .into_iter()
@@ -746,7 +754,9 @@ impl<Device: BlockRead> FilesystemVolume<Device> {
             (DriverVolume::Exfat(volume), DriverEntry::Exfat(driver_entry)) => {
                 Ok(volume.open_file(driver_entry)?.read_at(offset, output)?)
             }
-            (DriverVolume::Fat(volume), DriverEntry::Fat(driver_entry)) => {
+            (DriverVolume::Fat(volume), DriverEntry::Fat(driver_entry)) =>
+            {
+                #[allow(deprecated)]
                 Ok(fs_fat32::file::FileAPI::open_file(volume, driver_entry)?
                     .read_at(offset, output)?)
             }
@@ -760,6 +770,20 @@ mod tests {
     use super::*;
 
     struct TestDisk(Vec<u8>);
+
+    impl fs_core_layers::BlockRead for TestDisk {
+        fn read_at(&self, offset: u64, output: &mut [u8]) -> fs_core_layers::Result<()> {
+            BlockRead::read_at(self, offset, output).map_err(|error| match error {
+                fs_core::Error::OutOfBounds { offset, len, size } => {
+                    fs_core_layers::Error::OutOfBounds { offset, len, size }
+                }
+                other => fs_core_layers::Error::Io(std::io::Error::other(other.to_string())),
+            })
+        }
+        fn size_bytes(&self) -> u64 {
+            self.0.len() as u64
+        }
+    }
 
     impl BlockRead for TestDisk {
         fn read_at(&self, offset: u64, output: &mut [u8]) -> fs_core::Result<()> {

@@ -101,6 +101,22 @@ where
     }
 }
 
+/// The same reads for the FAT driver, which is built on the next rust-fs-core (see `filesystem::DriverDevice`).
+impl<S: Deref + Send + Sync> fs_core_layers::BlockRead for SourceDevice<S>
+where
+    S::Target: BlockSource,
+{
+    fn read_at(&self, offset: u64, output: &mut [u8]) -> fs_core_layers::Result<()> {
+        self.source
+            .read_exact_at(offset, output)
+            .map_err(fs_core_layers::Error::Io)
+    }
+
+    fn size_bytes(&self) -> u64 {
+        self.length
+    }
+}
+
 /// The driver reads a stream one cluster at a time. On a real device that is thousands of tiny
 /// reads for a file a copy could take in a few, so reads are served from a window of 1 MiB that
 /// is read once. A window that cannot be read is not tried again: the exact range asked for is
