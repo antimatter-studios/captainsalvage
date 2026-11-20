@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.1 — 2026-11-20
+
+**Fixed**
+
+- **A raw scan of a drive that has reset no longer freezes the app.** A raw scan step held a write lock on the catalog while it read the disk, and every read it journaled waited on that same lock, half a minute at a time, while holding what every status call needs: the scan sat at 0.0% and the window answered nothing. A step now reads the disk without the lock and takes it only to write; the read journal has a file of its own and gives up after a moment, keeping a write it cannot make in memory until the file is free, so no read is left open to be blamed for a reset.
+
 ### v0.15.0 — 2026-11-20
 
 **Added**
@@ -1294,12 +1300,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **An agent can test a bridge in one call.** The `test_stream` tool takes `appendChain: {head}` (and `appendChains: [{head}, ...]`) and follows the chain in the FAT itself, so a chain from `bridge_candidates` can be tested without walking it first and passing its extents; with several chains the answer has a `joins` entry for each. `bridge_candidates` takes `test: true` and then tests each of its first candidates as the file's continuation (5 by default, at most 20, within a read budget of 64 MiB unless `testBudgetBytes` says otherwise) and gives each row the verdict: whether the stream crosses the join cleanly and how much of it is valid.
-
-### v0.8.4 — 2026-11-20
-
-**Fixed**
-
-- **A bridge test no longer calls a join "clean" when the data is not valid on either side.** The `test_stream` tool (used by agents to test whether a chain continues a broken file) reported `clean` for a join whenever no break happened to fall beside it, even when the stream was not a valid file at all: on a real volume, a file whose data walked as MP3 for 0.0016% of its bytes, with a chain appended, came back `clean`. A clean crossing now needs valid structure running unbroken across the join, a few frames or chunks either side. The other answers are `breaks` (valid on at least one side, not through the join), `invalid-both-sides` (nothing valid there, so the join proves nothing) and `unknown`.
 
 <!-- changelog:end -->
 
