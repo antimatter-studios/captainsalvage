@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-11-20
+
+### Fixed
+
+- **A bridge test no longer calls a join "clean" when the data is not valid on either side.** The `test_stream` tool (used by agents to test whether a chain continues a broken file) reported `clean` for a join whenever no break happened to fall beside it, even when the stream was not a valid file at all: on a real volume, a file whose data walked as MP3 for 0.0016% of its bytes, with a chain appended, came back `clean`. A clean crossing now needs valid structure running unbroken across the join, a few frames or chunks either side. The other answers are `breaks` (valid on at least one side, not through the join), `invalid-both-sides` (nothing valid there, so the join proves nothing) and `unknown`.
+
 ## [0.8.3] — 2026-11-19
 
 ### Fixed
