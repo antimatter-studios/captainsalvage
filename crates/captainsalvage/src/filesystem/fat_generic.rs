@@ -17,7 +17,7 @@
 //! because the disk's own have been written over, is read the same way through either adapter.
 
 use super::generic::GenericVolume;
-use super::{SalvageEntry, VolumeGeometry};
+use super::{FatWalk, SalvageEntry, VolumeGeometry};
 use crate::allocation;
 use crate::changes::StructureCopy;
 use crate::ranges::RangeList;
@@ -196,6 +196,18 @@ pub fn sets(
                 "unchecked".to_string()
             }
         });
+        // A file's clusters are the driver's: its walk of the storage the entry claims. An entry whose chain the FAT cleared (a
+        // deleted one) is walked as one run from its first cluster, which is a guess and is said to be.
+        let walk = (!is_dir && size > 0)
+            .then(|| {
+                walk_of(
+                    generic,
+                    &candidate,
+                    geometry,
+                    view.state == CandidateState::Deleted,
+                )
+            })
+            .flatten();
         sets.by_cluster
             .entry(cluster)
             .or_default()
@@ -225,12 +237,43 @@ pub fn sets(
                 ),
                 name_slot: 0,
                 weak,
+                walk,
             });
     }
     for entries in sets.by_cluster.values_mut() {
         entries.sort_by_key(|entry| entry.offset);
     }
     Ok(sets)
+}
+
+/// The clusters the driver's walk of a candidate claims, as runs. `None` when the driver could not walk it at all, and then the
+/// engine follows the FAT itself.
+fn walk_of(
+    generic: &GenericFat,
+    candidate: &fs_core_layers::layers::Candidate<fs_fat32::layers::FatDetail>,
+    geometry: &VolumeGeometry,
+    guessed: bool,
+) -> Option<FatWalk> {
+    let walk = generic.extents(candidate).ok()?;
+    let mut extents: Vec<(u32, u32)> = Vec::new();
+    for extent in &walk.extents {
+        if extent.source.offset < geometry.data_offset || extent.source.length == 0 {
+            continue;
+        }
+        let into = extent.source.offset - geometry.data_offset;
+        let first = fs_exfat::primitives::FIRST_CLUSTER + (into / geometry.cluster_size) as u32;
+        let count = extent.source.length.div_ceil(geometry.cluster_size) as u32;
+        match extents.last_mut() {
+            Some((from, run)) if *from + *run == first => *run += count,
+            _ => extents.push((first, count)),
+        }
+    }
+    // Only what comes after the first cluster is a guess, so a file of one cluster has nothing guessed.
+    let clusters: u32 = extents.iter().map(|(_, count)| count).sum();
+    Some(FatWalk {
+        guessed: guessed && clusters > 1,
+        extents,
+    })
 }
 
 /// Whether the driver's findings include damage, as sentences.

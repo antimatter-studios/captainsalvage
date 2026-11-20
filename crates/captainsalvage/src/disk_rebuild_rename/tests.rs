@@ -96,9 +96,10 @@ fn old_database(folder: &Folder) -> PathBuf {
     path
 }
 
-/// The agent change journal and the FAT weak marks, which a database from before them gets empty when it is opened.
+/// The agent change journal and the FAT weak marks and walks, which a database from before them gets empty when it is opened.
 const ADDED_AFTER_THE_RENAME: &[&str] = &[
     "fat_weak",
+    "fat_walks",
     "agent_sessions",
     "disk_rebuild_changes",
     "disk_rebuild_agent_marks",

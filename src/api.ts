@@ -241,6 +241,8 @@ export interface CopyStatus {
   filesDone: number;
   filesSkipped: number;
   filesPartial: number;
+  /** Files copied from a guess: their FAT chain was cleared, so the driver followed their claim as one run. Absent when none. */
+  filesGuessed?: number;
   filesFailed: number;
   bytesTotal: number;
   bytesDone: number;
@@ -296,6 +298,8 @@ export interface Row {
   kind: "folder" | "file" | "missing-folder";
   /** A weak candidate: a FAT entry the driver found by its content only (`unchecked`), or as the only entry of its cluster (`lone_entry`). */
   weak?: "unchecked" | "lone_entry";
+  /** A FAT file whose clusters the driver guessed: its chain was cleared when it was deleted, so only its first cluster is known. */
+  guessed?: boolean;
   /** The source changed near this entry since it was stored, and the area has not been scanned again. */
   stale?: boolean;
   id: number | null;

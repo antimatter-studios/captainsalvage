@@ -152,6 +152,7 @@ export function ExportDialog({ item, copy, onClose }: { item: ExportItem; copy: 
             <div>{t("{done} of {total}", { done: bytes(Math.min(copy.bytesDone, copy.bytesTotal)), total: bytes(copy.bytesTotal) })}</div>
             {copy.current && <div className="muted detail-path">{copy.current}</div>}
             {copy.filesSkipped > 0 && <div className="muted">{t("{count} already copied, skipped.", { count: count(copy.filesSkipped) })}</div>}
+            {(copy.filesGuessed ?? 0) > 0 && <div>{t("{count} copied from a guess: the chain was cleared when the file was deleted, so the rest of each follows its first cluster. The manifest marks them.", { count: count(copy.filesGuessed ?? 0) })}</div>}
             {copy.filesPartial > 0 && <div>{t("{count} partial. The manifest says what is missing from each.", { count: count(copy.filesPartial) })}</div>}
             {copy.badClusters > 0 && <div className="warn">{t("{count} unreadable clusters were filled with zeros.", { count: count(copy.badClusters) })}</div>}
             {copy.filesFailed > 0 && <div className="warn">{t("{count} failed.", { count: count(copy.filesFailed) })}</div>}

@@ -161,6 +161,8 @@ struct LoadedSet {
     ntfs: Option<LoadedNtfs>,
     /// A FAT entry the driver found by its content only (`unchecked`, or `lone_entry`): a weak candidate.
     weak: Option<String>,
+    /// A FAT file's clusters as the driver walked them.
+    walk: Option<crate::filesystem::FatWalk>,
 }
 
 struct LoadedNtfs {
@@ -414,10 +416,18 @@ impl Streams<'_> {
             // A run list names its clusters. Nothing is assumed contiguous.
             return (self.volume.clusters_from_runs(&ntfs.runs, set.length), 0);
         }
-        let mut stream = self
-            .volume
-            .clusters_for(set.first_cluster, set.length, set.no_fat_chain);
-        let mut assumed = 0;
+        // A FAT file the driver walked is read from its walk: the clusters it claims. For a file whose chain the FAT cleared (a deleted
+        // one) the walk is one run from its first cluster, and every cluster after the first is a guess.
+        let mut stream = match &set.walk {
+            Some(walk) => self.volume.clusters_from_walk(&walk.extents, set.length),
+            None => self
+                .volume
+                .clusters_for(set.first_cluster, set.length, set.no_fat_chain),
+        };
+        let mut assumed = match &set.walk {
+            Some(walk) if walk.guessed => stream.clusters.len().saturating_sub(1) as u64,
+            _ => 0,
+        };
         if self.params.chain_fallback_contiguous && !stream.clusters.is_empty() {
             let mut next = stream.clusters[stream.clusters.len() - 1] + 1;
             while (stream.clusters.len() as u64) < stream.needed && self.volume.valid_cluster(next)
@@ -828,9 +838,15 @@ impl Context<'_> {
             sentences.push("Entry checksum failed, so its fields may be damaged.".to_string());
         }
         if assumed > 0 {
-            sentences.push(format!(
-                "Last {assumed} clusters are assumed contiguous, because the FAT chain ends early."
-            ));
+            if set.walk.as_ref().is_some_and(|walk| walk.guessed) {
+                sentences.push(format!(
+                    "The FAT cleared this file's chain when it was deleted, so the FAT driver followed its claim as one run from its first cluster: the last {assumed} clusters are a guess."
+                ));
+            } else {
+                sentences.push(format!(
+                    "Last {assumed} clusters are assumed contiguous, because the FAT chain ends early."
+                ));
+            }
         }
         if kept > 0 {
             sentences.push(format!(
@@ -1649,47 +1665,58 @@ impl MapDb {
         let mut statement = self.connection.prepare(
             "SELECT s.id, s.source_cluster, s.name, s.in_use, s.checksum_ok, s.is_dir, s.first_cluster, s.length, \
              s.no_fat_chain, s.created, s.modified, s.source_offset, r.record_number, r.sequence, r.parent_record, \
-             r.parent_sequence, r.storage, w.mark FROM sets s LEFT JOIN ntfs_records r \
+             r.parent_sequence, r.storage, w.mark, k.guessed, k.extents FROM sets s LEFT JOIN ntfs_records r \
              ON r.source_cluster = s.source_cluster AND r.source_offset = s.source_offset \
-             LEFT JOIN fat_weak w ON w.source_cluster = s.source_cluster AND w.source_offset = s.source_offset",
+             LEFT JOIN fat_weak w ON w.source_cluster = s.source_cluster AND w.source_offset = s.source_offset \
+             LEFT JOIN fat_walks k ON k.source_cluster = s.source_cluster AND k.source_offset = s.source_offset",
         )?;
-        let rows = statement.query_map([], |row| {
-            let source_cluster: u32 = row.get(1)?;
-            let source_offset: i64 = row.get(11)?;
-            let storage: Option<String> = row.get(16)?;
-            let mut in_use: bool = row.get(3)?;
-            if ntfs {
-                // A record that says it is in use but sits in a free cluster is an old copy of
-                // the MFT, not the volume's own.
-                in_use &= !volume.is_free(source_cluster);
-            }
-            Ok(LoadedSet {
-                id: row.get(0)?,
-                source_cluster,
-                name: row.get(2)?,
-                in_use,
-                checksum_ok: row.get(4)?,
-                accepted: false,
-                is_dir: row.get(5)?,
-                first_cluster: row.get(6)?,
-                length: row.get::<_, i64>(7)? as u64,
-                no_fat_chain: row.get(8)?,
-                created: row.get(9)?,
-                modified: row.get(10)?,
-                weak: row.get(17)?,
-                ntfs: storage.map(|storage| LoadedNtfs {
-                    record_number: row.get::<_, Option<u32>>(12).ok().flatten(),
-                    sequence: row.get::<_, Option<u16>>(13).ok().flatten().unwrap_or(0),
-                    parent_record: row.get::<_, Option<u32>>(14).ok().flatten(),
-                    parent_sequence: row.get::<_, Option<u16>>(15).ok().flatten(),
-                    storage,
-                    runs: runs
-                        .get(&(i64::from(source_cluster), source_offset))
-                        .cloned()
-                        .unwrap_or_default(),
-                }),
-            })
-        })?;
+        let rows =
+            statement.query_map([], |row| {
+                let source_cluster: u32 = row.get(1)?;
+                let source_offset: i64 = row.get(11)?;
+                let storage: Option<String> = row.get(16)?;
+                let mut in_use: bool = row.get(3)?;
+                if ntfs {
+                    // A record that says it is in use but sits in a free cluster is an old copy of
+                    // the MFT, not the volume's own.
+                    in_use &= !volume.is_free(source_cluster);
+                }
+                Ok(LoadedSet {
+                    id: row.get(0)?,
+                    source_cluster,
+                    name: row.get(2)?,
+                    in_use,
+                    checksum_ok: row.get(4)?,
+                    accepted: false,
+                    is_dir: row.get(5)?,
+                    first_cluster: row.get(6)?,
+                    length: row.get::<_, i64>(7)? as u64,
+                    no_fat_chain: row.get(8)?,
+                    created: row.get(9)?,
+                    modified: row.get(10)?,
+                    weak: row.get(17)?,
+                    walk: match row.get::<_, Option<String>>(19)? {
+                        Some(text) => serde_json::from_str(&text).ok().map(|extents| {
+                            crate::filesystem::FatWalk {
+                                guessed: row.get::<_, bool>(18).unwrap_or(false),
+                                extents,
+                            }
+                        }),
+                        None => None,
+                    },
+                    ntfs: storage.map(|storage| LoadedNtfs {
+                        record_number: row.get::<_, Option<u32>>(12).ok().flatten(),
+                        sequence: row.get::<_, Option<u16>>(13).ok().flatten().unwrap_or(0),
+                        parent_record: row.get::<_, Option<u32>>(14).ok().flatten(),
+                        parent_sequence: row.get::<_, Option<u16>>(15).ok().flatten(),
+                        storage,
+                        runs: runs
+                            .get(&(i64::from(source_cluster), source_offset))
+                            .cloned()
+                            .unwrap_or_default(),
+                    }),
+                })
+            })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 }

@@ -745,6 +745,7 @@ pub fn entry_from_record(
         ranges,
         name_slot: 0,
         weak: None,
+        walk: None,
     })
 }
 
@@ -777,6 +778,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
         ranges: RangeList::default(),
         name_slot: 0,
         weak: None,
+        walk: None,
     }
 }
 

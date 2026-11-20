@@ -49,6 +49,7 @@ struct Stored {
     modified: Option<String>,
     accessed: Option<String>,
     weak: Option<String>,
+    clusters_found: i64,
     verdict: String,
     confidence: f64,
     reason: String,
@@ -76,7 +77,7 @@ fn stored(image: &[u8], backend: FatBackend, label: &str) -> (Vec<Stored>, Volum
     let mut statement = connection
         .prepare(
             "SELECT source_cluster, source_offset, name, in_use, checksum_ok, attributes, is_dir, first_cluster, length, \
-             valid_length, no_fat_chain, created, modified, accessed, (SELECT mark FROM fat_weak w WHERE w.source_cluster = sets.source_cluster AND w.source_offset = sets.source_offset), COALESCE(verdict, ''), COALESCE(confidence, 0), \
+             valid_length, no_fat_chain, created, modified, accessed, (SELECT mark FROM fat_weak w WHERE w.source_cluster = sets.source_cluster AND w.source_offset = sets.source_offset), COALESCE(clusters_found, 0), COALESCE(verdict, ''), COALESCE(confidence, 0), \
              COALESCE(reason, '') FROM sets ORDER BY source_cluster, source_offset",
         )
         .unwrap();
@@ -97,9 +98,10 @@ fn stored(image: &[u8], backend: FatBackend, label: &str) -> (Vec<Stored>, Volum
                 modified: row.get(12)?,
                 accessed: row.get(13)?,
                 weak: row.get(14)?,
-                verdict: row.get(15)?,
-                confidence: row.get(16)?,
-                reason: row.get(17)?,
+                clusters_found: row.get(15)?,
+                verdict: row.get(16)?,
+                confidence: row.get(17)?,
+                reason: row.get(18)?,
             })
         })
         .unwrap()
@@ -154,6 +156,7 @@ fn what_changes_with_the_generic_adapter_is_the_state_and_the_marks_of_entries_n
             let mut same = new.clone();
             same.in_use = old.in_use;
             same.weak = old.weak.clone();
+            same.clusters_found = old.clusters_found;
             same.verdict = old.verdict.clone();
             same.confidence = old.confidence;
             same.reason = old.reason.clone();
@@ -184,11 +187,39 @@ fn what_changes_with_the_generic_adapter_is_the_state_and_the_marks_of_entries_n
         );
         assert_eq!(
             changed,
-            ["child by.tes", "ORPHAN.TXT", "TWO.TXT", "THREE.TXT"],
+            [
+                "_OST.TXT",
+                "child by.tes",
+                "ORPHAN.TXT",
+                "TWO.TXT",
+                "THREE.TXT"
+            ],
             "{kind}"
         );
         let row =
             |rows: &[Stored], name: &str| rows.iter().find(|row| row.name == name).unwrap().clone();
+        // The deleted file the folder names: its chain was cleared, so the old adapter found one cluster of it and the driver's
+        // walk is the whole claim, as one run from its first cluster, marked a guess in its reason (its first cluster is known, the
+        // rest is where the driver put it). Its entry, name, state and dates are the same.
+        let (old, new) = (row(&before, "_OST.TXT"), row(&after, "_OST.TXT"));
+        assert_eq!((old.clusters_found, new.clusters_found), (1, 2), "{kind}");
+        assert_eq!(
+            (old.verdict.as_str(), new.verdict.as_str()),
+            ("partial", "likely-intact"),
+            "{kind}"
+        );
+        assert_eq!((old.confidence, new.confidence), (0.5, 0.75), "{kind}");
+        assert!(!old.reason.contains("a guess"), "{kind}: {}", old.reason);
+        assert!(
+            new.reason.contains("the last 1 clusters are a guess"),
+            "{kind}: {}",
+            new.reason
+        );
+        assert_eq!(
+            (old.in_use, new.in_use, &old.weak, &new.weak),
+            (false, false, &None, &None),
+            "{kind}"
+        );
         // The entries of a cluster nothing points to: deleted for the driver, which reads the FAT's state of their cluster,
         // and weak, which the old adapter had no way to say.
         for name in ["ORPHAN.TXT", "TWO.TXT", "THREE.TXT"] {
