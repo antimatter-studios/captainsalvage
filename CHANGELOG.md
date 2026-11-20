@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-11-20
+
+### Maintenance
+
+- The coverage baseline is written from CI's numbers, and `baseline` refuses to measure outside CI ([#298](https://github.com/antimatter-studios/captainsalvage/pull/298))
+
 ## [0.11.0] — 2026-11-20
 
 ### Added

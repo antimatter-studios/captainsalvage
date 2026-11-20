@@ -1026,7 +1026,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.11.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.11.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1162,6 +1162,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.11.1 — 2026-11-20
+
+**Maintenance**
+
+- The coverage baseline is written from CI's numbers, and `baseline` refuses to measure outside CI ([#298](https://github.com/antimatter-studios/captainsalvage/pull/298))
+
 ### v0.11.0 — 2026-11-20
 
 **Added**
@@ -1215,12 +1221,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **The app no longer says it can keep an NTFS volume unmounted.** The Block mount switch works by the volume's UUID, and macOS reports no volume UUID for an NTFS volume, so the checkbox never appears for one and nothing is blocked. The support table (in the window, `captainsalvage filesystem capabilities` and the README) said "Supported"; it now says "Missing" and why. macOS mounts NTFS read-only by itself, so only a third-party NTFS driver on the Mac would write to such a volume.
-
-### v0.7.0 — 2026-11-19
-
-**Added**
-
-- **NTFS shows and copies what could be read of a damaged file.** When part of an NTFS file's data cannot be read (a damaged or missing run, a run outside the volume, or a read that fails), the text and byte previews now show each unreadable byte as `?` and say which bytes they are, and a copy keeps the file's layout, writes zeros there and the rest as read, is marked partial, and its manifest names the unreadable byte ranges. Before, the whole read failed and a copy made no file. Compressed, encrypted and incomplete streams are not treated this way: they still say why they cannot be read, and no file of zeros is made for them.
 
 <!-- changelog:end -->
 
