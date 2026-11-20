@@ -61,6 +61,13 @@ pub struct Detection {
 
 /// Reads the start of `view` and says what volume, if any, begins there.
 pub fn detect(view: &RawDisk) -> Result<Detection> {
+    // A disk that has reset is not analysed on its own: the first sector says what it says (and is known to
+    // read), and a range analysis is the person's to ask for.
+    if view.careful_open() {
+        let mut detection = Detection::default();
+        lenient_boot(view, &mut detection);
+        return Ok(detection);
+    }
     let window = view.length.min(HEAD_BYTES);
     let report = range_analysis::analyze(
         view,

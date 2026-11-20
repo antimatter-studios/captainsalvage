@@ -257,6 +257,50 @@ pub struct DiscoveryBatch {
     pub evidence_limit_reached: bool,
 }
 
+/// For a partition device such as /dev/rdisk7s1, the physical disk /dev/rdisk7 it is part of: that disk's key
+/// and where the partition starts in it, when the disk can be opened, its partition table has a partition of
+/// this length, and the first sector there is this device's own. None otherwise (a disk image, a disk that
+/// cannot be opened), and the device then has a map of its own until a whole disk links it.
+fn whole_disk_of(path: &Path, length: u64, own_key: &str) -> Option<(String, u64)> {
+    let name = path.file_name()?.to_str()?;
+    let (disk, slice) = name.rsplit_once('s')?;
+    let digits = disk
+        .strip_prefix("rdisk")
+        .or_else(|| disk.strip_prefix("disk"))?;
+    if digits.is_empty()
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || slice.is_empty()
+        || !slice.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let whole = path.with_file_name(disk);
+    let file = Arc::new(DiskFile::open(&whole).ok()?);
+    let whole_length = file.size;
+    let whole_key = crate::health::source_key(file.as_ref(), whole_length);
+    if whole_key == own_key {
+        return None;
+    }
+    let table = RawDisk::with_source(&whole, file.clone(), whole_length).ok()?;
+    let mut warnings = Vec::new();
+    for partition in table.partitions(&mut warnings).ok()? {
+        if partition.length != length {
+            continue;
+        }
+        let region = RegionSource::new(
+            file.clone(),
+            whole_length,
+            partition.start,
+            partition.length,
+        )
+        .ok()?;
+        if crate::health::source_key(&region, length) == own_key {
+            return Some((whole_key, partition.start));
+        }
+    }
+    None
+}
+
 /// The health of the source a [`RawDisk`] reads, and where this view starts in it.
 #[derive(Clone)]
 pub struct HealthView {
@@ -288,7 +332,17 @@ impl RawDisk {
     pub fn open_guarded(path: &Path, store: Arc<HealthStore>) -> Result<Self> {
         let source = Arc::new(DiskFile::open(path)?);
         let length = source.size;
-        Self::with_source_guarded(path, source, length, store)
+        let own_key = crate::health::source_key(source.as_ref(), length);
+        // What was stored before a GPT disk's GUID was part of its key moves to the new key, once.
+        let legacy = crate::health::legacy_source_key(source.as_ref(), length);
+        let _ = store.rekey(&legacy, &own_key);
+        // A partition (/dev/rdisk7s1) is a stretch of a physical disk: it shares that disk's map, so a bad
+        // zone found through one is avoided through the other.
+        let link = match store.link_of(&own_key) {
+            Ok(Some(link)) => Some(link),
+            _ => whole_disk_of(path, length, &own_key),
+        };
+        Self::guarded(path, source, length, store, own_key, link)
     }
 
     /// `with_source`, read through the guard of the health map.
@@ -299,11 +353,75 @@ impl RawDisk {
         store: Arc<HealthStore>,
     ) -> Result<Self> {
         ensure!(length > 0, "raw source is empty");
-        let key = crate::health::source_key(source.as_ref(), length);
-        let health = Health::attach(source, length, store, key)?;
+        let own_key = crate::health::source_key(source.as_ref(), length);
+        let link = store.link_of(&own_key).ok().flatten();
+        Self::guarded(path, source, length, store, own_key, link)
+    }
+
+    fn guarded(
+        path: &Path,
+        source: Arc<dyn BlockSource>,
+        length: u64,
+        store: Arc<HealthStore>,
+        own_key: String,
+        link: Option<(String, u64)>,
+    ) -> Result<Self> {
+        ensure!(length > 0, "raw source is empty");
+        let health = Health::attach_in(source, length, store, own_key, link)?;
         let mut disk = Self::with_source(path, health.guard(), length)?;
         disk.health = Some(HealthView { health, base: 0 });
         Ok(disk)
+    }
+
+    /// A whole disk tells the store which of its stretches are its partitions, by the first sector of each,
+    /// so that a partition opened alone later (or earlier: what was stored for it moves into the disk's)
+    /// shares the disk's health. Reads only the first sector of each partition, never one in a bad zone.
+    /// Returns how many were linked.
+    pub fn register_partition_links(&self) -> usize {
+        let Some(view) = self
+            .health
+            .as_ref()
+            .filter(|view| view.base == 0 && view.health.base() == 0)
+        else {
+            return 0;
+        };
+        let mut warnings = Vec::new();
+        let Ok(partitions) = self.partitions(&mut warnings) else {
+            return 0;
+        };
+        let _journal = view.health.journal_scope();
+        let mut linked = 0;
+        for partition in partitions {
+            if partition.length == 0
+                || view
+                    .health
+                    .blocked(partition.start, partition.start + 512.min(partition.length))
+                    .is_some()
+            {
+                continue;
+            }
+            let Ok(region) = RegionSource::new(
+                self.source.clone(),
+                self.length,
+                partition.start,
+                partition.length,
+            ) else {
+                continue;
+            };
+            let child = crate::health::source_key(&region, partition.length);
+            if view
+                .health
+                .store()
+                .link(&child, view.health.key(), partition.start, partition.length)
+                .is_ok()
+            {
+                linked += 1;
+            }
+        }
+        if linked > 0 {
+            view.health.reload();
+        }
+        linked
     }
 
     /// This source as it is after the drive came back at `path`: the same ID and guard, so what
@@ -378,6 +496,21 @@ impl RawDisk {
             ),
             health: self.health.clone(),
         })
+    }
+
+    /// The disk has reset (see [`crate::health::Health::careful_open`]): opening it spares it.
+    pub fn careful_open(&self) -> bool {
+        self.health
+            .as_ref()
+            .is_some_and(|view| view.health.careful_open())
+    }
+
+    /// Whether `offset..offset + length` of this view is known to read, from earlier reads.
+    pub fn known_good(&self, offset: u64, length: u64) -> bool {
+        match self.health.as_ref() {
+            Some(view) => view.health.known_good(view.base + offset, length),
+            None => true,
+        }
     }
 
     /// The bytes of `offset..offset + length` of this view that are marked bad, as the first

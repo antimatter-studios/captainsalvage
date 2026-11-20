@@ -50,6 +50,15 @@ pub const DEFAULT_FAILING_AFTER: u64 = 2;
 /// On a failing drive no read is longer than this: a long read into a bad area keeps the drive
 /// retrying for longer, and its reset costs more.
 const CAREFUL_PIECE_BYTES: u64 = 64 * 1024;
+/// A read that fails because the device is gone is the culprit of the reset only if it was in flight for at
+/// least this long. The reads the first real run found were 108 and 140 ms in; one that comes back at once
+/// was issued after the device had already gone, and says nothing about where the drive is bad.
+pub const CULPRIT_MIN_MS: u64 = 20;
+/// The first this many bytes of a source are known to read: the partition table and the boot sectors were
+/// read to open it.
+const HEAD_BYTES: u64 = 1024 * 1024;
+/// How many of the earlier good reads of a source are kept in mind to tell which ranges are safe to read again.
+const GOOD_READS_KEPT: usize = 2000;
 /// A read this long is always journaled, whoever asks: nothing small enough to be one bad sector
 /// is journaled unless it is a probe or the source is being opened.
 const JOURNAL_FROM_BYTES: u64 = 1024 * 1024;
@@ -115,6 +124,30 @@ pub fn known_bad(error: &io::Error) -> Option<&KnownBadRange> {
 /// rewrites left out (exFAT keeps its volume flags and percent in use there). It names the drive
 /// whatever it is called this time and needs one read, of the sector that always reads.
 pub fn source_key(device: &dyn BlockSource, length: u64) -> String {
+    let base = base_key(device, length);
+    // A GPT disk's first sector is the same protective MBR on every disk of one model, which has the same
+    // length: its own GUID, in the header after it, tells two such disks apart.
+    let mut header = [0u8; 72];
+    if length >= 1024
+        && device.read_exact_at(512, &mut header).is_ok()
+        && &header[..8] == b"EFI PART"
+    {
+        let guid: String = header[56..64]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        return format!("{base}-g{guid}");
+    }
+    base
+}
+
+/// The key a source had before a GPT disk's own GUID was part of it: its length and the start of its first
+/// sector. Rows stored under it belong to the one disk that had it, and are moved to the new key.
+pub fn legacy_source_key(device: &dyn BlockSource, length: u64) -> String {
+    base_key(device, length)
+}
+
+fn base_key(device: &dyn BlockSource, length: u64) -> String {
     let mut head = vec![0u8; length.min(512) as usize];
     let digest = match device.read_exact_at(0, &mut head) {
         Ok(()) => {
@@ -139,7 +172,16 @@ struct State {
 
 /// The health of one source, shared by the guard that reads it and the tools that show it.
 pub struct Health {
+    /// The key the map, the journal and the reset count are kept under: the physical disk's. A whole disk
+    /// and its partitions share it, so a bad zone found by one is avoided by the other.
     key: String,
+    /// This device's own key (its length and first sector), which a probe's progress is kept under, in
+    /// this device's own offsets.
+    own_key: String,
+    /// Where this device starts in the physical disk: 0 for the whole disk.
+    base: u64,
+    /// The ranges that earlier reads of the disk found good, in the disk's offsets.
+    good_reads: RwLock<Vec<(u64, u64)>>,
     owner: String,
     serial: u64,
     length: u64,
@@ -155,6 +197,8 @@ pub struct Health {
     failing_after: AtomicU64,
     /// The current disappearance of the device has been counted.
     counted_gone: AtomicBool,
+    /// The last read that found the device gone had been in flight long enough to be the one it went away during.
+    gone_in_flight: AtomicBool,
 }
 
 impl Drop for Health {
@@ -184,6 +228,9 @@ pub struct Probed {
     pub gone: bool,
     /// The read was refused because the range is already known to be bad.
     pub refused: bool,
+    /// With `gone`: the read was in flight long enough to be the one the device went away during. When it
+    /// is not, the device had already gone, and nothing is learned about the range.
+    pub in_flight: bool,
 }
 
 fn aligned(offset: u64, end: u64, length: u64) -> (u64, u64) {
@@ -193,7 +240,42 @@ fn aligned(offset: u64, end: u64, length: u64) -> (u64, u64) {
     )
 }
 
+/// Sorted spans joined where they touch or overlap.
+fn coalesce_spans(spans: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    let mut joined: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
+    for (start, length) in spans {
+        let end = start.saturating_add(length);
+        match joined.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => joined.push((start, end)),
+        }
+    }
+    joined
+}
+
 impl Health {
+    /// A range of the physical disk as this device sees it, cut to the device: None when it is elsewhere.
+    fn down(&self, range: &HealthRange) -> Option<HealthRange> {
+        let end = self.base.saturating_add(self.length);
+        if range.end <= self.base || range.start >= end {
+            return None;
+        }
+        Some(HealthRange {
+            start: range.start.max(self.base) - self.base,
+            end: range.end.min(end) - self.base,
+            ..range.clone()
+        })
+    }
+
+    /// A range of this device in the physical disk's offsets.
+    fn up(&self, range: HealthRange) -> HealthRange {
+        HealthRange {
+            start: range.start + self.base,
+            end: range.end + self.base,
+            ..range
+        }
+    }
+
     /// Puts the health of `inner` under `key`. Reads that started and never ended in an earlier
     /// run become `reset-culprit` ranges now, before anything reads the source.
     pub fn attach(
@@ -202,15 +284,37 @@ impl Health {
         store: Arc<HealthStore>,
         key: String,
     ) -> Result<Arc<Self>> {
+        Self::attach_in(inner, length, store, key, None)
+    }
+
+    /// [`Health::attach`] for a device that is a stretch of a physical disk: `link` is that disk's key and
+    /// where the device starts in it. What is known is kept under the disk's key, in the disk's offsets,
+    /// and seen from here in this device's own.
+    pub fn attach_in(
+        inner: Arc<dyn BlockSource>,
+        length: u64,
+        store: Arc<HealthStore>,
+        own_key: String,
+        link: Option<(String, u64)>,
+    ) -> Result<Arc<Self>> {
         let serial = NEXT_SERIAL.fetch_add(1, Ordering::Relaxed);
         live_set(|live| {
             live.insert(serial);
         });
+        let (key, base) = match link {
+            Some((disk_key, offset)) if disk_key != own_key => {
+                store.link(&own_key, &disk_key, offset, length)?;
+                (disk_key, offset)
+            }
+            _ => (own_key.clone(), 0),
+        };
+        // A culprit recorded for a read made after the device had gone is not one.
+        let _ = store.drop_instant_culprits(&key, CULPRIT_MIN_MS);
         let mut map = store.load_map(&key)?;
         let abandoned = store.abandoned(&key)?;
         let mut found = Vec::new();
         for read in &abandoned {
-            let (start, end) = aligned(read.start, read.start + read.length, length);
+            let (start, end) = aligned(read.start, read.start + read.length, u64::MAX);
             let range = HealthRange::new(
                 start,
                 end,
@@ -230,8 +334,13 @@ impl Health {
             // Each read that was open when its run ended is a reset that run could not count.
             resets = store.add_resets(&key, abandoned.len() as u64)?;
         }
+        let mut good = store.good_reads(&key, GOOD_READS_KEPT).unwrap_or_default();
+        good.sort_unstable();
         let health = Arc::new(Self {
             key,
+            own_key,
+            base,
+            good_reads: RwLock::new(coalesce_spans(good)),
             owner: format!("{}:{serial}", std::process::id()),
             serial,
             length,
@@ -243,12 +352,20 @@ impl Health {
             }),
             journaling: AtomicU32::new(0),
             slow_ms: AtomicU64::new(DEFAULT_SLOW_MS),
-            found_at_open: Mutex::new(found),
+            found_at_open: Mutex::new(Vec::new()),
             identity: Mutex::new(None),
             resets: AtomicU64::new(resets),
             failing_after: AtomicU64::new(failing_after.max(1)),
             counted_gone: AtomicBool::new(false),
+            gone_in_flight: AtomicBool::new(false),
         });
+        let mine: Vec<HealthRange> = found
+            .iter()
+            .filter_map(|range| health.down(range))
+            .collect();
+        if let Ok(mut slot) = health.found_at_open.lock() {
+            *slot = mine;
+        }
         if !abandoned.is_empty() {
             health.persist();
             let ids: Vec<i64> = abandoned.iter().map(|read| read.id).collect();
@@ -258,6 +375,44 @@ impl Health {
         Ok(health)
     }
 
+    /// Reads again what is stored for the physical disk, after something else (the link of a partition to
+    /// the disk) changed it: the zones, the reset count, and reads that started and never ended.
+    pub fn reload(&self) {
+        let _ = self.store.drop_instant_culprits(&self.key, CULPRIT_MIN_MS);
+        let Ok(mut map) = self.store.load_map(&self.key) else {
+            return;
+        };
+        let abandoned = self.store.abandoned(&self.key).unwrap_or_default();
+        for read in &abandoned {
+            let (start, end) = aligned(read.start, read.start + read.length, u64::MAX);
+            map.record(HealthRange::new(
+                start,
+                end,
+                RangeState::ResetCulprit,
+                None,
+                "a read of this range started and never finished, so the device probably reset during it",
+            ));
+        }
+        if let Ok(mut state) = self.state.write() {
+            // What this run learned and has not stored yet stays.
+            for range in state.map.ranges().to_vec() {
+                map.record(range);
+            }
+            state.map = map;
+        }
+        if !abandoned.is_empty() {
+            let _ = self.store.add_resets(&self.key, abandoned.len() as u64);
+            let ids: Vec<i64> = abandoned.iter().map(|read| read.id).collect();
+            let _ = self.store.settle(&ids, "never-finished");
+        }
+        if let Ok((resets, failing_after)) = self.store.load_flags(&self.key) {
+            self.resets.store(resets, Ordering::Relaxed);
+            self.failing_after
+                .store(failing_after.max(1), Ordering::Relaxed);
+        }
+        self.persist();
+    }
+
     /// The guard to give to everything that reads the source.
     pub fn guard(self: &Arc<Self>) -> Arc<dyn BlockSource> {
         Arc::new(GuardedSource {
@@ -265,8 +420,20 @@ impl Health {
         })
     }
 
+    /// The key of the physical disk this is, whole or in part: what the map, the journal and the reset count
+    /// are kept under.
     pub fn key(&self) -> &str {
         &self.key
+    }
+
+    /// This device's own key, which its probe's progress is kept under.
+    pub fn own_key(&self) -> &str {
+        &self.own_key
+    }
+
+    /// Where this device starts in the physical disk.
+    pub fn base(&self) -> u64 {
+        self.base
     }
 
     pub fn length(&self) -> u64 {
@@ -341,6 +508,10 @@ impl Health {
     /// Which stored source this is, once the catalog says. Ranges the same source has under
     /// another key (its first sector changed) come in.
     pub fn adopt_source(&self, source_id: &str) {
+        // A stored source is a device's, and the rows are the disk's: only the whole disk names them.
+        if self.base != 0 || self.key != self.own_key {
+            return;
+        }
         let _ = self.store.adopt(&self.key, source_id);
         let others = self
             .store
@@ -380,11 +551,71 @@ impl Health {
             .and_then(|identity| identity.clone())
     }
 
+    /// The map as this device sees it, in its own offsets.
     pub fn snapshot(&self) -> HealthMap {
+        self.state
+            .read()
+            .map(|state| {
+                if self.base == 0
+                    && state
+                        .map
+                        .ranges()
+                        .last()
+                        .is_none_or(|last| last.end <= self.length)
+                {
+                    state.map.clone()
+                } else {
+                    HealthMap::from_ranges(
+                        state
+                            .map
+                            .ranges()
+                            .iter()
+                            .filter_map(|range| self.down(range))
+                            .collect(),
+                    )
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    /// The whole physical disk's map, in the disk's offsets.
+    pub fn disk_snapshot(&self) -> HealthMap {
         self.state
             .read()
             .map(|state| state.map.clone())
             .unwrap_or_default()
+    }
+
+    /// The disk has a zone where the drive reset or that a probe jumped over, or has reset often: opening and
+    /// reading it should spare it (see `MarkerReader`).
+    pub fn careful_open(&self) -> bool {
+        self.failing()
+            || self.state.read().is_ok_and(|state| {
+                state.map.ranges().iter().any(|range| {
+                    matches!(range.state, RangeState::ResetCulprit | RangeState::Suspect)
+                })
+            })
+    }
+
+    /// Whether `offset..offset + length` of this device is known to read: in its first mebibyte, which was
+    /// read to open it; or a range a probe found good; or one an earlier read of it ended well.
+    pub fn known_good(&self, offset: u64, length: u64) -> bool {
+        let end = offset.saturating_add(length);
+        if end <= HEAD_BYTES {
+            return true;
+        }
+        let (from, to) = (offset + self.base, end + self.base);
+        if self.state.read().is_ok_and(|state| {
+            state.map.ranges().iter().any(|range| {
+                range.state == RangeState::Good && range.start <= from && range.end >= to
+            })
+        }) {
+            return true;
+        }
+        self.good_reads.read().is_ok_and(|good| {
+            good.iter()
+                .any(|(start, stop)| *start <= from && *stop >= to)
+        })
     }
 
     /// The first range that blocks reading and overlaps `start..end`.
@@ -399,10 +630,10 @@ impl Health {
         }
         state
             .map
-            .blocked_with(start, end, suspect_blocks)
+            .blocked_with(start + self.base, end + self.base, suspect_blocks)
             .map(|range| KnownBadRange {
-                start: range.start,
-                end: range.end,
+                start: range.start.saturating_sub(self.base),
+                end: range.end.saturating_sub(self.base),
                 state: range.state,
             })
     }
@@ -410,7 +641,14 @@ impl Health {
     pub fn blocked_within(&self, start: u64, end: u64) -> Vec<(u64, u64)> {
         self.state
             .read()
-            .map(|state| state.map.blocked_within(start, end))
+            .map(|state| {
+                state
+                    .map
+                    .blocked_within(start + self.base, end + self.base)
+                    .into_iter()
+                    .map(|(from, to)| (from - self.base, to - self.base))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -422,12 +660,14 @@ impl Health {
 
     /// Records an observation, and leaves storing the map to [`Health::persist`].
     pub fn record_quiet(&self, range: HealthRange) {
+        let range = self.up(range);
         if let Ok(mut state) = self.state.write() {
             state.map.record(range);
         }
     }
 
     pub fn replace_zone(&self, range: HealthRange) {
+        let range = self.up(range);
         if let Ok(mut state) = self.state.write() {
             state.map.replace(range);
         }
@@ -443,13 +683,16 @@ impl Health {
         zone: HealthRange,
         good_reads: &[u64],
     ) {
+        let zone = self.up(zone);
         if let Ok(mut state) = self.state.write() {
-            state.map.clear_suspect(band_start, band_end);
+            state
+                .map
+                .clear_suspect(band_start + self.base, band_end + self.base);
             state.map.record(zone);
             for at in good_reads {
                 state.map.record(HealthRange::new(
-                    *at,
-                    *at + BLOCK,
+                    *at + self.base,
+                    *at + self.base + BLOCK,
                     RangeState::Good,
                     None,
                     "a probe read this range well",
@@ -458,10 +701,49 @@ impl Health {
         }
     }
 
+    /// Records a bad zone found outside the probe, such as by reading the drive with `dd`: `start..end` of this
+    /// device, in the state given (a zone the drive reset on, one that failed, or one to keep out of), with who
+    /// says so and why. It is read by nothing from then on, like any other, until it is forgiven.
+    pub fn mark_bad(
+        &self,
+        start: u64,
+        end: u64,
+        state: RangeState,
+        who: &str,
+        why: &str,
+    ) -> Result<HealthRange> {
+        anyhow::ensure!(
+            matches!(
+                state,
+                RangeState::ResetCulprit | RangeState::Unreadable | RangeState::Suspect
+            ),
+            "a zone is marked reset-culprit, unreadable or suspect, not {}",
+            state.name()
+        );
+        anyhow::ensure!(start < end, "start must be below end");
+        anyhow::ensure!(
+            end <= self.length,
+            "the zone ends at {end}, past the end of the source at {}",
+            self.length
+        );
+        let why = why.trim();
+        anyhow::ensure!(
+            !why.is_empty(),
+            "say why: where the zone was found, as a note that will make sense later"
+        );
+        anyhow::ensure!(
+            why.chars().count() <= 500,
+            "the reason is at most 500 characters"
+        );
+        let range = HealthRange::new(start, end, state, None, &format!("marked by {who}: {why}"));
+        self.record(range.clone());
+        Ok(range)
+    }
+
     /// Forgets what is known about a range: the person says it is fine, or fixed.
     pub fn forgive(&self, start: u64, end: u64) {
         if let Ok(mut state) = self.state.write() {
-            state.map.clear(start, end);
+            state.map.clear(start + self.base, end + self.base);
         }
         self.persist();
     }
@@ -511,6 +793,8 @@ impl Health {
         let length = buffer.len() as u64;
         let end = offset.saturating_add(length);
         if device.is_gone() {
+            // Issued after the device had gone: not a culprit, and not counted again.
+            self.gone_in_flight.store(false, Ordering::Relaxed);
             return (device.read_exact_at(offset, buffer), 0, false);
         }
         if let Some(bad) = self.blocked_with(offset, end, !through_suspect) {
@@ -551,7 +835,7 @@ impl Health {
         let row = journal
             .then(|| {
                 self.store
-                    .started(&self.key, &self.owner, offset, length)
+                    .started(&self.key, &self.owner, offset + self.base, length)
                     .ok()
             })
             .flatten();
@@ -562,7 +846,9 @@ impl Health {
         if let Some(row) = row {
             let outcome = match (&result, gone) {
                 (Ok(()), _) => "ok",
-                (Err(_), true) => "gone",
+                (Err(_), true) if elapsed >= CULPRIT_MIN_MS => "gone",
+                // Issued after the device had gone: the evidence says nothing about this range.
+                (Err(_), true) => "gone-at-once",
                 (Err(_), false) => "error",
             };
             let _ = self.store.done(row, elapsed, outcome);
@@ -570,17 +856,23 @@ impl Health {
         let (from, to) = aligned(offset, end, self.length);
         if gone {
             self.count_reset();
-            self.record(HealthRange::new(
-                from,
-                to,
-                RangeState::ResetCulprit,
-                Some(elapsed),
-                if length > LOCALISES_UP_TO {
-                    "the device went away during a read of this range; the bad spot is somewhere inside"
-                } else {
-                    "the device went away during a read of this range"
-                },
-            ));
+            // Only the read in flight when the device went away can be the cause. One that comes back at once
+            // (a failure because the node had already vanished) was issued after it, whatever it asked for.
+            let in_flight = elapsed >= CULPRIT_MIN_MS;
+            self.gone_in_flight.store(in_flight, Ordering::Relaxed);
+            if in_flight {
+                self.record(HealthRange::new(
+                    from,
+                    to,
+                    RangeState::ResetCulprit,
+                    Some(elapsed),
+                    if length > LOCALISES_UP_TO {
+                        "the device went away during a read of this range; the bad spot is somewhere inside"
+                    } else {
+                        "the device went away during a read of this range"
+                    },
+                ));
+            }
         } else if result.is_err() {
             if length <= LOCALISES_UP_TO {
                 self.record(HealthRange::new(
@@ -639,6 +931,7 @@ impl Health {
             latency_ms,
             gone,
             refused,
+            in_flight: gone && self.gone_in_flight.load(Ordering::Relaxed),
         }
     }
 
@@ -648,6 +941,8 @@ impl Health {
             |state: RangeState| json!({"ranges": map.count(state), "bytes": map.bytes(state)});
         json!({
             "key": self.key,
+            "deviceKey": self.own_key,
+            "offsetInDisk": self.base,
             "sourceId": self.source_id(),
             "length": self.length,
             "slowThresholdMs": self.slow_ms(),

@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS health_flags (
     failing_after INTEGER NOT NULL DEFAULT 2,
     updated_millis INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS health_links (
+    child_key TEXT PRIMARY KEY, parent_key TEXT NOT NULL,
+    offset INTEGER NOT NULL, length INTEGER NOT NULL,
+    updated_millis INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS health_probes (
     source_key TEXT PRIMARY KEY, state TEXT NOT NULL, updated_millis INTEGER NOT NULL
 );";
@@ -261,6 +266,191 @@ impl HealthStore {
             )
             .optional()?
             .unwrap_or((0, super::DEFAULT_FAILING_AFTER)))
+    }
+
+    /// The physical disk a partition's key belongs to: the whole disk's key and where the partition starts
+    /// in it.
+    pub fn link_of(&self, child_key: &str) -> Result<Option<(String, u64)>> {
+        Ok(self
+            .lock()
+            .connection()
+            .query_row(
+                "SELECT parent_key, offset FROM health_links WHERE child_key = ?1",
+                [child_key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)),
+            )
+            .optional()?)
+    }
+
+    /// Records that the source of `child_key` is the stretch `offset..offset + length` of the physical disk
+    /// `parent_key`, and brings what is stored under the child's key (its bad zones, its journal rows, its
+    /// reset count) into the disk's, in the disk's own offsets. Done once: the child's rows are gone after.
+    pub fn link(&self, child_key: &str, parent_key: &str, offset: u64, length: u64) -> Result<()> {
+        if child_key == parent_key {
+            return Ok(());
+        }
+        let catalog = self.lock();
+        let connection = catalog.connection();
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO health_links (child_key, parent_key, offset, length, updated_millis) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key, offset = excluded.offset,
+             length = excluded.length, updated_millis = excluded.updated_millis",
+            params![child_key, parent_key, offset as i64, length as i64, now_millis() as i64],
+        )?;
+        // Its zones, moved to the disk's offsets. A zone the disk already knows stays as it is, and the
+        // earlier of the two times is kept by `record`.
+        let mut statement = transaction.prepare(
+            "SELECT start, end, state, latency_ms, note, updated_millis FROM health_ranges WHERE source_key = ?1 ORDER BY start",
+        )?;
+        let moved: Vec<HealthRange> = statement
+            .query_map([child_key], range_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .map(|mut range| {
+                range.start += offset;
+                range.end += offset;
+                range
+            })
+            .collect();
+        drop(statement);
+        if !moved.is_empty() {
+            let mut statement = transaction.prepare(
+                "SELECT start, end, state, latency_ms, note, updated_millis FROM health_ranges WHERE source_key = ?1 ORDER BY start",
+            )?;
+            let mut map = HealthMap::from_ranges(
+                statement
+                    .query_map([parent_key], range_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+            );
+            drop(statement);
+            for range in moved {
+                map.record(range);
+            }
+            transaction.execute(
+                "DELETE FROM health_ranges WHERE source_key = ?1",
+                [parent_key],
+            )?;
+            for range in map.ranges() {
+                transaction.execute(
+                    "INSERT INTO health_ranges (source_key, source_id, start, end, state, latency_ms, note, updated_millis)
+                     VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        parent_key,
+                        range.start as i64,
+                        range.end as i64,
+                        range.state.name(),
+                        range.latency_ms.map(|ms| ms as i64),
+                        range.note,
+                        range.found_millis as i64
+                    ],
+                )?;
+            }
+            transaction.execute(
+                "DELETE FROM health_ranges WHERE source_key = ?1",
+                [child_key],
+            )?;
+        }
+        // Its journal rows (an open one is a culprit for the disk too), in the disk's offsets.
+        transaction.execute(
+            "UPDATE read_journal SET source_key = ?2, start = start + ?3 WHERE source_key = ?1",
+            params![child_key, parent_key, offset as i64],
+        )?;
+        // Its reset count: the drive is one drive.
+        let child_resets: i64 = transaction
+            .query_row(
+                "SELECT resets FROM health_flags WHERE source_key = ?1",
+                [child_key],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if child_resets > 0 {
+            transaction.execute(
+                "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source_key) DO UPDATE SET resets = resets + excluded.resets, updated_millis = excluded.updated_millis",
+                params![parent_key, child_resets, now_millis() as i64],
+            )?;
+        }
+        transaction.execute(
+            "DELETE FROM health_flags WHERE source_key = ?1",
+            [child_key],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Moves everything stored under `old` to `new`: a source whose key gained its GUID. Does nothing when
+    /// something is already stored under `new`, so a second disk of the same model never takes the first's.
+    pub fn rekey(&self, old: &str, new: &str) -> Result<bool> {
+        if old == new {
+            return Ok(false);
+        }
+        let catalog = self.lock();
+        let transaction = catalog.connection().unchecked_transaction()?;
+        let taken: i64 = transaction.query_row(
+            "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
+                  + (SELECT count(*) FROM health_flags WHERE source_key = ?1)
+                  + (SELECT count(*) FROM read_journal WHERE source_key = ?1)",
+            [new],
+            |row| row.get(0),
+        )?;
+        let has: i64 = transaction.query_row(
+            "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
+                  + (SELECT count(*) FROM health_flags WHERE source_key = ?1)
+                  + (SELECT count(*) FROM read_journal WHERE source_key = ?1)
+                  + (SELECT count(*) FROM health_links WHERE parent_key = ?1)",
+            [old],
+            |row| row.get(0),
+        )?;
+        if taken > 0 || has == 0 {
+            return Ok(false);
+        }
+        for table in [
+            "health_ranges",
+            "health_flags",
+            "read_journal",
+            "health_probes",
+        ] {
+            transaction.execute(
+                &format!("UPDATE {table} SET source_key = ?2 WHERE source_key = ?1"),
+                params![old, new],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE health_links SET parent_key = ?2 WHERE parent_key = ?1",
+            params![old, new],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    /// The reads of `key` that ended well, most recent first: ranges known to read, from earlier opens.
+    pub fn good_reads(&self, key: &str, limit: usize) -> Result<Vec<(u64, u64)>> {
+        let catalog = self.lock();
+        let mut statement = catalog.connection().prepare(
+            "SELECT start, length FROM read_journal WHERE source_key = ?1 AND outcome = 'ok' ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![key, limit as i64], |row| {
+            Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Removes the reset-culprit ranges that were recorded for a read made after the device had already gone:
+    /// the read came back at once (under `min_ms`), so it cannot have been the one in flight when the
+    /// device went away. Only the ranges the guard recorded for such a read, by their note, are removed:
+    /// ones the person marked, and ones found from a read that never finished, are never touched.
+    pub fn drop_instant_culprits(&self, key: &str, min_ms: u64) -> Result<usize> {
+        Ok(self.lock().connection().execute(
+            "DELETE FROM health_ranges WHERE source_key = ?1 AND state = 'reset-culprit'
+             AND latency_ms IS NOT NULL AND latency_ms < ?2 AND note LIKE 'the device went away during a read of this range%'",
+            params![key, min_ms as i64],
+        )?)
     }
 
     /// Adds `resets` to the count and returns the new count.

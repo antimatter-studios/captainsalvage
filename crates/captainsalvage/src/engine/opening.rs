@@ -259,6 +259,17 @@ impl Engine {
                     })
                     .map(|found| found.source.id.clone())
             });
+        // A disk that has reset is recognised from the few markers read in places known to read. What is
+        // remembered to find the drive again is the fuller set stored for it, not those few.
+        let careful = disk.careful_open();
+        let remembered = if careful {
+            matched
+                .as_deref()
+                .and_then(|id| catalog.fingerprint_of(id).ok().flatten())
+                .unwrap_or_else(|| identification.fingerprint.clone())
+        } else {
+            identification.fingerprint.clone()
+        };
         remember_identity(
             &catalog,
             &disk,
@@ -268,7 +279,7 @@ impl Engine {
                 None
             },
             parent.as_deref(),
-            &identification.fingerprint,
+            &remembered,
         );
         let stored = match &matched {
             Some(id) => catalog.scans(id)?,
@@ -543,6 +554,14 @@ impl Engine {
             "source": source,
             "parents": parents,
             "extents": extents,
+            // Said when the disk has reset: what opening did not do, so a person is not surprised.
+            "carefulOpen": careful.then(|| json!({
+                "resets": disk.health.as_ref().map_or(0, |view| view.health.resets()),
+                "markersRead": identification.fingerprint.samples.len(),
+                "markersStored": remembered.samples.len(),
+                "analysisSkipped": true,
+                "summary": "This drive has reset, so opening it did not read fresh markers across the disk and did not analyse it: it was recognised from the few stored markers that lie in places known to read. Analysing a range is yours to ask for.",
+            })),
             "interpretation": opened_scan.as_ref().filter(|scan| scan.kind == ScanKind::Filesystem).map(|scan| json!({
                 "format": scan.format, "start": scan.start, "length": scan.length,
                 "bootOffset": scan.boot_offset, "origin": scan.origin, "confidence": scan.confidence,

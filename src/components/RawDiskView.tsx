@@ -5,7 +5,7 @@ import { fromEngine, t } from "../i18n";
 import { useSimple } from "../mode";
 import { bandColors, legendFor, type LegendItem, type Rgb } from "../palette";
 import { BAD_RED, badRanges } from "../badSectors";
-import { BadLegendItem, badSectorsLabel } from "./BadSectors";
+import { BadLegendItem, MarkBadSectors, badSectorsLabel } from "./BadSectors";
 import { MAP_HEALTH_CULPRIT, MAP_HEALTH_SLOW, MAP_HEALTH_SUSPECT, MAP_HEALTH_UNREADABLE, mapRowCount, type HealthRange, MAP_BAND, MAP_BAND_ALTERNATE, MAP_EXAMINED, MAP_FIRST_FORMAT, MAP_NOT_SCANNED, MAP_UNREADABLE, SOURCE_FORMATS, applyScanBatch, evidenceStatus, evidenceSummary, itemAt, laneMap, scanEstimate, type DiscoveryBatch, type DiskEvidence, type EvidenceStatus, type RawDiskState, type ScanSnapshot } from "../rawDisk";
 import type { ByteExtent, OpenedSource } from "../openedSource";
 import { Icon } from "./icons";
@@ -179,6 +179,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
   // What the read journal and the probe found wrong with the drive, drawn as a lane of the map. A source
   // opened without a health guard has none, and the lane is not drawn.
   const [health, setHealth] = useState<HealthRange[]>([]);
+  const [healthTick, setHealthTick] = useState(0);
   useEffect(() => {
     let current = true;
     const load = () => call<{ ranges: HealthRange[] }>("health_map", { diskId: disk.id })
@@ -187,7 +188,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
     void load();
     const timer = window.setInterval(() => void load(), 5000);
     return () => { current = false; window.clearInterval(timer); };
-  }, [disk.id]);
+  }, [disk.id, healthTick]);
   const drawn = useMemo(() => ({ ...disk, health }), [disk, health]);
   const mapSource = useMemo<StripSource>(() => {
     const legend = (): LegendItem[] => {
@@ -293,7 +294,7 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
         })}
       </div>
     </section>}
-    <nav className="explorer" aria-label={t("Source bytes")}>
+    <nav className="explorer" aria-label={t("Source bytes")} data-disk-id={disk.id}>
       {leftHandle}
       <div className="segmented" role="tablist">
         <button role="tab" aria-selected="true">{t("Source bytes")}</button>
@@ -359,8 +360,10 @@ export function RawDiskView({ disk, onUpdate, opened, picker, onOpen, onBack, on
           {disk.scanId && <p className="recovery-note" title={disk.scanId}>{t("Scan {id}. Each completed batch is saved on this Mac.", { id: disk.scanId })}</p>}
           {opened && opened.fingerprint.samples.length === 0 && <p className="warn">{t("No part of this source could be used to recognise it. Progress can be saved, but a saved scan cannot be matched to this source after reopening.")}</p>}
           {opened && opened.fingerprint.samples.length > 0 && opened.fingerprint.samples.length < opened.fingerprint.markersWanted && <p className="recovery-note">{t("Only {count} of {wanted} markers could be used, because the source is small, mostly blank or partly unreadable.", { count: opened.fingerprint.samples.length, wanted: opened.fingerprint.markersWanted })}</p>}
+          {opened?.carefulOpen && <p className="warn" role="status">{t("This drive has reset, so opening it did not read fresh markers across the disk and did not analyse it: it was recognised from {read} of its {stored} stored markers, from places known to read. Analysing a range is yours to ask for.", { read: count(opened.carefulOpen.markersRead), stored: count(opened.carefulOpen.markersStored) })}</p>}
           {disk.changedSource && <p className="warn" role="status">{t("This scan was resumed on a source that had changed, so findings near the changed markers may be out of date.")} {fromEngine(disk.changedSource.summary)}</p>}
           {!simple && <p className="recovery-note">{t("Drag across the source row to select a region, or enter exact byte offsets below.")}</p>}
+          <MarkBadSectors diskId={disk.id} length={disk.length} onMarked={() => setHealthTick((tick) => tick + 1)} />
           <p className="warn">{t("This app only reads. macOS or other programs may still write to a mounted source.")}</p>
           {disk.warnings.map((warning, index) => <p className="warn" key={index}>{fromEngine(warning)}</p>)}
           {disk.errors.length > 0 && <div className="recovery-tests"><h3>{t("Unreadable regions")}</h3>
