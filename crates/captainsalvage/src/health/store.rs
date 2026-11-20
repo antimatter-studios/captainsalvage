@@ -190,10 +190,16 @@ impl HealthStore {
             .connection()
             .execute_batch("PRAGMA synchronous = NORMAL;")?;
         catalog.connection().busy_timeout(CATALOG_BUSY)?;
+        // Setting the journal's file up (its mode, its tables) takes a write lock, and every store of this process
+        // that is opened at the same moment does it on the same file: opening a source must wait for that, as for
+        // any other lock, and only afterwards does the connection give up quickly, for the reads of a device.
         let connection = Connection::open(catalog.root().join(JOURNAL_FILE))?;
+        connection.busy_timeout(CATALOG_WRITE_PATIENCE)?;
+        retry_while_busy(|| {
+            connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+            connection.execute_batch(JOURNAL_SCHEMA)
+        })?;
         connection.busy_timeout(JOURNAL_BUSY)?;
-        connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        connection.execute_batch(JOURNAL_SCHEMA)?;
         let store = Self {
             catalog: Mutex::new(catalog),
             journal: Journal {

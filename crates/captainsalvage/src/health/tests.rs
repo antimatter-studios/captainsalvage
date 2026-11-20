@@ -1609,3 +1609,32 @@ fn closing_and_moving_journal_rows_waits_for_the_journal_file_and_is_not_lost() 
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0]["outcome"], "never-finished");
 }
+
+#[test]
+fn opening_the_store_waits_for_the_journal_file_while_another_store_sets_it_up() {
+    // Every store of a process sets the journal's file up (its mode and its tables) when it is opened, and sources
+    // are opened at the same moment: one holds the file's lock while the others open. They wait for it, as opening
+    // a source waits for any lock, and then give up quickly again for the reads of a device.
+    let root = Root::new();
+    let other = rusqlite::Connection::open(root.0.join("read-journal.sqlite")).unwrap();
+    other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        other.execute_batch("COMMIT").unwrap();
+    });
+    let began = Instant::now();
+    let path = root.0.clone();
+    let opened = finishes_within(20, move || {
+        HealthStore::open(&path).map(|store| store.journal_pending())
+    });
+    assert!(
+        opened.is_some_and(|result| result.is_ok()),
+        "opening the store failed on a lock that was held for a moment"
+    );
+    assert!(
+        began.elapsed() >= std::time::Duration::from_millis(1000),
+        "it did not wait for the lock: {:?}",
+        began.elapsed()
+    );
+    release.join().unwrap();
+}
