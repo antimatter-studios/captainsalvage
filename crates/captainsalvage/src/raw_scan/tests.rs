@@ -1025,3 +1025,266 @@ fn resuming_on_the_same_damaged_drive_continues_from_the_checkpoint_not_from_its
     assert_eq!(loaded.next_offset, reached);
     assert_eq!(loaded.errors.len(), 1, "the unreadable block stays listed");
 }
+
+/// The bytes of one physical drive after it changed: its first sector (which names it) is the
+/// same, and nothing else is.
+fn same_drive_changed(bytes: &[u8], seed: u64) -> Vec<u8> {
+    let mut changed = patterned(bytes.len(), seed);
+    changed[..4096].copy_from_slice(&bytes[..4096]);
+    changed
+}
+
+struct Health(PathBuf);
+
+impl Health {
+    fn new() -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("captainsalvage-physical-{}", identifier().unwrap()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn guarded(&self, data: Vec<u8>) -> RawDisk {
+        let store = Arc::new(crate::health::HealthStore::from_catalog(
+            crate::catalog::Catalog::open_unmigrated(&self.0).unwrap(),
+        ));
+        let length = data.len() as u64;
+        RawDisk::with_source_guarded(
+            Path::new("/dev/rdisk9"),
+            Arc::new(MemorySource::new(data)),
+            length,
+            store,
+        )
+        .unwrap()
+    }
+}
+
+impl Drop for Health {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn the_same_physical_drive_resumes_without_comparing_markers() {
+    let database = Database::new();
+    let health = Health::new();
+    let mut store = database.open();
+    let bytes = patterned(20 * 1024 * 1024, 41);
+    let first = health.guarded(bytes.clone());
+    let scan = store.create(&first, 0, first.length).unwrap();
+    store.step(&first, &scan.scan_id).unwrap();
+    drop(store);
+    // Every marker block has changed (a failing drive reads differently), but the drive is the
+    // same one: the same first sector, length, and place in it.
+    let second = health.guarded(same_drive_changed(&bytes, 42));
+    let mut store = database.open();
+    let listed = store.list(&second).unwrap();
+    assert_eq!(listed.scans.len(), 1);
+    assert_eq!(listed.scans[0].verification, Verification::Exact);
+    let loaded = store.resume(&second, &scan.scan_id, true, false).unwrap();
+    assert!(loaded.next_offset > 0);
+    // What the markers say is kept: they changed, and the scan says so, but nothing stopped.
+    assert!(loaded.changed_source.is_some());
+}
+
+#[test]
+fn a_rewritten_region_of_the_same_drive_still_resumes_and_is_marked_stale() {
+    let health = Health::new();
+    let mut store = ScanStore::open_in(&health.0).unwrap();
+    let bytes = patterned(20 * 1024 * 1024, 49);
+    let first = health.guarded(bytes.clone());
+    let scan = store.create(&first, 0, first.length).unwrap();
+    store.step(&first, &scan.scan_id).unwrap();
+    let saved = Fingerprint::read(&first);
+    // A mount rewrote three marker blocks of the same drive; its first sector is the same.
+    let mut mounted = bytes.clone();
+    for marker in &saved.samples[3..6] {
+        let at = marker.offset as usize;
+        for byte in &mut mounted[at..at + 4096] {
+            *byte ^= 0x5A;
+        }
+    }
+    let second = health.guarded(mounted);
+    let loaded = store.resume(&second, &scan.scan_id, true, false).unwrap();
+    assert!(loaded.next_offset > 0, "the resume continued");
+    let changed = loaded.changed_source.expect("the change is recorded");
+    assert_eq!(changed.changed, 3);
+    assert!(loaded.stale.regions.iter().any(|region| region.is_stale()));
+    assert!(loaded.stale.stale > 0);
+}
+
+#[test]
+fn another_drive_of_the_same_size_does_not_resume_by_identity_and_a_changed_one_needs_resume_anyway(
+) {
+    let database = Database::new();
+    let health = Health::new();
+    let mut store = database.open();
+    let bytes = patterned(20 * 1024 * 1024, 43);
+    let first = health.guarded(bytes.clone());
+    let scan = store.create(&first, 0, first.length).unwrap();
+    store.step(&first, &scan.scan_id).unwrap();
+    let other = health.guarded(patterned(bytes.len(), 44));
+    assert!(store.list(&other).unwrap().scans.is_empty());
+    let refusal = store
+        .resume(&other, &scan.scan_id, true, false)
+        .unwrap_err();
+    assert!(format!("{refusal:#}").contains("differs"), "{refusal:#}");
+    // The person can still say to resume it: the scan then records that the source changed.
+    let loaded = store.resume_anyway(&other, &scan.scan_id).unwrap();
+    assert!(loaded.next_offset > 0);
+    assert!(loaded.changed_source.is_some());
+}
+
+#[test]
+fn a_partition_of_a_drive_is_not_the_whole_drive() {
+    let health = Health::new();
+    let bytes = patterned(20 * 1024 * 1024, 45);
+    let whole = health.guarded(bytes);
+    let partition = whole.extent(1024 * 1024, 8 * 1024 * 1024).unwrap();
+    let again = whole.extent(1024 * 1024, 8 * 1024 * 1024).unwrap();
+    let elsewhere = whole.extent(2 * 1024 * 1024, 8 * 1024 * 1024).unwrap();
+    assert_eq!(partition.physical_identity(), again.physical_identity());
+    assert_ne!(partition.physical_identity(), elsewhere.physical_identity());
+    assert_ne!(partition.physical_identity(), whole.physical_identity());
+}
+
+#[test]
+fn the_catalog_finds_the_same_physical_drive_by_identity_when_no_marker_matches() {
+    use crate::catalog::{Accept, Catalog, MatchedBy};
+    let health = Health::new();
+    let root = health.0.join("catalog");
+    let catalog = Catalog::open(&root).unwrap();
+    let bytes = patterned(20 * 1024 * 1024, 46);
+    let first = health.guarded(bytes.clone());
+    let made = catalog.resolve_source(&first, Accept::Exact, None).unwrap();
+    assert_eq!(made.matched_by, MatchedBy::New);
+    let second = health.guarded(same_drive_changed(&bytes, 47));
+    let found = catalog
+        .resolve_source(&second, Accept::Exact, None)
+        .unwrap();
+    assert_eq!(found.matched_by, MatchedBy::Physical);
+    assert_eq!(found.source.id, made.source.id);
+    // Another drive of the same size is another source.
+    let other = health.guarded(patterned(bytes.len(), 48));
+    let new = catalog.resolve_source(&other, Accept::Exact, None).unwrap();
+    assert_eq!(new.matched_by, MatchedBy::New);
+    assert_ne!(new.source.id, made.source.id);
+}
+
+/// A source that cannot read its first sector, as a failing drive may not.
+struct NoHead(MemorySource);
+
+impl BlockSource for NoHead {
+    fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
+        if offset < 512 {
+            return Err(io::Error::from_raw_os_error(libc::EIO));
+        }
+        self.0.read_exact_at(offset, buffer)
+    }
+
+    fn read_stats(&self) -> crate::source::ReadStats {
+        self.0.read_stats()
+    }
+}
+
+impl Health {
+    fn guarded_without_head(&self, data: Vec<u8>) -> RawDisk {
+        let store = Arc::new(crate::health::HealthStore::from_catalog(
+            crate::catalog::Catalog::open_unmigrated(&self.0).unwrap(),
+        ));
+        let length = data.len() as u64;
+        RawDisk::with_source_guarded(
+            Path::new("/dev/rdisk9"),
+            Arc::new(NoHead(MemorySource::new(data))),
+            length,
+            store,
+        )
+        .unwrap()
+    }
+}
+
+fn hardware(serial: &str) -> crate::catalog::Hardware {
+    crate::catalog::Hardware {
+        model: Some("WD Elements".into()),
+        serial: Some(serial.into()),
+    }
+}
+
+#[test]
+fn a_drive_that_cannot_read_its_first_sector_is_named_by_its_serial_number() {
+    let health = Health::new();
+    let bytes = patterned(20 * 1024 * 1024, 50);
+    let unnamed = health.guarded_without_head(bytes.clone());
+    assert_eq!(unnamed.physical_identity(), None);
+    let named = health
+        .guarded_without_head(bytes.clone())
+        .with_hardware(hardware("SN-4471"));
+    let again = health
+        .guarded_without_head(bytes.clone())
+        .with_hardware(hardware("SN-4471"));
+    assert!(named.physical_identity().is_some());
+    assert_eq!(named.physical_identity(), again.physical_identity());
+    let other = health
+        .guarded_without_head(bytes)
+        .with_hardware(hardware("SN-9902"));
+    assert_ne!(named.physical_identity(), other.physical_identity());
+}
+
+#[test]
+fn a_clone_with_the_same_first_sector_but_another_serial_is_another_drive() {
+    let database = Database::new();
+    let health = Health::new();
+    let mut store = database.open();
+    let bytes = patterned(20 * 1024 * 1024, 51);
+    let original = health
+        .guarded(bytes.clone())
+        .with_hardware(hardware("SN-1000"));
+    let scan = store.create(&original, 0, original.length).unwrap();
+    store.step(&original, &scan.scan_id).unwrap();
+    // The same bytes and the same first sector on a drive with another serial number, whose
+    // markers all changed: it is told from the original by its serial, so markers decide.
+    let clone = health
+        .guarded(same_drive_changed(&bytes, 52))
+        .with_hardware(hardware("SN-2000"));
+    assert_ne!(original.physical_identity(), clone.physical_identity());
+    assert!(store.list(&clone).unwrap().scans.is_empty());
+    assert!(store.resume(&clone, &scan.scan_id, true, false).is_err());
+    // The same drive again is found by its serial, whatever its blocks read.
+    let again = health
+        .guarded(same_drive_changed(&bytes, 53))
+        .with_hardware(hardware("SN-1000"));
+    assert!(store.resume(&again, &scan.scan_id, true, false).is_ok());
+}
+
+#[test]
+fn when_nothing_names_the_drive_and_no_marker_matches_the_saved_scans_of_its_size_are_offered() {
+    use crate::catalog::{Accept, Catalog, MatchedBy};
+    let health = Health::new();
+    let mut store = ScanStore::open_in(&health.0).unwrap();
+    let catalog = Catalog::open(&health.0).unwrap();
+    let bytes = patterned(20 * 1024 * 1024, 54);
+    let first = health.guarded(bytes.clone());
+    let scan = store.create(&first, 0, first.length).unwrap();
+    let made = catalog
+        .scan_of_raw(&scan.scan_id)
+        .unwrap()
+        .expect("the scan is registered");
+    // A drive with a readable first sector has an identity, and another drive is just another drive.
+    let other = health.guarded(patterned(bytes.len(), 55));
+    assert!(catalog.unmatched_of_size(&other).unwrap().is_empty());
+    // A drive with no identity and nothing readable that matches is offered what is stored.
+    let nameless = health.guarded_without_head(patterned(bytes.len(), 56));
+    let offered = catalog.unmatched_of_size(&nameless).unwrap();
+    assert_eq!(offered.len(), 1);
+    assert_eq!(offered[0].source.id, made.source_id);
+    assert!(offered[0]
+        .comparison
+        .summary
+        .starts_with("No identity and no readable markers matched."));
+    let resolved = catalog
+        .resolve_source(&nameless, Accept::Exact, None)
+        .unwrap();
+    assert_eq!(resolved.matched_by, MatchedBy::New);
+    assert_ne!(resolved.source.id, made.source_id);
+}

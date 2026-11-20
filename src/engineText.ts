@@ -329,12 +329,18 @@ export const ENGINE_TEXT: string[] = [
   "Every saved marker lies in a bad sector, which is not read, so nothing says which drive this is.",
   "This drive has reset, so only {total} of its saved markers were read, from places known to read, and {skipped_to_spare} were not, to spare it.",
   "No marker matches.",
+  "No identity and no readable markers matched.",
+  "This is the same drive.",
+  "This is the same drive, so the changed markers did not stop it.",
+  "Resumed without a match, because it was asked for.",
+  "Opened without a match, because it was asked for.",
   "Only {matched} of {total} markers match, too few to identify this drive.",
   "Markers used: {total} instead of {wanted}, because the source is small or mostly blank.",
   // Opening a source.
   "No {id} boot evidence was found at the start, and none is saved for it. Select a range on the map and use Analyze this range to look for one.",
   "Only the person using the app switches an interpretation or starts a scan again.",
   "Suggest it to them instead.",
+  "Only the person using the app resumes a scan on a source that does not match it.",
   // Scanning the changed regions of a scan again.
   "Only the person using the app scans the changed regions again.",
   "The rescan was stopped.",

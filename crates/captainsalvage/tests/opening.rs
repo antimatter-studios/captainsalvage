@@ -82,6 +82,8 @@ fn disk_with(volume: &[u8], seed: u64) -> (Vec<u8>, u64) {
     let start = 1024 * 1024u64;
     let mut data = noise(start as usize + volume.len() + 64 * 1024, seed);
     data[..512].fill(0);
+    // A real MBR names its disk with a signature, which is what tells two such disks apart.
+    data[440..444].copy_from_slice(&(seed as u32).to_le_bytes());
     let entry = &mut data[446..462];
     entry[4] = 0x07;
     entry[8..12].copy_from_slice(&((start / 512) as u32).to_le_bytes());
@@ -431,6 +433,14 @@ fn changed_at(mut data: Vec<u8>, fingerprint: &Value, markers: &[usize]) -> Vec<
     data
 }
 
+/// The bytes of a clone of the drive, not the drive: its first sector differs, so it is told from
+/// the drive by its markers and not by its identity, and the markers in `markers` changed too.
+fn clone_changed_at(data: Vec<u8>, fingerprint: &Value, markers: &[usize]) -> Vec<u8> {
+    let mut clone = changed_at(data, fingerprint, markers);
+    clone[200] ^= 0x01;
+    clone
+}
+
 #[test]
 fn a_probable_match_is_listed_and_never_applied_without_the_persons_say() {
     let original = exfat(7);
@@ -444,7 +454,7 @@ fn a_probable_match_is_listed_and_never_applied_without_the_persons_say() {
     // The same drive after a mount wrote near the start: only a probable match.
     let changed = ImageFile::new(
         "probable-changed",
-        &changed_at(original.clone(), &first["fingerprint"], &[3, 4, 5]),
+        &clone_changed_at(original.clone(), &first["fingerprint"], &[3, 4, 5]),
     );
     // Other tests share the catalog, so only sources last seen at this path count.
     let here = |path: &std::path::Path| {
@@ -489,7 +499,7 @@ fn a_probable_match_is_listed_and_never_applied_without_the_persons_say() {
     // Or the person opens it as a new source, which leaves the stored one as it is.
     let other = ImageFile::new(
         "probable-fresh",
-        &changed_at(original, &first["fingerprint"], &[3, 4, 5]),
+        &clone_changed_at(original, &first["fingerprint"], &[3, 4, 5]),
     );
     let fresh = call(
         &engine,
@@ -501,26 +511,29 @@ fn a_probable_match_is_listed_and_never_applied_without_the_persons_say() {
 }
 
 #[test]
-fn weak_matches_are_hidden_until_all_are_shown_and_are_never_offered() {
+fn weak_matches_are_not_applied_and_the_person_is_asked() {
     let original = exfat(8);
     let image = ImageFile::new("weak", &original);
     let engine = Engine::default();
     let first = call(&engine, "open_source", json!({"path": image.0}));
     let total = first["fingerprint"]["samples"].as_array().unwrap().len();
-    // Six markers changed: 8 of 14 still match, which is under 60% but enough to show.
-    let last: Vec<usize> = (total - 6..total).collect();
+    // The first marker (the clone's first sector) and five more changed: 8 of 14 still match,
+    // which is under 60% but enough to show.
+    let last: Vec<usize> = (total - 5..total).collect();
     let other = ImageFile::new(
         "weak-changed",
-        &changed_at(original, &first["fingerprint"], &last),
+        &clone_changed_at(original, &first["fingerprint"], &last),
     );
     let hidden = call(&engine, "open_source", json!({"path": other.0}));
-    assert_ne!(hidden["needsChoice"], true, "a weak match is never offered");
-    assert_eq!(hidden["hidden"], 1);
-    assert!(hidden["matches"].as_array().unwrap().is_empty());
-    assert_ne!(
-        hidden["source"]["id"], first["source"]["id"],
-        "nothing stored was applied"
-    );
+    // A stored drive that matches too little is never passed over: the person is asked, and
+    // can resume it anyway or open the drive as a new source. Nothing stored is applied.
+    assert_eq!(hidden["needsChoice"], true, "{hidden}");
+    assert!(hidden["overview"].is_null());
+    assert!(hidden["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|found| found["verification"] == "weak" && found["id"] == first["source"]["id"]));
     let shown = call(
         &engine,
         "open_source",
@@ -533,6 +546,14 @@ fn weak_matches_are_hidden_until_all_are_shown_and_are_never_offered() {
             .any(|found| found["verification"] == "weak" && found["id"] == first["source"]["id"]),
         "{listed:?}"
     );
+    // Resuming anyway opens the stored scan on the source that does not match it.
+    let anyway = call(
+        &engine,
+        "open_source",
+        json!({"path": other.0, "scanId": first["scan"]["id"], "resumeAnyway": true}),
+    );
+    assert_eq!(anyway["source"]["id"], first["source"]["id"], "{anyway}");
+    assert!(!anyway["overview"].is_null());
 }
 
 #[test]

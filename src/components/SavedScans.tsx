@@ -18,7 +18,7 @@ function covered(scan: ScanRecord): string {
 }
 
 /** One stored scan: what it reads, when, how much it covers, what it keeps, its name, and a way in. */
-function ScanRow({ scan, current, allowed, onOpen }: { scan: ScanRecord; current: boolean; allowed: boolean; onOpen: () => void }) {
+function ScanRow({ scan, current, allowed, anyway, onOpen }: { scan: ScanRecord; current: boolean; allowed: boolean; anyway?: boolean; onOpen: () => void }) {
   const [label, setLabel] = useState(scan.label);
   const [failure, setFailure] = useState<string | null>(null);
   const saved = useRef(scan.label);
@@ -47,22 +47,23 @@ function ScanRow({ scan, current, allowed, onOpen }: { scan: ScanRecord; current
         onBlur={save}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
       />
-      {current ? <span className="muted saved-scan-now">{t("Open now")}</span> : <button className="primary" disabled={!allowed} onClick={onOpen}>{t("Open")}</button>}
+      {current ? <span className="muted saved-scan-now">{t("Open now")}</span> : <button className={anyway ? undefined : "primary"} disabled={!allowed} onClick={onOpen}>{anyway ? t("Resume anyway") : t("Open")}</button>}
       {failure && <span className="warn saved-scan-failure">{fromEngine(failure)}</span>}
     </li>
   );
 }
 
 /** A stored source the open one matches, and its scans. A probable match waits for an acknowledgement. */
-function MatchBlock({ match, currentScan, onOpen }: { match: SourceMatchRecord; currentScan: string | null; onOpen: (scanId: string, acknowledged: boolean) => void }) {
+function MatchBlock({ match, currentScan, onOpen }: { match: SourceMatchRecord; currentScan: string | null; onOpen: (scanId: string, acknowledged: boolean, anyway?: boolean) => void }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const { comparison } = match;
   const state = match.verification;
+  const anyway = state === "weak" || state === "different";
   return (
     <section className="saved-source" aria-label={match.label || match.lastPath}>
       <header>
         <strong>{match.label || match.lastPath.split("/").pop() || t("Stored source")}</strong>
-        <span className={state === "exact" ? "saved-state saved-state-exact" : "saved-state"}>{state === "exact" ? t("exact") : state === "probable" ? t("probable") : t("weak")}</span>
+        <span className={state === "exact" ? "saved-state saved-state-exact" : "saved-state"}>{state === "exact" ? t("exact") : state === "probable" ? t("probable") : state === "different" ? t("no match") : t("weak")}</span>
         <span className="muted">{t("{percent}% match: {matched} match, {changed} changed, {unreadable} unreadable", { percent: comparison.confidencePercent, matched: comparison.matched, changed: comparison.changed, unreadable: comparison.unreadable })}</span>
       </header>
       {state !== "exact" && <p className="warn">{fromEngine(comparison.summary)}</p>}
@@ -73,11 +74,11 @@ function MatchBlock({ match, currentScan, onOpen }: { match: SourceMatchRecord; 
         </label>
       )}
       {state === "probable" && <p className="muted">{t("After opening, the regions near the changed markers are marked, and you can scan just those again. Nothing is scanned until you ask.")}</p>}
-      {state === "weak" && <p className="warn">{t("Too few markers match to open these scans.")}</p>}
+      {(state === "weak" || state === "different") && <p className="warn">{t("Too few markers match to say this is the same drive. Resume anyway only if you know it is. The scan then records that it was resumed without a match.")}</p>}
       {match.scans.length === 0 ? <p className="muted">{t("No scans are stored for it.")}</p> : (
         <ul className="saved-scans-list">
           {match.scans.map((scan) => (
-            <ScanRow key={scan.id} scan={scan} current={scan.id === currentScan} allowed={canOpenFrom(state, acknowledged)} onOpen={() => onOpen(scan.id, state === "probable")} />
+            <ScanRow key={scan.id} scan={scan} current={scan.id === currentScan} allowed={anyway || canOpenFrom(state, acknowledged)} anyway={anyway} onOpen={() => onOpen(scan.id, state === "probable" || anyway, anyway)} />
           ))}
         </ul>
       )}
@@ -97,7 +98,7 @@ export function SavedScans({ diskId, extent, currentScan, choice, onOpen, onFres
   extent: ByteExtent | null;
   currentScan: string | null;
   choice: boolean;
-  onOpen: (scanId: string, acceptChangedMarkers: boolean) => void;
+  onOpen: (scanId: string, acceptChangedMarkers: boolean, resumeAnyway?: boolean) => void;
   onFresh?: () => void;
   onClose: () => void;
 }) {
@@ -106,12 +107,12 @@ export function SavedScans({ diskId, extent, currentScan, choice, onOpen, onFres
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
-    call<ScanListing>("list_scans", { diskId, showAll, ...(extent ? { extent } : {}) })
+    call<ScanListing>("list_scans", { diskId, showAll: showAll || choice, ...(choice ? { sameSize: true } : {}), ...(extent ? { extent } : {}) })
       .then((result) => { if (current) setListing(result); })
       .catch((reason) => { if (current) setFailure(String(reason)); });
     return () => { current = false; };
-  }, [diskId, extent?.start, extent?.length, showAll]);
-  const matches = listing ? shownMatches(listing.matches, showAll) : [];
+  }, [diskId, extent?.start, extent?.length, showAll, choice]);
+  const matches = listing ? shownMatches(listing.matches, showAll || choice) : [];
   return (
     <div className="saved-scans-backdrop" role="presentation">
       <div className="saved-scans" role="dialog" aria-modal="true" aria-label={t("Saved scans")}>

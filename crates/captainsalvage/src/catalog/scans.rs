@@ -482,11 +482,9 @@ impl Catalog {
         }
         let key = (!open.fresh).then_some(open.volume_key.as_str());
         let resolution = self.resolve_source(disk, open.accept, key)?;
-        if let Some(comparison) = resolution
-            .comparison
-            .as_ref()
-            .filter(|comparison| comparison.state == Verification::Probable)
-        {
+        if let Some(comparison) = resolution.comparison.as_ref().filter(|comparison| {
+            comparison.state == Verification::Probable || !comparison.changed_offsets.is_empty()
+        }) {
             // Stored work was applied on a probable match: what it holds near the changed
             // markers may be out of date.
             self.mark_changed(
@@ -585,15 +583,35 @@ impl Catalog {
         accept: Accept,
     ) -> Result<(ScanRecord, SourceRecord, Comparison)> {
         let scan = self.scan(scan_id)?;
-        let saved = self.fingerprint_of(&scan.source_id)?.context(
-            "The source of this scan has not been seen since it was stored, so it cannot be \
-             told from other drives yet. Open the volume itself, and it is found by its serial number.",
-        )?;
-        let comparison = saved.compare(&mut MarkerReader::new(disk));
+        // The same part of the same physical drive needs no marker to be recognised.
+        let same_drive = self.physical_source(disk)?.as_deref() == Some(scan.source_id.as_str());
+        let comparison = {
+            let saved = self.fingerprint_of(&scan.source_id)?.context(
+                "The source of this scan has not been seen since it was stored, so it cannot be \
+                 told from other drives yet. Open the volume itself, and it is found by its serial number.",
+            )?;
+            let mut comparison = saved.compare(&mut MarkerReader::new(disk));
+            if same_drive {
+                comparison = comparison.as_same_drive();
+            }
+            if accept == Accept::Anyway
+                && !matches!(
+                    comparison.state,
+                    Verification::Exact | Verification::Probable
+                )
+            {
+                comparison.summary = format!(
+                    "Opened without a match, because it was asked for. {}",
+                    comparison.summary
+                );
+                comparison.state = Verification::Probable;
+            }
+            comparison
+        };
         match comparison.state {
             Verification::Exact => {}
             Verification::Probable => ensure!(
-                accept == Accept::Probable,
+                accept.allows_probable(),
                 "The source is only a probable match for this scan ({}% of markers match). {} Opening it needs explicit acknowledgement of the changed markers.",
                 comparison.confidence_percent,
                 comparison.summary
@@ -603,8 +621,9 @@ impl Catalog {
                 comparison.summary
             ),
         }
-        // A probable match: what was stored near the changed markers may be out of date.
-        if comparison.state == Verification::Probable {
+        // A probable match, or a drive that is the same one with markers that changed: what was
+        // stored near the changed markers may be out of date.
+        if comparison.state == Verification::Probable || !comparison.changed_offsets.is_empty() {
             self.mark_changed(
                 &scan.source_id,
                 &comparison.changed_offsets,
@@ -613,6 +632,9 @@ impl Catalog {
         }
         self.touch_scan(scan_id)?;
         self.see(&scan.source_id, &disk.path.to_string_lossy())?;
+        if comparison.state == Verification::Exact {
+            self.remember_physical(disk, &scan.source_id)?;
+        }
         Ok((
             self.scan(scan_id)?,
             self.source(&scan.source_id)?,
