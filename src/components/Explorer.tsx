@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { StaleMark } from "./StaleRegions";
-import { call, type IslandRow, type Page, type Row, type UnexplainedRun } from "../api";
+import { call, type IslandRow, type Page, type Row, type UnexplainedAnswer, type UnexplainedRun } from "../api";
 import { bytes, count, displayPath, guessedFolderLabel, lostFolderName, percent, verdictLabel } from "../format";
 import { useSimple } from "../mode";
 import { fromEngine, t } from "../i18n";
@@ -271,11 +271,17 @@ function Broken({ onEntry, selectedKey, revision, onExport }: { onEntry: (row: R
 
 function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: UnexplainedRun) => void; selectedKey: string | null; revision: number }) {
   const [runs, setRuns] = useState<UnexplainedRun[] | null>(null);
+  // Said when the free space searched is not the volume's own bitmap: the whole volume, or what the file records leave.
+  const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
-    call<UnexplainedRun[]>("unexplained_runs", { limit: PAGE_SIZE })
-      .then((value) => current && setRuns(value))
+    call<UnexplainedRun[] | UnexplainedAnswer>("unexplained_runs", { limit: PAGE_SIZE })
+      .then((value) => {
+        if (!current) return;
+        setWarning(Array.isArray(value) ? null : value.allocationWarning);
+        setRuns(Array.isArray(value) ? value : value.runs);
+      })
       .catch((reason) => current && setError(String(reason)));
     return () => {
       current = false;
@@ -284,6 +290,7 @@ function Unexplained({ onRegion, selectedKey, revision }: { onRegion: (run: Unex
   return (
     <>
       <p className="hint">{t("Free space no entry or chain accounts for yet. This shrinks as the scan finds more folders. Select a region and ask an agent what it is.")}</p>
+      {warning && <p className="warn">{fromEngine(warning)}</p>}
       {error && <div className="empty">{fromEngine(error)}</div>}
       {runs && runs.length === 0 && <div className="empty">{t("Nothing unexplained so far. Regions appear after the map is rebuilt.")}</div>}
       {runs?.map((run) => (

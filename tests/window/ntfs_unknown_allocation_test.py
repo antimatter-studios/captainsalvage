@@ -91,6 +91,16 @@ try:
     made = os.path.join(OUT, 'frag.bin')
     check('the copy is the file, byte for byte', open(made, 'rb').read() if os.path.isfile(made) else None, FRAG)
 
+
+    # The tools that look in free space search the whole volume while allocation is unknown, and say so, in the window
+    # and in the tool's answer; the volume's own answers still do not call anything free.
+    answer = call('unexplained_runs', limit=20)
+    check('the tool says where its free space came from', (answer.get('allocationBasis'), isinstance(answer.get('runs'), list)), ('whole-volume', True))
+    check('and what that means', 'Nothing here is known to be free' in answer.get('allocationWarning', ''), True)
+    check('carving says it too', call('carve_candidates').get('allocationBasis'), 'whole-volume')
+    js("[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Unexplained')?.click()")
+    check('the Unexplained list warns that the whole volume is searched', wait_for("document.body.innerText.includes('the whole volume is searched as if it were free space')", 20), True)
+    check('and that nothing in it is known to be free', probe("document.body.innerText.includes('Nothing here is known to be free')"), True)
 finally:
     finish()
     shutil.rmtree(OUT, ignore_errors=True)

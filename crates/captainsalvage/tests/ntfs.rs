@@ -707,11 +707,163 @@ fn unknown_clusters_are_never_counted_as_free_space() {
         summary.unexplained_unknown_clusters > 0,
         "but it is not hidden either"
     );
-    assert!(
-        session.unexplained_runs(0, 10, 1).is_empty(),
-        "no run of free space is offered when nothing is known to be free"
-    );
+    // The search of free space is the whole volume then, with a warning (see the test of that), but the
+    // summary's numbers never count any of it as free.
+    assert!(!session.unexplained_runs(0, 10, 1).is_empty());
     assert_eq!(known.unexplained_unknown_clusters, 0);
+}
+
+fn run_clusters(answer: &Value) -> u64 {
+    let runs = answer.get("runs").unwrap_or(answer);
+    runs.as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["unexplainedClusters"].as_u64().unwrap())
+        .sum()
+}
+
+#[test]
+fn while_allocation_is_unknown_the_unexplained_tools_search_the_whole_volume_and_say_so() {
+    let fixture = fixture();
+    let whole = open(fixture.image.clone(), "carve-whole");
+    let session = open(torn_record(&fixture.image, 6), "carve-torn");
+    scan(&whole);
+    scan(&session);
+    whole.resolve().unwrap();
+    session.resolve().unwrap();
+    let known = Engine::new();
+    known.set_session(whole.clone());
+    let unknown = Engine::new();
+    unknown.set_session(session.clone());
+
+    // An undamaged volume answers as it always did: a bare list, and nothing about where its free space came from.
+    let known_runs = call(&known, "unexplained_runs", json!({"limit": 500}));
+    assert!(known_runs.is_array(), "{known_runs}");
+    assert!(run_clusters(&known_runs) > 0);
+    let known_carve = call(&known, "carve_candidates", json!({}));
+    assert!(
+        known_carve.get("allocationBasis").is_none()
+            && known_carve.get("allocationWarning").is_none()
+    );
+    let known_summary = call(&known, "unexplained_summary", json!({"samples": 16}));
+    assert!(
+        known_summary.get("allocationWarning").is_none(),
+        "{known_summary}"
+    );
+
+    // Without a bitmap the regions are the whole volume's, which is more than the free space was, and it is said.
+    let runs = call(&unknown, "unexplained_runs", json!({"limit": 500}));
+    assert_eq!(runs["allocationBasis"], "whole-volume", "{runs}");
+    let warning = runs["allocationWarning"].as_str().unwrap();
+    assert!(
+        warning.starts_with("Allocation is unknown for this volume"),
+        "{warning}"
+    );
+    assert!(
+        warning.contains("as if it were free space")
+            && warning.contains("Nothing here is known to be free"),
+        "{warning}"
+    );
+    assert!(
+        run_clusters(&runs) >= run_clusters(&known_runs),
+        "the whole volume holds at least the free space: {} against {}",
+        run_clusters(&runs),
+        run_clusters(&known_runs)
+    );
+    // The warning is not a claim that anything is free: the volume's own answers still say unknown.
+    assert!(!session.volume.is_free(100) && !session.volume.is_allocated(100));
+    assert!(session.volume.is_searched_as_free(100));
+    assert_eq!(session.resolve().unwrap().unexplained_free_clusters, 0);
+
+    let carve = call(&unknown, "carve_candidates", json!({}));
+    assert_eq!(carve["allocationBasis"], "whole-volume", "{carve}");
+    assert!(carve["allocationWarning"]
+        .as_str()
+        .unwrap()
+        .contains("may be listed"));
+    assert!(carve["total"].as_u64().unwrap() >= known_carve["total"].as_u64().unwrap());
+
+    let summary = call(&unknown, "unexplained_summary", json!({"samples": 16}));
+    assert_eq!(summary["allocationBasis"], "whole-volume", "{summary}");
+    assert_eq!(summary["allocationWarning"], runs["allocationWarning"]);
+}
+
+#[test]
+fn allocation_rebuilt_from_the_records_narrows_the_search_and_an_incomplete_one_is_not_used() {
+    use captainsalvage::source::MemorySource;
+    use captainsalvage::volume::{AllocationSource, DerivedAllocation, Volume};
+    let fixture = fixture();
+    let open_volume = |image: Vec<u8>| Volume::open(Arc::new(MemorySource::new(image))).unwrap();
+    let clusters = u64::from(open_volume(fixture.image.clone()).geometry.cluster_count);
+    let mut allocated = vec![0u8; clusters.div_ceil(8) as usize];
+    for cluster in 0..32u32 {
+        allocated[(cluster / 8) as usize] |= 1 << (cluster % 8); // clusters 2 to 33
+    }
+
+    // A volume whose allocation is known keeps it, and says nothing.
+    let known = open_volume(fixture.image.clone()).with_derived_allocation(DerivedAllocation {
+        allocated: allocated.clone(),
+        complete: true,
+        limitations: vec![],
+    });
+    assert_eq!(known.allocation_source(), AllocationSource::Known);
+    assert!(known.free_space_warning().is_none());
+
+    let torn = || open_volume(torn_record(&fixture.image, 6));
+    // Nothing rebuilt: the whole volume, with the warning.
+    let bare = torn();
+    assert_eq!(
+        bare.allocation_source(),
+        AllocationSource::Unknown {
+            why_not_derived: None
+        }
+    );
+    assert!(bare.is_searched_as_free(2) && bare.is_searched_as_free(4000));
+
+    // Rebuilt completely: only what no record says is in use, and the rebuild's limits are said with it.
+    let derived = torn().with_derived_allocation(DerivedAllocation {
+        allocated: allocated.clone(),
+        complete: true,
+        limitations: vec![
+            "a file whose attributes continue in another record is not seen".to_string(),
+        ],
+    });
+    assert!(matches!(
+        derived.allocation_source(),
+        AllocationSource::DerivedFromRecords { .. }
+    ));
+    assert!(
+        !derived.is_searched_as_free(2) && !derived.is_searched_as_free(33),
+        "in use by a record"
+    );
+    assert!(derived.is_searched_as_free(34) && derived.is_searched_as_free(4000));
+    let (basis, warning) = derived.free_space_warning().unwrap();
+    assert_eq!(basis, "derived-from-records");
+    assert!(
+        warning.contains("rebuilt from the file records")
+            && warning.contains("attributes continue in another record"),
+        "{warning}"
+    );
+    // Whatever it says, the volume's own answers do not call a cluster free.
+    assert!(!derived.is_free(4000) && !derived.is_allocated(2));
+
+    // Rebuilt incompletely: not trusted, the whole volume is searched, and the reason is said.
+    let partial = torn().with_derived_allocation(DerivedAllocation {
+        allocated,
+        complete: false,
+        limitations: vec!["record 9 could not be read".to_string()],
+    });
+    assert!(
+        partial.is_searched_as_free(2),
+        "an incomplete rebuild narrows nothing"
+    );
+    let (basis, warning) = partial.free_space_warning().unwrap();
+    assert_eq!(basis, "whole-volume");
+    assert!(
+        warning.contains("could not be rebuilt completely")
+            && warning.contains("record 9 could not be read"),
+        "{warning}"
+    );
 }
 
 #[test]

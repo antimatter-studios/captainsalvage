@@ -18,6 +18,32 @@ pub use crate::allocation::{
 pub use crate::filesystem::salvage::FilesystemBoot;
 pub use fs_exfat::primitives::BootCheck;
 
+/// Where a volume's knowledge of which clusters are free comes from. The tools that look for what is left in free space
+/// (carving, the unexplained regions) ask this, and say which it was, so unknown is never presented as free.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AllocationSource {
+    /// Read from the volume's own bitmap or table.
+    Known,
+    /// Rebuilt from the file records, because the bitmap could not be read. It is as complete as the records are, and its
+    /// limitations are said whenever it is used.
+    DerivedFromRecords { limitations: Vec<String> },
+    /// Not known, and not rebuilt, or rebuilt incompletely: the whole volume is searched, with a warning.
+    Unknown { why_not_derived: Option<String> },
+}
+
+/// Allocation rebuilt from the file records of a volume whose bitmap could not be read. It is never used to call a cluster
+/// free anywhere but in the search of free space, which it narrows from the whole volume.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedAllocation {
+    /// One bit for each cluster, in the numbering of `Volume::bitmap` (bit 0 is cluster 2): set where a record says the
+    /// cluster is in use.
+    pub allocated: Vec<u8>,
+    /// Whether every record could be read. An incomplete rebuild is not used: the whole volume is searched instead.
+    pub complete: bool,
+    /// What the rebuild cannot see, in words (an extension record that was not read, an attribute list), shown with it.
+    pub limitations: Vec<String>,
+}
+
 pub struct Volume {
     source: Arc<dyn BlockSource>,
     pub boot: FilesystemBoot,
@@ -32,6 +58,9 @@ pub struct Volume {
     pub allocation_known: bool,
     /// What is wrong with the volume's own structures, in words, for the person to be told.
     pub damage: Vec<String>,
+    /// Allocation rebuilt from the file records, when the volume's own is unknown and a rebuild was made. Nothing makes one
+    /// yet: it plugs in here, from the NTFS driver's `allocation_from_records`, through `with_derived_allocation`.
+    derived_allocation: Option<DerivedAllocation>,
     pub fat: Vec<u32>,
     pub bitmap: Vec<u8>,
     pub root_clusters: Vec<u32>,
@@ -95,6 +124,7 @@ impl Volume {
             dirty_flag,
             allocation_known,
             damage,
+            derived_allocation: None,
             fat,
             bitmap,
             root_clusters,
@@ -192,6 +222,79 @@ impl Volume {
     /// not known to be in use.
     pub fn is_allocated(&self, cluster: u32) -> bool {
         self.allocation_known && primitives::is_allocated(&self.bitmap, cluster)
+    }
+
+    /// Gives a volume whose allocation is unknown the allocation rebuilt from its file records. A volume whose own allocation is
+    /// known keeps it.
+    pub fn with_derived_allocation(mut self, derived: DerivedAllocation) -> Self {
+        if !self.allocation_known {
+            self.derived_allocation = Some(derived);
+        }
+        self
+    }
+
+    /// Where the knowledge of free space comes from now.
+    pub fn allocation_source(&self) -> AllocationSource {
+        if self.allocation_known {
+            return AllocationSource::Known;
+        }
+        match &self.derived_allocation {
+            Some(derived) if derived.complete => AllocationSource::DerivedFromRecords {
+                limitations: derived.limitations.clone(),
+            },
+            Some(derived) => AllocationSource::Unknown {
+                why_not_derived: Some(if derived.limitations.is_empty() {
+                    "not every file record could be read".to_string()
+                } else {
+                    derived.limitations.join("; ")
+                }),
+            },
+            None => AllocationSource::Unknown {
+                why_not_derived: None,
+            },
+        }
+    }
+
+    /// Whether the tools that look for what is left in free space may look in this cluster: where the allocation is known,
+    /// where it is free; where it was rebuilt from the file records, where no record says it is in use; and where it is
+    /// unknown, everywhere. This is not `is_free`, which is false for every cluster of such a volume.
+    pub fn is_searched_as_free(&self, cluster: u32) -> bool {
+        match self.allocation_source() {
+            AllocationSource::Known => self.is_free(cluster),
+            AllocationSource::DerivedFromRecords { .. } => self
+                .derived_allocation
+                .as_ref()
+                .is_some_and(|derived| !primitives::is_allocated(&derived.allocated, cluster)),
+            AllocationSource::Unknown { .. } => true,
+        }
+    }
+
+    /// What those tools say of where their free space came from, when it is not the volume's own bitmap. Nothing for a
+    /// volume whose allocation is known, so their answers are what they were.
+    pub fn free_space_warning(&self) -> Option<(&'static str, String)> {
+        match self.allocation_source() {
+            AllocationSource::Known => None,
+            AllocationSource::DerivedFromRecords { limitations } => Some((
+                "derived-from-records",
+                format!(
+                    "Allocation here was rebuilt from the file records, not read from a bitmap, so it is only as complete as they are: {}",
+                    if limitations.is_empty() {
+                        "no limitation was found".to_string()
+                    } else {
+                        limitations.join("; ")
+                    }
+                ),
+            )),
+            AllocationSource::Unknown { why_not_derived } => Some((
+                "whole-volume",
+                match why_not_derived {
+                    None => "Allocation is unknown for this volume, so the whole volume is searched as if it were free space. Nothing here is known to be free: clusters that current files use may be listed.".to_string(),
+                    Some(why) => format!(
+                        "Allocation could not be rebuilt completely from the file records ({why}), so the whole volume is searched as if it were free space. Nothing here is known to be free: clusters that current files use may be listed."
+                    ),
+                },
+            )),
+        }
     }
 
     /// Whether the bitmap says this cluster is free. False for a cluster of a volume whose allocation is unknown: unknown is
