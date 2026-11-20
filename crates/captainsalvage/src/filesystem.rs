@@ -5,6 +5,7 @@
 //! drivers; callers use normalized entries and bounded reads here.
 
 pub mod driver;
+pub mod generic;
 pub mod ntfs;
 pub(crate) mod ntfs_salvage;
 pub mod probe;
