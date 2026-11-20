@@ -6,6 +6,10 @@
 # compares (crates/captainsalvage/tests/ntfs_windows.rs). The app itself links macOS and Unix
 # libraries, so it is not built on Windows. `chore test:windows-oracle` does both steps in the
 # Windows guest of fs-windows-test-harness on a developer's machine.
+#
+# Every job takes its runner from a gate job of its own, `<job>-gate`, which runs on the runner gate
+# (`runs-on: antimatter-vps-gate`) and says which runner the job gets. A job that has an `if:` gives its
+# gate the same one.
 name: Windows oracle
 
 on:
@@ -24,10 +28,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  windows-gate:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'windows-oracle'
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick windows-x64
+
   windows:
     name: Windows formats and fills the NTFS volumes
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'windows-oracle'
-    runs-on: windows-2025
+    needs: windows-gate
+    runs-on: ${{ needs.windows-gate.outputs.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,10 +61,20 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  graded-gate:
+    needs: [windows]
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
   graded:
     name: the app reads them as Windows listed them
-    needs: windows
-    runs-on: ubuntu-24.04
+    needs: [windows, graded-gate]
+    runs-on: ${{ needs.graded-gate.outputs.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -15,6 +15,10 @@ name: release
 # read the repository could download them, and this app will be sold. They go straight from the
 # job that built them to private storage. That step is below, turned off until the bucket
 # exists, so until then a release has notes and no build.
+#
+# Every job takes its runner from a gate job of its own, `<job>-gate`, which runs on the runner gate
+# (`runs-on: antimatter-vps-gate`) and says which runner the job gets. A job that has an `if:` gives its
+# gate the same one.
 on:
   push:
     tags:
@@ -31,9 +35,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  build-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick macos-arm64
+
   build:
     name: build and test
-    runs-on: macos-15
+    needs: build-gate
+    runs-on: ${{ needs.build-gate.outputs.runner }}
     outputs:
       notes: ${{ steps.notes.outputs.body }}
     steps:
@@ -128,11 +142,22 @@ jobs:
       #       aws s3 cp "$file" "s3://$S3_BUCKET/captain-salvage/$GITHUB_REF_NAME/" --endpoint-url "$S3_ENDPOINT"
       #     done
 
+  publish-gate:
+    needs: [build]
+    if: github.event_name == 'push'
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
   publish:
     name: publish
-    needs: build
+    needs: [build, publish-gate]
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.publish-gate.outputs.runner }}
     permissions:
       contents: write
     steps:

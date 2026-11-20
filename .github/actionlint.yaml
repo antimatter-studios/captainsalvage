@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # The label of the runner that hands out the real runners (see the runner-gate jobs in the workflows).
+  labels:
+    - antimatter-vps-gate

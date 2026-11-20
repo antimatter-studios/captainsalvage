@@ -6,6 +6,11 @@ name: CI
 # so branch protection keeps one required check. The third job runs the independent NTFS, FAT and exFAT
 # oracles in a Linux VM, and the fourth checks what the tests run of our code against its baseline.
 # Documentation-only changes skip all of it.
+#
+# Every job takes its runner from a gate job of its own, `<job>-gate`, which runs on the runner gate
+# (`runs-on: antimatter-vps-gate`) and says which runner the job gets. The gate never fails a job, and a
+# fork's pull request gets GitHub's runner. The CI job below runs when its needs fail, so its gate does too,
+# and it falls back to `ubuntu-latest` when its gate was skipped.
 on:
   pull_request:
     paths-ignore: ["**.md", "media/**", "LICENSE"]
@@ -24,9 +29,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  engine-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
   engine:
     name: engine and window
-    runs-on: ubuntu-latest
+    needs: engine-gate
+    runs-on: ${{ needs.engine-gate.outputs.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,13 +93,23 @@ jobs:
           cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
           cargo test -p captainsalvage --locked --features test-hooks --lib
 
+  oracle-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64-kvm
+
   oracle:
     # `chore test:oracle`: the NTFS flows against ntfs-3g's tools and the Linux kernel's ntfs3
     # driver, and the FAT and exFAT flows against mkfs.fat, mkfs.exfat, mtools and the kernel's
     # vfat and exfat drivers, in the fs-linux-test-harness VM. Only an x86_64 runner has KVM, and
     # ci-setup-linux.sh is the harness's one setup for it, run from the sibling checkout.
     name: independent oracles (NTFS, FAT and exFAT, harness VM)
-    runs-on: ubuntu-24.04
+    needs: oracle-gate
+    runs-on: ${{ needs.oracle-gate.outputs.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,9 +142,19 @@ jobs:
         if: always() && steps.oracle.outcome != 'skipped'
         run: chore linux:down
 
+  app-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick macos-arm64
+
   app:
     name: app on macOS
-    runs-on: macos-15
+    needs: app-gate
+    runs-on: ${{ needs.app-gate.outputs.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -161,13 +196,23 @@ jobs:
           cargo build -p captain-salvage --locked --features test-hooks
           scripts/check-test-hooks.sh present target/debug/captain-salvage
 
+  coverage-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick macos-arm64
+
   coverage:
     # What the tests run of our own code, against docs/coverage-baseline.json (`chore test:coverage`).
     # One job, on macOS because the Tauri crate only builds there, and cached like the others. The VM
     # and window tests are not run, so the numbers are of the engine's tests, the Tauri crate's own
     # tests and the TypeScript tests.
     name: coverage against the baseline
-    runs-on: macos-15
+    needs: coverage-gate
+    runs-on: ${{ needs.coverage-gate.outputs.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -193,11 +238,22 @@ jobs:
       - name: coverage is not under the baseline
         run: python3 scripts/coverage.py check
 
-  ci:
-    name: CI
+  ci-gate:
     needs: [engine, app, oracle, coverage]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
+  ci:
+    name: CI
+    needs: [engine, app, oracle, coverage, ci-gate]
+    if: always()
+    runs-on: ${{ needs.ci-gate.outputs.runner || 'ubuntu-latest' }}
     steps:
       - name: all passed
         run: |
