@@ -22,15 +22,39 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long the journal waits for its own file, and the catalog's connection for the catalog's, before giving
 /// up. Nothing here may wait without end: a read of a device is waiting behind it.
 const JOURNAL_BUSY: Duration = Duration::from_millis(100);
 const CATALOG_BUSY: Duration = Duration::from_millis(300);
+/// How long a write to the catalog's rows is retried when another connection holds the catalog's write lock. Each
+/// try waits `CATALOG_BUSY` at most and lets go of this store's mutex between tries, so a status call is never
+/// held up for longer than that, but opening a source and recording what is known of it do not fail on a lock
+/// that is held for a moment, as they would under load.
+const CATALOG_WRITE_PATIENCE: Duration = Duration::from_secs(30);
 /// What the end of a read waits for the journal's file: a little longer, because the read is over.
 const JOURNAL_END_BUSY: Duration = Duration::from_millis(500);
 const JOURNAL_FILE: &str = "read-journal.sqlite";
+
+/// Runs `work` again while it is refused for a lock, for at most `CATALOG_WRITE_PATIENCE`, with a short wait
+/// between tries. Another error, or the same one at the end, is returned.
+fn retry_while_busy<R>(mut work: impl FnMut() -> rusqlite::Result<R>) -> rusqlite::Result<R> {
+    let deadline = Instant::now() + CATALOG_WRITE_PATIENCE;
+    loop {
+        match work() {
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            other => return other,
+        }
+    }
+}
 
 const JOURNAL_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS read_journal (
@@ -166,10 +190,16 @@ impl HealthStore {
             .connection()
             .execute_batch("PRAGMA synchronous = NORMAL;")?;
         catalog.connection().busy_timeout(CATALOG_BUSY)?;
+        // Setting the journal's file up (its mode, its tables) takes a write lock, and every store of this process
+        // that is opened at the same moment does it on the same file: opening a source must wait for that, as for
+        // any other lock, and only afterwards does the connection give up quickly, for the reads of a device.
         let connection = Connection::open(catalog.root().join(JOURNAL_FILE))?;
+        connection.busy_timeout(CATALOG_WRITE_PATIENCE)?;
+        retry_while_busy(|| {
+            connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+            connection.execute_batch(JOURNAL_SCHEMA)
+        })?;
         connection.busy_timeout(JOURNAL_BUSY)?;
-        connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        connection.execute_batch(JOURNAL_SCHEMA)?;
         let store = Self {
             catalog: Mutex::new(catalog),
             journal: Journal {
@@ -229,6 +259,25 @@ impl HealthStore {
                 .connection()
                 .execute("DELETE FROM read_journal", []);
         }
+    }
+
+    /// Runs a write on the catalog until it is not refused for a lock: a try that finds the catalog busy gives
+    /// the mutex up, waits a moment and tries again, for at most `CATALOG_WRITE_PATIENCE`. A write that is
+    /// refused for another reason, or still refused at the end, returns that error.
+    fn patiently<R>(
+        &self,
+        mut work: impl FnMut(&Catalog) -> rusqlite::Result<R>,
+    ) -> rusqlite::Result<R> {
+        retry_while_busy(|| work(&self.lock()))
+    }
+
+    /// [`Self::patiently`] for a write to the journal's file, which only the writes that must not be lost (the
+    /// ones that move or close rows, not the one made while a read is in flight) use.
+    fn patiently_in_journal<R>(
+        &self,
+        mut work: impl FnMut(&Connection) -> rusqlite::Result<R>,
+    ) -> rusqlite::Result<R> {
+        retry_while_busy(|| self.with_journal(&mut work))
     }
 
     fn lock(&self) -> MutexGuard<'_, Catalog> {
@@ -418,7 +467,7 @@ impl HealthStore {
 
     /// Closes the rows of reads that never ended, so each is counted once.
     pub fn settle(&self, ids: &[i64], outcome: &str) -> Result<()> {
-        self.with_journal(|connection| {
+        self.patiently_in_journal(|connection| {
             for id in ids {
                 connection.execute(
                     "UPDATE read_journal SET finished_millis = ?2, outcome = ?3 WHERE id = ?1",
@@ -510,36 +559,39 @@ impl HealthStore {
 
     /// Stores the map of `key` as it is now.
     pub fn save_map(&self, key: &str, source_id: Option<&str>, map: &HealthMap) -> Result<()> {
-        let catalog = self.lock();
-        let transaction = catalog.connection().unchecked_transaction()?;
-        transaction.execute("DELETE FROM health_ranges WHERE source_key = ?1", [key])?;
-        for range in map.ranges() {
-            transaction.execute(
-                "INSERT INTO health_ranges (source_key, source_id, start, end, state, latency_ms, note, updated_millis)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    key,
-                    source_id,
-                    range.start as i64,
-                    range.end as i64,
-                    range.state.name(),
-                    range.latency_ms.map(|ms| ms as i64),
-                    range.note,
-                    range.found_millis as i64
-                ],
-            )?;
-        }
-        transaction.commit()?;
+        self.patiently(|catalog| {
+            let transaction = catalog.connection().unchecked_transaction()?;
+            transaction.execute("DELETE FROM health_ranges WHERE source_key = ?1", [key])?;
+            for range in map.ranges() {
+                transaction.execute(
+                    "INSERT INTO health_ranges (source_key, source_id, start, end, state, latency_ms, note, updated_millis)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        key,
+                        source_id,
+                        range.start as i64,
+                        range.end as i64,
+                        range.state.name(),
+                        range.latency_ms.map(|ms| ms as i64),
+                        range.note,
+                        range.found_millis as i64
+                    ],
+                )?;
+            }
+            transaction.commit()
+        })?;
         Ok(())
     }
 
     /// Tells the rows of `key` which stored source they are about.
     pub fn adopt(&self, key: &str, source_id: &str) -> Result<()> {
-        self.lock().connection().execute(
-            "UPDATE health_ranges SET source_id = ?2 WHERE source_key = ?1",
-            params![key, source_id],
-        )?;
-        self.with_journal(|connection| {
+        self.patiently(|catalog| {
+            catalog.connection().execute(
+                "UPDATE health_ranges SET source_id = ?2 WHERE source_key = ?1",
+                params![key, source_id],
+            )
+        })?;
+        self.patiently_in_journal(|connection| {
             connection.execute(
                 "UPDATE read_journal SET source_id = ?2 WHERE source_key = ?1",
                 params![key, source_id],
@@ -584,7 +636,7 @@ impl HealthStore {
         if child_key == parent_key {
             return Ok(());
         }
-        let catalog = self.lock();
+        self.patiently(|catalog| {
         let connection = catalog.connection();
         let transaction = connection.unchecked_transaction()?;
         transaction.execute(
@@ -670,11 +722,11 @@ impl HealthStore {
             "DELETE FROM health_flags WHERE source_key = ?1",
             [child_key],
         )?;
-        transaction.commit()?;
-        drop(catalog);
+        transaction.commit()
+        })?;
         // Its journal rows (an open one is a culprit for the disk too), in the disk's offsets: in the journal's
         // own file, after the catalog's commit, so neither waits for the other.
-        self.with_journal(|connection| {
+        self.patiently_in_journal(|connection| {
             connection.execute(
                 "UPDATE read_journal SET source_key = ?2, start = start + ?3 WHERE source_key = ?1",
                 params![child_key, parent_key, offset as i64],
@@ -699,37 +751,41 @@ impl HealthStore {
             })?)
         };
         let (journal_new, journal_old) = (in_journal(new)?, in_journal(old)?);
-        let catalog = self.lock();
-        let transaction = catalog.connection().unchecked_transaction()?;
-        let taken: i64 = transaction.query_row(
-            "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
+        let moved = self.patiently(|catalog| {
+            let transaction = catalog.connection().unchecked_transaction()?;
+            let taken: i64 = transaction.query_row(
+                "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
                   + (SELECT count(*) FROM health_flags WHERE source_key = ?1)",
-            [new],
-            |row| row.get(0),
-        )?;
-        let has: i64 = transaction.query_row(
-            "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
+                [new],
+                |row| row.get(0),
+            )?;
+            let has: i64 = transaction.query_row(
+                "SELECT (SELECT count(*) FROM health_ranges WHERE source_key = ?1)
                   + (SELECT count(*) FROM health_flags WHERE source_key = ?1)
                   + (SELECT count(*) FROM health_links WHERE parent_key = ?1)",
-            [old],
-            |row| row.get(0),
-        )?;
-        if taken + journal_new > 0 || has + journal_old == 0 {
-            return Ok(false);
-        }
-        for table in ["health_ranges", "health_flags", "health_probes"] {
+                [old],
+                |row| row.get(0),
+            )?;
+            if taken + journal_new > 0 || has + journal_old == 0 {
+                return Ok(false);
+            }
+            for table in ["health_ranges", "health_flags", "health_probes"] {
+                transaction.execute(
+                    &format!("UPDATE {table} SET source_key = ?2 WHERE source_key = ?1"),
+                    params![old, new],
+                )?;
+            }
             transaction.execute(
-                &format!("UPDATE {table} SET source_key = ?2 WHERE source_key = ?1"),
+                "UPDATE health_links SET parent_key = ?2 WHERE parent_key = ?1",
                 params![old, new],
             )?;
+            transaction.commit()?;
+            Ok(true)
+        })?;
+        if !moved {
+            return Ok(false);
         }
-        transaction.execute(
-            "UPDATE health_links SET parent_key = ?2 WHERE parent_key = ?1",
-            params![old, new],
-        )?;
-        transaction.commit()?;
-        drop(catalog);
-        self.with_journal(|connection| {
+        self.patiently_in_journal(|connection| {
             connection.execute(
                 "UPDATE read_journal SET source_key = ?2 WHERE source_key = ?1",
                 params![old, new],
@@ -756,43 +812,53 @@ impl HealthStore {
     /// device went away. Only the ranges the guard recorded for such a read, by their note, are removed:
     /// ones the person marked, and ones found from a read that never finished, are never touched.
     pub fn drop_instant_culprits(&self, key: &str, min_ms: u64) -> Result<usize> {
-        Ok(self.lock().connection().execute(
-            "DELETE FROM health_ranges WHERE source_key = ?1 AND state = 'reset-culprit'
-             AND latency_ms IS NOT NULL AND latency_ms < ?2 AND note LIKE 'the device went away during a read of this range%'",
-            params![key, min_ms as i64],
-        )?)
+        Ok(self.patiently(|catalog| {
+            catalog.connection().execute(
+                "DELETE FROM health_ranges WHERE source_key = ?1 AND state = 'reset-culprit'
+                 AND latency_ms IS NOT NULL AND latency_ms < ?2 AND note LIKE 'the device went away during a read of this range%'",
+                params![key, min_ms as i64],
+            )
+        })?)
     }
 
     /// Adds `resets` to the count and returns the new count.
     pub fn add_resets(&self, key: &str, resets: u64) -> Result<u64> {
-        let catalog = self.lock();
-        catalog.connection().execute(
-            "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
-             ON CONFLICT(source_key) DO UPDATE SET resets = resets + excluded.resets, updated_millis = excluded.updated_millis",
-            params![key, resets as i64, now_millis() as i64],
-        )?;
-        Ok(catalog.connection().query_row(
-            "SELECT resets FROM health_flags WHERE source_key = ?1",
-            [key],
-            |row| row.get::<_, i64>(0),
-        )? as u64)
+        Ok(self.patiently(|catalog| {
+            let transaction = catalog.connection().unchecked_transaction()?;
+            transaction.execute(
+                "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source_key) DO UPDATE SET resets = resets + excluded.resets, updated_millis = excluded.updated_millis",
+                params![key, resets as i64, now_millis() as i64],
+            )?;
+            let total = transaction.query_row(
+                "SELECT resets FROM health_flags WHERE source_key = ?1",
+                [key],
+                |row| row.get::<_, i64>(0),
+            )?;
+            transaction.commit()?;
+            Ok(total)
+        })? as u64)
     }
 
     pub fn set_resets(&self, key: &str, resets: u64) -> Result<()> {
-        self.lock().connection().execute(
-            "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
-             ON CONFLICT(source_key) DO UPDATE SET resets = excluded.resets, updated_millis = excluded.updated_millis",
-            params![key, resets as i64, now_millis() as i64],
-        )?;
+        self.patiently(|catalog| {
+            catalog.connection().execute(
+                "INSERT INTO health_flags (source_key, resets, updated_millis) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source_key) DO UPDATE SET resets = excluded.resets, updated_millis = excluded.updated_millis",
+                params![key, resets as i64, now_millis() as i64],
+            )
+        })?;
         Ok(())
     }
 
     pub fn set_failing_after(&self, key: &str, after: u64) -> Result<()> {
-        self.lock().connection().execute(
-            "INSERT INTO health_flags (source_key, failing_after, updated_millis) VALUES (?1, ?2, ?3)
-             ON CONFLICT(source_key) DO UPDATE SET failing_after = excluded.failing_after, updated_millis = excluded.updated_millis",
-            params![key, after as i64, now_millis() as i64],
-        )?;
+        self.patiently(|catalog| {
+            catalog.connection().execute(
+                "INSERT INTO health_flags (source_key, failing_after, updated_millis) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source_key) DO UPDATE SET failing_after = excluded.failing_after, updated_millis = excluded.updated_millis",
+                params![key, after as i64, now_millis() as i64],
+            )
+        })?;
         Ok(())
     }
 
@@ -809,18 +875,22 @@ impl HealthStore {
     }
 
     pub fn save_probe(&self, key: &str, state: &str) -> Result<()> {
-        self.lock().connection().execute(
-            "INSERT INTO health_probes (source_key, state, updated_millis) VALUES (?1, ?2, ?3)
-             ON CONFLICT(source_key) DO UPDATE SET state = excluded.state, updated_millis = excluded.updated_millis",
-            params![key, state, now_millis() as i64],
-        )?;
+        self.patiently(|catalog| {
+            catalog.connection().execute(
+                "INSERT INTO health_probes (source_key, state, updated_millis) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source_key) DO UPDATE SET state = excluded.state, updated_millis = excluded.updated_millis",
+                params![key, state, now_millis() as i64],
+            )
+        })?;
         Ok(())
     }
 
     pub fn clear_probe(&self, key: &str) -> Result<()> {
-        self.lock()
-            .connection()
-            .execute("DELETE FROM health_probes WHERE source_key = ?1", [key])?;
+        self.patiently(|catalog| {
+            catalog
+                .connection()
+                .execute("DELETE FROM health_probes WHERE source_key = ?1", [key])
+        })?;
         Ok(())
     }
 

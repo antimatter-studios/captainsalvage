@@ -1507,3 +1507,134 @@ fn the_end_of_a_read_is_not_lost_when_the_journal_is_busy_so_no_false_open_row_r
     assert_eq!(store.recent("k", 3).unwrap()[0]["outcome"], "ok");
     assert!(store.abandoned("k").unwrap().is_empty());
 }
+
+#[test]
+fn what_is_recorded_about_a_source_waits_for_a_write_lock_held_for_a_while_and_is_not_lost() {
+    // Opening a source records its link to the disk, its reset count and its map. Another connection (a scan's
+    // step, a second source being opened) can hold the catalog's write lock for longer than the store's own wait,
+    // which is short so that a status call always answers. The writes try again, so the open does not fail.
+    let root = Root::new();
+    let store = root.store();
+    let other = rusqlite::Connection::open(root.0.join("raw-scans.sqlite")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        other.execute_batch("COMMIT").unwrap();
+    });
+    let began = Instant::now();
+    let s = store.clone();
+    let written = finishes_within(20, move || {
+        s.link("child", "parent", 4096, 1 << 20)?;
+        let resets = s.add_resets("parent", 2)?;
+        let mut map = HealthMap::default();
+        map.record(HealthRange::new(
+            0,
+            4096,
+            RangeState::Unreadable,
+            None,
+            "the test marked it",
+        ));
+        s.save_map("parent", None, &map)?;
+        Ok::<_, anyhow::Error>(resets)
+    });
+    assert_eq!(
+        written.map(|result| result.ok()),
+        Some(Some(2)),
+        "a write to the catalog failed on a lock that was held for a moment"
+    );
+    assert!(
+        began.elapsed() >= std::time::Duration::from_millis(1000),
+        "the writes did not wait for the lock: {:?}",
+        began.elapsed()
+    );
+    release.join().unwrap();
+    assert_eq!(
+        store.link_of("child").unwrap(),
+        Some(("parent".into(), 4096))
+    );
+    assert_eq!(store.load_flags("parent").unwrap().0, 2);
+    assert_eq!(store.load_map("parent").unwrap().ranges().len(), 1);
+}
+
+#[test]
+fn a_status_read_still_answers_at_once_while_a_write_waits_for_the_catalog() {
+    let root = Root::new();
+    let store = root.store();
+    let other = rusqlite::Connection::open(root.0.join("raw-scans.sqlite")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let writer = store.clone();
+    let write = std::thread::spawn(move || writer.set_resets("k", 1));
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    // The write is retrying: it does not hold the store's mutex between tries, so a read goes through.
+    let began = Instant::now();
+    let reader = store.clone();
+    let read = finishes_within(5, move || reader.load_flags("k"));
+    assert!(matches!(read, Some(Ok(_))), "{read:?}");
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        began.elapsed()
+    );
+    other.execute_batch("COMMIT").unwrap();
+    write.join().unwrap().unwrap();
+    assert_eq!(store.load_flags("k").unwrap().0, 1);
+}
+
+#[test]
+fn closing_and_moving_journal_rows_waits_for_the_journal_file_and_is_not_lost() {
+    // The writes that close or move rows (opening a source does them) are the ones that must not be lost, unlike
+    // the journal's write while a read is in flight, which is kept in memory when the file is busy.
+    let root = Root::new();
+    let store = root.store();
+    let row = store.started("k", "9999999:1", 0, 4096).unwrap();
+    assert!(row > 0, "the file was free: a real row");
+    let other = rusqlite::Connection::open(root.0.join("read-journal.sqlite")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        other.execute_batch("COMMIT").unwrap();
+    });
+    let s = store.clone();
+    let done = finishes_within(20, move || {
+        s.settle(&[row], "never-finished")?;
+        s.adopt("k", "source-1")?;
+        s.link("k", "disk", 512, 4096)
+    });
+    assert!(
+        done.is_some_and(|result| result.is_ok()),
+        "a write to the journal failed on a lock that was held for a moment"
+    );
+    release.join().unwrap();
+    let rows = store.recent("disk", 5).unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["outcome"], "never-finished");
+}
+
+#[test]
+fn opening_the_store_waits_for_the_journal_file_while_another_store_sets_it_up() {
+    // Every store of a process sets the journal's file up (its mode and its tables) when it is opened, and sources
+    // are opened at the same moment: one holds the file's lock while the others open. They wait for it, as opening
+    // a source waits for any lock, and then give up quickly again for the reads of a device.
+    let root = Root::new();
+    let other = rusqlite::Connection::open(root.0.join("read-journal.sqlite")).unwrap();
+    other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        other.execute_batch("COMMIT").unwrap();
+    });
+    let began = Instant::now();
+    let path = root.0.clone();
+    let opened = finishes_within(20, move || {
+        HealthStore::open(&path).map(|store| store.journal_pending())
+    });
+    assert!(
+        opened.is_some_and(|result| result.is_ok()),
+        "opening the store failed on a lock that was held for a moment"
+    );
+    assert!(
+        began.elapsed() >= std::time::Duration::from_millis(1000),
+        "it did not wait for the lock: {:?}",
+        began.elapsed()
+    );
+    release.join().unwrap();
+}
