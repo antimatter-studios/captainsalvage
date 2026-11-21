@@ -348,7 +348,14 @@ fn the_app_lists_and_copies_every_image_the_kernel_reads_byte_for_byte() {
 
 /// What the app shows of an image it opened as a person does: scanned, browsed from the root, every file read in full by the
 /// preview's range reader and copied out, with the folders, and with the hash of the bytes each copy holds.
-fn app_view(name: &str, image: Vec<u8>) -> (Tree, BTreeMap<String, String>) {
+fn app_view(
+    name: &str,
+    image: Vec<u8>,
+) -> (
+    Tree,
+    BTreeMap<String, String>,
+    BTreeMap<String, captainsalvage::ranges::RangeList>,
+) {
     use captainsalvage::export::CopyRequest;
     use captainsalvage::scan::{run_scan, ScanOptions};
     use captainsalvage::session::Session;
@@ -463,7 +470,14 @@ fn app_view(name: &str, image: Vec<u8>) -> (Tree, BTreeMap<String, String>) {
             sha(&target),
         );
     }
-    (tree, copies)
+    // The typed ranges of every entry, from the driver's walk.
+    let mut ranges = BTreeMap::new();
+    for cluster in 2..session.volume.geometry.last_cluster_exclusive() {
+        for entry in session.volume.sets_in_cluster(cluster, &[], 4096) {
+            ranges.insert(entry.name.clone(), entry.ranges);
+        }
+    }
+    (tree, copies, ranges)
 }
 
 #[test]
@@ -473,7 +487,7 @@ fn the_app_opens_scans_browses_previews_and_copies_every_image_as_the_kernel_lis
         let oracle = read_tree(&oracle_output().join(format!("{name}.kernel.tsv")));
         let oracle_links = oracle.links.clone();
         assert!(!oracle_links.is_empty(), "{name}");
-        let (shown, copies) = app_view(&name, image);
+        let (shown, copies, ranges) = app_view(&name, image);
         // A symbolic link is listed as a file that holds its target: the kernel's links, so.
         let mut kernel = Tree {
             links: BTreeMap::new(),
@@ -489,6 +503,18 @@ fn the_app_opens_scans_browses_previews_and_copies_every_image_as_the_kernel_lis
             wrong.is_empty(),
             "{name}: what the app shows differs from the kernel's:\n{wrong}"
         );
+        // The ranges say how each file is stored: what compresses is `Compressed` (gzip, xz, lzo, lz4 and zstd images alike), and
+        // the zero blocks of a file with holes are `Sparse`, which no read of the image makes.
+        use captainsalvage::ranges::RangeKind;
+        let compressible = &ranges["compressible.txt"];
+        assert_eq!(compressible.size(), 700_000, "{name}");
+        assert!(compressible.bytes_of(RangeKind::Compressed) > 0, "{name}");
+        if name.ends_with("-128k") {
+            assert!(
+                ranges["sparse.bin"].bytes_of(RangeKind::Sparse) >= 262_144,
+                "{name}"
+            );
+        }
         // Every file was copied out with the bytes the kernel read.
         assert_eq!(copies.len(), kernel.files.len(), "{name}");
         let mut hashes: Vec<&String> = copies.values().collect();
