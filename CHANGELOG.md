@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-11-21
+
+### Fixed
+
+- **Resuming a scan on the same damaged drive now continues from its checkpoint.** You avoid starting over at a block that still cannot be read.
+
 ## [0.18.0] — 2026-11-21
 
 ### Added

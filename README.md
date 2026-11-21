@@ -1100,7 +1100,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.18.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.18.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1237,6 +1237,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.18.1 — 2026-11-21
+
+**Fixed**
+
+- **Resuming a scan on the same damaged drive now continues from its checkpoint.** You avoid starting over at a block that still cannot be read.
+
 ### v0.18.0 — 2026-11-21
 
 **Added**
@@ -1291,12 +1297,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **An NTFS volume with more clusters than Windows allows is refused at open, with the reason.** Windows itself does not create or mount an NTFS volume of more than 4,294,967,294 (2^32 - 2) clusters, and the limit here was one cluster too generous and its message did not say why. A boot sector that states more clusters is now refused as soon as it is read, with a message that gives the count and says Windows does not make such a volume, and nothing else on the disk is read. A volume of exactly 4,294,967,294 clusters still opens. The support table says NTFS is limited to that many clusters.
-
-### v0.15.4 — 2026-11-21
-
-**Maintenance**
-
-- Gated Linux jobs install missing tools so release publishing works on self-hosted runners ([#319](https://github.com/antimatter-studios/captainsalvage/pull/319))
 
 <!-- changelog:end -->
 
