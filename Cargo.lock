@@ -770,7 +770,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3272,9 +3272,9 @@ dependencies = [
 [[package]]
 name = "rust-fs-exfat"
 version = "0.4.0"
-source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=84956aaf3317ef98767425cf4c2a2ab528ae1b02#84956aaf3317ef98767425cf4c2a2ab528ae1b02"
+source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=671fa209464b990b0df0074cabb2410463ec7d0f#671fa209464b990b0df0074cabb2410463ec7d0f"
 dependencies = [
- "rust-fs-core 0.4.5",
+ "rust-fs-core 0.5.1",
  "serde",
  "sha2 0.10.9",
 ]
