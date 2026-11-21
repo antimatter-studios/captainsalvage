@@ -17,6 +17,10 @@
 //! from the root, every file read in full by the preview's range reader and copied out, and what is shown and copied is the
 //! kernel's tree, byte for byte, a symbolic link being a file that holds its target.
 //!
+//! And one image of them is damaged in one compressed data block of one file (`one_damaged_data_block_costs_only_that_file`):
+//! every entry is still listed, that file's copy is partial and names the block's bytes, the volume's damage names the data block,
+//! and every other file copies with the kernel's SHA-256.
+//!
 //! What this does not check, so that nobody reads more into a pass than is there: damaged images (the driver's
 //! own suite checks them, and `generic_squashfs.rs` reads one), extended attributes (the images are made without),
 //! images with an export table or several fragments tables of more than one size, filesystems on a partition of a
@@ -523,4 +527,204 @@ fn the_app_opens_scans_browses_previews_and_copies_every_image_as_the_kernel_lis
         wanted.sort();
         assert_eq!(hashes, wanted, "{name}: the copies' hashes");
     }
+}
+
+/// Opens and scans an image as a person does.
+fn scanned_session(name: &str, image: Vec<u8>) -> Arc<captainsalvage::session::Session> {
+    use captainsalvage::scan::{run_scan, ScanOptions};
+    use captainsalvage::session::Session;
+    use captainsalvage::source::MemorySource;
+    use captainsalvage::workspace::Workspace;
+    use std::sync::atomic::AtomicBool;
+    let path = std::env::temp_dir().join(format!(
+        "captainsalvage-squashfs-damaged-{}-{name}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&path);
+    let session = Session::with_source(
+        Path::new("/test/squashfs-damaged-data"),
+        Arc::new(MemorySource::new(image)),
+        Workspace::at(&path).unwrap(),
+    )
+    .unwrap();
+    run_scan(
+        &session.volume,
+        &session.workspace,
+        ScanOptions { chunk_clusters: 64 },
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    session
+}
+
+/// Every entry of the map as a person browses from the root: path to (is a folder, id, length).
+fn browsed(session: &captainsalvage::session::Session) -> BTreeMap<String, (bool, i64, u64)> {
+    let mut found = BTreeMap::new();
+    let mut queue = vec![(session.volume.geometry.root_cluster, String::new())];
+    while let Some((node, folder)) = queue.pop() {
+        let mut offset = 0;
+        loop {
+            let page = session
+                .with_database(|database| database.children(node, offset, 500, true, 0.0))
+                .unwrap();
+            if page.rows.is_empty() {
+                break;
+            }
+            offset += page.rows.len() as u64;
+            for row in page.rows {
+                let path = if folder.is_empty() {
+                    row.name.clone()
+                } else {
+                    format!("{folder}/{}", row.name)
+                };
+                if row.kind == "file" {
+                    found.insert(path, (false, row.id.unwrap(), row.length));
+                } else {
+                    found.insert(path.clone(), (true, 0, 0));
+                    queue.push((row.head.unwrap(), path));
+                }
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn one_damaged_data_block_costs_only_that_file() {
+    use captainsalvage::export::CopyRequest;
+    use captainsalvage::ranges::{Provenance, RangeKind};
+    let name = "gzip-128k";
+    let image = std::fs::read(oracle_output().join(format!("{name}.img"))).unwrap();
+    let kernel = read_tree(&oracle_output().join(format!("{name}.kernel.tsv")));
+    let clean = scanned_session("clean", image.clone());
+
+    // The third compressed data block of `compressible.txt`, where the clean image says it is.
+    let mut stored = None;
+    for cluster in 2..clean.volume.geometry.last_cluster_exclusive() {
+        for entry in clean.volume.sets_in_cluster(cluster, &[], 4096) {
+            if entry.name == "compressible.txt" {
+                stored = Some(entry.ranges);
+            }
+        }
+    }
+    let ranges = stored.expect("the image holds compressible.txt");
+    let block = ranges.ranges()[2];
+    assert_eq!(block.kind, RangeKind::Compressed);
+    let Some(Provenance::Source { offset, length }) = block.provenance else {
+        panic!("a compressed range has a place on the image")
+    };
+    // Sixteen bytes in the middle of the stored block are flipped: the stream no longer decodes, and nothing else is touched.
+    let mut damaged = image.clone();
+    let middle = (offset + length / 2) as usize;
+    for byte in &mut damaged[middle..middle + 16] {
+        *byte ^= 0xA5;
+    }
+    let session = scanned_session("damaged", damaged);
+
+    // Every entry is still listed, as before.
+    assert_eq!(
+        browsed(&session).keys().collect::<Vec<_>>(),
+        browsed(&clean).keys().collect::<Vec<_>>()
+    );
+    // The volume names the data block.
+    assert!(
+        session
+            .volume
+            .damage
+            .iter()
+            .any(|line| line.starts_with("data block:") && line.contains("zlib")),
+        "{:?}",
+        session.volume.damage
+    );
+
+    // Every file is copied: the damaged one is partial and names the bytes of its block; the others are the kernel's.
+    let listed = browsed(&session);
+    let ids: Vec<i64> = listed
+        .values()
+        .filter(|(is_folder, _, _)| !*is_folder)
+        .map(|(_, id, _)| *id)
+        .collect();
+    let destination = session.workspace.dir().join("copy");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: ids.clone(),
+            include_partial: true,
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let status = session.copy_status().unwrap();
+        if status.state == "finished" {
+            assert_eq!(
+                (
+                    status.files_done as usize,
+                    status.files_failed,
+                    status.files_partial
+                ),
+                (ids.len(), 0, 1),
+                "{status:?}"
+            );
+            break;
+        }
+        assert!(
+            !matches!(status.state.as_str(), "failed" | "stopped"),
+            "{status:?}"
+        );
+        assert!(std::time::Instant::now() < deadline, "{status:?}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let manifest =
+        std::fs::read_to_string(destination.join("captain-salvage-manifest.jsonl")).unwrap();
+    let mut partial = 0;
+    for line in manifest.lines() {
+        let row: serde_json::Value = serde_json::from_str(line).unwrap();
+        let path = row["sourcePath"]
+            .as_str()
+            .unwrap_or_default()
+            .trim_start_matches('/')
+            .to_string();
+        let path = if path.is_empty() {
+            row["name"].as_str().unwrap().to_string()
+        } else {
+            format!("{path}/{}", row["name"].as_str().unwrap())
+        };
+        let copied = std::fs::read(row["target"].as_str().unwrap()).unwrap();
+        if row["name"] == "compressible.txt" {
+            partial += 1;
+            assert!(
+                row["status"].as_str().unwrap().starts_with("partial"),
+                "{row}"
+            );
+            assert_eq!(
+                row["unreadableRanges"],
+                serde_json::json!([{"start": block.start, "end": block.start + block.length}]),
+                "{row}"
+            );
+            // Outside that block the bytes are the file's; inside it they are zeros, which the manifest says are not its bytes.
+            let whole = clean
+                .read_entry_range(listed["compressible.txt"].1, 0, 700_000)
+                .unwrap()
+                .data;
+            let (from, to) = (block.start as usize, (block.start + block.length) as usize);
+            assert_eq!(copied[..from], whole[..from]);
+            assert_eq!(copied[to..], whole[to..]);
+            assert!(copied[from..to].iter().all(|byte| *byte == 0));
+            assert_ne!(
+                row["sha256"].as_str().unwrap(),
+                kernel.files["compressible.txt"].1
+            );
+        } else {
+            assert_eq!(row["status"], "complete", "{path}: {row}");
+            // A link is a file holding its target here, and the kernel's tree lists it among its links.
+            let wanted = match kernel.files.get(&path) {
+                Some((_, sha)) => sha.clone(),
+                None => sha(kernel.links[&path].as_bytes()),
+            };
+            assert_eq!(sha(&copied), wanted, "{path}");
+        }
+    }
+    assert_eq!(partial, 1);
 }
