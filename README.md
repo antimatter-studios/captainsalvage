@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.6 | MIT | captain-salvage |
+| `captainsalvage` | 0.16.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,13 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.16.0 — 2026-11-21
+
+**Added**
+
+- **An NTFS volume whose `$Bitmap` cannot be read now opens, with its allocation unknown.** It used to be refused ("`$Bitmap has no data stream`"), although the files are found and read through `$MFT` and only the knowledge of which clusters are free is lost. Now the volume opens, the overview (the window and the tools) says "Allocation unknown" and why, and every cluster is drawn in a state of its own on the map, which is neither free nor in use. No cluster is called free: unexplained-space totals do not count unknown clusters as free (they are counted apart, so they are not hidden), and a deleted file's verdict says that whether its clusters are in use now is not known. Files are listed, read and copied byte for byte as in the undamaged volume. The saved baseline now says which of its parts could not be read.
+- **A damaged NTFS system record is reported, not hidden.** A `$MFT` record 0, `$Volume` record or root directory record that fails its update-sequence check is now named in the overview, with what it means: for `$MFT` record 0, that files in later parts of `$MFT` may be missing or listed as damaged. It used to show only as one more damaged file, with no message. `$MFTMirr` is not consulted yet.
+
 ### v0.15.6 — 2026-11-21
 
 **Fixed**
@@ -1296,13 +1303,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **Bad sectors are drawn as flashing red, everywhere the window draws the disk.** Ranges the health map calls reset-culprit (the drive reset during a read there), unreadable (a read there failed) or suspect (inside a band the damage probe jumped over) are drawn in red that pulses once a second: on the raw-disk map (over every row, and in the legend as "Bad sectors: reading here drops the drive"), on the volume map (the bad clusters, on both the whole-volume and the magnified strip), and in a preview, where the `?` for each byte that could not be read is red and pulsing. Resting the pointer on one says where it is, how it was found (the drive reset during a read, a read failed, or a band the probe jumped over) and when. Slow ranges stay amber and do not flash. For people who ask macOS for reduced motion nothing flashes: the red is solid, with a diagonal hatch. The new `bad_sectors` tool gives the volume's bad clusters. The strings are translated into German, Spanish and French.
-
-### v0.13.0 — 2026-11-20
-
-**Added**
-
-- **The damage probe jumps over a bad band instead of walking into it, and maps its edges only when you say.** On a drive whose bad area is a wide band with readable islands, every read inside it can reset the drive. `probe_health` now marks a band as soon as a grid read fails, is slow or resets the drive, jumps 16 GiB (`skipBytes`) before it reads again, and counts a read that is far slower than the running median, near the band, as part of it. The whole grid is read first, and the band between the last clean read before it and the first clean read after it is marked suspect: nothing reads it, scans report it as read errors, previews mark it, copies write zeros there and name it, until you forgive it. Mapping the edges of the bands costs resets, so it waits for `action: edges`, and each band reports how many resets it has cost.
-- **A drive that keeps resetting is called failing.** The app counts how many times the device went away while a source was read. After two (`failingAfterResets`) the probe pauses and says so, and the source is read carefully from then on: every read journaled, none longer than 64 KiB, suspect bands never read. `health_map` shows the count, and only the person clears it.
 
 <!-- changelog:end -->
 
