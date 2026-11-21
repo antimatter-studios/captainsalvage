@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.23.1] — 2026-11-21
+
+### Maintenance
+
+- A driver's entries have typed ranges, built from the walk its driver made: readable, encoded, sparse and missing, with holes between ([#365](https://github.com/antimatter-studios/captainsalvage/pull/365))
+
 ## [0.23.0] — 2026-11-21
 
 ### Added
