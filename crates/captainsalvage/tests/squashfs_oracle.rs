@@ -15,7 +15,7 @@
 //!
 //! The same images are then opened by the engine as a person opens them (`the_app_opens_scans_browses_...`): scanned, browsed
 //! from the root, every file read in full by the preview's range reader and copied out, and what is shown and copied is the
-//! kernel's tree, byte for byte. The engine does not list symbolic links yet, so that comparison leaves them out.
+//! kernel's tree, byte for byte, a symbolic link being a file that holds its target.
 //!
 //! What this does not check, so that nobody reads more into a pass than is there: damaged images (the driver's
 //! own suite checks them, and `generic_squashfs.rs` reads one), extended attributes (the images are made without),
@@ -471,12 +471,19 @@ fn the_app_opens_scans_browses_previews_and_copies_every_image_as_the_kernel_lis
     for (name, _, _) in cases() {
         let image = std::fs::read(oracle_output().join(format!("{name}.img"))).unwrap();
         let oracle = read_tree(&oracle_output().join(format!("{name}.kernel.tsv")));
+        let oracle_links = oracle.links.clone();
+        assert!(!oracle_links.is_empty(), "{name}");
         let (shown, copies) = app_view(&name, image);
-        // The app does not list symbolic links yet (the support table says so): the rest is the kernel's tree.
-        let kernel = Tree {
+        // A symbolic link is listed as a file that holds its target: the kernel's links, so.
+        let mut kernel = Tree {
             links: BTreeMap::new(),
             ..oracle
         };
+        for (path, target) in &oracle_links {
+            kernel
+                .files
+                .insert(path.clone(), (target.len() as u64, sha(target.as_bytes())));
+        }
         let wrong = differences(&kernel, &shown);
         assert!(
             wrong.is_empty(),

@@ -401,6 +401,9 @@ pub enum EntrySource {
 pub struct DriverStream {
     pub walk: fs_core_layers::layers::ExtentWalk,
     pub length: u64,
+    /// For a candidate that is not a stream of bytes the driver walks (a symbolic link, a special file): its path from the root,
+    /// by which the driver's file layer reads it.
+    pub node: Option<String>,
 }
 
 /// Largest contiguous file assumed when looking for owners of a cluster: 16 GiB.
@@ -1934,9 +1937,17 @@ impl MapDb {
                         )
                         .optional()?;
                     if let Some(walk) = walk {
+                        let node = (storage == crate::filesystem::STORAGE_DRIVER_NODE).then(|| {
+                            format!(
+                                "{}/{}",
+                                entry.path.as_deref().unwrap_or_default(),
+                                entry.name
+                            )
+                        });
                         return Ok(EntrySource::Driver(DriverStream {
                             walk: serde_json::from_str(&walk)?,
                             length: entry.length,
+                            node,
                         }));
                     }
                 }

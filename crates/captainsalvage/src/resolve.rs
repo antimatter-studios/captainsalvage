@@ -10,8 +10,8 @@ use crate::content::{
     CLASS_TEXT, CLASS_ZEROS,
 };
 use crate::filesystem::{
-    NtfsRun, STORAGE_COMPRESSED, STORAGE_DAMAGED, STORAGE_DRIVER, STORAGE_DRIVER_PARTIAL,
-    STORAGE_RESIDENT, STORAGE_RUNS,
+    NtfsRun, STORAGE_COMPRESSED, STORAGE_DAMAGED, STORAGE_DRIVER, STORAGE_DRIVER_NODE,
+    STORAGE_DRIVER_PARTIAL, STORAGE_RESIDENT, STORAGE_RUNS,
 };
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
@@ -194,7 +194,7 @@ impl LoadedSet {
         self.record.as_ref().is_some_and(|ntfs| {
             matches!(
                 ntfs.storage.as_str(),
-                STORAGE_DRIVER | STORAGE_DRIVER_PARTIAL
+                STORAGE_DRIVER | STORAGE_DRIVER_PARTIAL | STORAGE_DRIVER_NODE
             )
         })
     }
@@ -231,6 +231,7 @@ impl LoadedSet {
                         | STORAGE_COMPRESSED
                         | STORAGE_DRIVER
                         | STORAGE_DRIVER_PARTIAL
+                        | STORAGE_DRIVER_NODE
                 )
             })
     }
@@ -673,10 +674,9 @@ impl Context<'_> {
 
     /// The verdict for a driver's file, from what the driver said of its record and how far its walk reached.
     fn assess_driver(&self, set: &LoadedSet, node_kind: Option<&str>) -> Assessment {
-        let whole = set
-            .record
-            .as_ref()
-            .is_some_and(|ntfs| ntfs.storage == STORAGE_DRIVER);
+        let whole = set.record.as_ref().is_some_and(|ntfs| {
+            matches!(ntfs.storage.as_str(), STORAGE_DRIVER | STORAGE_DRIVER_NODE)
+        });
         if !whole {
             return Assessment::plain(
                 VERDICT_PARTIAL,
