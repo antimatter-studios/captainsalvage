@@ -18,12 +18,13 @@ anyhow = "1.0.104"
 bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
 fs-core = { package = "rust-fs-core", version = "=0.4.3" }
-# The FAT driver is built on the next rust-fs-core, whose BlockRead is another trait than 0.4.3's, which the exFAT and NTFS drivers
-# still use. A device implements both until every driver is on this one.
-fs-core-layers = { package = "rust-fs-core", version = "=0.5.0", features = ["layers"] }
+# The FAT and SquashFS drivers are built on the next rust-fs-core, whose BlockRead is another trait than 0.4.3's, which the exFAT and
+# NTFS drivers still use. A device implements both until every driver is on this one. The drivers must agree on its exact version.
+fs-core-layers = { package = "rust-fs-core", version = "=0.5.1", features = ["layers"] }
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f" }
-fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "3bc18be855ca6b08d123d209823902834ca6c9e2" }
+fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "0159f5c72a0b23359a5963ff452c83ad80001a36" }
 fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }
+fs-squashfs = { package = "rust-fs-squashfs", git = "https://github.com/antimatter-studios/rust-fs-squashfs", rev = "ef405d42b94cb0c26c5cc63dd82ebd7186fac664" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
 rars = { version = "0.12.4", default-features = false }

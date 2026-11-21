@@ -124,10 +124,19 @@ where
         Ok(self.volume.salvage()?.all_candidates()?)
     }
 
+    /// The number that names a candidate in a tree and in a parent claim: the driver's `candidate_id`, which is where
+    /// its record starts unless the driver's records share bytes (SquashFS inodes share a metadata block).
+    pub fn id(&self, candidate: &Candidate<Detail<V>>) -> u64 {
+        self.volume
+            .adapter()
+            .map(|adapter| adapter.candidate_id(candidate))
+            .unwrap_or(candidate.location.offset)
+    }
+
     /// A candidate as the app reads it.
-    pub fn view(candidate: &Candidate<Detail<V>>) -> CandidateView {
+    pub fn view(&self, candidate: &Candidate<Detail<V>>) -> CandidateView {
         CandidateView {
-            id: candidate.location.offset,
+            id: self.id(candidate),
             record_length: candidate.location.length,
             name: candidate.name.clone(),
             kind: candidate.kind,
@@ -149,7 +158,11 @@ where
         candidates: &[Candidate<Detail<V>>],
     ) -> Result<(Tree, Vec<PlacedCandidate>)> {
         let tree = self.volume.salvage()?.rebuild_tree(candidates)?;
-        let placed = place(candidates, &tree);
+        let ids: Vec<u64> = candidates
+            .iter()
+            .map(|candidate| self.id(candidate))
+            .collect();
+        let placed = place(candidates, &ids, &tree);
         Ok((tree, placed))
     }
 
@@ -221,10 +234,11 @@ where
 }
 
 /// The folder of each candidate, from the parent claims: following `Parent::Candidate` up to `Parent::Root`.
-fn place<D>(candidates: &[Candidate<D>], tree: &Tree) -> Vec<PlacedCandidate> {
+fn place<D>(candidates: &[Candidate<D>], ids: &[u64], tree: &Tree) -> Vec<PlacedCandidate> {
     let names: BTreeMap<u64, Option<&str>> = candidates
         .iter()
-        .map(|candidate| (candidate.location.offset, candidate.name.as_deref()))
+        .zip(ids)
+        .map(|(candidate, id)| (*id, candidate.name.as_deref()))
         .collect();
     let parents: BTreeMap<u64, Parent> = tree
         .nodes
