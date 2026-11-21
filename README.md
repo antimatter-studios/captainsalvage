@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.5 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.6 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.6 — 2026-11-21
+
+**Fixed**
+
+- **Block mount works for an NTFS volume that macOS gives no volume UUID.** The mount block named a volume by its UUID, so a volume macOS reports none for (a synthetic NTFS image, a disk image) got no Block mount checkbox and nothing kept it unmounted. Such a volume is now blocked by where it is: the identity of the disk it is on (the device's own GUID, or for a disk with none a fingerprint of the first 4 KiB) with the partition's offset and length. The checkbox appears for it, a block set while it is mounted shows the Unmount warning, and macOS is refused the mount, also when the disk is attached again under another disk number, while a different disk of the same size mounts as usual. A volume that has a UUID, which a real NTFS volume on a drive does, is blocked by it as before. The support table now says NTFS mount blocking is limited, with the reason; an agent names a volume without a UUID by its device and the key `startup_disks` gives it.
+
 ### v0.15.5 — 2026-11-21
 
 **Fixed**
@@ -1297,13 +1303,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 - **The damage probe jumps over a bad band instead of walking into it, and maps its edges only when you say.** On a drive whose bad area is a wide band with readable islands, every read inside it can reset the drive. `probe_health` now marks a band as soon as a grid read fails, is slow or resets the drive, jumps 16 GiB (`skipBytes`) before it reads again, and counts a read that is far slower than the running median, near the band, as part of it. The whole grid is read first, and the band between the last clean read before it and the first clean read after it is marked suspect: nothing reads it, scans report it as read errors, previews mark it, copies write zeros there and name it, until you forgive it. Mapping the edges of the bands costs resets, so it waits for `action: edges`, and each band reports how many resets it has cost.
 - **A drive that keeps resetting is called failing.** The app counts how many times the device went away while a source was read. After two (`failingAfterResets`) the probe pauses and says so, and the source is read carefully from then on: every read journaled, none longer than 64 KiB, suspect bands never read. `health_map` shows the count, and only the person clears it.
-
-### v0.12.0 — 2026-11-20
-
-**Added**
-
-- **The app finds the bad zones of a failing drive without resetting it again and again, and then never reads them.** A drive that retries inside a bad area for seconds makes a USB bridge reset the whole device, and each reset hurts a damaged drive further. The app now writes a journal of the reads that can reach an unknown bad spot (opening a source, probing, any large read) before each starts, so a read that never finished, because the device went away during it, is marked as the likely cause the next time the drive is opened, before anything reads it. The new `probe_health` tool finds the zones on purpose and gently, bounded and resumable: it reads one block a GiB, then walks toward each bad block from the good side on both sides and stops at the first slow or failed read, so a zone is bounded without reading into it. `health_map` shows what is known, and the window draws it as a lane of the raw-disk map. Ranges marked unreadable or as a reset are not read again by anything: scans report them as read errors, previews mark them, copies write zeros there and name them in the manifest, and the markers that recognise the drive are taken from outside them.
-- **A drive that went away and came back is the same source.** The app lets go of the vanished device node as soon as it finds the device gone, and `rebind_source` (or opening the new path) points the open source at the drive when it returns, found again by its markers, so the open volume and its map read again.
 
 <!-- changelog:end -->
 

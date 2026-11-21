@@ -1,6 +1,6 @@
 [package]
 name = "captain-salvage"
-version = "0.15.5"
+version = "0.15.6"
 license = "MIT"
 edition = "2021"
 
