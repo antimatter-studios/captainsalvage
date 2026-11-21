@@ -308,16 +308,32 @@ impl ScanStore {
             // the scan is bound, so a failure to mark is not left behind a resumed scan.
             self.mark_changed(id, &comparison)?;
         }
+        // Earlier failures are retried only where they read now (a clone, a repaired drive). On the
+        // same damaged drive they fail again, so the checkpoint stays where the scan got to, and
+        // those failures stay listed. Rewinding to the first failure of a damaged drive would make
+        // every resume start over from it.
+        let (retry_from, still_failing) = self.retry_point(disk, id)?;
         let token = identifier()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
-            "UPDATE raw_scans SET next_offset = min(next_offset,
-                coalesce((SELECT min(offset) FROM raw_failures WHERE scan_id = ?1), next_offset)),
+            "UPDATE raw_scans SET next_offset = min(next_offset, ?5),
                 source_token = ?2, source_path = ?3, updated_at_millis = ?4 WHERE id = ?1",
-            params![id, token, disk.path.to_string_lossy(), now_millis() as i64],
+            params![
+                id,
+                token,
+                disk.path.to_string_lossy(),
+                now_millis() as i64,
+                retry_from
+            ],
         )?;
+        for offset in still_failing {
+            transaction.execute(
+                "UPDATE raw_failures SET source_token = ?3 WHERE scan_id = ?1 AND offset = ?2",
+                params![id, offset, token],
+            )?;
+        }
         transaction.execute(
             "UPDATE raw_scans SET attempt_start = next_offset WHERE id = ?1",
             [id],
@@ -329,6 +345,36 @@ impl ScanStore {
         bindings.insert(id.into(), token);
         self.touch(id);
         self.snapshot(id)
+    }
+
+    /// Where a resumed scan goes back to retry earlier read failures: the first one that reads on
+    /// this source now (`i64::MAX` when none does), and the offsets of those that still do not. A
+    /// failure in a range the health map marks bad, or any failure on a disk that has reset, is
+    /// not read again.
+    fn retry_point(&self, disk: &RawDisk, id: &str) -> Result<(i64, Vec<i64>)> {
+        let mut statement = self.connection.prepare(
+            "SELECT offset, length FROM raw_failures WHERE scan_id = ?1 ORDER BY offset",
+        )?;
+        let failures = statement
+            .query_map([id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut retry_from = i64::MAX;
+        let mut still_failing = Vec::new();
+        for (offset, length) in failures {
+            let (start, size) = (offset as u64, length as u64);
+            let readable = !disk.careful_open()
+                && disk.known_bad(start, size).is_none()
+                && size <= DISCOVERY_BATCH_BYTES
+                && disk.read(start, size).is_ok();
+            if readable {
+                retry_from = retry_from.min(offset);
+            } else {
+                still_failing.push(offset);
+            }
+        }
+        Ok((retry_from, still_failing))
     }
 
     pub fn current(&self, disk: &RawDisk, id: &str) -> Result<ScanSnapshot> {

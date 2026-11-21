@@ -999,3 +999,29 @@ fn retrying_failures_does_not_duplicate_previously_found_structures() {
         clone.length
     );
 }
+
+#[test]
+fn resuming_on_the_same_damaged_drive_continues_from_the_checkpoint_not_from_its_first_failure() {
+    let database = Database::new();
+    let mut store = database.open();
+    let bytes = patterned(48 * 1024 * 1024, 31);
+    let open = || {
+        let failing = Arc::new(BadRegion {
+            source: MemorySource::new(bytes.clone()),
+            fail: AtomicBool::new(true),
+        });
+        RawDisk::with_source(Path::new("damaged"), failing, bytes.len() as u64).unwrap()
+    };
+    let first = open();
+    let scan = store.create(&first, 0, first.length).unwrap();
+    store.step(&first, &scan.scan_id).unwrap();
+    let reached = store.step(&first, &scan.scan_id).unwrap().batch.next_offset;
+    assert!(reached > 65536 * 2);
+    drop(store);
+    // The drive is opened again and still cannot read the same block: it is the same drive.
+    let second = open();
+    let mut store = database.open();
+    let loaded = store.resume(&second, &scan.scan_id, true, false).unwrap();
+    assert_eq!(loaded.next_offset, reached);
+    assert_eq!(loaded.errors.len(), 1, "the unreadable block stays listed");
+}
