@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-11-21
+
+### Maintenance
+
+- The FAT driver is pinned to rust-fs-fat's merged three layers (19f4a93), which brings rust-fs-core 0.5.0, and the adapter's devices read through both generations of it ([#331](https://github.com/antimatter-studios/captainsalvage/pull/331))
+
 ## [0.17.0] — 2026-11-21
 
 ### Added

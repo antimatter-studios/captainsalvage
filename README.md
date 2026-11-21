@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.17.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.17.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1231,6 +1231,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.17.1 — 2026-11-21
+
+**Maintenance**
+
+- The FAT driver is pinned to rust-fs-fat's merged three layers (19f4a93), which brings rust-fs-core 0.5.0, and the adapter's devices read through both generations of it ([#331](https://github.com/antimatter-studios/captainsalvage/pull/331))
+
 ### v0.17.0 — 2026-11-21
 
 **Added**
@@ -1289,15 +1295,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **A raw scan of a drive that has reset no longer freezes the app.** A raw scan step held a write lock on the catalog while it read the disk, and every read it journaled waited on that same lock, half a minute at a time, while holding what every status call needs: the scan sat at 0.0% and the window answered nothing. A step now reads the disk without the lock and takes it only to write; the read journal has a file of its own and gives up after a moment, keeping a write it cannot make in memory until the file is free, so no read is left open to be blamed for a reset.
-
-### v0.15.0 — 2026-11-20
-
-**Added**
-
-- **Bad sectors are a kind of extent, `bad_sector`, like the others.** The ranges the health map marks as bad (suspect, unreadable or reset-culprit) are now extents of the source with that kind, kept in the catalog under the source, so they are there when it is opened again and when the drive comes back under another name. The new `list_extents` tool lists them with the source's other extents (filter by kind or range), and `open_source`, `list_hypotheses`, `read_layout` and `analyze_range` answer with the ones that matter to them (`badSectors`). A file whose bytes lie in a bad sector now has them as `BadSector` in its typed ranges: a preview shows them as `?`, and a copy writes zeros there and names the ranges as `badSectorRanges` in its manifest, apart from the bytes that were tried and failed.
-- **Free space nobody can read is no longer unexplained.** A free cluster in a bad sector counts as explained by bad sectors, as a region label would explain it, in the cluster map (a new legend entry, in red), in the region counts and in the unexplained totals and runs; the map summary says how many (`badSectorFreeClusters`). It shows after the map is rebuilt.
-- **A Disk Rebuild flags what crosses a bad sector, and blocks nothing.** A file, a folder (by everything below it) or a reassembly with bytes in a bad sector shows a flashing red flag with the bytes affected in the tree of the Rebuild tab, and the copy plan counts the files and the bytes. The copy goes ahead, with zeros there.
-- **A drive with a known bad zone is still an exact match.** A saved marker that lies in a bad sector is not read and says nothing either way, so it is left out of what the match is counted over: when everything that can be read matches, the source is recognised exactly, and the comparison says how many markers lay in bad sectors.
 
 <!-- changelog:end -->
 
