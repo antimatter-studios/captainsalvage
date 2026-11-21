@@ -65,6 +65,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "am-lz4-flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e99a8b1acf1c1749062af7f82b410d72b36c15def030f7e2b6e3454f235aa57"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,6 +380,7 @@ dependencies = [
  "rusqlite",
  "rust-fs-core 0.4.5",
  "rust-fs-core 0.5.1",
+ "rust-fs-erofs",
  "rust-fs-exfat",
  "rust-fs-ext4",
  "rust-fs-fat32",
@@ -3245,6 +3252,21 @@ checksum = "e5565c39c9e33464399bb7ad1c2061d52d113ffacce8a23af919e69347969552"
 dependencies = [
  "serde",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "rust-fs-erofs"
+version = "0.6.0"
+source = "git+https://github.com/antimatter-studios/rust-fs-erofs?rev=0204627bb5f70a3552ee2bce0d29f94cb56cfa11#0204627bb5f70a3552ee2bce0d29f94cb56cfa11"
+dependencies = [
+ "am-lz4-flex",
+ "crc32c",
+ "flate2",
+ "lru",
+ "lz4_flex",
+ "lzma-rs",
+ "rust-fs-core 0.5.1",
+ "ruzstd 0.8.3",
 ]
 
 [[package]]

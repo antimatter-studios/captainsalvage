@@ -50,6 +50,7 @@ fn the_three_fat_variants_report_one_table_and_no_filesystem_claims_a_feature_of
         FilesystemKind::Ntfs,
         FilesystemKind::Squashfs,
         FilesystemKind::Ext4,
+        FilesystemKind::Erofs,
     ] {
         let table = kind.capabilities();
         let mut seen = std::collections::HashSet::new();

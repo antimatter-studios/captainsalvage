@@ -22,6 +22,7 @@ fs-core = { package = "rust-fs-core", version = "=0.4.5" }
 # NTFS drivers still use. A device implements both until every driver is on this one. The drivers must agree on its exact version.
 fs-core-layers = { package = "rust-fs-core", version = "=0.5.1", features = ["layers"] }
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "84956aaf3317ef98767425cf4c2a2ab528ae1b02" }
+fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/antimatter-studios/rust-fs-erofs", rev = "0204627bb5f70a3552ee2bce0d29f94cb56cfa11" }
 fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/antimatter-studios/rust-fs-ext4", rev = "4c70f07b311a87792b5b3efc8694c56f77301da1" }
 fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "0159f5c72a0b23359a5963ff452c83ad80001a36" }
 fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }

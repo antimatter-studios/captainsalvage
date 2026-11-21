@@ -96,6 +96,9 @@ pub enum ParentRef {
     Record(u64),
 }
 
+/// A parent a candidate claims, and the name that claim gives it (as bytes, as the directory entry stores it), when it has one.
+pub type NamedClaim = (ParentRef, Option<Vec<u8>>);
+
 /// One bounded read of a candidate's bytes: the bytes, and the ranges of them (from the start of the read) that could not
 /// be read, which are zeros in the bytes.
 pub struct DriverRead {
@@ -128,6 +131,20 @@ pub trait DriverAccess: Send + Sync {
         folders: &[DriverRecord],
         files: &[DriverRecord],
     ) -> Result<Vec<Vec<ParentRef>>>;
+    /// The same claims with the name each gives its candidate. A format that keeps its names in directory entries (ext4,
+    /// XFS, Btrfs, EROFS) has them here and nowhere else: the candidate itself carries none. A driver that names its
+    /// candidates gives none here, which is the default.
+    fn claims(
+        &self,
+        folders: &[DriverRecord],
+        files: &[DriverRecord],
+    ) -> Result<Vec<Vec<NamedClaim>>> {
+        Ok(self
+            .parents(folders, files)?
+            .into_iter()
+            .map(|claims| claims.into_iter().map(|claim| (claim, None)).collect())
+            .collect())
+    }
     /// `length` bytes of the node at `path` (from the root, `/`-separated), from `start`, through the driver's file layer: a
     /// file's bytes, a symbolic link's target, nothing for a special file. For a candidate that is not a stream of bytes
     /// the driver walks.
@@ -215,7 +232,17 @@ where
         folders: &[DriverRecord],
         files: &[DriverRecord],
     ) -> Result<Vec<Vec<ParentRef>>> {
-        let adapter = self.volume().adapter()?;
+        Ok(self
+            .claims(folders, files)?
+            .into_iter()
+            .map(|claims| claims.into_iter().map(|(parent, _)| parent).collect())
+            .collect())
+    }
+    fn claims(
+        &self,
+        folders: &[DriverRecord],
+        files: &[DriverRecord],
+    ) -> Result<Vec<Vec<NamedClaim>>> {
         let mine: std::collections::HashSet<u64> = files.iter().map(|file| file.id).collect();
         let candidates: Vec<Candidate<<V::Adapter as SalvageAdapter>::Detail>> = files
             .iter()
@@ -223,7 +250,7 @@ where
             .map(candidate_of)
             .collect::<Result<_>>()?;
         let tree = self.volume().salvage()?.rebuild_tree(&candidates)?;
-        let claims: std::collections::HashMap<u64, Vec<ParentRef>> = tree
+        let claims: std::collections::HashMap<u64, Vec<NamedClaim>> = tree
             .nodes
             .iter()
             .map(|node| {
@@ -231,15 +258,17 @@ where
                     node.candidate,
                     node.parents
                         .iter()
-                        .map(|claim| match claim.parent {
-                            Parent::Root => ParentRef::Root,
-                            Parent::Candidate(id) => ParentRef::Record(id),
+                        .map(|claim| {
+                            let parent = match claim.parent {
+                                Parent::Root => ParentRef::Root,
+                                Parent::Candidate(id) => ParentRef::Record(id),
+                            };
+                            (parent, claim.name.clone())
                         })
                         .collect(),
                 )
             })
             .collect();
-        let _ = adapter;
         Ok(files
             .iter()
             .map(|file| claims.get(&file.id).cloned().unwrap_or_default())
@@ -352,9 +381,27 @@ fn placeholder_ext4_superblock() -> fs_ext4::Superblock {
     fs_ext4::Superblock::parse(raw).expect("a minimal superblock parses")
 }
 
+/// EROFS: its superblock is at byte 1024, as ext's is, and its magic (`0xE0F5E1E2`, little-endian) is its first four bytes.
+const EROFS: RegisteredDriver = RegisteredDriver {
+    kind: FilesystemKind::Erofs,
+    format: "erofs",
+    magic: &[(EROFS_MAGIC_OFFSET, &[0xE2, 0xE1, 0xF5, 0xE0])],
+    probe: probe_as::<fs_erofs::layers::ErofsVolume>,
+    open: open_as::<fs_erofs::layers::ErofsVolume>,
+    capabilities: || {
+        let geometry = fs_erofs::primitives::Geometry::hypothesis(4096, 0, 0, 0)
+            .expect("a 4096-byte block is a geometry");
+        fs_erofs::layers::ErofsSalvage::from_hypothesis(geometry).capabilities()
+    },
+    root_record: 2,
+};
+
+/// Where an EROFS superblock, and so its magic, begins.
+const EROFS_MAGIC_OFFSET: usize = 1024;
+
 /// Every driver the engine reads through the layers.
 pub fn registry() -> &'static [RegisteredDriver] {
-    &[SQUASHFS, EXT4]
+    &[SQUASHFS, EXT4, EROFS]
 }
 
 /// The driver whose volumes begin with these bytes (the first 2048 of a source, or what a saved copy holds of them).
