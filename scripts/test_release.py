@@ -5,10 +5,12 @@ import argparse
 import contextlib
 import fnmatch
 import io
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -399,6 +401,25 @@ class Workflow(unittest.TestCase):
     """release.yml starts for a release and for nothing else, as scripts/tag-kind says."""
 
     WORKFLOW = release.ROOT / ".github/workflows/release.yml"
+
+    def test_publish_installs_gh_only_when_missing(self):
+        text = self.WORKFLOW.read_text()
+        step = text.split("- name: install GitHub CLI when missing\n", 1)[1].split("      - name:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            env = {**os.environ, "PATH": directory}
+            stubs = 'sudo() { echo "sudo $*" >&2; if [ "$1" = tee ]; then while IFS= read -r line; do echo "$line" >&2; done; fi; }; curl() { echo key; }; dpkg() { echo amd64; }\n'
+            missing = subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", stubs + script], env=env, capture_output=True, text=True)
+            self.assertEqual(missing.returncode, 0, missing.stderr)
+            self.assertIn("sudo apt-get install -y gh", missing.stderr)
+            self.assertIn("signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg", missing.stderr)
+            gh = path / "gh"
+            gh.write_text("#!/bin/sh\nexit 0\n")
+            gh.chmod(0o755)
+            present = subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", stubs + script], env=env, capture_output=True, text=True)
+            self.assertEqual(present.returncode, 0, present.stderr)
+            self.assertEqual(present.stderr, "")
 
     @classmethod
     def patterns(cls):
