@@ -353,26 +353,26 @@ means the feature does not exist for that filesystem (FAT has no alternate data 
 not the same as **Missing**, which exists but is not done yet. NTFS has its own section below.
 
 <!-- capabilities:start -->
-| Feature | exFAT | FAT12, FAT16, FAT32 | NTFS | SquashFS | ext2/3/4 |
-|---|---|---|---|---|---|
-| Open | Supported | Supported | Supported | Supported | Supported |
-| Scan | Supported | Supported | Supported | Limited | Supported |
-| Map | Supported | Supported | Supported | Limited | Limited |
-| Browse | Supported | Supported | Supported | Supported | Supported |
-| Preview | Limited | Limited | Limited | Limited | Limited |
-| Resume | Supported | Supported | Supported | Supported | Supported |
-| Baseline copy | Supported | Supported | Supported | Supported | Supported |
-| File tests | Supported | Supported | Limited | Supported | Supported |
-| Disk Rebuilds | Supported | Supported | Limited | Limited | Supported |
-| Copy out | Limited | Limited | Limited | Limited | Supported |
-| Mount block | Supported | Supported | Limited | Missing | Missing |
-| Named streams | Not offered | Not offered | Limited | Not offered | Not offered |
-| Hard links | Not offered | Not offered | Supported | Not offered | Not offered |
-| Attribute lists | Not offered | Not offered | Missing | Not offered | Not offered |
-| Compression | Not offered | Not offered | Supported | Not offered | Not offered |
-| Encryption | Not offered | Not offered | Missing | Not offered | Not offered |
-| Journal | Not offered | Not offered | Missing | Not offered | Not offered |
-| Large volumes | Not offered | Not offered | Limited | Not offered | Not offered |
+| Feature | exFAT | FAT12, FAT16, FAT32 | NTFS | SquashFS | ext2/3/4 | EROFS |
+|---|---|---|---|---|---|---|
+| Open | Supported | Supported | Supported | Supported | Supported | Supported |
+| Scan | Supported | Supported | Supported | Limited | Supported | Limited |
+| Map | Supported | Supported | Supported | Limited | Limited | Limited |
+| Browse | Supported | Supported | Supported | Supported | Supported | Supported |
+| Preview | Limited | Limited | Limited | Limited | Limited | Limited |
+| Resume | Supported | Supported | Supported | Supported | Supported | Supported |
+| Baseline copy | Supported | Supported | Supported | Supported | Supported | Supported |
+| File tests | Supported | Supported | Limited | Supported | Supported | Supported |
+| Disk Rebuilds | Supported | Supported | Limited | Limited | Supported | Supported |
+| Copy out | Limited | Limited | Limited | Limited | Supported | Limited |
+| Mount block | Supported | Supported | Limited | Missing | Missing | Missing |
+| Named streams | Not offered | Not offered | Limited | Not offered | Not offered | Not offered |
+| Hard links | Not offered | Not offered | Supported | Not offered | Not offered | Not offered |
+| Attribute lists | Not offered | Not offered | Missing | Not offered | Not offered | Not offered |
+| Compression | Not offered | Not offered | Supported | Not offered | Not offered | Not offered |
+| Encryption | Not offered | Not offered | Missing | Not offered | Not offered | Not offered |
+| Journal | Not offered | Not offered | Missing | Not offered | Not offered | Not offered |
+| Large volumes | Not offered | Not offered | Limited | Not offered | Not offered | Not offered |
 
 **exFAT**
 
@@ -428,6 +428,20 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 - File tests (Supported): File formats are walked through the bytes the driver reads.
 - Disk Rebuilds (Supported): A rebuild is a plan of ranges of the source. A Disk Rebuild gathers the folders and files the scan found (a file the disk lost the name of can be named by an accepted entry) and copies them out at their rebuilt paths. A file's storage is the driver's walk of it, so a Disk Rebuild cannot replace it with a list of clusters. A link is read by its path in the volume's own namespace, so one whose folders are lost cannot be copied.
 - Copy out (Supported): A file is rebuilt from the storage it claims, and a range that cannot be read is zeros, marked in the report.
+- Mount block (Missing): macOS does not mount this filesystem, so there is nothing to block.
+
+**EROFS**
+
+- Open (Supported): The volume opens for salvage, from a backup of its geometry when the first is damaged.
+- Scan (Limited): Every record is found, live, deleted or damaged, and damaged ones are kept as evidence. The driver lacks deleted-candidates.
+- Map (Limited): The driver gives no allocation, so every cluster of the map is allocation unknown, which is not free and not in use. Content and ownership layers.
+- Browse (Supported): The folder tree is rebuilt from the parent claims of the records. A symbolic link is listed as a file that holds its target, and a special file as an empty one.
+- Preview (Limited): Bytes are read through the driver, which decodes compressed blocks and fragment tails. A range that cannot be read is marked, as for the other filesystems.
+- Resume (Supported): A paused or interrupted scan continues from where it was.
+- Baseline copy (Supported): The volume's first structures (its superblock) are hashed and kept; changes are explained.
+- File tests (Supported): File formats are walked through the bytes the driver reads.
+- Disk Rebuilds (Supported): A rebuild is a plan of ranges of the source. A Disk Rebuild gathers the folders and files the scan found (a file the disk lost the name of can be named by an accepted entry) and copies them out at their rebuilt paths. A file's storage is the driver's walk of it, so a Disk Rebuild cannot replace it with a list of clusters. A link is read by its path in the volume's own namespace, so one whose folders are lost cannot be copied.
+- Copy out (Limited): A file is rebuilt from the storage it claims, and a range that cannot be read is zeros, marked in the report. The driver lacks deleted-extents.
 - Mount block (Missing): macOS does not mount this filesystem, so there is nothing to block.
 <!-- capabilities:end -->
 
@@ -1163,6 +1177,7 @@ The libraries the app names itself:
 | `rusqlite` | 0.41.1 | MIT | captainsalvage |
 | `rust-fs-core` | 0.4.5 | MIT | captainsalvage |
 | `rust-fs-core` | 0.5.1 | MIT | captainsalvage |
+| `rust-fs-erofs` | 0.6.0 | MIT | captainsalvage |
 | `rust-fs-exfat` | 0.4.0 | MIT | captainsalvage |
 | `rust-fs-ext4` | 0.8.0 | MIT | captainsalvage |
 | `rust-fs-fat32` | 0.1.0 | MIT | captainsalvage |

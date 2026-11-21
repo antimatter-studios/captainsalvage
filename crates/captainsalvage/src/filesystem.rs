@@ -43,6 +43,8 @@ pub enum FilesystemKind {
     Squashfs,
     /// ext2, ext3 and ext4, which one driver reads (its layers name the flavour of each volume).
     Ext4,
+    /// EROFS, the read-only filesystem of images and Android partitions.
+    Erofs,
 }
 
 impl fmt::Display for FilesystemKind {
@@ -55,6 +57,7 @@ impl fmt::Display for FilesystemKind {
             Self::Ntfs => "NTFS",
             Self::Squashfs => "SquashFS",
             Self::Ext4 => "ext2/3/4",
+            Self::Erofs => "EROFS",
         })
     }
 }
@@ -209,7 +212,7 @@ impl FilesystemKind {
     pub fn claims(self) -> Claims {
         match self {
             Self::Ntfs => Claims::RunList,
-            Self::Squashfs | Self::Ext4 => Claims::Driver,
+            Self::Squashfs | Self::Ext4 | Self::Erofs => Claims::Driver,
             Self::Exfat | Self::Fat12 | Self::Fat16 | Self::Fat32 => Claims::Chain,
         }
     }
@@ -231,7 +234,7 @@ impl FilesystemKind {
                 capability("export", Limited, "Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges."),
                 capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
             ],
-            Self::Squashfs | Self::Ext4 => drivers::capability_table(self),
+            Self::Squashfs | Self::Ext4 | Self::Erofs => drivers::capability_table(self),
             Self::Fat12 | Self::Fat16 | Self::Fat32 => vec![
                 capability("open", Supported, "The boot sector, the reserved sectors, the FAT copies and the root directory are read and saved as a baseline. FAT12, FAT16 and FAT32 are told apart by their cluster count. FAT has no allocation bitmap on disk. Checked on synthetic images and by the driver's independent tests, not yet on a real damaged drive. The entries are read through the FAT driver's generic layers adapter, which the driver's own checks cover; the old FAT adapter stays for one release (set SALVAGE_FAT_ADAPTER=legacy) and reads a volume the driver does not open."),
                 capability("scan", Supported, "Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable. An entry in a cluster that is free in the FAT is deleted, as the driver reads it. A file's clusters are the driver's walk of what its entry claims: its FAT chain, and, for a deleted file, whose chain the FAT cleared, one run from its first cluster, which is a guess and is marked as one (the file is copied whole, from the guess, instead of one cluster). An entry the driver found by its content only, not through a folder that names it, is a weak candidate: marked unchecked, and lone_entry when it is the only entry in its cluster, with half the confidence."),
@@ -930,7 +933,8 @@ mod tests {
             FilesystemKind::Exfat
             | FilesystemKind::Ntfs
             | FilesystemKind::Squashfs
-            | FilesystemKind::Ext4 => {
+            | FilesystemKind::Ext4
+            | FilesystemKind::Erofs => {
                 panic!("not a FAT variant")
             }
         };
@@ -968,7 +972,8 @@ mod tests {
             FilesystemKind::Exfat
             | FilesystemKind::Ntfs
             | FilesystemKind::Squashfs
-            | FilesystemKind::Ext4 => {
+            | FilesystemKind::Ext4
+            | FilesystemKind::Erofs => {
                 unreachable!()
             }
         }
