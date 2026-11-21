@@ -12,7 +12,7 @@
 //! and boot code, which are structures, not data, and are covered by the saved copy.
 
 use super::{
-    FilesystemDetails, NtfsEntry, NtfsRun, SalvageEntry, VolumeGeometry, STORAGE_ATTRIBUTE_LIST,
+    FilesystemDetails, NtfsRun, RecordEntry, SalvageEntry, VolumeGeometry, STORAGE_ATTRIBUTE_LIST,
     STORAGE_COMPRESSED, STORAGE_COMPRESSION_UNSUPPORTED, STORAGE_DAMAGED, STORAGE_ENCRYPTED,
     STORAGE_INCOMPLETE, STORAGE_NONE, STORAGE_RESIDENT, STORAGE_RUNS,
 };
@@ -564,7 +564,7 @@ fn further_name_entries(record: &RecordEvidence, primary: &SalvageEntry) -> Vec<
             let mut entry = primary.clone();
             entry.name = name.name.clone();
             entry.name_slot = slot;
-            if let Some(ntfs) = entry.ntfs.as_mut() {
+            if let Some(ntfs) = entry.record.as_mut() {
                 ntfs.parent_record = Some(name.parent_record);
                 ntfs.parent_sequence = Some(name.parent_sequence);
             }
@@ -701,7 +701,7 @@ pub fn entry_from_record(
     };
     let length = if is_dir { 0 } else { data.length };
     let valid_length = if is_dir { 0 } else { data.valid_length };
-    let ntfs = NtfsEntry {
+    let ntfs = RecordEntry {
         record_number: record.record_number,
         sequence: record.sequence,
         parent_record: chosen.map(|name| name.parent_record),
@@ -741,7 +741,7 @@ pub fn entry_from_record(
         modified: nt_time(modified),
         accessed: nt_time(accessed),
         slots: 1,
-        ntfs: Some(ntfs),
+        record: Some(ntfs),
         ranges,
         name_slot: 0,
         weak: None,
@@ -768,7 +768,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
         modified: None,
         accessed: None,
         slots: 1,
-        ntfs: Some(NtfsEntry {
+        record: Some(RecordEntry {
             record_number: None,
             sequence: 0,
             parent_record: None,

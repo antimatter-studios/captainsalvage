@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS sets (
 );
 CREATE INDEX IF NOT EXISTS sets_first ON sets (first_cluster);
 CREATE INDEX IF NOT EXISTS sets_node ON sets (node);
-CREATE TABLE IF NOT EXISTS ntfs_records (
+CREATE TABLE IF NOT EXISTS records (
     source_cluster INTEGER NOT NULL,
     source_offset INTEGER NOT NULL,
     record_number INTEGER,
@@ -578,9 +578,9 @@ pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_le
     source_cluster, source_offset, COALESCE(clusters_needed, 0), COALESCE(clusters_found, 0), \
     COALESCE(clusters_allocated, 0), COALESCE(clusters_conflict, 0), COALESCE(o_is_dir, is_dir), \
     COALESCE(confidence, 0), \
-    (SELECT record_number FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
-    (SELECT sequence FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
-    (SELECT storage FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
+    (SELECT record_number FROM records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
+    (SELECT sequence FROM records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
+    (SELECT storage FROM records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
     (SELECT mark FROM fat_weak w WHERE w.source_cluster = sets.source_cluster AND w.source_offset = sets.source_offset), \
     (SELECT guessed FROM fat_walks k WHERE k.source_cluster = sets.source_cluster AND k.source_offset = sets.source_offset), \
     (SELECT extents FROM fat_walks k WHERE k.source_cluster = sets.source_cluster AND k.source_offset = sets.source_offset)";
@@ -652,6 +652,37 @@ pub(crate) fn node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
 /// Writes a chunk's entries, NTFS records, read errors and state inside `transaction`. With
 /// `replace`, an entry already stored at the same place is updated in place and keeps its id;
 /// without it, the stored one is left as it is.
+/// Renames the table of records a map made before it was driver-neutral had (`ntfs_records`), when it has not been renamed.
+fn rename_record_table(connection: &Connection) -> Result<()> {
+    let has = |name: &str| -> Result<bool> {
+        Ok(connection.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )? > 0)
+    };
+    if !has("ntfs_records")? || has("records")? {
+        return Ok(());
+    }
+    // Several openers may find the old name at the same moment (the app, a scan, a tool): the one that gets the write lock
+    // renames it, and the others, which wait for the lock, look again and find nothing to do.
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let renamed = (|| -> Result<()> {
+        if has("ntfs_records")? && !has("records")? {
+            connection.execute_batch("ALTER TABLE ntfs_records RENAME TO records")?;
+        }
+        Ok(())
+    })();
+    match renamed {
+        Ok(()) => connection.execute_batch("COMMIT")?,
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 fn write_chunk(
     transaction: &rusqlite::Transaction,
     found: &[(u32, EntrySet)],
@@ -676,7 +707,7 @@ fn write_chunk(
     };
     let mut insert = transaction.prepare_cached(insert_sql)?;
     let mut record_insert = transaction.prepare_cached(
-        "INSERT OR IGNORE INTO ntfs_records (source_cluster, source_offset, record_number, sequence, \
+        "INSERT OR IGNORE INTO records (source_cluster, source_offset, record_number, sequence, \
          parent_record, parent_sequence, storage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     let mut weak_insert = transaction.prepare_cached(
@@ -703,10 +734,10 @@ fn write_chunk(
         )
         .optional()?
         .and_then(|value| value.parse().ok())
-        .unwrap_or(16);
+        .unwrap_or(crate::filesystem::drivers::FIRST_RECORD);
     let first_record = next_record;
     for (cluster, set) in found {
-        let ntfs = set.ntfs.as_ref();
+        let ntfs = set.record.as_ref();
         // A further name of the same NTFS file is told apart by its slot.
         let key = crate::filesystem::source_key(set.offset, set.name_slot);
         insert.execute(params![
@@ -840,6 +871,9 @@ impl MapDb {
         connection.busy_timeout(Duration::from_secs(300))?;
         connection.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
         connection.execute_batch("PRAGMA synchronous = NORMAL;")?;
+        // The table of records (the numbers a map's tree is made of) was made for NTFS and called `ntfs_records`. It holds a
+        // driver's candidates too, and is named for what it holds. A map made before is renamed, once, with its rows.
+        rename_record_table(&connection)?;
         connection.execute_batch(SCHEMA)?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version < disk_rebuild_rename::SCHEMA_VERSION {
@@ -1025,7 +1059,7 @@ impl MapDb {
     /// Stores one chunk's results atomically with the scan position, so a resume
     /// from any point repeats at most one chunk and creates no duplicates.
     /// Gives each of a driver's candidates the record it is in, from the parent claims the driver finds. The records are
-    /// numbered when they are stored; the folder every claim names the root of becomes record 5, as an NTFS volume's root is,
+    /// numbered when they are stored; the folder every claim names the root of takes the volume's root number (`geometry.root_cluster`, which the driver's registry entry gave),
     /// and every other candidate's parent is the number of the folder it names. The folders are held, with their candidates
     /// (a volume has far fewer of them than files), and the rest is read and written a batch at a time. Done again when
     /// candidates were stored since it last ran.
@@ -1040,7 +1074,8 @@ impl MapDb {
         if total == 0 || self.state("driver_linked")?.as_deref() == Some(&total.to_string()) {
             return Ok(());
         }
-        const ROOT_RECORD: i64 = crate::filesystem::drivers::ROOT_RECORD as i64;
+        // The root folder's number is the volume's own (`geometry.root_cluster`), which the driver's registry entry gave it.
+        let root_record = i64::from(volume.geometry.root_cluster);
         struct Stored {
             cluster: i64,
             offset: i64,
@@ -1077,7 +1112,7 @@ impl MapDb {
         let mut number_of: std::collections::HashMap<u64, i64> = std::collections::HashMap::new();
         for folder in &folders {
             let number: i64 = self.connection.query_row(
-                "SELECT record_number FROM ntfs_records WHERE source_cluster = ?1 AND source_offset = ?2",
+                "SELECT record_number FROM records WHERE source_cluster = ?1 AND source_offset = ?2",
                 params![folder.cluster, folder.offset],
                 |row| row.get(0),
             )?;
@@ -1093,15 +1128,15 @@ impl MapDb {
                 .collect();
             let claims = driver.parents(&folder_records, &records)?;
             let transaction = this.connection.transaction()?;
-            // The root first, so a folder of the same batch that names it finds record 5.
+            // The root first, so a folder of the same batch that names it finds the root's number.
             for (stored, claims) in batch.iter().zip(&claims) {
                 if claims.first() == Some(&ParentRef::Root) {
-                    // The root is record 5, as an NTFS volume's is, and has no parent.
+                    // The root has the volume's root number, and no parent.
                     transaction.execute(
-                        "UPDATE ntfs_records SET record_number = ?3, parent_record = NULL WHERE source_cluster = ?1 AND source_offset = ?2",
-                        params![stored.cluster, stored.offset, ROOT_RECORD],
+                        "UPDATE records SET record_number = ?3, parent_record = NULL WHERE source_cluster = ?1 AND source_offset = ?2",
+                        params![stored.cluster, stored.offset, root_record],
                     )?;
-                    number_of.insert(stored.id, ROOT_RECORD);
+                    number_of.insert(stored.id, root_record);
                 }
             }
             for (stored, claims) in batch.iter().zip(&claims) {
@@ -1111,7 +1146,7 @@ impl MapDb {
                     None => None,
                 };
                 transaction.execute(
-                    "UPDATE ntfs_records SET parent_record = ?3 WHERE source_cluster = ?1 AND source_offset = ?2",
+                    "UPDATE records SET parent_record = ?3 WHERE source_cluster = ?1 AND source_offset = ?2",
                     params![stored.cluster, stored.offset, parent],
                 )?;
             }
@@ -1180,7 +1215,7 @@ impl MapDb {
             params![first, end],
         )?;
         transaction.execute(
-            "DELETE FROM ntfs_records WHERE source_cluster >= ?1 AND source_cluster < ?2",
+            "DELETE FROM records WHERE source_cluster >= ?1 AND source_cluster < ?2",
             params![first, end],
         )?;
         transaction.execute(

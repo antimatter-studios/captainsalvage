@@ -367,6 +367,10 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
             "CREATE TEMP VIEW {new} AS SELECT {list} FROM main.{old}"
         ))?;
     }
+    // A map made before the table of records was named for what it holds is read through its old name.
+    if table_exists(&connection, "ntfs_records")? && !table_exists(&connection, "records")? {
+        connection.execute_batch("CREATE TEMP VIEW records AS SELECT * FROM main.ntfs_records")?;
+    }
     connection.execute_batch("PRAGMA query_only = ON;")?;
     Ok(connection)
 }
