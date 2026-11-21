@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.17.2] — 2026-11-21
+
+### Maintenance
+
+- One generic adapter over rust-fs-core's layers, proven on FAT beside the FAT adapter the app uses, with the support rows derived from what a driver says it lacks ([#333](https://github.com/antimatter-studios/captainsalvage/pull/333))
+
 ## [0.17.1] — 2026-11-21
 
 ### Maintenance

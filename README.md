@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.17.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.17.2 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1231,6 +1231,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.17.2 — 2026-11-21
+
+**Maintenance**
+
+- One generic adapter over rust-fs-core's layers, proven on FAT beside the FAT adapter the app uses, with the support rows derived from what a driver says it lacks ([#333](https://github.com/antimatter-studios/captainsalvage/pull/333))
+
 ### v0.17.1 — 2026-11-21
 
 **Maintenance**
@@ -1289,12 +1295,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - Every job takes its runner from a gate job on the runner gate ([#312](https://github.com/antimatter-studios/captainsalvage/pull/312))
-
-### v0.15.1 — 2026-11-20
-
-**Fixed**
-
-- **A raw scan of a drive that has reset no longer freezes the app.** A raw scan step held a write lock on the catalog while it read the disk, and every read it journaled waited on that same lock, half a minute at a time, while holding what every status call needs: the scan sat at 0.0% and the window answered nothing. A step now reads the disk without the lock and takes it only to write; the read journal has a file of its own and gives up after a moment, keeping a write it cannot make in memory until the file is free, so no read is left open to be blamed for a reset.
 
 <!-- changelog:end -->
 
