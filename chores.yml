@@ -139,3 +139,47 @@ tasks:
     # run (or the hosted-runner workflow) filled, without asking Windows again.
     cmds:
       - cargo test --locked -p captainsalvage --features windows-oracle --test ntfs_windows
+
+  # The project overview: every repository listed in scripts/constellation-repositories.sh,
+  # read from GitHub. No `sources` on any of these: the answer lives on GitHub and changes when
+  # somebody files an issue or opens a pull request, so no file here can say it is up to date.
+  # Each repository's answer is kept for AM_GITHUB_CACHE_TTL seconds (600); -- --no-cache asks anyway.
+  overview:summary:
+    desc: Counts only, one row per repository, no issue detail
+    cmds:
+      - scripts/am-overview --summary {{.CLI_ARGS}}
+
+  overview:list:
+    desc: Every repository in turn, each with its issue numbers, titles and pull requests
+    cmds:
+      - scripts/am-overview --list {{.CLI_ARGS}}
+
+  overview:tsv:
+    desc: The detail rows as TSV, for piping somewhere else
+    cmds:
+      - scripts/am-overview --tsv {{.CLI_ARGS}}
+
+  pr:list:
+    desc: Every pull request across the repositories (add -- --state open, --tsv, ...)
+    cmds:
+      - scripts/am-prs {{.CLI_ARGS}}
+
+  pr:external:
+    desc: Pull requests opened by external contributors (add -- --state open, --tsv, ...)
+    cmds:
+      - scripts/am-prs --external {{.CLI_ARGS}}
+
+  queue:list:
+    desc: Every pull request waiting in a merge queue across the repositories (add -- --tsv, --project NAME, --no-cache)
+    cmds:
+      - scripts/am-queue {{.CLI_ARGS}}
+
+  issue:list:
+    desc: Every open issue across the repositories, oldest first, as JSON (add -- --unclaimed, --urls, --prs, --no-cache, ...)
+    cmds:
+      - scripts/am-issues {{.CLI_ARGS}}
+
+  check:overview-scripts:
+    desc: The overview scripts' own tests, against fixtures (no GitHub)
+    cmds:
+      - for t in scripts/tests/*.sh; do bash "$t" || exit 1; done
