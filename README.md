@@ -1128,7 +1128,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.22.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.23.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1266,6 +1266,16 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.23.0 — 2026-11-21
+
+**Added**
+
+- **A SquashFS image's symbolic links and special files are listed.** A symbolic link shows as a file that holds its target, so it previews and copies out as that text, and a device or other special file shows as an empty file. The support table's browse note says so.
+
+**Maintenance**
+
+- The map's table and structs of records are named for what they hold, not for NTFS, and a driver's registry entry gives its volume's root number, so the record path is the same for every filesystem that has records ([#362](https://github.com/antimatter-studios/captainsalvage/pull/362))
+
 ### v0.22.0 — 2026-11-21
 
 **Added**
@@ -1319,14 +1329,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **A deleted FAT file is now read and copied whole, marked as a guess, where it used to come out as its first cluster alone.** When a FAT file is deleted, the FAT clears its chain, so only its first cluster is known. The FAT driver's walk of what the file's entry claims follows it as one run from that cluster, and that is now what the map, the verdicts, the copy and the file tests use for FAT files, instead of the app following the chain itself. A deleted file is copied in full by default and no longer skipped as partial, its verdict says its clusters are a guess, with the lower confidence a guess gets, and its copy is marked in the manifest (`extentsGuessed`) and counted in the export window. Files the FAT chains are read as before. The earlier FAT adapter stays for one release: set `SALVAGE_FAT_ADAPTER=legacy`.
-
-### v0.19.0 — 2026-11-21
-
-**Added**
-
-- **A drive you opened before is recognised as the same drive, so its scan resumes at once.** This holds even when its blocks read differently now or the drive was opened carefully after a reset. A mount that rewrote blocks still marks the regions around them as possibly out of date.
-- **A drive is recognised by its model and serial number when the system reports one.** A damaged drive whose first sector cannot be read is still the same drive, and a copy with another serial number is not.
-- **When a saved scan cannot be matched to the drive, you are asked.** You can choose Resume anyway or open the drive as a new source. This includes a drive that cannot be recognised at all, for which the saved scans of the same size are offered. A scan is never started again silently.
 
 <!-- changelog:end -->
 

@@ -8,6 +8,16 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-11-21
+
+### Added
+
+- **A SquashFS image's symbolic links and special files are listed.** A symbolic link shows as a file that holds its target, so it previews and copies out as that text, and a device or other special file shows as an empty file. The support table's browse note says so.
+
+### Maintenance
+
+- The map's table and structs of records are named for what they hold, not for NTFS, and a driver's registry entry gives its volume's root number, so the record path is the same for every filesystem that has records ([#362](https://github.com/antimatter-studios/captainsalvage/pull/362))
+
 ## [0.22.0] — 2026-11-21
 
 ### Added
