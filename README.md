@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.16.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.17.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.17.0 — 2026-11-21
+
+**Added**
+
+- **On an NTFS volume whose allocation is unknown, carving and the unexplained-space tools still work, and say what they are searching.** When a volume's `$Bitmap` cannot be read there is no list of free clusters, so these tools used to find nothing. They now search the whole volume, as if it were free space, and say so in every answer: the Unexplained list in the window shows a warning, and the `unexplained_runs`, `unexplained_summary` and `carve_candidates` answers carry `allocationBasis` and `allocationWarning`. Nothing is called free: the warning says that nothing here is known to be free, and that a file current files use may be listed. The answers for a volume whose allocation is known are unchanged. The search is built to narrow to what the file records leave over once allocation can be rebuilt from them, with that rebuild's limits said alongside.
+
 ### v0.16.1 — 2026-11-21
 
 **Maintenance**
@@ -1291,18 +1297,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 - **Free space nobody can read is no longer unexplained.** A free cluster in a bad sector counts as explained by bad sectors, as a region label would explain it, in the cluster map (a new legend entry, in red), in the region counts and in the unexplained totals and runs; the map summary says how many (`badSectorFreeClusters`). It shows after the map is rebuilt.
 - **A Disk Rebuild flags what crosses a bad sector, and blocks nothing.** A file, a folder (by everything below it) or a reassembly with bytes in a bad sector shows a flashing red flag with the bytes affected in the tree of the Rebuild tab, and the copy plan counts the files and the bytes. The copy goes ahead, with zeros there.
 - **A drive with a known bad zone is still an exact match.** A saved marker that lies in a bad sector is not read and says nothing either way, so it is left out of what the match is counted over: when everything that can be read matches, the source is recognised exactly, and the comparison says how many markers lay in bad sectors.
-
-### v0.14.1 — 2026-11-20
-
-**Added**
-
-- **A zone found outside the probe can be marked.** `probe_health` has a `mark_bad` action, and the raw-disk view a "Mark bad sectors" form, to record a zone found some other way, such as by reading the drive with `dd`: its first and last byte, what happened (the drive reset, a read failed, or keep out) and why. It is kept with who marked it and when, and nothing reads it afterwards.
-- **A disk that has reset is opened carefully.** Once a disk has a zone where the drive reset, a zone a probe jumped over, or has reset twice, opening it does not read fresh markers across the whole disk and does not run a range analysis: it is recognised from at most five of its stored markers that lie where earlier reads went well, and the window says so. Analysing a range stays the person's to ask for.
-- **The bad zones and the reset count belong to the physical disk.** A whole disk and its partitions share one map, one reset count and one failing flag, so a zone found through a partition is avoided from the whole disk and the other way round, and a drive that reset once through each is failing. A GPT disk's own GUID is part of its key, so two disks of one model are two disks. A read that failed because the device had already gone no longer marks the place it was asked for as the cause: only the read in flight when the device went away can.
-
-**Fixed**
-
-- **An error under the source header is readable.** An error such as "The disk has been disconnected; scan not started." was squeezed into the narrow column of the progress bar beside "Saved scans", one or two words to a line, and ran off the top of the window. It now has a line of its own under the title row, the whole width of the window, and a very long one wraps and scrolls inside itself.
 
 <!-- changelog:end -->
 

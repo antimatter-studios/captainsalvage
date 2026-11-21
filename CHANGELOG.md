@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-11-21
+
+### Added
+
+- **On an NTFS volume whose allocation is unknown, carving and the unexplained-space tools still work, and say what they are searching.** When a volume's `$Bitmap` cannot be read there is no list of free clusters, so these tools used to find nothing. They now search the whole volume, as if it were free space, and say so in every answer: the Unexplained list in the window shows a warning, and the `unexplained_runs`, `unexplained_summary` and `carve_candidates` answers carry `allocationBasis` and `allocationWarning`. Nothing is called free: the warning says that nothing here is known to be free, and that a file current files use may be listed. The answers for a volume whose allocation is known are unchanged. The search is built to narrow to what the file records leave over once allocation can be rebuilt from them, with that rebuild's limits said alongside.
+
 ## [0.16.1] — 2026-11-21
 
 ### Maintenance
