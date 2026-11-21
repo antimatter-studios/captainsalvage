@@ -1100,7 +1100,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.17.3 | MIT | captain-salvage |
+| `captainsalvage` | 0.18.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1237,6 +1237,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.18.0 — 2026-11-21
+
+**Added**
+
+- **FAT volumes are read through the FAT driver's shared layers, and entries it is unsure of are marked as weak candidates.** FAT12, FAT16 and FAT32 entries now come from the driver's own scan instead of the app's earlier reading of every cluster, which finds the same entries. Two things differ, on purpose. An entry in a folder cluster that is free in the FAT is shown as deleted (its data may have been overwritten), where it used to be shown as in use because its own first byte said so. And an entry the driver found by its content only, not through a folder that names it (a lone entry in a cluster nothing points to, or file bytes that happen to look like an entry), is marked as a weak candidate, in the window and in the tools, with half the confidence, and says so in its reason. The overview also tells of damage the driver finds in the FAT's own structures. The earlier FAT adapter stays for one release: set `SALVAGE_FAT_ADAPTER=legacy` to read with it. It also reads a volume the driver does not open, and the overview says so.
+
 ### v0.17.3 — 2026-11-21
 
 **Maintenance**
@@ -1291,12 +1297,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - Gated Linux jobs install missing tools so release publishing works on self-hosted runners ([#319](https://github.com/antimatter-studios/captainsalvage/pull/319))
-
-### v0.15.3 — 2026-11-21
-
-**Maintenance**
-
-- A raw scan step through the engine's tools reads a failing drive through the journal without waiting for itself ([#317](https://github.com/antimatter-studios/captainsalvage/pull/317))
 
 <!-- changelog:end -->
 
