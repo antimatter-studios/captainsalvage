@@ -354,26 +354,26 @@ means the feature does not exist for that filesystem (FAT has no alternate data 
 not the same as **Missing**, which exists but is not done yet. NTFS has its own section below.
 
 <!-- capabilities:start -->
-| Feature | exFAT | FAT12, FAT16, FAT32 | NTFS |
-|---|---|---|---|
-| Open | Supported | Supported | Supported |
-| Scan | Supported | Supported | Supported |
-| Map | Supported | Supported | Supported |
-| Browse | Supported | Supported | Supported |
-| Preview | Limited | Limited | Limited |
-| Resume | Supported | Supported | Supported |
-| Baseline copy | Supported | Supported | Supported |
-| File tests | Supported | Supported | Limited |
-| Disk Rebuilds | Supported | Supported | Limited |
-| Copy out | Limited | Limited | Limited |
-| Mount block | Supported | Supported | Limited |
-| Named streams | Not offered | Not offered | Limited |
-| Hard links | Not offered | Not offered | Supported |
-| Attribute lists | Not offered | Not offered | Missing |
-| Compression | Not offered | Not offered | Supported |
-| Encryption | Not offered | Not offered | Missing |
-| Journal | Not offered | Not offered | Missing |
-| Large volumes | Not offered | Not offered | Limited |
+| Feature | exFAT | FAT12, FAT16, FAT32 | NTFS | SquashFS |
+|---|---|---|---|---|
+| Open | Supported | Supported | Supported | Supported |
+| Scan | Supported | Supported | Supported | Missing |
+| Map | Supported | Supported | Supported | Missing |
+| Browse | Supported | Supported | Supported | Missing |
+| Preview | Limited | Limited | Limited | Missing |
+| Resume | Supported | Supported | Supported | Missing |
+| Baseline copy | Supported | Supported | Supported | Supported |
+| File tests | Supported | Supported | Limited | Missing |
+| Disk Rebuilds | Supported | Supported | Limited | Missing |
+| Copy out | Limited | Limited | Limited | Missing |
+| Mount block | Supported | Supported | Limited | Missing |
+| Named streams | Not offered | Not offered | Limited | Not offered |
+| Hard links | Not offered | Not offered | Supported | Not offered |
+| Attribute lists | Not offered | Not offered | Missing | Not offered |
+| Compression | Not offered | Not offered | Supported | Not offered |
+| Encryption | Not offered | Not offered | Missing | Not offered |
+| Journal | Not offered | Not offered | Missing | Not offered |
+| Large volumes | Not offered | Not offered | Limited | Not offered |
 
 **exFAT**
 
@@ -402,6 +402,20 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 - Disk Rebuilds (Supported): Disk Rebuilds overlay cluster lists and folder links without touching the disk.
 - Copy out (Limited): Copies are hashed, never overwrite, and record complete or partial status. A cluster that cannot be read is written as zeros, so the file keeps its layout, and the copy is marked partial; the manifest names the unreadable byte ranges.
 - Mount block (Supported): macOS is refused a mount of the volume while the app is open.
+
+**SquashFS**
+
+- Open (Supported): The volume opens for salvage, from a backup of its geometry when the first is damaged.
+- Scan (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Map (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Browse (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Preview (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Resume (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- File tests (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Disk Rebuilds (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Copy out (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Baseline copy (Supported): The volume's first structures (its superblock) are hashed and kept; changes are explained.
+- Mount block (Missing): macOS does not mount this filesystem, so there is nothing to block.
 <!-- capabilities:end -->
 
 What each was checked against, apart from this app's own synthetic images:
