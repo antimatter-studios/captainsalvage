@@ -14,8 +14,7 @@ finds, and helps you get your files back, without ever writing to the disk.
 > tested with synthetic disk images only, so neither has yet recovered a real damaged drive.
 > Those images include volumes formatted by `mkfs.fat`, `mkfs.exfat` and `mkntfs` and filled by
 > the Linux kernel, whose listings and file hashes the app is compared with in CI. NTFS has
-> limits, listed under [NTFS volumes](#ntfs-volumes), and exFAT volumes with 4096-byte sectors
-> are refused (#234). Every merged change is a tagged version with notes on the
+> limits, listed under [NTFS volumes](#ntfs-volumes). Every merged change is a tagged version with notes on the
 > [releases page](#releases); no builds are published.
 
 The [illustrated user manual](docs/manual/index.html) shows every part of the app: a safe
@@ -497,8 +496,7 @@ What was checked against something that is not this app:
 - **mkfs.fat, mkfs.exfat and the Linux kernel's vfat and exfat**, in the same VM (from
   `tests/fat_exfat_oracle.rs` and `validation/fat-oracle.sh`). The formatters make twelve images
   (FAT12 at 512 and 4096 byte sectors and 60 MiB, FAT16 at 512 and 4096 byte sectors, FAT32 at 512
-  and 4096 byte sectors, exFAT at 512 and 4096 byte sectors (the app refuses the 4096 one with
-  `unsupported sector size 4096`, which the test asserts, #234), and a FAT16, a FAT32 and an exFAT
+  and 4096 byte sectors, exFAT at 512 and 4096 byte sectors, and a FAT16, a FAT32 and an exFAT
   volume at a 1 MiB offset in a disk with a partition table), the kernel fills them through a
   read-write mount, and the kernel, mtools (FAT) and `fsck` report them. The app lists exactly what
   the kernel lists, with the same SHA-256 for every file, copies the same bytes, finds the two files
@@ -1140,9 +1138,9 @@ The libraries the app names itself:
 | `react-dom` | 19.3.1 | MIT | window |
 | `rhai` | 1.27.0 | MIT OR Apache-2.0 | captainsalvage |
 | `rusqlite` | 0.41.1 | MIT | captainsalvage |
-| `rust-fs-core` | 0.4.3 | MIT | captainsalvage |
+| `rust-fs-core` | 0.4.5 | MIT | captainsalvage |
 | `rust-fs-core` | 0.5.1 | MIT | captainsalvage |
-| `rust-fs-exfat` | 0.1.0 | MIT | captainsalvage |
+| `rust-fs-exfat` | 0.4.0 | MIT | captainsalvage |
 | `rust-fs-fat32` | 0.1.0 | MIT | captainsalvage |
 | `rust-fs-ntfs` | 0.11.0 | MIT OR Apache-2.0 | captainsalvage |
 | `rust-fs-squashfs` | 0.4.0 | MIT | captainsalvage |

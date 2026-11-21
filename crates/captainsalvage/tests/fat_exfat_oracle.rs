@@ -27,11 +27,9 @@
 //! damage cannot reach is read exactly as before, nothing is listed that the volume never held, and
 //! a file the app calls live reads with the bytes the oracle read from the undamaged volume.
 //!
-//! A limit, issue #234: the pinned rust-fs-exfat driver refuses an exFAT volume with 4096-byte
-//! sectors when its structures are read. The exFAT image with 4096-byte sectors is made, and the
-//! test asserts that the app refuses it with `unsupported sector size 4096` and shows nothing, so a
-//! change that opens it, or opens it wrongly, fails; every other exFAT image is held to the full
-//! comparison.
+//! The exFAT image with 4096-byte sectors (issue #234) is held to the same full comparison as every
+//! other image: the driver's primitive structure reader opens a volume with 1024, 2048 or 4096-byte
+//! sectors, so the app lists the kernel's files with the kernel's SHA-256 and copies their bytes.
 //!
 //! What this does not check, so that nobody reads more into a pass than is there:
 //!
@@ -536,43 +534,8 @@ fn copied_files(session: &Arc<Session>, label: &str) -> BTreeMap<String, (u64, S
     copied
 }
 
-/// KNOWN LIMIT, issue #234: the driver reads exFAT structures at 512-byte sectors only. The app
-/// must say so when the volume is opened, and show nothing of it.
-fn exfat_with_4096_byte_sectors_is_refused(case: &Case) {
-    let image = case.image();
-    let before = file_sha(&image);
-    let opened = Session::with_source(
-        Path::new("/test/oracle-image"),
-        Arc::new(MemorySource::new(std::fs::read(&image).unwrap())),
-        workspace(&case.name),
-    );
-    let error = match opened {
-        Ok(_) => panic!(
-            "{}: the app opened an exFAT volume with 4096-byte sectors",
-            case.name
-        ),
-        Err(error) => format!("{error:#}"),
-    };
-    assert!(
-        error.contains("unsupported sector size 4096"),
-        "{}: the app refused it with another message: {error}",
-        case.name
-    );
-    // The oracle read it: the refusal is the app's limit, not a broken image.
-    assert!(case.oracle().files.len() > 130, "{}", case.name);
-    assert_eq!(
-        file_sha(&image),
-        before,
-        "{}: the image was written",
-        case.name
-    );
-}
-
 /// The checks every clean image has to pass.
 fn read_like_the_oracles(case: &Case) {
-    if case.kind == "exfat" && case.sector == 4096 {
-        return exfat_with_4096_byte_sectors_is_refused(case);
-    }
     let oracle = case.oracle();
     assert!(
         oracle.files.len() > 130 && oracle.dirs.len() >= 4,

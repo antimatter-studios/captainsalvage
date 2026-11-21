@@ -2,8 +2,5 @@
 members = ["crates/captainsalvage", "src-tauri"]
 resolver = "2"
 
-[patch.crates-io]
-rust-fs-core = { git = "https://github.com/antimatter-studios/rust-fs-core", rev = "9271095beb76dda54729b517e85179883ad851b4" }
-
 [profile.release]
 opt-level = 3
