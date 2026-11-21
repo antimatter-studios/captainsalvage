@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.15.3] — 2026-11-21
+
+### Maintenance
+
+- A raw scan step through the engine's tools reads a failing drive through the journal without waiting for itself ([#317](https://github.com/antimatter-studios/captainsalvage/pull/317))
+
 ## [0.15.2] — 2026-11-20
 
 ### Fixed
