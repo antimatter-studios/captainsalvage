@@ -1104,7 +1104,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.20.2 | MIT | captain-salvage |
+| `captainsalvage` | 0.20.3 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1241,6 +1241,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.20.3 — 2026-11-21
+
+**Maintenance**
+
+- The copy of a FAT or exFAT file reads its typed ranges, as its preview does, instead of its cluster list ([#350](https://github.com/antimatter-studios/captainsalvage/pull/350))
+
 ### v0.20.2 — 2026-11-21
 
 **Maintenance**
@@ -1296,12 +1302,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The FAT driver is pinned to rust-fs-fat's merged three layers (19f4a93), which brings rust-fs-core 0.5.0, and the adapter's devices read through both generations of it ([#331](https://github.com/antimatter-studios/captainsalvage/pull/331))
-
-### v0.17.0 — 2026-11-21
-
-**Added**
-
-- **On an NTFS volume whose allocation is unknown, carving and the unexplained-space tools still work, and say what they are searching.** When a volume's `$Bitmap` cannot be read there is no list of free clusters, so these tools used to find nothing. They now search the whole volume, as if it were free space, and say so in every answer: the Unexplained list in the window shows a warning, and the `unexplained_runs`, `unexplained_summary` and `carve_candidates` answers carry `allocationBasis` and `allocationWarning`. Nothing is called free: the warning says that nothing here is known to be free, and that a file current files use may be listed. The answers for a volume whose allocation is known are unchanged. The search is built to narrow to what the file records leave over once allocation can be rebuilt from them, with that rebuild's limits said alongside.
 
 <!-- changelog:end -->
 
