@@ -274,6 +274,13 @@ export interface VolumeChoice {
   refused: string | null;
 }
 
+/** The answer of `unexplained_runs`: the list, or, where the volume's free space is not its own bitmap's, the list with where it came from. */
+export interface UnexplainedAnswer {
+  allocationBasis: "whole-volume" | "derived-from-records";
+  allocationWarning: string;
+  runs: UnexplainedRun[];
+}
+
 export interface UnexplainedRun {
   startCluster: number;
   endCluster: number;

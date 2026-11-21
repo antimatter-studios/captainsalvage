@@ -220,6 +220,9 @@ export const ENGINE_TEXT: string[] = [
   "$Volume (MFT record 3) failed its update-sequence check, so the volume's label and flags could not be read.",
   "The root directory's record (MFT record 5) failed its update-sequence check.",
   "$Bitmap could not be read ({name}), so which clusters are free is unknown. Files are still listed and read through $MFT, and no cluster is counted as free.",
+  "Allocation is unknown for this volume, so the whole volume is searched as if it were free space. Nothing here is known to be free: clusters that current files use may be listed.",
+  "Allocation could not be rebuilt completely from the file records ({name}), so the whole volume is searched as if it were free space. Nothing here is known to be free: clusters that current files use may be listed.",
+  "Allocation here was rebuilt from the file records, not read from a bitmap, so it is only as complete as they are: {name}",
   // Keeping volumes unmounted.
   "Only the person using the app can let a volume mount again.",
   "A volume UUID is needed.",

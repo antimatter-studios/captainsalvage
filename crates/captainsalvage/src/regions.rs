@@ -134,7 +134,7 @@ impl Session {
         let classes = self.class_map();
         let entropy = self.entropy_map();
         let unexplained = |cluster: u32| {
-            self.volume.is_free(cluster)
+            self.volume.is_searched_as_free(cluster)
                 && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
 
@@ -353,7 +353,7 @@ impl Session {
 
         let ownership = self.ownership_map();
         let unexplained = |cluster: u32| {
-            self.volume.is_free(cluster)
+            self.volume.is_searched_as_free(cluster)
                 && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
         // What the scan made of each cluster, and how far it got: a cluster that holds valid directory
@@ -472,6 +472,11 @@ impl Session {
             },
             "note": "Estimates scale the sampled share to the considered regions; the sample is evenly spaced, not random.",
         });
+        // Only when the free space is not the volume's own, so every other answer is as it was.
+        if let Some((basis, warning)) = self.volume.free_space_warning() {
+            answer["allocationBasis"] = json!(basis);
+            answer["allocationWarning"] = json!(warning);
+        }
         if per_run {
             answer["perRun"] = json!(runs_out);
         }

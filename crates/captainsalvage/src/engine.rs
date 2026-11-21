@@ -1626,11 +1626,21 @@ impl Engine {
                 let (offset, limit) = page(args);
                 let minimum =
                     u64_of(args, "minClusters").unwrap_or(DEFAULT_MIN_RUN_CLUSTERS) as u32;
-                Ok(serde_json::to_value(session.unexplained_runs(
+                let runs = serde_json::to_value(session.unexplained_runs(
                     offset as usize,
                     limit as usize,
                     minimum,
-                ))?)
+                ))?;
+                // The answer is the list of regions. Where the free space is not the volume's own bitmap it is said
+                // with them: the list, with where the free space came from and what that means.
+                Ok(match session.volume.free_space_warning() {
+                    None => runs,
+                    Some((basis, warning)) => json!({
+                        "allocationBasis": basis,
+                        "allocationWarning": warning,
+                        "runs": runs,
+                    }),
+                })
             }
             "bad_sectors" => Ok(crate::health_tools::bad_sectors(&session)),
             "unexplained_summary" => {

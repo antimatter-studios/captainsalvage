@@ -60,6 +60,13 @@ pub struct CarvePage {
     /// Every file start found in unexplained space, of which this page is a part.
     pub total: u64,
     pub bytes_estimated_on_this_page: u64,
+    /// Where the free space searched came from, when it is not the volume's own bitmap: `whole-volume` or `derived-from-records`.
+    /// Left out when the allocation is known, so the answer is as it was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_basis: Option<String>,
+    /// What that means for the candidates, in words. Never says that the space is known to be free.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_warning: Option<String>,
 }
 
 /// Where a file's structure says it ends, if it says.
@@ -360,7 +367,7 @@ impl Session {
         let last = self.volume.geometry.last_cluster_exclusive();
         let cluster_size = self.volume.geometry.cluster_size();
         let unexplained = |cluster: u32| {
-            self.volume.is_free(cluster)
+            self.volume.is_searched_as_free(cluster)
                 && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
         let class_at = |cluster: u32| classes[(cluster - FIRST_CLUSTER) as usize];
@@ -413,10 +420,13 @@ impl Session {
             }
         }
         let bytes_estimated_on_this_page = candidates.iter().map(|found| found.bytes).sum();
+        let warning = self.volume.free_space_warning();
         Ok(CarvePage {
             candidates,
             total: starts.len() as u64,
             bytes_estimated_on_this_page,
+            allocation_basis: warning.as_ref().map(|(basis, _)| (*basis).to_string()),
+            allocation_warning: warning.map(|(_, text)| text),
         })
     }
 }
