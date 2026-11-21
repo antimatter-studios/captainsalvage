@@ -51,8 +51,9 @@ fn legacy_key(view: &RawDisk) -> Option<String> {
         label: String::new(),
         boot_offset: 0,
     };
-    let mut boot = [0u8; 512];
-    view.source.read_exact_at(0, &mut boot).ok()?;
+    let boot =
+        crate::filesystem::read_head(|offset, buffer| view.source.read_exact_at(offset, buffer))
+            .ok()?;
     let kind = crate::filesystem::FilesystemKind::detect_boot_sector(&boot).ok()?;
     let source = view
         .interpretation(&crate::disk::DiskRegion {

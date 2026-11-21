@@ -49,6 +49,7 @@ fn the_three_fat_variants_report_one_table_and_no_filesystem_claims_a_feature_of
         FilesystemKind::Fat32,
         FilesystemKind::Ntfs,
         FilesystemKind::Squashfs,
+        FilesystemKind::Ext4,
     ] {
         let table = kind.capabilities();
         let mut seen = std::collections::HashSet::new();

@@ -143,9 +143,7 @@ fn read_region(source: &dyn BlockSource, offset: u64, length: u64) -> Result<Vec
 }
 
 pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
-    let mut sector = [0; 512];
-    source
-        .read_exact_at(0, &mut sector)
+    let sector = super::read_head(|offset, buffer| source.read_exact_at(offset, buffer))
         .context("reading main boot region")?;
     if &sector[3..11] == b"NTFS    " {
         return ntfs_salvage::read_structures(source);
@@ -419,7 +417,7 @@ pub fn find_entries(
         FilesystemKind::Fat32 => FatKind::Fat32,
         FilesystemKind::Ntfs => return ntfs_salvage::find_entries(geometry, data, start_limit),
         // A driver's entries are the driver's candidates, found once by `Volume`, not in the clusters.
-        FilesystemKind::Squashfs => return Vec::new(),
+        FilesystemKind::Squashfs | FilesystemKind::Ext4 => return Vec::new(),
     };
     let aligned = &data[..data.len() / 32 * 32];
     fs_fat32::directory::scan_directory(aligned, fat_kind)
