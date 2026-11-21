@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS driver_records (
     PRIMARY KEY (source_cluster, source_offset)
 );
 CREATE INDEX IF NOT EXISTS driver_records_candidate ON driver_records (candidate_id);
+CREATE TABLE IF NOT EXISTS driver_numbers (
+    candidate_id INTEGER PRIMARY KEY,
+    record_number INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS fat_weak (
     source_cluster INTEGER NOT NULL,
     source_offset INTEGER NOT NULL,
@@ -723,6 +727,11 @@ fn write_chunk(
         "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
+    let mut number_of = transaction
+        .prepare_cached("SELECT record_number FROM driver_numbers WHERE candidate_id = ?1")?;
+    let mut number_insert = transaction.prepare_cached(
+        "INSERT INTO driver_numbers (candidate_id, record_number) VALUES (?1, ?2)",
+    )?;
     let mut driver_insert = transaction.prepare_cached(
         "INSERT OR IGNORE INTO driver_records (source_cluster, source_offset, candidate_id, candidate, walk) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -774,8 +783,20 @@ fn write_chunk(
         let mut record_number =
             ntfs.and_then(|entry| entry.record_number.map(|value| value as i64));
         if let Some(facts) = &set.driver {
-            record_number = Some(next_record);
-            next_record += 1;
+            // A candidate keeps the number it was first given, whatever happens to its row: a rescan of the cluster it is in
+            // stores it again, and what a Disk Rebuild or an overlay says of the folder with that number must still be true.
+            let known: Option<i64> = number_of
+                .query_row([facts.record.id as i64], |row| row.get(0))
+                .optional()?;
+            record_number = Some(match known {
+                Some(number) => number,
+                None => {
+                    let number = next_record;
+                    next_record += 1;
+                    number_insert.execute(params![facts.record.id as i64, number])?;
+                    number
+                }
+            });
             driver_insert.execute(params![
                 cluster,
                 key,
@@ -1139,6 +1160,11 @@ impl MapDb {
                         "UPDATE records SET record_number = ?3, parent_record = NULL WHERE source_cluster = ?1 AND source_offset = ?2",
                         params![stored.cluster, stored.offset, root_record],
                     )?;
+                    // And the number a rescan will give it again.
+                    transaction.execute(
+                        "UPDATE driver_numbers SET record_number = ?2 WHERE candidate_id = ?1",
+                        params![stored.id as i64, root_record],
+                    )?;
                     number_of.insert(stored.id, root_record);
                 }
             }
@@ -1233,6 +1259,8 @@ impl MapDb {
             "DELETE FROM driver_records WHERE source_cluster >= ?1 AND source_cluster < ?2",
             params![first, end],
         )?;
+        // The records stored again have no parent until the folders are linked again (`link_driver_records`, first in a resolve).
+        transaction.execute("DELETE FROM scan_state WHERE key = 'driver_linked'", [])?;
         transaction.execute(
             "DELETE FROM read_errors WHERE cluster >= ?1 AND cluster < ?2",
             params![first, end],

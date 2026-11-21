@@ -424,7 +424,11 @@ pub fn capability_table(kind: FilesystemKind) -> Vec<Capability> {
         "File formats are walked through the bytes the driver reads.",
     );
     let (support, note) = row("rebuilds").unwrap_or((Missing, ""));
-    add("rebuilds", support, note);
+    add(
+        "rebuilds",
+        support,
+        leak(&format!("{note} A Disk Rebuild gathers the folders and files the scan found (a file the disk lost the name of can be named by an accepted entry) and copies them out at their rebuilt paths. A file's storage is the driver's walk of it, so a Disk Rebuild cannot replace it with a list of clusters. A link is read by its path in the volume's own namespace, so one whose folders are lost cannot be copied.")),
+    );
     let (support, note) = row("export").unwrap_or((Missing, ""));
     add("export", support, note);
     add(

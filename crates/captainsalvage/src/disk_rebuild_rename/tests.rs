@@ -101,6 +101,7 @@ const ADDED_AFTER_THE_RENAME: &[&str] = &[
     "fat_weak",
     "fat_walks",
     "driver_records",
+    "driver_numbers",
     "agent_sessions",
     "disk_rebuild_changes",
     "disk_rebuild_agent_marks",
