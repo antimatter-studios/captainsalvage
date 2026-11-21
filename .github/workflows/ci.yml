@@ -100,11 +100,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
       - name: test the engine
         run: cargo test -p captainsalvage --locked
-      - name: lint and test the engine with the test hooks, which only the window tests' build has
-        run: |
-          cargo clippy -p captainsalvage --all-targets --locked --features test-hooks -- -D warnings
-          cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
-          cargo test -p captainsalvage --locked --features test-hooks --lib
+      # The engine with the test hooks, which only the window tests' build has: one step per command, so a job that is lost
+      # says which command it was running.
+      - name: lint the engine with the test hooks
+        run: cargo clippy -p captainsalvage --all-targets --locked --features test-hooks -- -D warnings
+      - name: test the test hooks
+        run: cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
+      - name: test the engine's own tests with the test hooks
+        run: cargo test -p captainsalvage --locked --features test-hooks --lib
 
   oracle-gate:
     runs-on: antimatter-vps-gate
