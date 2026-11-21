@@ -479,7 +479,7 @@ pub fn find_entries(
                 modified: stamp(24, Some(22)),
                 accessed: stamp(18, None),
                 slots: 1,
-                ntfs: None,
+                record: None,
                 ranges: RangeList::for_cluster_stream(
                     geometry,
                     fat,

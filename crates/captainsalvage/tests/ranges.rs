@@ -278,7 +278,7 @@ fn ntfs_ranges_add_up_to_the_size_and_agree_with_the_runs() {
     let found = entries(&session);
     let mut checked = 0;
     for entry in found.iter().filter(|entry| !entry.is_dir) {
-        let ntfs = entry.ntfs.as_ref().unwrap();
+        let ntfs = entry.record.as_ref().unwrap();
         RangeList::new(entry.ranges.ranges().to_vec(), entry.length)
             .unwrap_or_else(|error| panic!("{}: {error}", entry.name));
         let valid = entry.valid_length.min(entry.length);

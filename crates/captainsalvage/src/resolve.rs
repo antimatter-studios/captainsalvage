@@ -159,14 +159,14 @@ struct LoadedSet {
     created: Option<String>,
     modified: Option<String>,
     /// NTFS: where the FILE record says this entry sits, and how its bytes are held.
-    ntfs: Option<LoadedNtfs>,
+    record: Option<LoadedRecord>,
     /// A FAT entry the driver found by its content only (`unchecked`, or `lone_entry`): a weak candidate.
     weak: Option<String>,
     /// A FAT file's clusters as the driver walked them.
     walk: Option<crate::filesystem::FatWalk>,
 }
 
-struct LoadedNtfs {
+struct LoadedRecord {
     record_number: Option<u32>,
     sequence: u16,
     parent_record: Option<u32>,
@@ -178,7 +178,7 @@ struct LoadedNtfs {
 impl LoadedSet {
     /// The folder this entry is named by: its record number for NTFS, its first cluster otherwise.
     fn folder_key(&self) -> u32 {
-        self.ntfs
+        self.record
             .as_ref()
             .and_then(|ntfs| ntfs.record_number)
             .unwrap_or(self.first_cluster)
@@ -186,12 +186,12 @@ impl LoadedSet {
 
     /// Whether the entry's first cluster says which stream it is. A resident NTFS file has none.
     fn has_clusters(&self) -> bool {
-        !self.is_resident() && (self.ntfs.is_none() || self.first_cluster != 0)
+        !self.is_resident() && (self.record.is_none() || self.first_cluster != 0)
     }
 
     /// Whether this is a driver's candidate (`filesystem::drivers`), read through the driver.
     fn is_driver(&self) -> bool {
-        self.ntfs.as_ref().is_some_and(|ntfs| {
+        self.record.as_ref().is_some_and(|ntfs| {
             matches!(
                 ntfs.storage.as_str(),
                 STORAGE_DRIVER | STORAGE_DRIVER_PARTIAL
@@ -201,7 +201,9 @@ impl LoadedSet {
 
     /// NTFS: the name was linked under a sequence number the parent record no longer has.
     fn parent_was_reused(&self, sequences: &HashMap<u32, u16>) -> bool {
-        let Some(ntfs) = &self.ntfs else { return false };
+        let Some(ntfs) = &self.record else {
+            return false;
+        };
         match (ntfs.parent_record, ntfs.parent_sequence) {
             (Some(parent), Some(linked)) => sequences
                 .get(&parent)
@@ -211,14 +213,14 @@ impl LoadedSet {
     }
 
     fn is_resident(&self) -> bool {
-        self.ntfs
+        self.record
             .as_ref()
             .is_some_and(|ntfs| ntfs.storage == STORAGE_RESIDENT)
     }
 
     /// Why the driver cannot read this NTFS stream, if it cannot.
     fn unreadable_storage(&self) -> Option<&str> {
-        self.ntfs
+        self.record
             .as_ref()
             .map(|ntfs| ntfs.storage.as_str())
             .filter(|storage| {
@@ -427,7 +429,7 @@ impl Streams<'_> {
                 0,
             );
         }
-        if let Some(ntfs) = &set.ntfs {
+        if let Some(ntfs) = &set.record {
             // A run list names its clusters. Nothing is assumed contiguous.
             return (self.volume.clusters_from_runs(&ntfs.runs, set.length), 0);
         }
@@ -614,7 +616,7 @@ impl Context<'_> {
     }
 
     fn assess_folder(&self, set: &LoadedSet, trust: f64) -> Assessment {
-        if set.ntfs.is_some() {
+        if set.record.is_some() {
             return if self.ntfs_children.contains(&set.folder_key()) {
                 Assessment::plain(
                     VERDICT_FOLDER,
@@ -672,7 +674,7 @@ impl Context<'_> {
     /// The verdict for a driver's file, from what the driver said of its record and how far its walk reached.
     fn assess_driver(&self, set: &LoadedSet, node_kind: Option<&str>) -> Assessment {
         let whole = set
-            .ntfs
+            .record
             .as_ref()
             .is_some_and(|ntfs| ntfs.storage == STORAGE_DRIVER);
         if !whole {
@@ -1062,7 +1064,10 @@ impl MapDb {
                 if ntfs {
                     return set.is_dir
                         && set.checksum_ok
-                        && set.ntfs.as_ref().is_some_and(|n| n.record_number.is_some());
+                        && set
+                            .record
+                            .as_ref()
+                            .is_some_and(|n| n.record_number.is_some());
                 }
                 set.is_dir
                     && set.length > 0
@@ -1114,7 +1119,7 @@ impl MapDb {
         if ntfs {
             for set in &folder_sets {
                 node_heads.insert(set.folder_key());
-                if let Some(ntfs) = &set.ntfs {
+                if let Some(ntfs) = &set.record {
                     // The folder sets rank trustworthy records first, so the first one is kept.
                     directory_sequence
                         .entry(set.folder_key())
@@ -1122,7 +1127,7 @@ impl MapDb {
                 }
             }
             for set in &sets {
-                if let Some(parent) = set.ntfs.as_ref().and_then(|n| n.parent_record) {
+                if let Some(parent) = set.record.as_ref().and_then(|n| n.parent_record) {
                     node_heads.insert(parent);
                     ntfs_children.insert(parent);
                 }
@@ -1161,7 +1166,7 @@ impl MapDb {
                 continue;
             }
             let source_head = if ntfs {
-                match set.ntfs.as_ref().and_then(|n| n.parent_record) {
+                match set.record.as_ref().and_then(|n| n.parent_record) {
                     Some(parent) => parent,
                     None => continue,
                 }
@@ -1330,7 +1335,7 @@ impl MapDb {
         let mut results = Vec::with_capacity(sets.len());
         for set in &sets {
             let source_head = if ntfs {
-                set.ntfs
+                set.record
                     .as_ref()
                     .and_then(|n| n.parent_record)
                     .unwrap_or(u32::MAX)
@@ -1349,7 +1354,7 @@ impl MapDb {
             let assessment = if set.is_dir {
                 context.assess_folder(set, trust)
             } else if set
-                .ntfs
+                .record
                 .as_ref()
                 .is_some_and(|ntfs| ntfs.storage == STORAGE_DAMAGED)
             {
@@ -1367,7 +1372,7 @@ impl MapDb {
                 context.assess_driver(set, node_kind)
             } else if !set.in_use
                 && set.checksum_ok
-                && set.ntfs.is_none()
+                && set.record.is_none()
                 && in_use_first.contains(&set.first_cluster)
             {
                 Assessment::plain(
@@ -1724,7 +1729,7 @@ impl MapDb {
         let mut statement = self.connection.prepare(
             "SELECT s.id, s.source_cluster, s.name, s.in_use, s.checksum_ok, s.is_dir, s.first_cluster, s.length, \
              s.no_fat_chain, s.created, s.modified, s.source_offset, r.record_number, r.sequence, r.parent_record, \
-             r.parent_sequence, r.storage, w.mark, k.guessed, k.extents FROM sets s LEFT JOIN ntfs_records r \
+             r.parent_sequence, r.storage, w.mark, k.guessed, k.extents FROM sets s LEFT JOIN records r \
              ON r.source_cluster = s.source_cluster AND r.source_offset = s.source_offset \
              LEFT JOIN fat_weak w ON w.source_cluster = s.source_cluster AND w.source_offset = s.source_offset \
              LEFT JOIN fat_walks k ON k.source_cluster = s.source_cluster AND k.source_offset = s.source_offset",
@@ -1763,7 +1768,7 @@ impl MapDb {
                         }),
                         None => None,
                     },
-                    ntfs: storage.map(|storage| LoadedNtfs {
+                    record: storage.map(|storage| LoadedRecord {
                         record_number: row.get::<_, Option<u32>>(12).ok().flatten(),
                         sequence: row.get::<_, Option<u16>>(13).ok().flatten().unwrap_or(0),
                         parent_record: row.get::<_, Option<u32>>(14).ok().flatten(),

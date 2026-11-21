@@ -21,7 +21,7 @@
 
 use crate::allocation::{self, valid_cluster};
 use crate::filesystem::{
-    NtfsEntry, VolumeGeometry, STORAGE_COMPRESSED, STORAGE_RESIDENT, STORAGE_RUNS,
+    RecordEntry, VolumeGeometry, STORAGE_COMPRESSED, STORAGE_RESIDENT, STORAGE_RUNS,
 };
 use anyhow::{bail, Result};
 use std::collections::HashSet;
@@ -485,7 +485,7 @@ impl RangeList {
     /// incomplete or has no data this app can follow is `Missing`; bytes past the valid length are
     /// `Sparse`; and what the runs do not cover is `Missing`.
     pub fn for_ntfs(
-        entry: &NtfsEntry,
+        entry: &RecordEntry,
         geometry: &VolumeGeometry,
         length: u64,
         valid_length: u64,
@@ -778,8 +778,8 @@ mod tests {
         }
     }
 
-    fn ntfs(storage: &str, runs: Vec<crate::filesystem::NtfsRun>) -> NtfsEntry {
-        NtfsEntry {
+    fn ntfs(storage: &str, runs: Vec<crate::filesystem::NtfsRun>) -> RecordEntry {
+        RecordEntry {
             record_number: Some(42),
             sequence: 1,
             parent_record: None,

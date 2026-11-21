@@ -136,7 +136,14 @@ fn rows(connection: &Connection) -> Vec<(String, Vec<Vec<String>>)> {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        all.push((new_table_name(&table).to_string(), found));
+        // The table of records was renamed after the Disk Rebuild rename (it is `ntfs_records` in a map made before).
+        let name = new_table_name(&table);
+        let name = if name == "ntfs_records" {
+            "records"
+        } else {
+            name
+        };
+        all.push((name.to_string(), found));
     }
     all.sort();
     all
@@ -539,4 +546,68 @@ fn a_renamed_database_also_has_the_agent_change_journal() {
     assert!(database.disk_rebuilds().unwrap()[0].made_by_agent);
     database.agent_undo_last(None).unwrap();
     assert!(!database.disk_rebuilds().unwrap()[0].made_by_agent);
+}
+
+#[test]
+fn a_map_with_the_table_of_records_under_its_old_name_is_renamed_with_its_rows_and_read_only_one_reads_it_through_a_view(
+) {
+    let folder = Folder::new();
+    let path = folder.map();
+    {
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE ntfs_records (source_cluster INTEGER NOT NULL, source_offset INTEGER NOT NULL, record_number INTEGER, \
+                 sequence INTEGER NOT NULL, parent_record INTEGER, parent_sequence INTEGER, storage TEXT NOT NULL, \
+                 PRIMARY KEY (source_cluster, source_offset)); \
+                 INSERT INTO ntfs_records VALUES (2, 0, 5, 5, NULL, NULL, 'runs'); \
+                 INSERT INTO ntfs_records VALUES (3, 0, 16, 1, 5, 5, 'resident'); \
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+    }
+    let database = MapDb::open(&path).unwrap();
+    let rows: Vec<(i64, i64, String)> = database
+        .connection
+        .prepare("SELECT record_number, parent_record, storage FROM records ORDER BY record_number")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(-1),
+                row.get(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        [(5, -1, "runs".to_string()), (16, 5, "resident".to_string())]
+    );
+    let has_old: i64 = database
+        .connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name = 'ntfs_records'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_old, 0);
+    drop(database);
+    // A map that cannot be written to is read as it stands, through a view with the new name.
+    let old = folder.0.join("old.sqlite");
+    {
+        let connection = Connection::open(&old).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE ntfs_records (source_cluster INTEGER, record_number INTEGER); INSERT INTO ntfs_records VALUES (2, 5);",
+            )
+            .unwrap();
+    }
+    let connection = open_read_only(&old).unwrap();
+    let number: i64 = connection
+        .query_row("SELECT record_number FROM records", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(number, 5);
 }

@@ -280,7 +280,7 @@ fn read_chunk(
         found.extend(sets.into_iter().map(|mut set| {
             // A FILE record in a cluster the bitmap calls free is an old copy of the MFT, whatever
             // its own flag says, so it is recorded as not in use.
-            if let Some(ntfs) = set.ntfs.as_mut() {
+            if let Some(ntfs) = set.record.as_mut() {
                 set.in_use &= !volume.is_free(cluster);
                 // Records the kernel's ntfs3 driver wrote have no number in their header, so
                 // it is where `$MFT` puts them.

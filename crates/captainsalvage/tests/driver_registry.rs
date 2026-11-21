@@ -172,3 +172,15 @@ fn a_session_over_an_image_scans_and_lists_its_files() {
     let sets = session.query_map("SELECT count(*) AS n FROM sets").unwrap();
     assert!(sets["rows"][0]["n"].as_i64().unwrap() >= 7, "{sets}");
 }
+
+#[test]
+fn a_drivers_root_number_is_below_the_numbers_its_candidates_get() {
+    for driver in drivers::registry() {
+        assert!(
+            i64::from(driver.root_record) < drivers::FIRST_RECORD,
+            "{}",
+            driver.format
+        );
+        assert!(driver.root_record > 0, "{}", driver.format);
+    }
+}
