@@ -108,21 +108,17 @@ fn the_support_table_of_a_driver_comes_from_what_it_lacks() {
     ] {
         assert!(!row(feature).note.is_empty(), "{feature}");
     }
-    // The volume opens and its structures are kept; nothing that needs its entries is offered yet.
+    // What the driver decides is derived from what it lacks: SquashFS has no deleted candidates, no deleted extents and no
+    // cluster steps, so scanning, copying out and rebuilds are limited by those, and its links are not listed yet.
     assert_eq!(row("open").support, Support::Supported);
     assert_eq!(row("baseline").support, Support::Supported);
-    for feature in [
-        "scan",
-        "map",
-        "browse",
-        "preview",
-        "resume",
-        "file_tests",
-        "rebuilds",
-        "export",
-    ] {
-        assert_eq!(row(feature).support, Support::Missing, "{feature}");
-    }
+    assert_eq!(row("scan").support, Support::Limited);
+    assert!(row("scan").note.contains("deleted-candidates"));
+    assert_eq!(row("browse").support, Support::Limited);
+    assert!(row("browse").note.contains("Symbolic links"));
+    assert_eq!(row("export").support, Support::Limited);
+    assert!(row("export").note.contains("deleted-extents"));
+    assert_eq!(row("rebuilds").support, Support::Limited);
     assert_eq!(row("mount_block").support, Support::Missing);
     assert_eq!(
         FilesystemKind::Squashfs.claims(),
@@ -145,7 +141,7 @@ fn an_image_that_is_not_a_volume_of_its_driver_is_refused_by_name() {
 }
 
 #[test]
-fn a_session_over_an_image_scans_and_lists_nothing_yet() {
+fn a_session_over_an_image_scans_and_lists_its_files() {
     use captainsalvage::scan::{run_scan, ScanOptions};
     use captainsalvage::session::Session;
     use captainsalvage::workspace::Workspace;
@@ -174,5 +170,5 @@ fn a_session_over_an_image_scans_and_lists_nothing_yet() {
     assert_eq!(overview["filesystem"]["kind"], "driver");
     assert_eq!(overview["filesystem"]["format"], "squashfs");
     let sets = session.query_map("SELECT count(*) AS n FROM sets").unwrap();
-    assert_eq!(sets["rows"][0]["n"], 0, "{sets}");
+    assert!(sets["rows"][0]["n"].as_i64().unwrap() >= 7, "{sets}");
 }

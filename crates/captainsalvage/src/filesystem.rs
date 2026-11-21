@@ -398,6 +398,11 @@ pub const STORAGE_ATTRIBUTE_LIST: &str = "attribute-list";
 pub const STORAGE_INCOMPLETE: &str = "incomplete";
 /// Something shaped like a FILE record was here, but it failed its update-sequence check.
 pub const STORAGE_DAMAGED: &str = "damaged-record";
+/// A driver's candidate whose storage the driver walked to its end, and reads through the driver (`drivers`).
+pub const STORAGE_DRIVER: &str = "driver";
+/// A driver's candidate whose walk did not reach the end of what the record claims: what it reached is read, and the rest is
+/// named as missing.
+pub const STORAGE_DRIVER_PARTIAL: &str = "driver-partial";
 
 /// What an NTFS FILE record says about an entry, kept beside the common fields. A file
 /// reference names a record and the sequence it had; neither is a cluster.
@@ -420,7 +425,11 @@ impl NtfsEntry {
     pub fn is_readable(&self) -> bool {
         matches!(
             self.storage.as_str(),
-            STORAGE_RESIDENT | STORAGE_RUNS | STORAGE_COMPRESSED
+            STORAGE_RESIDENT
+                | STORAGE_RUNS
+                | STORAGE_COMPRESSED
+                | STORAGE_DRIVER
+                | STORAGE_DRIVER_PARTIAL
         )
     }
 }
@@ -464,6 +473,18 @@ pub struct SalvageEntry {
     /// takes the entry's clusters from it, instead of following the FAT chain itself.
     #[serde(skip)]
     pub walk: Option<FatWalk>,
+    /// A driver's candidate, whole, with the storage the driver walked for it: what the engine keeps to read it through the
+    /// driver again (`drivers`). Its `ntfs` field carries the record numbers the map's tree is built from, as an NTFS
+    /// record's do.
+    #[serde(skip)]
+    pub driver: Option<DriverFacts>,
+}
+
+/// What a driver gave of one candidate: the candidate, and the walk of its storage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DriverFacts {
+    pub record: drivers::DriverRecord,
+    pub walk: fs_core_layers::layers::ExtentWalk,
 }
 
 /// The clusters a FAT file claims, as the driver walked them: runs of `(first cluster, count)`, in file order.
@@ -517,6 +538,7 @@ impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
             name_slot: 0,
             weak: None,
             walk: None,
+            driver: None,
         }
     }
 }
@@ -569,6 +591,8 @@ pub enum FilesystemDetails {
     #[serde(rename_all = "camelCase")]
     Driver {
         format: String,
+        /// The filesystem's name as a person reads it (`SquashFS`).
+        name: String,
         allocation_unit: u64,
         allocation_units: u64,
         declared_bytes: u64,

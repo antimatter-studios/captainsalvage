@@ -233,6 +233,13 @@ impl Volume {
         self.kind.claims()
     }
 
+    /// Reads this volume through `driver` instead of the one its saved structures open: for the tests of the engine that bring a
+    /// driver of their own, which the registry has no entry for.
+    pub fn with_driver(mut self, driver: Box<dyn drivers::DriverAccess>) -> Self {
+        self.driver = Some(driver);
+        self
+    }
+
     /// The driver's volume, for a filesystem that is read through the registry (`filesystem::drivers`), when it opened.
     pub fn driver(&self) -> Option<&dyn drivers::DriverAccess> {
         self.driver.as_deref()
@@ -297,6 +304,9 @@ impl Volume {
         data: &[u8],
         start_limit: usize,
     ) -> Vec<SalvageEntry> {
+        if let Some(driver) = self.driver.as_deref() {
+            return self.marked_bad(drivers::entries_in_cluster(driver, &self.geometry, cluster));
+        }
         match self.generic_sets() {
             Some(sets) => self.marked_bad(sets.in_cluster(cluster)),
             None => self.find_sets(data, start_limit),

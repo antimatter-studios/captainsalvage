@@ -91,6 +91,15 @@ CREATE TABLE IF NOT EXISTS ntfs_records (
     storage TEXT NOT NULL,
     PRIMARY KEY (source_cluster, source_offset)
 );
+CREATE TABLE IF NOT EXISTS driver_records (
+    source_cluster INTEGER NOT NULL,
+    source_offset INTEGER NOT NULL,
+    candidate_id INTEGER NOT NULL,
+    candidate TEXT NOT NULL,
+    walk TEXT NOT NULL,
+    PRIMARY KEY (source_cluster, source_offset)
+);
+CREATE INDEX IF NOT EXISTS driver_records_candidate ON driver_records (candidate_id);
 CREATE TABLE IF NOT EXISTS fat_weak (
     source_cluster INTEGER NOT NULL,
     source_offset INTEGER NOT NULL,
@@ -382,6 +391,16 @@ pub enum EntrySource {
     /// An NTFS stream, read through the driver so sparse ranges, initialised length and
     /// unreadable streams are what NTFS says they are.
     Ntfs(crate::filesystem::ntfs_salvage::StreamReference),
+    /// A candidate of a driver (`filesystem::drivers`), read through the driver: its bytes are what its walk rebuilds, which
+    /// decodes what the driver stored compressed.
+    Driver(DriverStream),
+}
+
+/// What the engine keeps to read a driver's candidate: the storage its walk reached, and the size the record claims.
+#[derive(Clone, Debug)]
+pub struct DriverStream {
+    pub walk: fs_core_layers::layers::ExtentWalk,
+    pub length: u64,
 }
 
 /// Largest contiguous file assumed when looking for owners of a cluster: 16 GiB.
@@ -670,6 +689,22 @@ fn write_chunk(
         "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
+    let mut driver_insert = transaction.prepare_cached(
+        "INSERT OR IGNORE INTO driver_records (source_cluster, source_offset, candidate_id, candidate, walk) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    // A driver's candidates are numbered as they are stored, from sixteen, as the records of a volume with records are: the
+    // map's tree is made of those numbers. The count goes on across chunks and across a resumed scan.
+    let mut next_record: i64 = transaction
+        .query_row(
+            "SELECT value FROM scan_state WHERE key = 'driver_next_record'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(16);
+    let first_record = next_record;
     for (cluster, set) in found {
         let ntfs = set.ntfs.as_ref();
         // A further name of the same NTFS file is told apart by its slot.
@@ -702,11 +737,24 @@ fn write_chunk(
                 serde_json::to_string(&walk.extents)?
             ])?;
         }
+        let mut record_number =
+            ntfs.and_then(|entry| entry.record_number.map(|value| value as i64));
+        if let Some(facts) = &set.driver {
+            record_number = Some(next_record);
+            next_record += 1;
+            driver_insert.execute(params![
+                cluster,
+                key,
+                facts.record.id as i64,
+                facts.record.candidate,
+                serde_json::to_string(&facts.walk)?
+            ])?;
+        }
         if let Some(entry) = ntfs {
             record_insert.execute(params![
                 cluster,
                 key,
-                entry.record_number.map(|value| value as i64),
+                record_number,
                 i64::from(entry.sequence),
                 entry.parent_record.map(|value| value as i64),
                 entry.parent_sequence.map(i64::from),
@@ -722,6 +770,13 @@ fn write_chunk(
                 run.count as i64,
             ])?;
         }
+    }
+    if next_record != first_record {
+        transaction.execute(
+            "INSERT INTO scan_state (key, value) VALUES ('driver_next_record', ?1) \
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [next_record.to_string()],
+        )?;
     }
     let mut error_insert = transaction
         .prepare_cached("INSERT OR REPLACE INTO read_errors (cluster, message) VALUES (?1, ?2)")?;
@@ -969,6 +1024,113 @@ impl MapDb {
 
     /// Stores one chunk's results atomically with the scan position, so a resume
     /// from any point repeats at most one chunk and creates no duplicates.
+    /// Gives each of a driver's candidates the record it is in, from the parent claims the driver finds. The records are
+    /// numbered when they are stored; the folder every claim names the root of becomes record 5, as an NTFS volume's root is,
+    /// and every other candidate's parent is the number of the folder it names. The folders are held, with their candidates
+    /// (a volume has far fewer of them than files), and the rest is read and written a batch at a time. Done again when
+    /// candidates were stored since it last ran.
+    pub fn link_driver_records(&mut self, volume: &Volume) -> Result<()> {
+        use crate::filesystem::drivers::{DriverRecord, ParentRef};
+        let Some(driver) = volume.driver() else {
+            return Ok(());
+        };
+        let total: i64 =
+            self.connection
+                .query_row("SELECT count(*) FROM driver_records", [], |row| row.get(0))?;
+        if total == 0 || self.state("driver_linked")?.as_deref() == Some(&total.to_string()) {
+            return Ok(());
+        }
+        const ROOT_RECORD: i64 = crate::filesystem::drivers::ROOT_RECORD as i64;
+        struct Stored {
+            cluster: i64,
+            offset: i64,
+            id: u64,
+            candidate: String,
+        }
+        let load = |connection: &Connection,
+                    folders: bool,
+                    after: Option<(i64, i64)>,
+                    limit: i64|
+         -> Result<Vec<Stored>> {
+            let mut statement = connection.prepare(
+                "SELECT d.source_cluster, d.source_offset, d.candidate_id, d.candidate FROM driver_records d \
+                 JOIN sets s ON s.source_cluster = d.source_cluster AND s.source_offset = d.source_offset \
+                 WHERE s.is_dir = ?1 AND (d.source_cluster, d.source_offset) > (?2, ?3) \
+                 ORDER BY d.source_cluster, d.source_offset LIMIT ?4",
+            )?;
+            let (cluster, offset) = after.unwrap_or((-1, -1));
+            let rows = statement.query_map(params![folders, cluster, offset, limit], |row| {
+                Ok(Stored {
+                    cluster: row.get(0)?,
+                    offset: row.get(1)?,
+                    id: row.get::<_, i64>(2)? as u64,
+                    candidate: row.get(3)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        };
+        let folders = load(&self.connection, true, None, i64::MAX)?;
+        let folder_records: Vec<DriverRecord> = folders
+            .iter()
+            .map(|folder| DriverRecord::stored(folder.id, folder.candidate.clone()))
+            .collect();
+        let mut number_of: std::collections::HashMap<u64, i64> = std::collections::HashMap::new();
+        for folder in &folders {
+            let number: i64 = self.connection.query_row(
+                "SELECT record_number FROM ntfs_records WHERE source_cluster = ?1 AND source_offset = ?2",
+                params![folder.cluster, folder.offset],
+                |row| row.get(0),
+            )?;
+            number_of.insert(folder.id, number);
+        }
+        let link = |this: &mut Self,
+                    batch: &[Stored],
+                    number_of: &mut std::collections::HashMap<u64, i64>|
+         -> Result<()> {
+            let records: Vec<DriverRecord> = batch
+                .iter()
+                .map(|stored| DriverRecord::stored(stored.id, stored.candidate.clone()))
+                .collect();
+            let claims = driver.parents(&folder_records, &records)?;
+            let transaction = this.connection.transaction()?;
+            // The root first, so a folder of the same batch that names it finds record 5.
+            for (stored, claims) in batch.iter().zip(&claims) {
+                if claims.first() == Some(&ParentRef::Root) {
+                    // The root is record 5, as an NTFS volume's is, and has no parent.
+                    transaction.execute(
+                        "UPDATE ntfs_records SET record_number = ?3, parent_record = NULL WHERE source_cluster = ?1 AND source_offset = ?2",
+                        params![stored.cluster, stored.offset, ROOT_RECORD],
+                    )?;
+                    number_of.insert(stored.id, ROOT_RECORD);
+                }
+            }
+            for (stored, claims) in batch.iter().zip(&claims) {
+                let parent = match claims.first() {
+                    Some(ParentRef::Root) => continue,
+                    Some(ParentRef::Record(id)) => number_of.get(id).copied(),
+                    None => None,
+                };
+                transaction.execute(
+                    "UPDATE ntfs_records SET parent_record = ?3 WHERE source_cluster = ?1 AND source_offset = ?2",
+                    params![stored.cluster, stored.offset, parent],
+                )?;
+            }
+            transaction.commit()?;
+            Ok(())
+        };
+        // The folders first, so the root is known before any file is placed under it.
+        link(self, &folders, &mut number_of)?;
+        let mut after = None;
+        loop {
+            let batch = load(&self.connection, false, after, 5000)?;
+            let Some(last) = batch.last() else { break };
+            after = Some((last.cluster, last.offset));
+            link(self, &batch, &mut number_of)?;
+        }
+        self.set_state("driver_linked", &total.to_string())?;
+        Ok(())
+    }
+
     pub fn commit_chunk(
         &mut self,
         found: &[(u32, EntrySet)],
@@ -1027,6 +1189,10 @@ impl MapDb {
         )?;
         transaction.execute(
             "DELETE FROM fat_walks WHERE source_cluster >= ?1 AND source_cluster < ?2",
+            params![first, end],
+        )?;
+        transaction.execute(
+            "DELETE FROM driver_records WHERE source_cluster >= ?1 AND source_cluster < ?2",
             params![first, end],
         )?;
         transaction.execute(
@@ -1723,6 +1889,22 @@ impl MapDb {
                 entry.source_cluster,
                 entry.source_offset,
             ) {
+                if storage.starts_with(crate::filesystem::STORAGE_DRIVER) {
+                    let walk: Option<String> = self
+                        .connection
+                        .query_row(
+                            "SELECT walk FROM driver_records WHERE source_cluster = ?1 AND source_offset = ?2",
+                            params![cluster, offset],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if let Some(walk) = walk {
+                        return Ok(EntrySource::Driver(DriverStream {
+                            walk: serde_json::from_str(&walk)?,
+                            length: entry.length,
+                        }));
+                    }
+                }
                 return Ok(EntrySource::Ntfs(
                     crate::filesystem::ntfs_salvage::StreamReference {
                         record_offset: volume.cluster_offset(cluster)

@@ -251,6 +251,7 @@ pub fn sets(
                 name_slot: 0,
                 weak,
                 walk,
+                driver: None,
             });
     }
     for entries in sets.by_cluster.values_mut() {
