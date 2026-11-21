@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.4 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.5 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.5 — 2026-11-21
+
+**Fixed**
+
+- **An NTFS volume with more clusters than Windows allows is refused at open, with the reason.** Windows itself does not create or mount an NTFS volume of more than 4,294,967,294 (2^32 - 2) clusters, and the limit here was one cluster too generous and its message did not say why. A boot sector that states more clusters is now refused as soon as it is read, with a message that gives the count and says Windows does not make such a volume, and nothing else on the disk is read. A volume of exactly 4,294,967,294 clusters still opens. The support table says NTFS is limited to that many clusters.
+
 ### v0.15.4 — 2026-11-21
 
 **Maintenance**
@@ -1298,12 +1304,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 - **The app finds the bad zones of a failing drive without resetting it again and again, and then never reads them.** A drive that retries inside a bad area for seconds makes a USB bridge reset the whole device, and each reset hurts a damaged drive further. The app now writes a journal of the reads that can reach an unknown bad spot (opening a source, probing, any large read) before each starts, so a read that never finished, because the device went away during it, is marked as the likely cause the next time the drive is opened, before anything reads it. The new `probe_health` tool finds the zones on purpose and gently, bounded and resumable: it reads one block a GiB, then walks toward each bad block from the good side on both sides and stops at the first slow or failed read, so a zone is bounded without reading into it. `health_map` shows what is known, and the window draws it as a lane of the raw-disk map. Ranges marked unreadable or as a reset are not read again by anything: scans report them as read errors, previews mark them, copies write zeros there and name them in the manifest, and the markers that recognise the drive are taken from outside them.
 - **A drive that went away and came back is the same source.** The app lets go of the vanished device node as soon as it finds the device gone, and `rebind_source` (or opening the new path) points the open source at the drive when it returns, found again by its markers, so the open volume and its map read again.
-
-### v0.11.1 — 2026-11-20
-
-**Maintenance**
-
-- The coverage baseline is written from CI's numbers, and `baseline` refuses to measure outside CI ([#298](https://github.com/antimatter-studios/captainsalvage/pull/298))
 
 <!-- changelog:end -->
 

@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.15.5] — 2026-11-21
+
+### Fixed
+
+- **An NTFS volume with more clusters than Windows allows is refused at open, with the reason.** Windows itself does not create or mount an NTFS volume of more than 4,294,967,294 (2^32 - 2) clusters, and the limit here was one cluster too generous and its message did not say why. A boot sector that states more clusters is now refused as soon as it is read, with a message that gives the count and says Windows does not make such a volume, and nothing else on the disk is read. A volume of exactly 4,294,967,294 clusters still opens. The support table says NTFS is limited to that many clusters.
+
 ## [0.15.4] — 2026-11-21
 
 ### Maintenance
