@@ -13,7 +13,7 @@ use super::fat_generic::Overlay;
 use super::generic::{capability_rows, GenericVolume};
 use super::salvage::{FilesystemBoot, Inspected};
 use super::{
-    Capability, DriverFacts, FilesystemDetails, FilesystemKind, NtfsEntry, SalvageEntry, Support,
+    Capability, DriverFacts, FilesystemDetails, FilesystemKind, RecordEntry, SalvageEntry, Support,
     VolumeGeometry, STORAGE_DRIVER, STORAGE_DRIVER_PARTIAL,
 };
 use crate::changes::StructureCopy;
@@ -45,7 +45,14 @@ pub struct RegisteredDriver {
     pub open: OpenDriver,
     /// What the driver's salvage adapter lacks, which the support rows are derived from.
     pub capabilities: fn() -> Capabilities,
+    /// The number the map gives the volume's root folder. Every other candidate of the volume is numbered from
+    /// [`FIRST_RECORD`], so this must be below it.
+    pub root_record: u32,
 }
+
+/// The first number the map gives a driver's candidates, in the order they are stored. A driver's root folder has the number its
+/// entry says (`RegisteredDriver::root_record`), below this.
+pub const FIRST_RECORD: i64 = 16;
 
 /// The volumes of a driver, as the engine reads them: the geometry, what the driver says it supports, how healthy its
 /// own structures are, where they are, and what is damaged.
@@ -267,6 +274,7 @@ const SQUASHFS: RegisteredDriver = RegisteredDriver {
         fs_squashfs::layers::SquashfsAdapter::new(fs_squashfs::Superblock::decode(&[0; 96]))
             .capabilities()
     },
+    root_record: 2,
 };
 
 /// Every driver the engine reads through the layers.
@@ -386,9 +394,6 @@ pub fn capability_table(kind: FilesystemKind) -> Vec<Capability> {
 fn leak(note: &str) -> &'static str {
     Box::leak(note.to_string().into_boxed_str())
 }
-
-/// The record number of a driver volume's root folder in the map.
-pub const ROOT_RECORD: u32 = 5;
 
 /// How much of the start of a source is read to find a driver's structures. They are small and near the start (a
 /// superblock, a boot record); a table that is megabytes or gigabytes long is read from the source when it is needed,
@@ -520,9 +525,9 @@ pub fn inspect(structures: &StructureCopy, driver: &'static RegisteredDriver) ->
         boot_check: None,
         geometry: VolumeGeometry {
             volume_serial: 0,
-            // The map's tree is made of record numbers, and the folder every claim names the root of is record 5, as on an NTFS
-            // volume (`MapDb::link_driver_records`).
-            root_cluster: ROOT_RECORD,
+            // The map's tree is made of record numbers, and the folder every parent claim names the root of has the number the
+            // driver's entry gives it (`MapDb::link_driver_records`); NTFS's root is record 5 by its own format.
+            root_cluster: driver.root_record,
             partition_offset: 0,
             // Cluster 2 is the first allocation unit, at the start of the source.
             data_offset: 0,
@@ -625,7 +630,7 @@ pub fn entries_in_cluster(
             modified: None,
             accessed: None,
             slots: 1,
-            ntfs: Some(NtfsEntry {
+            record: Some(RecordEntry {
                 record_number: None,
                 sequence: 0,
                 parent_record: None,

@@ -408,7 +408,7 @@ pub const STORAGE_DRIVER_PARTIAL: &str = "driver-partial";
 /// reference names a record and the sequence it had; neither is a cluster.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct NtfsEntry {
+pub struct RecordEntry {
     /// The record's own number, when its header says one.
     pub record_number: Option<u64>,
     pub sequence: u16,
@@ -420,7 +420,7 @@ pub struct NtfsEntry {
     pub runs: Vec<NtfsRun>,
 }
 
-impl NtfsEntry {
+impl RecordEntry {
     /// Whether the bytes can be read through the driver rather than only described.
     pub fn is_readable(&self) -> bool {
         matches!(
@@ -453,7 +453,7 @@ pub struct SalvageEntry {
     pub slots: usize,
     /// Set for entries found in NTFS FILE records.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ntfs: Option<NtfsEntry>,
+    pub record: Option<RecordEntry>,
     /// Where the entry's bytes are, as typed ranges derived from the same data as its cluster
     /// list (issue #212, first slice). Nothing reads it but tests, and it is never serialised or
     /// stored, so saved scans and what scripts and tools report are as they were.
@@ -533,7 +533,7 @@ impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
             modified: entry.modified,
             accessed: entry.accessed,
             slots: entry.slots,
-            ntfs: None,
+            record: None,
             ranges: crate::ranges::RangeList::default(),
             name_slot: 0,
             weak: None,

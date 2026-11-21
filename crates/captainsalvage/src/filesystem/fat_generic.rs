@@ -239,7 +239,7 @@ pub fn sets(
                 modified: view.detail["modified"].as_str().map(str::to_string),
                 accessed: view.detail["accessed"].as_str().map(str::to_string),
                 slots: 1,
-                ntfs: None,
+                record: None,
                 ranges: RangeList::for_cluster_stream(
                     geometry,
                     fat,
