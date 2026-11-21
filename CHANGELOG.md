@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-11-21
+
+### Maintenance
+
+- The pull request jobs install ffmpeg so the tests that need it run, and the path without ffmpeg is a test of its own that hides ffmpeg itself ([#327](https://github.com/antimatter-studios/captainsalvage/pull/327))
+
 ## [0.16.0] — 2026-11-21
 
 ### Added
