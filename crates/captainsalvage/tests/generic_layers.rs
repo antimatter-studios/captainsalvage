@@ -160,32 +160,132 @@ fn the_generic_adapter_finds_the_candidates_the_fat_adapter_finds_and_the_differ
             kind.to_string().to_lowercase().replace(' ', ""),
             "{kind}"
         );
-        // Every entry the generic adapter finds, the app finds, with the same name, state, size and first cluster, in
-        // the same 32 bytes.
-        for found in &driver {
-            assert!(
-                app.contains(found),
-                "{kind}: only the generic adapter finds {found:?}\napp: {app:#?}"
+        // Both find the same six entries, in the same 32 bytes, with the same name, kind, first cluster and size.
+        let names = |list: &[Seen]| {
+            list.iter()
+                .map(|seen| (seen.at, seen.name.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&driver), names(&app), "{kind}");
+        let without_state = |seen: &Seen| (seen.at, seen.is_dir, seen.first_cluster, seen.size);
+        for (theirs, ours) in driver.iter().zip(&app) {
+            assert_eq!(
+                without_state(theirs),
+                without_state(ours),
+                "{kind}: {}",
+                theirs.name
             );
         }
-        // The app also finds two things the driver does not, and each is a known difference, said here so it is a decision
-        // to change and not a surprise:
-        let only_app: Vec<&str> = app
+        // One difference in what they say: the state of an entry in a cluster nothing points to. The driver reads it from the
+        // FAT's state of the cluster it was found in (this one is free, so deleted: its data may have been overwritten), the
+        // app from the entry's own first byte (not deleted). The driver's is the more accurate, and the app adopts it when the
+        // generic path takes over.
+        let differ: Vec<&str> = driver
             .iter()
-            .filter(|seen| !driver.contains(seen))
-            .map(|seen| seen.name.as_str())
+            .zip(&app)
+            .filter(|(theirs, ours)| theirs.live != ours.live)
+            .map(|(theirs, _)| theirs.name.as_str())
             .collect();
+        assert_eq!(differ, ["ORPHAN.TXT"], "{kind}");
+        // The two entries no directory names (a lone entry in a cluster nothing points to, and bytes of a file that read like
+        // one entry) are the driver's weakest candidates: found by content, not verified, flagged lone. `child by.tes` is a
+        // false positive of both; the driver says so by how it reports it, and the app does not.
+        use fs_core_layers::layers::Integrity;
+        for candidate in generic.candidates().unwrap() {
+            let view = Fat::view(&candidate);
+            let lone = view.detail["loneEntry"].as_bool().unwrap();
+            let name = view.name.clone().unwrap();
+            assert_eq!(
+                lone,
+                ["child by.tes", "ORPHAN.TXT"].contains(&name.as_str()),
+                "{kind}: {name}"
+            );
+            assert_eq!(
+                view.integrity == Integrity::Unchecked,
+                lone,
+                "{kind}: {name}"
+            );
+        }
+        assert_eq!(driver.len(), 6, "{kind}");
+    }
+}
+
+/// An orphaned directory cluster (nothing points to it, and it has no `.` and `..`) is found by its content.
+#[test]
+fn entries_in_an_orphaned_directory_cluster_are_found_by_content_by_both_adapters() {
+    for kind in KINDS {
+        let mut fixture = Fixture::new(kind);
+        let mut orphans = short_entry(b"TWO     TXT", 0x20, 18, 5);
+        orphans.extend(short_entry(b"THREE   TXT", 0x20, 19, 5));
+        fixture.put_cluster(16, &orphans);
+        fixture.put_cluster(18, b"two..");
+        fixture.put_cluster(19, b"three");
+        let generic = Fat::open_for_salvage(Memory(fixture.image.clone())).unwrap();
+        let session = scanned(&fixture, &format!("orphans-{kind}"));
+        let (app, ids) = app_side(&fixture, &session);
+        let driver = generic_side(&generic);
+        for name in ["TWO.TXT", "THREE.TXT"] {
+            let found = driver
+                .iter()
+                .find(|seen| seen.name == name)
+                .unwrap_or_else(|| panic!("{kind}: the generic adapter does not find {name}"));
+            let theirs = app
+                .iter()
+                .find(|seen| seen.name == name)
+                .unwrap_or_else(|| panic!("{kind}: the app does not find {name}"));
+            // The same 32 bytes, name, first cluster and size.
+            assert_eq!(
+                (
+                    found.at,
+                    &found.name,
+                    found.is_dir,
+                    found.first_cluster,
+                    found.size
+                ),
+                (
+                    theirs.at,
+                    &theirs.name,
+                    theirs.is_dir,
+                    theirs.first_cluster,
+                    theirs.size
+                ),
+                "{kind}"
+            );
+            // The state is the one difference. The driver says what the FAT says of the cluster the entry was found in: this
+            // one is free, so the entries are deleted. The app says what the entry's own first byte says: not deleted.
+            assert!(!found.live && theirs.live, "{kind}: {name}");
+        }
+        // The bytes of one, as each reads them.
+        let candidates = generic.candidates().unwrap();
+        let two = candidates
+            .iter()
+            .find(|candidate| candidate.name.as_deref() == Some("TWO.TXT"))
+            .unwrap();
         assert_eq!(
-            only_app,
-            ["child by.tes", "ORPHAN.TXT"],
-            "{kind}: file bytes in a cluster that reads like a directory entry, which the app's scan of every cluster \
-             takes for one; and a directory cluster nobody points to and that has no . and .. to name it, which the driver's \
-             discovery does not look for"
+            Fat::view(two).integrity,
+            fs_core_layers::layers::Integrity::Unchecked,
+            "found by content, not verified"
         );
+        let mut copied = Vec::new();
+        generic.copy(two, &mut copied).unwrap();
+        let (_, id, _) = ids
+            .iter()
+            .find(|(seen, _, _)| seen.name == "TWO.TXT")
+            .unwrap();
+        assert_eq!(copied, b"two..");
+        assert_eq!(session.read_entry_range(*id, 0, 5).unwrap().data, b"two..");
+        // Nothing is found by one and not the other: the entries no directory names (the two orphan entries, the lone ones)
+        // are found by both too, and the same six plus these two.
+        assert_eq!(driver.len(), 8, "{kind}");
         assert_eq!(
-            driver.len(),
-            4,
-            "{kind}: the long-named file, the folder, the deleted entry and the folder's child"
+            driver
+                .iter()
+                .map(|seen| (seen.at, seen.name.clone()))
+                .collect::<Vec<_>>(),
+            app.iter()
+                .map(|seen| (seen.at, seen.name.clone()))
+                .collect::<Vec<_>>(),
+            "{kind}"
         );
     }
 }
@@ -219,8 +319,8 @@ fn the_generic_adapter_places_the_extents_the_tree_and_the_bytes_as_the_fat_adap
         );
         assert_eq!(
             tree.orphans().count(),
-            0,
-            "{kind}: the driver's four candidates all sit under the root or the folder"
+            2,
+            "{kind}: the four the directories name sit under the root or the folder; the two lone entries have no parent"
         );
         for candidate in &candidates {
             let view = Fat::view(candidate);
@@ -231,19 +331,24 @@ fn the_generic_adapter_places_the_extents_the_tree_and_the_bytes_as_the_fat_adap
                 .unwrap_or_else(|| panic!("{kind}: {name} is not in the app's scan"));
             let at = format!("{kind}: {name}");
 
-            // The tree: the folder each is in.
+            // The tree: the folder each is in. The two entries found by content have no folder the driver can name, and the
+            // app calls them orphans at the cluster they were found in.
             let folder = placed
                 .iter()
                 .find(|place| place.id == view.id)
                 .unwrap()
                 .folder
-                .clone()
-                .unwrap();
-            assert_eq!(
-                &folder,
-                path.as_deref().unwrap().trim_start_matches('/'),
-                "{at}"
-            );
+                .clone();
+            let app_folder = path.as_deref().unwrap();
+            if app_folder.starts_with("[orphan @") {
+                assert_eq!(folder, None, "{at}");
+            } else {
+                assert_eq!(
+                    folder.as_deref(),
+                    Some(app_folder.trim_start_matches('/')),
+                    "{at}"
+                );
+            }
 
             // The extents: the clusters each claims. A deleted entry's chain is cleared, so the driver follows the claim
             // as one run, which is what the app does with `chainFallbackContiguous` on (below).
