@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-11-21
+
+### Maintenance
+
+- A saved copy of a volume's structures says where on the volume each region was read from, for FAT, exFAT and NTFS ([#348](https://github.com/antimatter-studios/captainsalvage/pull/348))
+
 ## [0.20.1] — 2026-11-21
 
 ### Maintenance
