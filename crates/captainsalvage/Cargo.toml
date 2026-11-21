@@ -22,7 +22,7 @@ fs-core = { package = "rust-fs-core", version = "=0.4.3" }
 # still use. A device implements both until every driver is on this one.
 fs-core-layers = { package = "rust-fs-core", version = "=0.5.0", features = ["layers"] }
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f" }
-fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "2272fa2f9c221b83dd7457bb7744dabc32f40898" }
+fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "3bc18be855ca6b08d123d209823902834ca6c9e2" }
 fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
