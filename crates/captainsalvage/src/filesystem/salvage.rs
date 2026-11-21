@@ -209,6 +209,54 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
     })
 }
 
+/// Where on the volume each region of a copy was read from, in the order of the manifest (the main boot region, its backup, the
+/// allocation table, the allocation bitmap, the root): the first byte of each, from the geometry the copy itself decodes to. A
+/// region the geometry does not place, or a copy that does not decode, has none.
+pub fn region_offsets(copy: &StructureCopy) -> [Option<u64>; 5] {
+    let mut offsets = [None; 5];
+    if copy.main.is_empty() {
+        return offsets;
+    }
+    offsets[0] = Some(0);
+    if copy.main.get(3..11) == Some(b"NTFS    ") {
+        if let Ok(inspected) = ntfs_salvage::inspect(copy) {
+            // The backup boot sector is the volume's last sector; the root holds records 0, 3 and 5 of `$MFT`, the first of which
+            // starts where the boot sector says `$MFT` does.
+            offsets[1] = (!copy.backup.is_empty()).then_some(inspected.geometry.volume_size);
+            offsets[4] = Some(inspected.boot.mft_cluster * inspected.boot.cluster_size);
+        }
+        return offsets;
+    }
+    let Ok(inspected) = inspect(copy) else {
+        return [None; 5];
+    };
+    let geometry = &inspected.geometry;
+    let sector = geometry.bytes_per_sector;
+    if !copy.backup.is_empty() {
+        offsets[1] = Some(if inspected.kind == FilesystemKind::Exfat {
+            // The backup boot region follows the main one, which is twelve sectors.
+            fs_exfat::primitives::BOOT_REGION_SECTORS * sector
+        } else {
+            // A FAT volume's reserved sectors after the boot sector.
+            sector
+        });
+    }
+    if !copy.fat.is_empty() {
+        offsets[2] = Some(geometry.fat_offset);
+    }
+    offsets[4] = match inspected.kind {
+        FilesystemKind::Exfat => Some(allocation::cluster_offset(geometry, geometry.root_cluster)),
+        FilesystemKind::Fat32 => Some(allocation::cluster_offset(geometry, geometry.root_cluster)),
+        FilesystemKind::Fat12 | FilesystemKind::Fat16 if !copy.root.is_empty() => {
+            // The fixed root directory follows the allocation table's copies.
+            let copies = copy.fat.len() as u64 / geometry.fat_bytes.max(1);
+            Some(geometry.fat_offset + geometry.fat_bytes * copies)
+        }
+        _ => None,
+    };
+    offsets
+}
+
 pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
     if structures.main.get(3..11) == Some(b"NTFS    ") {
         let inspected = ntfs_salvage::inspect(structures)?;

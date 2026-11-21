@@ -41,7 +41,10 @@ const REGIONS_V1: [(&str, &str); 5] = [
 pub struct Region {
     pub name: String,
     pub file: String,
-    /// Where the region starts in the source, when the adapter that read it knows.
+    /// Where on the volume the region's first byte was read from, in bytes, when the copy can say: the boot region at 0, the
+    /// backup where the format keeps it, the table where its geometry puts it. A region made of several places (the NTFS records
+    /// of the root, a FAT32 root directory in clusters) says where its first piece was. `None` for a region that has no place on
+    /// the volume (an empty one), or that cannot be told from the copy (an exFAT allocation bitmap).
     pub offset: Option<u64>,
     pub length: u64,
     pub sha256: String,
@@ -131,17 +134,19 @@ impl StructureCopy {
         ]
     }
 
-    /// What this copy holds, region by region.
+    /// What this copy holds, region by region, with where on the volume each was read from where that is known.
     pub fn manifest(&self) -> StructureManifest {
+        let offsets = salvage::region_offsets(self);
         StructureManifest {
             version: MANIFEST_VERSION,
             regions: REGIONS_V1
                 .iter()
                 .zip(self.parts())
-                .map(|((file, what), part)| Region {
+                .zip(offsets)
+                .map(|(((file, what), part), offset)| Region {
                     name: file.trim_end_matches(".bin").to_string(),
                     file: (*file).to_string(),
-                    offset: None,
+                    offset,
                     length: part.len() as u64,
                     sha256: hex(part),
                     what: (*what).to_string(),
