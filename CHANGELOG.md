@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.20.6] — 2026-11-21
+
+### Maintenance
+
+- SquashFS images are listed and copied through the generic layers adapter, and a kernel-made image of each compressor is checked against the kernel's own listing ([#356](https://github.com/antimatter-studios/captainsalvage/pull/356))
+
 ## [0.20.5] — 2026-11-21
 
 ### Maintenance
