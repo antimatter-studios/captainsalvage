@@ -685,7 +685,7 @@ pub fn entries_in_cluster(
                 .to_string(),
                 runs: Vec::new(),
             }),
-            ranges: crate::ranges::RangeList::default(),
+            ranges: crate::ranges::RangeList::from_walk(&walk),
             name_slot,
             weak: None,
             walk: None,

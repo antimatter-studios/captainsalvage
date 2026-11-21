@@ -7,6 +7,8 @@
 //! are inline in. The ranges of a stream are sorted, do not overlap, leave no gap and add up to the
 //! stream's size, which `RangeList::new` checks.
 //!
+//! A driver's candidates have ranges too, from the walk the driver made (`RangeList::from_walk`).
+//!
 //! This is the first slice of issue #212. The model is filled in by the FAT, exFAT and NTFS
 //! adapters for every entry they describe, from the same data the cluster lists come from. The second
 //! slice moved the preview of a FAT or exFAT entry to read them (`RangeList::from_clusters` and
@@ -308,6 +310,56 @@ impl RangeList {
     /// clusters that lie side by side are one readable range, a cluster outside the volume is
     /// `Missing`, and bytes past `valid_length` are `Sparse`. `length` is the stream's size, at most
     /// what the clusters hold; the list may be longer than the stream needs, and the extra is ignored.
+    /// The ranges of a driver's candidate from the walk its driver made of the storage the candidate claims: the stored bytes
+    /// of a run are `Readable`, a run the format stores encoded (compressed, or a window of a block that files share) is
+    /// `Compressed` and is decoded by the driver, a run the format allocated but did not write and every hole are `Sparse`,
+    /// and bytes the walk did not reach are `Missing` (zeros past a complete walk's end are `Sparse`). Nothing is
+    /// assumed contiguous, and nothing is a cluster.
+    pub fn from_walk(walk: &fs_core_layers::layers::ExtentWalk) -> Self {
+        use fs_core_layers::layers::WalkEnd;
+        let mut ranges: Vec<Range> = Vec::new();
+        let mut at = 0u64;
+        let mut push =
+            |start: u64, length: u64, kind: RangeKind, provenance: Option<Provenance>| {
+                if length > 0 {
+                    ranges.push(Range {
+                        start,
+                        length,
+                        kind,
+                        provenance,
+                    });
+                }
+            };
+        for extent in &walk.extents {
+            let length = extent.length();
+            if length == 0 || extent.offset < at {
+                // An empty run, or one that overlaps the one before: the walk is not trusted past it.
+                continue;
+            }
+            push(at, extent.offset - at, RangeKind::Sparse, None);
+            let place = Some(Provenance::Source {
+                offset: extent.source.offset,
+                length: extent.source.length,
+            });
+            if extent.uninitialized {
+                push(extent.offset, length, RangeKind::Sparse, None);
+            } else if extent.encoded.is_some() {
+                push(extent.offset, length, RangeKind::Compressed, place);
+            } else {
+                push(extent.offset, length, RangeKind::Readable, place);
+            }
+            at = extent.offset + length;
+        }
+        let kind = if walk.end == WalkEnd::Complete {
+            RangeKind::Sparse
+        } else {
+            RangeKind::Missing
+        };
+        push(at, walk.claimed.saturating_sub(at), kind, None);
+        let size = ranges.last().map_or(0, Range::end);
+        Self::new(ranges, size).unwrap_or_default()
+    }
+
     pub fn from_clusters(
         geometry: &VolumeGeometry,
         clusters: &[u32],
@@ -947,5 +999,93 @@ mod tests {
         // Nothing is read for a stretch that is only zeros.
         let (_, unreadable) = list.read(1700, 2000, 512, &mut |_, _| panic!("a hole was read"));
         assert!(unreadable.is_empty());
+    }
+
+    /// One run of a walk: file offset, source offset, length, whether it is unwritten, and (decoded size, run length) when encoded.
+    type Run = (u64, u64, u64, bool, Option<(u64, u64)>);
+
+    fn walk_of(
+        extents: Vec<Run>,
+        claimed: u64,
+        end: fs_core_layers::layers::WalkEnd,
+    ) -> fs_core_layers::layers::ExtentWalk {
+        use fs_core_layers::layers::{Encoding, Extent, ExtentWalk, WalkExtent};
+        ExtentWalk {
+            extents: extents
+                .into_iter()
+                .map(
+                    |(offset, source, length, uninitialized, encoded)| WalkExtent {
+                        offset,
+                        source: Extent::new(source, length),
+                        uninitialized,
+                        encoded: encoded.map(|(decoded, run)| Encoding {
+                            codec: "gzip".into(),
+                            decoded,
+                            offset: 0,
+                            length: run,
+                        }),
+                    },
+                )
+                .collect(),
+            claimed,
+            end,
+        }
+    }
+
+    #[test]
+    fn a_driver_walk_becomes_readable_compressed_and_sparse_ranges_with_holes_between() {
+        use fs_core_layers::layers::WalkEnd;
+        // 0..100 stored as it is, a hole to 300, 300..400 stored encoded (60 stored bytes decoding to the run), 400..450 not
+        // written, and a claim of 600: the end of a complete walk is zeros.
+        let walk = walk_of(
+            vec![
+                (0, 5000, 100, false, None),
+                (300, 9000, 60, false, Some((100, 100))),
+                (400, 0, 50, true, None),
+            ],
+            600,
+            WalkEnd::Complete,
+        );
+        let list = RangeList::from_walk(&walk);
+        let found: Vec<(u64, u64, RangeKind)> = list
+            .ranges()
+            .iter()
+            .map(|range| (range.start, range.length, range.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (0, 100, RangeKind::Readable),
+                (100, 200, RangeKind::Sparse),
+                (300, 100, RangeKind::Compressed),
+                (400, 50, RangeKind::Sparse),
+                (450, 150, RangeKind::Sparse),
+            ]
+        );
+        assert_eq!(list.size(), 600);
+        assert_eq!(
+            list.ranges()[0].provenance,
+            Some(Provenance::Source {
+                offset: 5000,
+                length: 100
+            })
+        );
+    }
+
+    #[test]
+    fn what_a_walk_did_not_reach_is_missing_and_a_walk_of_nothing_is_empty() {
+        use fs_core_layers::layers::WalkEnd;
+        let walk = walk_of(vec![(0, 0, 200, false, None)], 1000, WalkEnd::Broken);
+        let list = RangeList::from_walk(&walk);
+        assert_eq!(list.bytes_of(RangeKind::Readable), 200);
+        assert_eq!(list.bytes_of(RangeKind::Missing), 800);
+        assert!(RangeList::from_walk(&walk_of(Vec::new(), 0, WalkEnd::Complete)).is_empty());
+        // A run that overlaps the one before is not trusted.
+        let overlapping = walk_of(
+            vec![(0, 0, 100, false, None), (50, 100, 100, false, None)],
+            100,
+            WalkEnd::Complete,
+        );
+        assert_eq!(RangeList::from_walk(&overlapping).size(), 100);
     }
 }

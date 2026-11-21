@@ -628,8 +628,15 @@ impl Session {
             }
         };
         let valid = row.valid_length.min(row.length);
-        let mut ranges =
-            crate::ranges::RangeList::from_clusters(&self.volume.geometry, &clusters, total, valid);
+        let mut ranges = match &driver {
+            Some(stream) => crate::ranges::RangeList::from_walk(&stream.walk),
+            None => crate::ranges::RangeList::from_clusters(
+                &self.volume.geometry,
+                &clusters,
+                total,
+                valid,
+            ),
+        };
         ranges.mark_bad(&self.volume.bad_sectors());
         let stream = Arc::new(EntryStream {
             id,
