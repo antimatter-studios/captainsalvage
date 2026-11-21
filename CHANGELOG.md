@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.20.5] — 2026-11-21
+
+### Maintenance
+
+- SquashFS is pinned to rust-fs-squashfs's three layers (ef405d4), which brings rust-fs-core 0.5.1, and the generic adapter names a candidate by the driver's own id ([#354](https://github.com/antimatter-studios/captainsalvage/pull/354))
+
 ## [0.20.4] — 2026-11-21
 
 ### Maintenance

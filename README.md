@@ -1104,7 +1104,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.20.4 | MIT | captain-salvage |
+| `captainsalvage` | 0.20.5 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1242,6 +1242,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.20.5 — 2026-11-21
+
+**Maintenance**
+
+- SquashFS is pinned to rust-fs-squashfs's three layers (ef405d4), which brings rust-fs-core 0.5.1, and the generic adapter names a candidate by the driver's own id ([#354](https://github.com/antimatter-studios/captainsalvage/pull/354))
+
 ### v0.20.4 — 2026-11-21
 
 **Maintenance**
@@ -1297,12 +1303,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The FAT driver is pinned to rust-fs-fat's content discovery of orphaned directory clusters and lone entries (2272fa2), and the generic-versus-app FAT comparison asserts what it now finds ([#335](https://github.com/antimatter-studios/captainsalvage/pull/335))
-
-### v0.17.2 — 2026-11-21
-
-**Maintenance**
-
-- One generic adapter over rust-fs-core's layers, proven on FAT beside the FAT adapter the app uses, with the support rows derived from what a driver says it lacks ([#333](https://github.com/antimatter-studios/captainsalvage/pull/333))
 
 <!-- changelog:end -->
 
