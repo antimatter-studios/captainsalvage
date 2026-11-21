@@ -540,16 +540,11 @@ fn a_filesystem_scan_marks_its_rows_and_a_rescan_replaces_them_and_rebuilds_the_
     drop(session);
 
     change_two_markers(&image);
-    // Without acknowledging the changed markers nothing opens.
-    let waiting = call(&engine, "open_source", json!({"path": image.0}));
-    assert_eq!(waiting["needsChoice"], true);
-    let disk = waiting["disk"]["id"].as_str().unwrap().to_string();
-
-    let opened = call(
-        &engine,
-        "open_source",
-        json!({"diskId": disk, "acceptChangedMarkers": true}),
-    );
+    // The same drive after a mount rewrote two blocks: it opens at once, with nothing to
+    // acknowledge, and the regions around the rewritten blocks are marked stale.
+    let opened = call(&engine, "open_source", json!({"path": image.0}));
+    assert_ne!(opened["needsChoice"], true, "{opened}");
+    let disk = opened["disk"]["id"].as_str().unwrap().to_string();
     assert_eq!(opened["scan"]["id"], scan_id.as_str());
     assert_eq!(stale_state(&opened), 1, "{opened}");
     assert_eq!(opened["scan"]["staleRegions"], 1);
@@ -649,15 +644,7 @@ fn an_interrupted_filesystem_rescan_stays_stale_and_resumes() {
     let scan_id = first["scan"]["id"].as_str().unwrap().to_string();
     scan_fully(&engine.session().unwrap());
     change_two_markers(&image);
-    let disk = call(&engine, "open_source", json!({"path": image.0}))["disk"]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let opened = call(
-        &engine,
-        "open_source",
-        json!({"diskId": disk, "acceptChangedMarkers": true}),
-    );
+    let opened = call(&engine, "open_source", json!({"path": image.0}));
     assert_eq!(stale_state(&opened), 1);
     let session = engine.session().unwrap();
     let catalog = Catalog::for_user().unwrap();

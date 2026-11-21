@@ -609,9 +609,9 @@ export default function App() {
     await openSource({ diskId: opened.disk.id, ...(opened.extent ? { extent: opened.extent } : {}), format: id }, "switch");
     setSwitching(false);
   }, [opened, openSource]);
-  const openScan = useCallback((scanId: string, acceptChangedMarkers: boolean) => {
+  const openScan = useCallback((scanId: string, acceptChangedMarkers: boolean, resumeAnyway?: boolean) => {
     if (diskNow === null) return;
-    void openSource({ diskId: diskNow, ...(extentNow ? { extent: extentNow } : {}), scanId, acceptChangedMarkers });
+    void openSource({ diskId: diskNow, ...(extentNow ? { extent: extentNow } : {}), scanId, acceptChangedMarkers, ...(resumeAnyway ? { resumeAnyway } : {}) });
   }, [diskNow, extentNow, openSource]);
   /** A rescan of the changed regions finished or stopped: what it stored is read again. */
   const rescanned = useCallback((result: RescanResult) => {

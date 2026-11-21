@@ -181,6 +181,27 @@ impl<'a> MarkerReader<'a> {
     }
 }
 
+impl Comparison {
+    /// This comparison for a source that is the same physical drive as the saved one (see
+    /// [`RawDisk::physical_identity`]). The drive is the same whatever its markers say, so the
+    /// state is exact and nothing here stops anything. What the markers say is kept: the changed
+    /// ones still mark the regions around them stale, and bad zones are still skipped.
+    pub fn as_same_drive(mut self) -> Self {
+        self.state = Verification::Exact;
+        self.summary = if self.changed_offsets.is_empty() {
+            format!("This is the same drive. {}", self.summary)
+        } else {
+            format!(
+                "This is the same drive, so the changed markers did not stop it. {}",
+                self.summary
+            )
+        }
+        .trim_end()
+        .to_string();
+        self
+    }
+}
+
 impl Fingerprint {
     pub fn read(disk: &RawDisk) -> Self {
         Self::read_with(&mut MarkerReader::new(disk))

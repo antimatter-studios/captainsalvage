@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS raw_scans (
                  length INTEGER NOT NULL, error TEXT NOT NULL, source_token TEXT NOT NULL,
                  PRIMARY KEY(scan_id, offset)
              );
+             CREATE TABLE IF NOT EXISTS raw_scan_physical (
+                 scan_id TEXT NOT NULL REFERENCES raw_scans(id), physical TEXT NOT NULL,
+                 PRIMARY KEY(scan_id, physical)
+             );
              CREATE TABLE IF NOT EXISTS raw_scan_changes (
                  scan_id TEXT PRIMARY KEY REFERENCES raw_scans(id), resumes INTEGER NOT NULL,
                  resumed_at_millis INTEGER NOT NULL, confidence_percent INTEGER NOT NULL,
@@ -177,7 +181,13 @@ impl ScanStore {
         let mut hidden = 0;
         while let Some(row) = rows.next()? {
             let saved: Fingerprint = serde_json::from_str(&row.get::<_, String>(1)?)?;
+            let saved_id: String = row.get(0)?;
             let comparison = saved.compare(&mut reader);
+            let comparison = if self.is_same_drive(disk, &saved_id)? {
+                comparison.as_same_drive()
+            } else {
+                comparison
+            };
             let verification = match comparison.state {
                 Verification::Different => continue,
                 _ if row.get::<_, u32>(2)? != SCANNER_VERSION => Verification::Incompatible,
@@ -245,6 +255,12 @@ impl ScanStore {
                 now as i64
             ],
         )?;
+        if let Some(physical) = disk.physical_identity() {
+            self.connection.execute(
+                "INSERT OR REPLACE INTO raw_scan_physical VALUES (?1, ?2)",
+                params![id, physical],
+            )?;
+        }
         bindings.insert(id.clone(), token);
         self.register(disk, &id, start, length);
         self.snapshot(&id)
@@ -271,6 +287,34 @@ impl ScanStore {
         accept_changed_markers: bool,
     ) -> Result<ScanSnapshot> {
         ensure!(accept_sampled_match, "Resuming requires acknowledgement that sampled matches do not prove the entire source is identical.");
+        self.resume_with(disk, id, accept_changed_markers, false)
+    }
+
+    /// Resumes a saved scan on a source that does not match it, because the person said to. The
+    /// scan records that it was resumed on a source it could not be matched to.
+    pub fn resume_anyway(&mut self, disk: &RawDisk, id: &str) -> Result<ScanSnapshot> {
+        self.resume_with(disk, id, true, true)
+    }
+
+    /// Whether the saved scan was made on this same part of this same physical drive.
+    fn is_same_drive(&self, disk: &RawDisk, id: &str) -> Result<bool> {
+        let Some(now) = disk.physical_identity() else {
+            return Ok(false);
+        };
+        Ok(self.connection.query_row(
+            "SELECT count(*) > 0 FROM raw_scan_physical WHERE scan_id = ?1 AND physical = ?2",
+            params![id, now],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn resume_with(
+        &mut self,
+        disk: &RawDisk,
+        id: &str,
+        accept_changed_markers: bool,
+        anyway: bool,
+    ) -> Result<ScanSnapshot> {
         let mut bindings = disk
             .scan_tokens
             .lock()
@@ -288,8 +332,28 @@ impl ScanStore {
             "Saved scan uses an incompatible scanner; start a new scan."
         );
         let saved: Fingerprint = serde_json::from_str(&fingerprint)?;
-        // The markers are read before the database is locked, once each and within a time limit.
-        let comparison = saved.compare(&mut MarkerReader::new(disk));
+        // The same part of the same physical drive is the scan's source whatever its blocks read
+        // now, so what the markers say never stops it. Markers decide for another device (a
+        // clone, an image) or a drive of unknown identity. Either way a marker in a bad zone is
+        // skipped, not changed, and the markers that changed mark the regions around them stale.
+        // They are read before the database is locked, once each and within a time limit.
+        let same_drive = self.is_same_drive(disk, id)?;
+        let mut comparison = saved.compare(&mut MarkerReader::new(disk));
+        if same_drive {
+            comparison = comparison.as_same_drive();
+        }
+        if anyway
+            && !matches!(
+                comparison.state,
+                Verification::Exact | Verification::Probable
+            )
+        {
+            comparison.summary = format!(
+                "Resumed without a match, because it was asked for. {}",
+                comparison.summary
+            );
+            comparison.state = Verification::Probable;
+        }
         match comparison.state {
             Verification::Exact => {}
             Verification::Probable => ensure!(
@@ -303,7 +367,9 @@ impl ScanStore {
                 comparison.summary
             ),
         }
-        if comparison.state == Verification::Probable {
+        let changed =
+            comparison.state == Verification::Probable || !comparison.changed_offsets.is_empty();
+        if changed {
             // What was stored near the changed markers may be out of date. This is done before
             // the scan is bound, so a failure to mark is not left behind a resumed scan.
             self.mark_changed(id, &comparison)?;
@@ -338,8 +404,17 @@ impl ScanStore {
             "UPDATE raw_scans SET attempt_start = next_offset WHERE id = ?1",
             [id],
         )?;
-        if comparison.state == Verification::Probable {
+        if changed {
             record_changed_source(&transaction, id, &comparison)?;
+        }
+        if comparison.state == Verification::Exact {
+            if let Some(physical) = disk.physical_identity() {
+                // A scan made before drives were recognised by identity learns this one on an exact match.
+                transaction.execute(
+                    "INSERT OR IGNORE INTO raw_scan_physical VALUES (?1, ?2)",
+                    params![id, physical],
+                )?;
+            }
         }
         transaction.commit()?;
         bindings.insert(id.into(), token);

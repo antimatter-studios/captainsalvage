@@ -33,7 +33,9 @@ enum Plan {
 }
 
 fn open_accept(args: &Value) -> Accept {
-    if bool_of(args, "acceptChangedMarkers", false) {
+    if bool_of(args, "resumeAnyway", false) {
+        Accept::Anyway
+    } else if bool_of(args, "acceptChangedMarkers", false) {
         Accept::Probable
     } else {
         Accept::Exact
@@ -176,6 +178,9 @@ impl Engine {
         let rescan = bool_of(args, "rescan", false);
         let wanted_scan = str_of(args, "scanId");
         let wanted_format = str_of(args, "format");
+        if accept == Accept::Anyway && author != AUTHOR_USER {
+            bail!("Only the person using the app resumes a scan on a source that does not match it. Suggest it to them instead.");
+        }
         if (wanted_format.is_some() || rescan) && author != AUTHOR_USER {
             bail!("Only the person using the app switches an interpretation or starts a scan again. Suggest it to them instead.");
         }
@@ -208,7 +213,36 @@ impl Engine {
             None => &disk,
         };
         let catalog = Catalog::for_user()?;
-        let identification = catalog.identify(view, show_all)?;
+        let mut identification = catalog.identify(view, show_all)?;
+        // A stored drive that matches too little to be applied is still said, never passed over:
+        // opening goes on as a new source only when the person says so.
+        let unmatched = wanted_scan.is_none()
+            && !fresh
+            && accept == Accept::Exact
+            && (identification.hidden > 0 || !identification.matches.is_empty())
+            && !identification
+                .matches
+                .iter()
+                .any(|found| found.verification != Verification::Weak);
+        if unmatched && identification.hidden > 0 {
+            identification = catalog.identify(view, true)?;
+        }
+        // Nothing matched, and nothing names this drive: the saved scans of its size are offered
+        // too, because a drive that cannot be recognised is the one that most needs asking about.
+        let same_size = wanted_scan.is_none()
+            && !fresh
+            && accept == Accept::Exact
+            && identification.matches.is_empty()
+            && identification.hidden == 0;
+        let same_size = if same_size {
+            catalog.unmatched_of_size(view)?
+        } else {
+            Vec::new()
+        };
+        let unmatched = unmatched || !same_size.is_empty();
+        if !same_size.is_empty() {
+            identification.matches = same_size;
+        }
         let exact = identification
             .matches
             .iter()
@@ -221,7 +255,7 @@ impl Engine {
             && !fresh
             && accept == Accept::Exact
             && exact.is_none()
-            && probable.is_some()
+            && (probable.is_some() || unmatched)
         {
             return Ok(json!({
                 "needsChoice": true,
@@ -252,7 +286,7 @@ impl Engine {
             .map(|scan| scan.source_id.clone())
             .or_else(|| {
                 exact
-                    .or(if accept == Accept::Probable {
+                    .or(if accept.allows_probable() {
                         probable
                     } else {
                         None
@@ -451,12 +485,11 @@ impl Engine {
                 catalog.touch_scan(&scan.id)?;
                 if let Some(raw) = scan.raw_scan_id.as_deref() {
                     let mut store = crate::raw_scan::ScanStore::for_user()?;
-                    raw_snapshot = serde_json::to_value(store.resume(
-                        &disk,
-                        raw,
-                        true,
-                        accept == Accept::Probable,
-                    )?)?;
+                    raw_snapshot = serde_json::to_value(if accept == Accept::Anyway {
+                        store.resume_anyway(&disk, raw)?
+                    } else {
+                        store.resume(&disk, raw, true, accept.allows_probable())?
+                    })?;
                 }
                 // After the scan resumed: on a probable match that marks what may be out of date.
                 opened_scan = Some(catalog.scan(&scan.id)?);

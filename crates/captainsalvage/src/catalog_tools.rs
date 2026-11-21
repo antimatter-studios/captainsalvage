@@ -57,6 +57,7 @@ fn view_of(disk: &RawDisk, args: &Value) -> Result<RawDisk> {
             let mut view = RawDisk::with_source(&disk.path, disk.source.clone(), disk.length)?;
             // The same device, so the same health map.
             view.health = disk.health.clone();
+            view.hardware = disk.hardware.clone();
             Ok(view)
         }
     }
@@ -79,7 +80,7 @@ pub fn definitions() -> Vec<Definition> {
         Definition {
             name: "list_scans",
             description: "Lists the scans stored for a source, newest work of the interpretation last used first. A scan is a source, an interpretation (an extent of the source and the format read there, or none for raw bytes), its options, the scanner version and the range it covers; changing any of them makes a new scan, and the earlier ones stay. Each shows its interpretation and where it came from (analysis or manual), what range it covers and how far it has read, its status, when it was made and last opened, its name, and how many bytes it stores on this Mac. Give sourceId for one source, or diskId to list the scans of every stored source the open raw source matches (showAll adds weak matches). Opening a scan reads what is stored and starts no scan. Read only.",
-            properties: json!({"sourceId": {"type": "string", "description": "A source ID from list_sources."}, "diskId": disk_id(), "extent": extent_argument(), "showAll": {"type": "boolean", "description": "With diskId, also list weak matches."}}),
+            properties: json!({"sourceId": {"type": "string", "description": "A source ID from list_sources."}, "diskId": disk_id(), "extent": extent_argument(), "showAll": {"type": "boolean", "description": "With diskId, also list weak matches."}, "sameSize": {"type": "boolean", "description": "With diskId, when nothing matches and nothing names the drive (no serial number, and a first sector that cannot be read), list the stored sources of the same size that have scans, to resume anyway."}}),
             required: &[],
         },
         Definition {
@@ -192,7 +193,10 @@ pub fn call(tool: &str, disk: Option<&RawDisk>, args: &Value, person: bool) -> R
                 return Ok(listing(&catalog.source(id)?, catalog.scans(id)?));
             }
             let view = view_of(need_disk()?, args)?;
-            let identified = catalog.identify(&view, flag(args, "showAll"))?;
+            let mut identified = catalog.identify(&view, flag(args, "showAll"))?;
+            if flag(args, "sameSize") && identified.matches.is_empty() {
+                identified.matches = catalog.unmatched_of_size(&view)?;
+            }
             let mut matches = Vec::new();
             for found in &identified.matches {
                 let scans = catalog.scans(&found.source.id)?;

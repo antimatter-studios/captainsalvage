@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS sources (
     last_path TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS sources_length ON sources(length);
+CREATE TABLE IF NOT EXISTS source_physical (
+    physical TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id)
+);
 CREATE TABLE IF NOT EXISTS interpretations (
     hypothesis_id TEXT PRIMARY KEY REFERENCES hypotheses(id),
     source_id TEXT NOT NULL REFERENCES sources(id),
@@ -159,6 +162,8 @@ pub enum MatchedBy {
     /// The volume's old key (its serial number) names it, and its markers agree at least
     /// probably, or it had no markers yet.
     VolumeKey,
+    /// The same part of the same physical drive was opened before. No marker was compared.
+    Physical,
     /// Nothing stored matched, so a new source was made.
     New,
 }
@@ -190,6 +195,16 @@ pub enum Accept {
     Exact,
     /// A probable match too, because the person acknowledged the changed markers.
     Probable,
+    /// Whatever the markers say, because the person asked to resume it anyway. The scan records
+    /// that its source could not be matched.
+    Anyway,
+}
+
+impl Accept {
+    /// Whether a probable match, with its changed markers, may be applied.
+    pub fn allows_probable(self) -> bool {
+        self != Accept::Exact
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -373,7 +388,7 @@ impl Catalog {
     pub fn identify(&self, disk: &RawDisk, show_all: bool) -> Result<Identification> {
         let mut reader = MarkerReader::new(disk);
         let fingerprint = Fingerprint::read_with(&mut reader);
-        let (matches, hidden) = self.compare_all(disk, &mut reader, show_all)?;
+        let (matches, hidden) = self.compare_all(disk, &mut reader, show_all, false)?;
         Ok(Identification {
             fingerprint,
             matches,
@@ -381,16 +396,40 @@ impl Catalog {
         })
     }
 
+    /// The stored sources of this length that have scans, when nothing names this device: it has
+    /// no identity (no serial number, and a first sector that cannot be read), and no marker of
+    /// it matched any of them. They are not a match, and a new source made beside them would
+    /// leave their scans unseen, so the person is shown them to resume anyway. A device with an
+    /// identity that matches none of them is another drive, and is not listed.
+    pub fn unmatched_of_size(&self, disk: &RawDisk) -> Result<Vec<SourceMatch>> {
+        if disk.physical_identity().is_some() {
+            return Ok(Vec::new());
+        }
+        let mut reader = MarkerReader::new(disk);
+        let (matches, _) = self.compare_all(disk, &mut reader, true, true)?;
+        let mut found = Vec::new();
+        for entry in matches {
+            if entry.verification == Verification::Different
+                && !self.scans(&entry.source.id)?.is_empty()
+            {
+                found.push(entry);
+            }
+        }
+        Ok(found)
+    }
+
     fn compare_all(
         &self,
         disk: &RawDisk,
         reader: &mut MarkerReader,
         show_all: bool,
+        with_unmatched: bool,
     ) -> Result<(Vec<SourceMatch>, usize)> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {SOURCE_COLUMNS}, fingerprint FROM sources
              WHERE length = ?1 AND fingerprint IS NOT NULL ORDER BY last_seen_millis DESC"
         ))?;
+        let same_drive = self.physical_source(disk)?;
         let mut rows = statement.query(params![disk.length as i64])?;
         let mut matches = Vec::new();
         let mut hidden = 0;
@@ -398,7 +437,19 @@ impl Catalog {
             let source = source_row(row)?;
             let saved: Fingerprint = serde_json::from_str(&row.get::<_, String>(SOURCE_FIELDS)?)?;
             let comparison = saved.compare(reader);
+            let comparison = if same_drive.as_deref() == Some(source.id.as_str()) {
+                comparison.as_same_drive()
+            } else {
+                comparison
+            };
+            let mut comparison = comparison;
             match comparison.state {
+                Verification::Different if with_unmatched => {
+                    comparison.summary = format!(
+                        "No identity and no readable markers matched. {}",
+                        comparison.summary
+                    );
+                }
                 Verification::Different | Verification::Incompatible => continue,
                 Verification::Weak if !show_all => {
                     hidden += 1;
@@ -436,7 +487,46 @@ impl Catalog {
         accept: Accept,
         volume_key: Option<&str>,
     ) -> Result<Resolution> {
-        self.resolve_attempt(disk, accept, volume_key, 0)
+        let resolution = self.resolve_attempt(disk, accept, volume_key, 0)?;
+        if resolution.matched_by != MatchedBy::Physical {
+            self.remember_physical(disk, &resolution.source.id)?;
+        }
+        Ok(resolution)
+    }
+
+    /// The stored source that is this same part of the same physical drive, if one was opened
+    /// before. It does not depend on what any block reads now, so a drive whose blocks read
+    /// differently, or are in a bad zone, or which was opened carefully, is still found.
+    fn physical_source(&self, disk: &RawDisk) -> Result<Option<String>> {
+        let Some(physical) = disk.physical_identity() else {
+            return Ok(None);
+        };
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT source_id FROM source_physical JOIN sources ON sources.id = source_id
+                 WHERE physical = ?1 AND sources.length = ?2",
+                params![physical, disk.length as i64],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    fn remember_physical(&self, disk: &RawDisk, source_id: &str) -> Result<()> {
+        if let Some(hardware) = disk
+            .hardware
+            .as_ref()
+            .filter(|hardware| hardware.model.is_some() || hardware.serial.is_some())
+        {
+            self.set_hardware(source_id, hardware)?;
+        }
+        if let Some(physical) = disk.physical_identity() {
+            self.connection.execute(
+                "INSERT OR IGNORE INTO source_physical (physical, source_id) VALUES (?1, ?2)",
+                params![physical, source_id],
+            )?;
+        }
+        Ok(())
     }
 
     /// One try at [`Catalog::resolve_source`]. Another app can make the source for this same
@@ -453,19 +543,37 @@ impl Catalog {
             disk.length <= i64::MAX as u64,
             "source exceeds the stored length limit"
         );
+        let path = disk.path.to_string_lossy().into_owned();
+        // The same part of the same physical drive is the same source, with no marker read.
+        if let Some(id) = self.physical_source(disk)? {
+            ensure!(
+                !disk.source.is_gone(),
+                "The disk has been disconnected; it was not identified."
+            );
+            self.see(&id, &path)?;
+            // What the markers say is kept, to mark what changed stale, and decides nothing.
+            let comparison = self
+                .fingerprint_of(&id)?
+                .map(|saved| saved.compare(&mut MarkerReader::new(disk)).as_same_drive());
+            return Ok(Resolution {
+                source: self.source(&id)?,
+                matched_by: MatchedBy::Physical,
+                comparison,
+                declined: None,
+            });
+        }
         let mut reader = MarkerReader::new(disk);
         let current = Fingerprint::read_with(&mut reader);
         ensure!(
             !disk.source.is_gone(),
             "The disk has been disconnected; it was not identified."
         );
-        let path = disk.path.to_string_lossy().into_owned();
         let known = self.sources_of_length(disk.length)?;
-        let (matches, _) = self.compare_all(disk, &mut reader, false)?;
+        let (matches, _) = self.compare_all(disk, &mut reader, false, false)?;
         let mut declined = None;
         if let Some(best) = matches.iter().find(|found| match found.verification {
             Verification::Exact => true,
-            Verification::Probable => accept == Accept::Probable,
+            Verification::Probable => accept.allows_probable(),
             _ => false,
         }) {
             self.see(&best.source.id, &path)?;

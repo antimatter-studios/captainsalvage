@@ -317,6 +317,8 @@ pub struct RawDisk {
     pub(crate) scan_tokens: Mutex<HashMap<String, String>>,
     /// Set when the source reads through the guard of the health map ([`crate::health`]).
     pub health: Option<HealthView>,
+    /// What the drive's hardware says it is, when the system said (see [`crate::hardware`]).
+    pub hardware: Option<crate::catalog::Hardware>,
 }
 
 impl RawDisk {
@@ -370,6 +372,7 @@ impl RawDisk {
         let health = Health::attach_in(source, length, store, own_key, link)?;
         let mut disk = Self::with_source(path, health.guard(), length)?;
         disk.health = Some(HealthView { health, base: 0 });
+        disk.hardware = Some(crate::hardware::read(path));
         Ok(disk)
     }
 
@@ -495,7 +498,31 @@ impl RawDisk {
                     .unwrap_or_default(),
             ),
             health: self.health.clone(),
+            hardware: self.hardware.clone(),
         })
+    }
+
+    /// Says what the hardware of this source is, for a test or a caller that knows it.
+    pub fn with_hardware(mut self, hardware: crate::catalog::Hardware) -> Self {
+        self.hardware = Some(hardware);
+        self
+    }
+
+    /// Which part of which physical drive this source is: the drive, and where this view starts
+    /// in it and how long it is. The drive is named by its model and serial number when the
+    /// hardware gave a serial number that tells it from others, and otherwise by its key (the one
+    /// its health map is kept under: its length, its first sector and a GPT disk's GUID). The same
+    /// drive opened again, whatever its device node is called and however its blocks read now,
+    /// gives the same text. None when the source has no health guard, or nothing names the drive:
+    /// no serial number, and a first sector that could not be read.
+    pub fn physical_identity(&self) -> Option<String> {
+        let view = self.health.as_ref()?;
+        let place = format!("@{}+{}", view.health.base() + view.base, self.length);
+        if let Some(hardware) = self.hardware.as_ref().and_then(|found| found.identity()) {
+            return Some(format!("hw:{hardware}{place}"));
+        }
+        let key = view.health.key();
+        (!key.contains("unreadable-head")).then(|| format!("{key}{place}"))
     }
 
     /// The disk has reset (see [`crate::health::Health::careful_open`]): opening it spares it.
@@ -534,6 +561,7 @@ impl RawDisk {
             length,
             scan_tokens: Mutex::new(HashMap::new()),
             health: None,
+            hardware: None,
         })
     }
 
@@ -543,6 +571,7 @@ impl RawDisk {
     pub fn extent(&self, start: u64, length: u64) -> Result<RawDisk> {
         let region = RegionSource::new(self.source.clone(), self.length, start, length)?;
         let mut view = Self::with_source(&self.path, Arc::new(region), length)?;
+        view.hardware = self.hardware.clone();
         view.health = self.health.as_ref().map(|health| HealthView {
             health: health.health.clone(),
             base: health.base + start,

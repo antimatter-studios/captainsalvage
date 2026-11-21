@@ -20,6 +20,7 @@ pub mod export;
 pub mod exporting;
 pub mod filesystem;
 pub mod filetest;
+pub mod hardware;
 pub mod health;
 pub mod health_tools;
 pub mod hypotheses;
