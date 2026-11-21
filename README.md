@@ -1128,7 +1128,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.21.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.22.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1266,6 +1266,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.22.0 — 2026-11-21
+
+**Added**
+
+- **A SquashFS image opens, scans and shows its files.** The app reads it through the filesystem's own driver: its folders and files are listed, a file is previewed from any place in it, and a copy writes the bytes the driver decodes (every compressor SquashFS has: gzip, xz, lzo, lz4 and zstd), with each copy hashed and marked complete or partial as for the other filesystems. Symbolic links and special files are not listed yet, and no allocation is read from the image, so its map shows every cluster as unknown rather than free. The support table has a SquashFS column.
+
 ### v0.21.0 — 2026-11-21
 
 **Added**
@@ -1321,12 +1327,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 - **A drive you opened before is recognised as the same drive, so its scan resumes at once.** This holds even when its blocks read differently now or the drive was opened carefully after a reset. A mount that rewrote blocks still marks the regions around them as possibly out of date.
 - **A drive is recognised by its model and serial number when the system reports one.** A damaged drive whose first sector cannot be read is still the same drive, and a copy with another serial number is not.
 - **When a saved scan cannot be matched to the drive, you are asked.** You can choose Resume anyway or open the drive as a new source. This includes a drive that cannot be recognised at all, for which the saved scans of the same size are offered. A scan is never started again silently.
-
-### v0.18.1 — 2026-11-21
-
-**Fixed**
-
-- **Resuming a scan on the same damaged drive now continues from its checkpoint.** You avoid starting over at a block that still cannot be read.
 
 <!-- changelog:end -->
 
