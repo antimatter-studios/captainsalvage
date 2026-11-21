@@ -19,13 +19,15 @@ pub enum FilesystemBoot {
     Exfat(BootSector),
     Fat(FilesystemDetails),
     Ntfs(NtfsBoot),
+    /// A driver's volume: what its own geometry says of it.
+    Driver(FilesystemDetails),
 }
 
 impl FilesystemBoot {
     pub fn exfat(&self) -> Option<&BootSector> {
         match self {
             Self::Exfat(boot) => Some(boot),
-            Self::Fat(_) | Self::Ntfs(_) => None,
+            Self::Fat(_) | Self::Ntfs(_) | Self::Driver(_) => None,
         }
     }
 }
@@ -151,6 +153,9 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
     if &sector[3..11] == super::BITLOCKER_OEM_ID {
         bail!("{}", super::BITLOCKER_MESSAGE);
     }
+    if let Some(driver) = super::drivers::recognise(&sector) {
+        return super::drivers::read_structures(source, driver);
+    }
     let boot = match FatBoot::parse(&sector) {
         Ok(boot) if &sector[3..11] != b"EXFAT   " => boot,
         _ => {
@@ -218,6 +223,10 @@ pub fn region_offsets(copy: &StructureCopy) -> [Option<u64>; 5] {
         return offsets;
     }
     offsets[0] = Some(0);
+    if super::drivers::recognise(&copy.main).is_some() {
+        // A driver's volume saves the bytes its structures are in, from the first, and no other region.
+        return offsets;
+    }
     if copy.main.get(3..11) == Some(b"NTFS    ") {
         if let Ok(inspected) = ntfs_salvage::inspect(copy) {
             // The backup boot sector is the volume's last sector; the root holds records 0, 3 and 5 of `$MFT`, the first of which
@@ -258,6 +267,9 @@ pub fn region_offsets(copy: &StructureCopy) -> [Option<u64>; 5] {
 }
 
 pub fn inspect(structures: &StructureCopy) -> Result<Inspected> {
+    if let Some(driver) = super::drivers::recognise(&structures.main) {
+        return super::drivers::inspect(structures, driver);
+    }
     if structures.main.get(3..11) == Some(b"NTFS    ") {
         let inspected = ntfs_salvage::inspect(structures)?;
         return Ok(Inspected {
@@ -406,6 +418,8 @@ pub fn find_entries(
         FilesystemKind::Fat16 => FatKind::Fat16,
         FilesystemKind::Fat32 => FatKind::Fat32,
         FilesystemKind::Ntfs => return ntfs_salvage::find_entries(geometry, data, start_limit),
+        // A driver's entries are the driver's candidates, found once by `Volume`, not in the clusters.
+        FilesystemKind::Squashfs => return Vec::new(),
     };
     let aligned = &data[..data.len() / 32 * 32];
     fs_fat32::directory::scan_directory(aligned, fat_kind)

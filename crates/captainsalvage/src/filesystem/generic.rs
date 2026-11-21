@@ -119,6 +119,11 @@ where
         Ok(capability_rows(&support, &health))
     }
 
+    /// The structures the driver names (boot sector, superblock, tables), and where each is.
+    pub fn structures(&self) -> Result<Vec<fs_core_layers::layers::Structure>> {
+        Ok(self.volume.structures()?)
+    }
+
     /// Every candidate on the volume, live, deleted or damaged, in the order the driver finds them.
     pub fn candidates(&self) -> Result<Vec<Candidate<Detail<V>>>> {
         Ok(self.volume.salvage()?.all_candidates()?)

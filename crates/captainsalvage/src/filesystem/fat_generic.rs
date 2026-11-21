@@ -61,6 +61,19 @@ pub struct Overlay {
 }
 
 impl Overlay {
+    /// The source as the driver sees it: `length` bytes, with `patches` (`(offset, bytes)`) read in place of the disk's.
+    pub(crate) fn new(
+        source: Arc<dyn BlockSource>,
+        length: u64,
+        patches: Vec<(u64, Vec<u8>)>,
+    ) -> Self {
+        Self {
+            source,
+            length,
+            patches,
+        }
+    }
+
     fn read(&self, offset: u64, output: &mut [u8]) -> std::io::Result<()> {
         self.source.read_exact_at(offset, output)?;
         let end = offset + output.len() as u64;
