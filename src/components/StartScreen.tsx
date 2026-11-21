@@ -253,7 +253,7 @@ function VolumeRow({ volume, onOpen }: { volume: StartupVolume; onOpen: (path: s
         </span>
       </div>
       <span className={`start-status start-status-${status}`}>{statusLabel(status)}</span>
-      {volume.uuid && <MountBlockToggle compact uuid={volume.uuid} name={title} mounted={Boolean(volume.mountPoint)} />}
+      {volume.mountBlockKey && <MountBlockToggle compact uuid={volume.mountBlockKey} device={volume.uuid ? undefined : volume.device} name={title} mounted={Boolean(volume.mountPoint)} />}
       {(status === "ready" || status === "raw") && <button className="primary start-open" onClick={() => onOpen(volume.device)}>{t("Open")}</button>}
     </li>
   );
@@ -403,7 +403,7 @@ export function StartScreen({ imagePath, failure, onOpen, onBack, themeSwitch }:
   const disks = report?.disks ?? [];
   const groups = useMemo(() => diskGroups(disks, volumes), [disks, volumes]);
   const elsewhere = report?.elsewhere ?? [];
-  const blockable = volumes.some((volume) => volume.uuid) || elsewhere.some((known) => known.record.uuid);
+  const blockable = volumes.some((volume) => volume.mountBlockKey) || elsewhere.some((known) => known.record.uuid);
 
   return (
     <main className="start">

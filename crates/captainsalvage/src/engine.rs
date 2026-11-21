@@ -838,13 +838,29 @@ impl Engine {
                     .get("blocked")
                     .and_then(Value::as_bool)
                     .context("blocked must be true or false")?;
-                let blocks = crate::mountblock::set(
-                    &crate::workspace::Workspace::root()?,
-                    need_str(args, "uuid")?,
-                    str_of(args, "name").unwrap_or_default(),
-                    blocked,
-                    author == AUTHOR_USER,
-                )?;
+                let folder = crate::workspace::Workspace::root()?;
+                let name = str_of(args, "name").unwrap_or_default();
+                let key = str_of(args, "uuid").unwrap_or_default().trim();
+                let device = str_of(args, "device").unwrap_or_default().trim();
+                let by_person = author == AUTHOR_USER;
+                // A volume with a UUID is named by it. One without is named by its device, to be
+                // blocked, and by the key the list gave, to be let go.
+                let blocks = if !blocked && !key.is_empty() {
+                    crate::mountblock::set(&folder, key, name, false, by_person)?
+                } else if !device.is_empty()
+                    && (key.is_empty() || crate::mountblock::is_place_key(key))
+                {
+                    crate::mountblock::set_by_device(
+                        &folder,
+                        device,
+                        name,
+                        blocked,
+                        by_person,
+                        Some(key),
+                    )?
+                } else {
+                    crate::mountblock::set(&folder, key, name, blocked, by_person)?
+                };
                 Ok(json!({"blocks": blocks}))
             }
             "open_volume" => {

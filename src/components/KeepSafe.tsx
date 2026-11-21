@@ -25,9 +25,9 @@ export function KeepSafe({ device }: { device: string }) {
 
   const volumes = report?.volumes ?? [];
   const drive = volumes.find((volume) => volume.device === device)?.wholeDisk;
-  const onDrive = volumes.filter((volume) => drive && volume.wholeDisk === drive && volume.canOpen && volume.uuid);
+  const onDrive = volumes.filter((volume) => drive && volume.wholeDisk === drive && volume.canOpen && volume.mountBlockKey);
   if (onDrive.length === 0) return null;
-  const waiting = onDrive.filter((volume) => !blocked.has((volume.uuid ?? "").toUpperCase()));
+  const waiting = onDrive.filter((volume) => !blocked.has((volume.mountBlockKey ?? "").toUpperCase()));
   // Lines an older version of the app asked people to add. They do not reliably stop a mount.
   const oldLines = onDrive.filter((volume) => volume.protected);
   const names = onDrive.map((volume) => volume.name || t("unnamed volume")).join(t(" and "));
@@ -50,7 +50,7 @@ export function KeepSafe({ device }: { device: string }) {
           ) : (
             <p><strong>{t("Stop macOS mounting {names}.", { names })}</strong> {t("While Captain Salvage is open, it refuses every mount of a blocked volume: from plugging the disk in, Finder, Disk Utility or diskutil.")}</p>
           )}
-          {onDrive.map((volume) => <MountBlockToggle key={volume.device} uuid={volume.uuid ?? ""} name={volume.name || t("unnamed volume")} mounted={Boolean(volume.mountPoint)} />)}
+          {onDrive.map((volume) => <MountBlockToggle key={volume.device} uuid={volume.mountBlockKey ?? ""} device={volume.uuid ? undefined : volume.device} name={volume.name || t("unnamed volume")} mounted={Boolean(volume.mountPoint)} />)}
         </div>
       </div>
 

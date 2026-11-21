@@ -26,7 +26,7 @@ def image(name, size):
 def volume(device, whole, name, size, fmt, uuid, known=False, mounted=False, readable=True):
     record = {"uuid": uuid, "name": name, "bytes": size, "lastOpenedMillis": OPENED}
     return {"device": device, "wholeDisk": whole, "name": name, "bytes": size, "format": fmt, "external": True,
-            "mountPoint": "/Volumes/" + name if mounted else None, "uuid": uuid, "canOpen": fmt != "HFS+", "readable": readable,
+            "mountPoint": "/Volumes/" + name if mounted else None, "uuid": uuid, "mountBlockKey": uuid, "canOpen": fmt != "HFS+", "readable": readable,
             "known": {"record": record, "kinds": [], "lostFolders": 0, "scanned": True, "filesFound": 4200, "bytesFound": 2 * MIB, "filesPassed": 30, "filesDamaged": 2} if known else None,
             "fstabLine": None, "protected": False, "mountBlocked": False}
 
