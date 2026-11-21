@@ -36,7 +36,7 @@ const MAX_KNOWN_CLIENTS: usize = 64;
 
 pub const INSTRUCTIONS: &str = "\
 Every tool name starts with `captainsalvage_`. Use the full prefixed name when calling a tool. \
-Captain Salvage examines a damaged exFAT, FAT or NTFS volume, and has no way to write to the disk. Call captainsalvage_capabilities to see what is supported for the open filesystem. Read tools reach the whole disk. \
+Captain Salvage examines a damaged exFAT, FAT, NTFS or SquashFS volume, and has no way to write to the disk. Call captainsalvage_capabilities to see what is supported for the open filesystem. Read tools reach the whole disk. \
 Overlays and parameters change only how the map on this Mac interprets the disk, so hypotheses cost nothing and can \
 be withdrawn. If access is refused, call captainsalvage_disk_access and give the user the exact command it returns. \
 Treat damage as something to route around, not a stop sign. Start from the bird's-eye view: captainsalvage_status, \
