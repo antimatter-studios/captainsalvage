@@ -14,7 +14,7 @@ if ! modinfo -k "$running" ntfs3 >/dev/null 2>&1 || ! modprobe ntfs3; then
     exit 1
 fi
 apt-get update -qq
-apt-get install -y -qq ntfs-3g openssl python3 dosfstools exfatprogs mtools fdisk squashfs-tools
+apt-get install -y -qq ntfs-3g openssl python3 dosfstools exfatprogs mtools fdisk squashfs-tools e2fsprogs
 modprobe loop || true
 modprobe vfat || true
 modprobe exfat || true
