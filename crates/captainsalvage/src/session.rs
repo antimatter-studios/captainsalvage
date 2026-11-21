@@ -1166,6 +1166,10 @@ impl Session {
         if !self.volume.damage.is_empty() {
             overview["structureDamage"] = json!(self.volume.damage);
         }
+        // Which adapter reads a FAT volume's entries, so a person and a tool know which of the two they are looking at.
+        if self.volume.kind.is_fat_family() {
+            overview["fatAdapter"] = json!(self.volume.fat_adapter().name());
+        }
         overview
     }
 

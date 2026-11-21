@@ -294,6 +294,8 @@ export interface UnexplainedRun {
 
 export interface Row {
   kind: "folder" | "file" | "missing-folder";
+  /** A weak candidate: a FAT entry the driver found by its content only (`unchecked`), or as the only entry of its cluster (`lone_entry`). */
+  weak?: "unchecked" | "lone_entry";
   /** The source changed near this entry since it was stored, and the area has not been scanned again. */
   stale?: boolean;
   id: number | null;
@@ -585,6 +587,8 @@ export interface Overview {
   allocationNote?: string;
   /** What is wrong with the volume's own structures, in words. Absent when nothing is. */
   structureDamage?: string[];
+  /** Which adapter reads a FAT volume's entries: the generic one (the default), or the old one. Only present for FAT. */
+  fatAdapter?: "generic" | "legacy";
   structureHash: string;
   classNames: string[];
   groupNames: string[];

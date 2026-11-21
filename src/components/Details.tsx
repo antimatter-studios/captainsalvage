@@ -125,6 +125,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, onPreview, onInsi
             {row.clustersConflict > 0 && <Fact label={t("Shared")}>{t("{count} clusters", { count: count(row.clustersConflict) })}</Fact>}
             <Fact label={t("Pieces")}>{count(extents.length)}</Fact>
             <Fact label={t("Layout")}>{row.storage === "resident" ? t("Inside its FILE record") : row.storage !== undefined ? t("Run list") : row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
+            {row.weak && <Fact label={t("Found by")}>{row.weak === "lone_entry" ? t("Its content only, a lone entry") : t("Its content only")}</Fact>}
             <Fact label={t("Entry state")}>{row.inUse ? t("In use") : t("Marked deleted")}{row.checksumOk ? "" : row.storage !== undefined ? t(", record damaged") : t(", checksum failed")}</Fact>
           </>
         )}
@@ -298,6 +299,7 @@ function VolumeTab({ overview, status, revision, onChanged }: { overview: Overvi
     <div className="detail">
       <FilesystemDetailsPanel details={overview.filesystem} />
       {(overview.structureDamage ?? []).map((text) => <p key={text} className="warn">{fromEngine(text)}</p>)}
+      {overview.fatAdapter === "legacy" && <p className="hint">{t("The old FAT adapter reads this volume. It is kept for one release.")}</p>}
       <h4>{t("Space")}</h4>
       <dl className="facts">
         {overview.allocationKnown === false && <Fact label={t("Allocation unknown")}>{bytes(overview.allocationBytes.unknown ?? 0)}</Fact>}

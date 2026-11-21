@@ -120,6 +120,12 @@ them as free, that the window says so, and that the files are listed and a fragm
 second it checks that the torn record is reported in words and that the allocation is still known. It needs `ntfs.img`, never mounts
 or attaches anything, and removes what it copied.
 
+`fat_weak_candidates_test.py` (the generic adapter, #290) opens a synthetic FAT16 image, checks that the overview says the
+generic adapter reads it and tells of the damage the driver found, that a search marks the entries the driver found by their
+content only as weak candidates (in the window, and `weak` and the reason in the tool's answer), that they are deleted when their
+cluster is free in the FAT, that an entry a folder names has no mark, and that the details say how a weak candidate was found. It
+needs `fat.img`, never mounts or attaches anything, and removes nothing it did not make.
+
 `start_follows_disks_test.py` (issue #250) makes a small synthetic exFAT disk image of its own, starts the app on
 the start screen with a list that names only the one disk the test attached (`SALVAGE_TEST_STARTUP_DISK_FILE`, a
 file holding that disk's identifier, honoured in a test-hooks build with `SALVAGE_TEST_UI`, so no real disk is ever
@@ -160,6 +166,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | `archive_file_test.py` | `arctest.img` | archives |
 | `films_test.py` | `filmtest.img` | films |
 | `mounted_warning_test.py` | `hdiutil` | the mounted warning, on a throwaway image |
+| `fat_weak_candidates_test.py` | `fat.img` | FAT entries found by their content only, marked weak |
 | `ntfs_unknown_allocation_test.py` | `ntfs.img` | an NTFS volume with an unreadable `$Bitmap`, and a torn `$MFT` record 0 |
 | `ntfs_mount_block_test.py` | `ntfs.img`, `hdiutil` | the mount block of an NTFS volume with no UUID, on throwaway images |
 | `browse_probe.py`, `browse_first_probe.py`, `mount_block_probe.py`, `mount_block_race.py` | as above | probes: they print and have no pass count; read their output |
@@ -178,6 +185,7 @@ Make the ones a test needs before running it:
 |---|---|
 | `jigsaw.img` | `SALVAGE_JIGSAW_IMAGE=$PWD/tests/window/jigsaw.img cargo test -p captainsalvage --test synthetic write_the_jigsaw` |
 | `emptyfiles.img` | `SALVAGE_EMPTY_IMAGE=$PWD/tests/window/emptyfiles.img cargo test -p captainsalvage --test synthetic write_the_empty` |
+| `fat.img` | `SALVAGE_FAT_IMAGE=$PWD/tests/window/fat.img cargo test -p captainsalvage --test fat_backends write_the_fat` |
 | `ntfs.img` | `SALVAGE_NTFS_IMAGE=$PWD/tests/window/ntfs.img cargo test -p captainsalvage --test ntfs write_the_ntfs` |
 | `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p captainsalvage --test synthetic write_the_macos_visited` |
 | `arctest.img` | `tests/window/make_arctest.sh` (archives) |

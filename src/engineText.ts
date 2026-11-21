@@ -223,6 +223,11 @@ export const ENGINE_TEXT: string[] = [
   "Allocation is unknown for this volume, so the whole volume is searched as if it were free space. Nothing here is known to be free: clusters that current files use may be listed.",
   "Allocation could not be rebuilt completely from the file records ({name}), so the whole volume is searched as if it were free space. Nothing here is known to be free: clusters that current files use may be listed.",
   "Allocation here was rebuilt from the file records, not read from a bitmap, so it is only as complete as they are: {name}",
+  // FAT volumes read through the driver.
+  "FAT structure damage found by the driver: {name}",
+  "The FAT driver did not open this volume ({name}), so the old FAT adapter reads it.",
+  "The FAT driver found this entry by its content, as the only entry in its cluster and not through a folder that names it, so it may be file bytes that look like an entry.",
+  "The FAT driver found this entry by its content and not through a folder that names it, so it is not verified.",
   // Keeping volumes unmounted.
   "Only the person using the app can let a volume mount again.",
   "A volume UUID is needed.",

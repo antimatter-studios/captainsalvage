@@ -221,10 +221,13 @@ fn read_chunk(
         let start = index * cluster_size as usize;
         let end = start + cluster_size as usize;
         let data = &buffer[start..buffer.len().min(end + lookahead_max as usize)];
-        let mut sets = volume.find_sets(data, cluster_size as usize);
+        let mut sets = volume.sets_in_cluster(cluster, data, cluster_size as usize);
         // A FAT entry is placed by its short entry, so a long name that began in the cluster before
-        // it in the folder is whole only with that cluster's end in front.
-        if volume.kind.is_fat_family() && sets.iter().any(|set| set.offset < LONG_NAME_REACH) {
+        // it in the folder is whole only with that cluster's end in front. (The generic adapter reads long names itself.)
+        if volume.kind.is_fat_family()
+            && volume.fat_adapter() == crate::filesystem::fat_generic::FatBackend::Legacy
+            && sets.iter().any(|set| set.offset < LONG_NAME_REACH)
+        {
             if let Some(lead) = long_name_lead(volume, cluster) {
                 let mut joined = lead.clone();
                 joined.extend_from_slice(data);

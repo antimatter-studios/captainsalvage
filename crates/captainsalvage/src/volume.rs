@@ -2,6 +2,7 @@
 
 use crate::allocation as primitives;
 use crate::changes::StructureCopy;
+use crate::filesystem::fat_generic::{self, FatBackend, GenericFat};
 use crate::filesystem::ntfs_salvage;
 use crate::filesystem::{
     salvage, Claims, FilesystemDetails, FilesystemKind, NtfsRun, SalvageEntry, VolumeGeometry,
@@ -46,6 +47,10 @@ pub struct DerivedAllocation {
 
 pub struct Volume {
     source: Arc<dyn BlockSource>,
+    /// The FAT driver's volume, through the generic layers adapter, when that is the one in use.
+    generic_fat: Option<GenericFat>,
+    /// What the generic adapter finds, worked out once, the first time the scan asks. `None` once it has failed.
+    generic_sets: std::sync::OnceLock<Option<fat_generic::Sets>>,
     pub boot: FilesystemBoot,
     pub backup_boot: Option<FilesystemBoot>,
     pub boot_check: Option<BootCheck>,
@@ -79,6 +84,12 @@ impl Volume {
         Self::from_structures(source, structures)
     }
 
+    /// As `open`, with the adapter of FAT entries named instead of asked of the environment.
+    pub fn open_with(source: Arc<dyn BlockSource>, fat_backend: FatBackend) -> Result<Self> {
+        let structures = Self::read_structures(source.as_ref())?;
+        Self::from_structures_with(source, structures, fat_backend)
+    }
+
     /// Reads the boot regions, FAT, root directory and allocation bitmap from the disk.
     pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
         salvage::read_structures(source)
@@ -90,6 +101,14 @@ impl Volume {
     pub fn from_structures(
         source: Arc<dyn BlockSource>,
         structures: StructureCopy,
+    ) -> Result<Self> {
+        Self::from_structures_with(source, structures, FatBackend::requested())
+    }
+
+    pub fn from_structures_with(
+        source: Arc<dyn BlockSource>,
+        structures: StructureCopy,
+        fat_backend: FatBackend,
     ) -> Result<Self> {
         let salvage::Inspected {
             boot,
@@ -113,8 +132,30 @@ impl Volume {
                 ntfs_salvage::mft_runs(&structures, &geometry),
             )
         });
+        let mut damage = damage;
+        // A FAT volume is read through the generic layers adapter unless the old one is asked for. When the driver does not open
+        // the volume, the old adapter reads it, and the person is told.
+        let mut generic_fat = None;
+        if kind.is_fat_family() {
+            match fat_backend {
+                FatBackend::Legacy => {}
+                FatBackend::Generic => match fat_generic::open(&source, &geometry, &structures) {
+                    Ok(opened) => {
+                        damage.extend(fat_generic::damage(&opened));
+                        generic_fat = Some(opened);
+                    }
+                    Err(error) => {
+                        damage.push(format!(
+                            "The FAT driver did not open this volume ({error:#}), so the old FAT adapter reads it."
+                        ));
+                    }
+                },
+            }
+        }
         let mut volume = Self {
             source,
+            generic_fat,
+            generic_sets: std::sync::OnceLock::new(),
             boot,
             backup_boot,
             boot_check,
@@ -196,8 +237,60 @@ impl Volume {
         entries
     }
 
+    /// Which adapter reads this volume's FAT entries: `generic`, or `legacy` (always for exFAT and NTFS).
+    pub fn fat_adapter(&self) -> FatBackend {
+        if self.generic_fat.is_some() {
+            FatBackend::Generic
+        } else {
+            FatBackend::Legacy
+        }
+    }
+
+    /// What the generic adapter finds, worked out once. `None` when it is not the adapter in use, or has failed (the old one
+    /// then reads the volume).
+    fn generic_sets(&self) -> Option<&fat_generic::Sets> {
+        let generic = self.generic_fat.as_ref()?;
+        self.generic_sets
+            .get_or_init(|| {
+                let copies = self.structures.fat.len() as u64 / self.geometry.fat_bytes.max(1);
+                fat_generic::sets(generic, &self.geometry, &self.fat, copies).ok()
+            })
+            .as_ref()
+    }
+
+    /// The entries that start in this cluster of the scan, `data` being its bytes: what the generic adapter found there, or, for
+    /// every other filesystem and when the old adapter is asked for, what `find_sets` finds in `data`.
+    pub fn sets_in_cluster(
+        &self,
+        cluster: u32,
+        data: &[u8],
+        start_limit: usize,
+    ) -> Vec<SalvageEntry> {
+        match self.generic_sets() {
+            Some(sets) => self.marked_bad(sets.in_cluster(cluster)),
+            None => self.find_sets(data, start_limit),
+        }
+    }
+
+    fn marked_bad(&self, mut entries: Vec<SalvageEntry>) -> Vec<SalvageEntry> {
+        let bad = self.bad_sectors();
+        if !bad.is_empty() {
+            for entry in &mut entries {
+                entry.ranges.mark_bad(&bad);
+            }
+        }
+        entries
+    }
+
     pub fn fixed_root_entries(&self) -> Vec<(u32, SalvageEntry)> {
         if self.kind.has_fixed_root() {
+            if let Some(sets) = self.generic_sets() {
+                return self
+                    .marked_bad(sets.in_cluster(0))
+                    .into_iter()
+                    .map(|entry| (0, entry))
+                    .collect();
+            }
             self.find_sets(&self.structures.root, self.structures.root.len())
                 .into_iter()
                 .map(|entry| (0, entry))
