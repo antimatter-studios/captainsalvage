@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-11-21
+
+### Maintenance
+
+- The FAT driver is pinned to its next-free-clusters guess for a deleted file (3bc18be), and a deleted file written around a live one is copied byte for byte ([#345](https://github.com/antimatter-studios/captainsalvage/pull/345))
+
 ## [0.20.0] — 2026-11-21
 
 ### Added
