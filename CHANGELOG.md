@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.17.3] — 2026-11-21
+
+### Maintenance
+
+- The FAT driver is pinned to rust-fs-fat's content discovery of orphaned directory clusters and lone entries (2272fa2), and the generic-versus-app FAT comparison asserts what it now finds ([#335](https://github.com/antimatter-studios/captainsalvage/pull/335))
+
 ## [0.17.2] — 2026-11-21
 
 ### Maintenance
