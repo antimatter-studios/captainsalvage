@@ -1100,7 +1100,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.18.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.19.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1237,6 +1237,14 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.19.0 — 2026-11-21
+
+**Added**
+
+- **A drive you opened before is recognised as the same drive, so its scan resumes at once.** This holds even when its blocks read differently now or the drive was opened carefully after a reset. A mount that rewrote blocks still marks the regions around them as possibly out of date.
+- **A drive is recognised by its model and serial number when the system reports one.** A damaged drive whose first sector cannot be read is still the same drive, and a copy with another serial number is not.
+- **When a saved scan cannot be matched to the drive, you are asked.** You can choose Resume anyway or open the drive as a new source. This includes a drive that cannot be recognised at all, for which the saved scans of the same size are offered. A scan is never started again silently.
+
 ### v0.18.1 — 2026-11-21
 
 **Fixed**
@@ -1291,12 +1299,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **Block mount works for an NTFS volume that macOS gives no volume UUID.** The mount block named a volume by its UUID, so a volume macOS reports none for (a synthetic NTFS image, a disk image) got no Block mount checkbox and nothing kept it unmounted. Such a volume is now blocked by where it is: the identity of the disk it is on (the device's own GUID, or for a disk with none a fingerprint of the first 4 KiB) with the partition's offset and length. The checkbox appears for it, a block set while it is mounted shows the Unmount warning, and macOS is refused the mount, also when the disk is attached again under another disk number, while a different disk of the same size mounts as usual. A volume that has a UUID, which a real NTFS volume on a drive does, is blocked by it as before. The support table now says NTFS mount blocking is limited, with the reason; an agent names a volume without a UUID by its device and the key `startup_disks` gives it.
-
-### v0.15.5 — 2026-11-21
-
-**Fixed**
-
-- **An NTFS volume with more clusters than Windows allows is refused at open, with the reason.** Windows itself does not create or mount an NTFS volume of more than 4,294,967,294 (2^32 - 2) clusters, and the limit here was one cluster too generous and its message did not say why. A boot sector that states more clusters is now refused as soon as it is read, with a message that gives the count and says Windows does not make such a volume, and nothing else on the disk is read. A volume of exactly 4,294,967,294 clusters still opens. The support table says NTFS is limited to that many clusters.
 
 <!-- changelog:end -->
 
