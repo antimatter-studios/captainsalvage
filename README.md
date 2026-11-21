@@ -1104,7 +1104,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.20.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.20.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1241,6 +1241,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.20.1 — 2026-11-21
+
+**Maintenance**
+
+- The FAT driver is pinned to its next-free-clusters guess for a deleted file (3bc18be), and a deleted file written around a live one is copied byte for byte ([#345](https://github.com/antimatter-studios/captainsalvage/pull/345))
+
 ### v0.20.0 — 2026-11-21
 
 **Added**
@@ -1296,13 +1302,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The pull request jobs install ffmpeg so the tests that need it run, and the path without ffmpeg is a test of its own that hides ffmpeg itself ([#327](https://github.com/antimatter-studios/captainsalvage/pull/327))
-
-### v0.16.0 — 2026-11-21
-
-**Added**
-
-- **An NTFS volume whose `$Bitmap` cannot be read now opens, with its allocation unknown.** It used to be refused ("`$Bitmap has no data stream`"), although the files are found and read through `$MFT` and only the knowledge of which clusters are free is lost. Now the volume opens, the overview (the window and the tools) says "Allocation unknown" and why, and every cluster is drawn in a state of its own on the map, which is neither free nor in use. No cluster is called free: unexplained-space totals do not count unknown clusters as free (they are counted apart, so they are not hidden), and a deleted file's verdict says that whether its clusters are in use now is not known. Files are listed, read and copied byte for byte as in the undamaged volume. The saved baseline now says which of its parts could not be read.
-- **A damaged NTFS system record is reported, not hidden.** A `$MFT` record 0, `$Volume` record or root directory record that fails its update-sequence check is now named in the overview, with what it means: for `$MFT` record 0, that files in later parts of `$MFT` may be missing or listed as damaged. It used to show only as one more damaged file, with no message. `$MFTMirr` is not consulted yet.
 
 <!-- changelog:end -->
 
