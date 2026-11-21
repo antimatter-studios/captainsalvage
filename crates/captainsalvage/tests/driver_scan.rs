@@ -184,3 +184,22 @@ fn a_copy_writes_the_bytes_the_driver_reads_and_says_it_is_complete() {
         assert_eq!(copied, wanted, "{path}");
     }
 }
+
+#[test]
+fn an_entrys_typed_ranges_are_its_drivers_walk() {
+    use captainsalvage::ranges::RangeKind;
+    let session = scanned("ranges", 16);
+    let mut by_name = BTreeMap::new();
+    for cluster in 2..session.volume.geometry.last_cluster_exclusive() {
+        for entry in session.volume.sets_in_cluster(cluster, &[], 4096) {
+            by_name.insert(entry.name.clone(), entry.ranges);
+        }
+    }
+    // A file of several blocks and a tail is stored as it is here (it does not compress): readable, in a place on the image.
+    let big = &by_name["big.bin"];
+    assert_eq!(big.size(), 20000);
+    assert_eq!(big.bytes_of(RangeKind::Readable), 20000);
+    assert!(big.ranges()[0].provenance.is_some());
+    assert_eq!(by_name["hello.txt"].size(), 3);
+    assert!(by_name["empty.txt"].is_empty());
+}
