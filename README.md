@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.3 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.4 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.4 — 2026-11-21
+
+**Maintenance**
+
+- Gated Linux jobs install missing tools so release publishing works on self-hosted runners ([#319](https://github.com/antimatter-studios/captainsalvage/pull/319))
+
 ### v0.15.3 — 2026-11-21
 
 **Maintenance**
@@ -1298,12 +1304,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The coverage baseline is written from CI's numbers, and `baseline` refuses to measure outside CI ([#298](https://github.com/antimatter-studios/captainsalvage/pull/298))
-
-### v0.11.0 — 2026-11-20
-
-**Added**
-
-- **A bridge can be verified by a decoder, and a verified one can be kept.** The `media_check` tool (which has ffmpeg read a file and reports its exact errors) and the `materialize` tool now take a reassembly the way `test_stream` does: an entry (or clusters) plus `appendExtents`, `appendChain` or `appendChains`. ffmpeg then reads the clusters in that order as one file, every byte from the disk (a cluster that cannot be read fails the check, it is not filled in), and the answer says what was joined where. A new `disk_rebuild_place_reassembly` tool keeps one: it completes the file with the appended clusters as a hypothesis the map then reads (which `delete_overlay` undoes) and places the file in a Disk Rebuild, so a copy of the Disk Rebuild holds it whole.
 
 <!-- changelog:end -->
 

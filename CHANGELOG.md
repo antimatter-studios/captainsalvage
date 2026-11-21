@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.15.4] — 2026-11-21
+
+### Maintenance
+
+- Gated Linux jobs install missing tools so release publishing works on self-hosted runners ([#319](https://github.com/antimatter-studios/captainsalvage/pull/319))
+
 ## [0.15.3] — 2026-11-21
 
 ### Maintenance
