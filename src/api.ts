@@ -626,6 +626,17 @@ export type FilesystemDetails =
       serial: string;
       version: string | null;
       label: string | null;
+    }
+  | {
+      /** A filesystem read through its driver's layers: what the driver says of it. */
+      kind: "driver";
+      format: string;
+      name: string;
+      allocationUnit: number;
+      allocationUnits: number;
+      declaredBytes: number;
+      label: string | null;
+      serial: string | null;
     };
 
 /** What the app does for the open filesystem: supported, limited with the limit stated, or missing. */

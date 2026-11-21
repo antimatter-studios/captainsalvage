@@ -76,6 +76,13 @@ export function FilesystemDetailsPanel({ details }: { details: FilesystemDetails
         <dl className="facts">
           <Fact label={t("Format")} value="exFAT" />
         </dl>
+      ) : details.kind === "driver" ? (
+        <dl className="facts">
+          <Fact label={t("Format")} value={details.name} />
+          {details.label && <Fact label={t("Volume label")} value={details.label} />}
+          {details.serial && <Fact label={t("Serial number")} value={details.serial} />}
+          <Fact label={t("Cluster size")} value={details.allocationUnit} />
+        </dl>
       ) : details.kind === "ntfs" ? (
         <dl className="facts">
           <Fact label={t("Format")} value="NTFS" />

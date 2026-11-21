@@ -746,6 +746,7 @@ pub fn entry_from_record(
         name_slot: 0,
         weak: None,
         walk: None,
+        driver: None,
     })
 }
 
@@ -779,6 +780,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
         name_slot: 0,
         weak: None,
         walk: None,
+        driver: None,
     }
 }
 

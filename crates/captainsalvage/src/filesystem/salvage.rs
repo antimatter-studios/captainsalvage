@@ -491,6 +491,7 @@ pub fn find_entries(
                 name_slot: 0,
                 weak: None,
                 walk: None,
+                driver: None,
             })
         })
         .collect()

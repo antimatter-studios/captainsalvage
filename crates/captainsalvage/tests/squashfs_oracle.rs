@@ -13,6 +13,10 @@
 //!   holes included), with the oracle's bytes, and call every one of them live and verified;
 //! - place every record in the folder the kernel lists it in.
 //!
+//! The same images are then opened by the engine as a person opens them (`the_app_opens_scans_browses_...`): scanned, browsed
+//! from the root, every file read in full by the preview's range reader and copied out, and what is shown and copied is the
+//! kernel's tree, byte for byte. The engine does not list symbolic links yet, so that comparison leaves them out.
+//!
 //! What this does not check, so that nobody reads more into a pass than is there: damaged images (the driver's
 //! own suite checks them, and `generic_squashfs.rs` reads one), extended attributes (the images are made without),
 //! images with an export table or several fragments tables of more than one size, filesystems on a partition of a
@@ -339,5 +343,151 @@ fn the_app_lists_and_copies_every_image_the_kernel_reads_byte_for_byte() {
             wrong.is_empty(),
             "{name}: the records' extents differ from the kernel's:\n{wrong}"
         );
+    }
+}
+
+/// What the app shows of an image it opened as a person does: scanned, browsed from the root, every file read in full by the
+/// preview's range reader and copied out, with the folders, and with the hash of the bytes each copy holds.
+fn app_view(name: &str, image: Vec<u8>) -> (Tree, BTreeMap<String, String>) {
+    use captainsalvage::export::CopyRequest;
+    use captainsalvage::scan::{run_scan, ScanOptions};
+    use captainsalvage::session::Session;
+    use captainsalvage::source::MemorySource;
+    use captainsalvage::workspace::Workspace;
+    use std::sync::atomic::AtomicBool;
+    let path = std::env::temp_dir().join(format!(
+        "captainsalvage-squashfs-oracle-{}-{name}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&path);
+    let session = Session::with_source(
+        Path::new("/test/squashfs-oracle"),
+        Arc::new(MemorySource::new(image)),
+        Workspace::at(&path).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        session.volume.kind,
+        captainsalvage::filesystem::FilesystemKind::Squashfs
+    );
+    run_scan(
+        &session.volume,
+        &session.workspace,
+        ScanOptions { chunk_clusters: 64 },
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    let mut tree = Tree::default();
+    let mut ids = Vec::new();
+    let mut queue = vec![(session.volume.geometry.root_cluster, String::new())];
+    while let Some((node, folder)) = queue.pop() {
+        let mut offset = 0;
+        loop {
+            let page = session
+                .with_database(|database| database.children(node, offset, 500, true, 0.0))
+                .unwrap();
+            if page.rows.is_empty() {
+                break;
+            }
+            offset += page.rows.len() as u64;
+            for row in page.rows {
+                let path = if folder.is_empty() {
+                    row.name.clone()
+                } else {
+                    format!("{folder}/{}", row.name)
+                };
+                if row.kind == "file" {
+                    let id = row.id.unwrap();
+                    let range = session.read_entry_range(id, 0, row.length + 1).unwrap();
+                    assert!(range.unreadable.is_empty(), "{path}");
+                    assert_eq!(range.data.len() as u64, row.length, "{path}");
+                    // Every file the driver follows whole and the root leads to is live; an empty one says it is empty.
+                    assert!(
+                        matches!(row.verdict.as_str(), "live" | "empty"),
+                        "{path}: {}",
+                        row.verdict
+                    );
+                    tree.files.insert(path, (row.length, sha(&range.data)));
+                    ids.push(id);
+                } else {
+                    tree.dirs.insert(path.clone());
+                    queue.push((row.head.unwrap(), path));
+                }
+            }
+        }
+    }
+    let destination = session.workspace.dir().join("copy");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: ids.clone(),
+            include_partial: true,
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let status = session.copy_status().unwrap();
+        if status.state == "finished" {
+            assert_eq!(
+                (
+                    status.files_done as usize,
+                    status.files_failed,
+                    status.files_partial
+                ),
+                (ids.len(), 0, 0),
+                "{status:?}"
+            );
+            break;
+        }
+        assert!(
+            !matches!(status.state.as_str(), "failed" | "stopped"),
+            "{status:?}"
+        );
+        assert!(std::time::Instant::now() < deadline, "{status:?}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let manifest =
+        std::fs::read_to_string(destination.join("captain-salvage-manifest.jsonl")).unwrap();
+    let mut copies = BTreeMap::new();
+    for line in manifest.lines() {
+        let row: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(row["status"], "complete", "{row}");
+        let target = std::fs::read(row["target"].as_str().unwrap()).unwrap();
+        assert_eq!(sha(&target), row["sha256"].as_str().unwrap());
+        copies.insert(
+            row["sourcePath"].as_str().unwrap_or_default().to_string()
+                + "/"
+                + row["name"].as_str().unwrap(),
+            sha(&target),
+        );
+    }
+    (tree, copies)
+}
+
+#[test]
+fn the_app_opens_scans_browses_previews_and_copies_every_image_as_the_kernel_lists_it() {
+    for (name, _, _) in cases() {
+        let image = std::fs::read(oracle_output().join(format!("{name}.img"))).unwrap();
+        let oracle = read_tree(&oracle_output().join(format!("{name}.kernel.tsv")));
+        let (shown, copies) = app_view(&name, image);
+        // The app does not list symbolic links yet (the support table says so): the rest is the kernel's tree.
+        let kernel = Tree {
+            links: BTreeMap::new(),
+            ..oracle
+        };
+        let wrong = differences(&kernel, &shown);
+        assert!(
+            wrong.is_empty(),
+            "{name}: what the app shows differs from the kernel's:\n{wrong}"
+        );
+        // Every file was copied out with the bytes the kernel read.
+        assert_eq!(copies.len(), kernel.files.len(), "{name}");
+        let mut hashes: Vec<&String> = copies.values().collect();
+        let mut wanted: Vec<&String> = kernel.files.values().map(|(_, sha)| sha).collect();
+        hashes.sort();
+        wanted.sort();
+        assert_eq!(hashes, wanted, "{name}: the copies' hashes");
     }
 }

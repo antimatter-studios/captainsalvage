@@ -830,6 +830,7 @@ impl Session {
                         .map(|(from, to)| to - from)
                         .sum()
                 }),
+            Ok(crate::map::EntrySource::Driver(_)) => 0,
             Err(_) => 0,
         }
     }
@@ -1158,9 +1159,10 @@ impl Session {
         rebuilt: Option<&PathBuf>,
     ) -> Result<Option<ManifestRow>> {
         let source = self.with_database(|database| database.entry_source(&self.volume, row))?;
-        let (clusters, ntfs) = match source {
-            crate::map::EntrySource::Clusters(clusters) => (clusters, None),
-            crate::map::EntrySource::Ntfs(stream) => (Vec::new(), Some(stream)),
+        let (clusters, ntfs, driver) = match source {
+            crate::map::EntrySource::Clusters(clusters) => (clusters, None, None),
+            crate::map::EntrySource::Ntfs(stream) => (Vec::new(), Some(stream), None),
+            crate::map::EntrySource::Driver(stream) => (Vec::new(), None, Some(stream)),
         };
         let source_path = row.path.clone().unwrap_or_default();
         let relative = rebuilt
@@ -1242,15 +1244,60 @@ impl Session {
                 self.update_copy(|status| status.bytes_done += chunk.len() as u64);
             }
         }
+        // A driver's candidate is read through the driver: what its walk rebuilds, decoded where the driver stored it
+        // compressed, in pieces. A stretch whose source bytes cannot be read is zeros in the copy and a range in the manifest,
+        // as for an NTFS stream; a stream the driver cannot read at all ends the copy there, partial.
+        if let Some(stream) = &driver {
+            let access = self
+                .volume
+                .driver()
+                .context("this volume is not read through a driver")?;
+            while written < stream.length {
+                if self.should_stop() {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Ok(None);
+                }
+                let wanted = (stream.length - written).min(MAX_RUN_BYTES);
+                let read = match access.read(&stream.walk, written, wanted) {
+                    Ok(read) if !read.data.is_empty() => read,
+                    Ok(_) => {
+                        stream_error = Some("the stream ended early".into());
+                        break;
+                    }
+                    Err(error) => {
+                        stream_error = Some(format!("{error:#}"));
+                        break;
+                    }
+                };
+                for range in &read.unreadable {
+                    let from = written + range.offset;
+                    let to = (from + range.length).min(valid);
+                    if from < to {
+                        unreadable += (to - from).div_ceil(cluster_size);
+                        push_range(&mut unreadable_ranges, from, to);
+                    }
+                }
+                if let Err(error) = self.require_disk() {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error);
+                }
+                file.write_all(&read.data)?;
+                hasher.update(&read.data);
+                written += read.data.len() as u64;
+                self.update_copy(|status| status.bytes_done += read.data.len() as u64);
+            }
+        }
         if let (Some(error), 0) = (&stream_error, written) {
             drop(file);
             let _ = fs::remove_file(&temporary);
-            bail!("nothing of this NTFS stream could be read, so no file was made: {error}");
+            bail!("nothing of this stream could be read, so no file was made: {error}");
         }
         // A FAT or exFAT stream is read from its typed ranges, as the preview reads it: readable bytes from the disk (a cluster
         // that cannot be read is zeros in the copy and a range in the manifest, so one bad cluster never costs the rest of the
         // file), and bytes past the valid length are zeros by definition. The stream ends where its clusters do.
-        if ntfs.is_none() {
+        if ntfs.is_none() && driver.is_none() {
             let total = row.length.min(clusters.len() as u64 * cluster_size);
             let ranges = crate::ranges::RangeList::from_clusters(
                 &self.volume.geometry,
@@ -1336,7 +1383,7 @@ impl Session {
             format!("partial: could not read the stream ({error})")
         } else if written < row.length {
             "partial: chain ended early".to_string()
-        } else if unreadable > 0 && ntfs.is_some() {
+        } else if unreadable > 0 && (ntfs.is_some() || driver.is_some()) {
             "partial: unreadable parts of the stream filled with zeros".to_string()
         } else if unreadable > 0 {
             "partial: unreadable clusters filled with zeros".to_string()
@@ -1358,7 +1405,7 @@ impl Session {
             confidence: row.confidence,
             reason: row.reason.clone(),
             first_cluster: row.first_cluster,
-            clusters_found: if ntfs.is_some() {
+            clusters_found: if ntfs.is_some() || driver.is_some() {
                 row.clusters_found
             } else {
                 clusters.len() as u64

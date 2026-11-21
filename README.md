@@ -357,15 +357,15 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 | Feature | exFAT | FAT12, FAT16, FAT32 | NTFS | SquashFS |
 |---|---|---|---|---|
 | Open | Supported | Supported | Supported | Supported |
-| Scan | Supported | Supported | Supported | Missing |
-| Map | Supported | Supported | Supported | Missing |
-| Browse | Supported | Supported | Supported | Missing |
-| Preview | Limited | Limited | Limited | Missing |
-| Resume | Supported | Supported | Supported | Missing |
+| Scan | Supported | Supported | Supported | Limited |
+| Map | Supported | Supported | Supported | Limited |
+| Browse | Supported | Supported | Supported | Limited |
+| Preview | Limited | Limited | Limited | Limited |
+| Resume | Supported | Supported | Supported | Supported |
 | Baseline copy | Supported | Supported | Supported | Supported |
-| File tests | Supported | Supported | Limited | Missing |
-| Disk Rebuilds | Supported | Supported | Limited | Missing |
-| Copy out | Limited | Limited | Limited | Missing |
+| File tests | Supported | Supported | Limited | Supported |
+| Disk Rebuilds | Supported | Supported | Limited | Limited |
+| Copy out | Limited | Limited | Limited | Limited |
 | Mount block | Supported | Supported | Limited | Missing |
 | Named streams | Not offered | Not offered | Limited | Not offered |
 | Hard links | Not offered | Not offered | Supported | Not offered |
@@ -406,15 +406,15 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 **SquashFS**
 
 - Open (Supported): The volume opens for salvage, from a backup of its geometry when the first is damaged.
-- Scan (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- Map (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- Browse (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- Preview (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- Resume (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- File tests (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- Disk Rebuilds (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
-- Copy out (Missing): Not yet: the volume opens and says what it is, but the app does not list the entries of this filesystem yet.
+- Scan (Limited): Every record is found, live, deleted or damaged, and damaged ones are kept as evidence. The driver lacks deleted-candidates.
+- Map (Limited): The driver gives no allocation, so every cluster of the map is allocation unknown, which is not free and not in use. Content and ownership layers.
+- Browse (Limited): The folder tree is rebuilt from the parent claims of the records. Symbolic links and special files are not listed yet: a link's target is read through the driver's file layer, not through storage it walks.
+- Preview (Limited): Bytes are read through the driver, which decodes compressed blocks and fragment tails. A range that cannot be read is marked, as for the other filesystems.
+- Resume (Supported): A paused or interrupted scan continues from where it was.
 - Baseline copy (Supported): The volume's first structures (its superblock) are hashed and kept; changes are explained.
+- File tests (Supported): File formats are walked through the bytes the driver reads.
+- Disk Rebuilds (Limited): A rebuild is a plan of ranges of the source. The driver lacks cluster-steps.
+- Copy out (Limited): A file is rebuilt from the storage it claims, and a range that cannot be read is zeros, marked in the report. The driver lacks deleted-extents.
 - Mount block (Missing): macOS does not mount this filesystem, so there is nothing to block.
 <!-- capabilities:end -->
 

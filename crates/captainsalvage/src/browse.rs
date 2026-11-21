@@ -235,6 +235,8 @@ pub(crate) struct EntryStream {
     ranges: crate::ranges::RangeList,
     /// NTFS: the stream is read through the driver, not by cluster.
     ntfs: Option<crate::filesystem::ntfs_salvage::StreamReference>,
+    /// A driver's candidate: the stream is what the driver's walk rebuilds.
+    driver: Option<crate::map::DriverStream>,
 }
 
 /// A stretch of a file, in bytes from its start: `start` is in it, `end` is not.
@@ -610,14 +612,20 @@ impl Session {
             let source = database.entry_source(&self.volume, &row)?;
             Ok((row, source))
         })?;
-        let (total, clusters, ntfs) = match source {
+        let (total, clusters, ntfs, driver) = match source {
             crate::map::EntrySource::Clusters(clusters) => (
                 row.length
                     .min(clusters.len() as u64 * self.volume.geometry.cluster_size()),
                 clusters,
                 None,
+                None,
             ),
-            crate::map::EntrySource::Ntfs(stream) => (stream.length, Vec::new(), Some(stream)),
+            crate::map::EntrySource::Ntfs(stream) => {
+                (stream.length, Vec::new(), Some(stream), None)
+            }
+            crate::map::EntrySource::Driver(stream) => {
+                (stream.length, Vec::new(), None, Some(stream))
+            }
         };
         let valid = row.valid_length.min(row.length);
         let mut ranges =
@@ -630,6 +638,7 @@ impl Session {
             name: row.name,
             ranges,
             ntfs,
+            driver,
         });
         let mut cache = self.lock_browse()?;
         cache.streams.retain(|known| known.id != id);
@@ -672,6 +681,23 @@ impl Session {
                 let from = keep.min(data.len());
                 data[from..].fill(0);
             }
+        } else if let (Some(driver), true) = (&stream.driver, start < end) {
+            // A driver's candidate is read through the driver, which decodes what it stored compressed. A stretch whose
+            // source bytes cannot be read is zeros, named; bytes past the valid length are zeros the format defines.
+            let read = self
+                .volume
+                .driver()
+                .context("this volume is not read through a driver")?
+                .read(&driver.walk, start, end - start)?;
+            data = read.data;
+            for range in &read.unreadable {
+                push_range(
+                    &mut unreadable,
+                    start + range.offset,
+                    (start + range.offset + range.length).min(stream.valid),
+                );
+            }
+            self.require_disk()?;
         } else if start < end {
             // The stream's typed ranges say what each stretch is: readable bytes are read from the
             // disk (a bad cluster reads as zeros and is named, so one never hides the rest of a file),
