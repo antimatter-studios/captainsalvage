@@ -111,7 +111,7 @@ fn generic_side(generic: &Fat) -> Vec<Seen> {
         .unwrap()
         .iter()
         .map(|candidate| {
-            let view = Fat::view(candidate);
+            let view = generic.view(candidate);
             Seen {
                 at: view.id,
                 name: view.name.clone().unwrap_or_default(),
@@ -201,7 +201,7 @@ fn the_generic_adapter_finds_the_candidates_the_fat_adapter_finds_and_the_differ
         // false positive of both; the driver says so by how it reports it, and the app does not.
         use fs_core_layers::layers::Integrity;
         for candidate in generic.candidates().unwrap() {
-            let view = Fat::view(&candidate);
+            let view = generic.view(&candidate);
             let lone = view.detail["loneEntry"].as_bool().unwrap();
             let name = view.name.clone().unwrap();
             assert_eq!(
@@ -271,7 +271,7 @@ fn entries_in_an_orphaned_directory_cluster_are_found_by_content_by_both_adapter
             .find(|candidate| candidate.name.as_deref() == Some("TWO.TXT"))
             .unwrap();
         assert_eq!(
-            Fat::view(two).integrity,
+            generic.view(two).integrity,
             fs_core_layers::layers::Integrity::Unchecked,
             "found by content, not verified"
         );
@@ -332,7 +332,7 @@ fn the_generic_adapter_places_the_extents_the_tree_and_the_bytes_as_the_fat_adap
             "{kind}: the four the directories name sit under the root or the folder; the two lone entries have no parent"
         );
         for candidate in &candidates {
-            let view = Fat::view(candidate);
+            let view = generic.view(candidate);
             let name = view.name.clone().unwrap();
             let (seen, id, path) = app
                 .iter()
