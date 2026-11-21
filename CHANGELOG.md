@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.15.6] — 2026-11-21
+
+### Fixed
+
+- **Block mount works for an NTFS volume that macOS gives no volume UUID.** The mount block named a volume by its UUID, so a volume macOS reports none for (a synthetic NTFS image, a disk image) got no Block mount checkbox and nothing kept it unmounted. Such a volume is now blocked by where it is: the identity of the disk it is on (the device's own GUID, or for a disk with none a fingerprint of the first 4 KiB) with the partition's offset and length. The checkbox appears for it, a block set while it is mounted shows the Unmount warning, and macOS is refused the mount, also when the disk is attached again under another disk number, while a different disk of the same size mounts as usual. A volume that has a UUID, which a real NTFS volume on a drive does, is blocked by it as before. The support table now says NTFS mount blocking is limited, with the reason; an agent names a volume without a UUID by its device and the key `startup_disks` gives it.
+
 ## [0.15.5] — 2026-11-21
 
 ### Fixed
