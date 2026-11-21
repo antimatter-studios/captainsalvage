@@ -56,6 +56,19 @@ pub struct Region {
 pub struct StructureManifest {
     pub version: u32,
     pub regions: Vec<Region>,
+    /// The regions that could not be read when the copy was made, and why. Such a region is empty here.
+    /// Left out when every region was read, so a copy of a volume read whole is as it always was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unread: Vec<Unread>,
+}
+
+/// A region of a volume's structures that could not be read, and why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Unread {
+    /// The region's name, as in the manifest: `bitmap`.
+    pub region: String,
+    pub why: String,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -73,6 +86,8 @@ pub struct StructureCopy {
     pub fat: Vec<u8>,
     pub bitmap: Vec<u8>,
     pub root: Vec<u8>,
+    /// What could not be read, empty for every volume but one whose allocation bitmap is unreadable.
+    pub unread: Vec<Unread>,
 }
 
 impl From<primitives::StructureCopy> for StructureCopy {
@@ -83,6 +98,7 @@ impl From<primitives::StructureCopy> for StructureCopy {
             fat: copy.fat,
             bitmap: copy.bitmap,
             root: copy.root,
+            unread: Vec::new(),
         }
     }
 }
@@ -100,6 +116,11 @@ impl From<StructureCopy> for primitives::StructureCopy {
 }
 
 impl StructureCopy {
+    /// Whether this region could not be read when the copy was made.
+    pub fn is_unread(&self, region: &str) -> bool {
+        self.unread.iter().any(|unread| unread.region == region)
+    }
+
     fn parts(&self) -> [&Vec<u8>; 5] {
         [
             &self.main,
@@ -126,6 +147,7 @@ impl StructureCopy {
                     what: (*what).to_string(),
                 })
                 .collect(),
+            unread: self.unread.clone(),
         }
     }
 
@@ -193,6 +215,7 @@ impl StructureCopy {
             fat: parts.next()?,
             bitmap: parts.next()?,
             root: parts.next()?,
+            unread: manifest.unread,
         })
     }
 
@@ -215,6 +238,7 @@ impl StructureCopy {
         Some(StructureManifest {
             version: 1,
             regions,
+            unread: Vec::new(),
         })
     }
 }
@@ -386,7 +410,12 @@ pub fn compare(
 ) -> StructureChanges {
     let mut written = Vec::new();
     let mut freed = 0;
+    // With either bitmap unreadable nothing can be said of which clusters were written.
+    let comparable = !baseline.is_unread("bitmap") && !current.is_unread("bitmap");
     for cluster in FIRST_CLUSTER..last_cluster_exclusive {
+        if !comparable {
+            break;
+        }
         match (
             bit(&baseline.bitmap, cluster),
             bit(&current.bitmap, cluster),
@@ -467,6 +496,7 @@ mod tests {
             fat: vec![3; 1024],
             bitmap: vec![4; 64],
             root: vec![5; 96],
+            unread: Vec::new(),
         }
     }
 
@@ -510,6 +540,56 @@ mod tests {
         assert_eq!(manifest.regions[2].length, 1024);
         assert_eq!(manifest.regions[2].sha256, hex(&copy.fat));
         assert_eq!(StructureCopy::load(&dir), Some(copy));
+    }
+
+    #[test]
+    fn a_region_that_could_not_be_read_is_named_in_the_manifest_and_comes_back() {
+        let dir = folder("unread");
+        let mut copy = copy();
+        copy.bitmap = Vec::new();
+        copy.unread = vec![Unread {
+            region: "bitmap".into(),
+            why: "$Bitmap has no data stream".into(),
+        }];
+        copy.save(&dir).unwrap();
+        let text = fs::read_to_string(dir.join("manifest.json")).unwrap();
+        assert!(text.contains("\"unread\""), "{text}");
+        let loaded = StructureCopy::load(&dir).expect("a copy with an empty region loads");
+        assert_eq!(loaded, copy);
+        assert!(loaded.is_unread("bitmap") && !loaded.is_unread("fat"));
+        // A copy with every region read has no such field, so it is written as it always was.
+        let whole = folder("read");
+        self::copy().save(&whole).unwrap();
+        assert!(!fs::read_to_string(whole.join("manifest.json"))
+            .unwrap()
+            .contains("unread"));
+    }
+
+    #[test]
+    fn nothing_is_said_written_when_either_bitmap_was_not_read() {
+        let limits = Limits {
+            cluster_count: 8,
+            cluster_size: 4096,
+        };
+        let mut baseline = copy();
+        baseline.bitmap = vec![0b0000_1111];
+        let mut current = copy();
+        current.bitmap = vec![0b1111_1111];
+        assert_eq!(
+            compare(&baseline, &current, limits, 10)
+                .written_clusters
+                .len(),
+            4
+        );
+        baseline.bitmap = Vec::new();
+        baseline.unread = vec![Unread {
+            region: "bitmap".into(),
+            why: "unreadable".into(),
+        }];
+        let changes = compare(&baseline, &current, limits, 10);
+        assert!(changes.written_clusters.is_empty() && changes.freed_clusters == 0);
+        let changes = compare(&current, &baseline, limits, 10);
+        assert!(changes.written_clusters.is_empty() && changes.freed_clusters == 0);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use super::{
     STORAGE_COMPRESSED, STORAGE_COMPRESSION_UNSUPPORTED, STORAGE_DAMAGED, STORAGE_ENCRYPTED,
     STORAGE_INCOMPLETE, STORAGE_NONE, STORAGE_RESIDENT, STORAGE_RUNS,
 };
-use crate::changes::StructureCopy;
+use crate::changes::{StructureCopy, Unread};
 use crate::ranges::RangeList;
 use crate::source::BlockSource;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -204,6 +204,10 @@ pub struct NtfsInspected {
     pub bitmap: Vec<u8>,
     pub details: FilesystemDetails,
     pub dirty: bool,
+    /// False when `$Bitmap` could not be read: `bitmap` is then all zeros, and says nothing about which clusters are free.
+    pub allocation_known: bool,
+    /// What is wrong with the structures read at open, in words: a damaged `$MFT` record 0, an unreadable `$Bitmap`.
+    pub damage: Vec<String>,
 }
 
 /// The most clusters an NTFS volume has: a cluster number is 32 bits, and the last two numbers are never given.
@@ -317,7 +321,32 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
         root.extend_from_slice(&record.raw);
     }
 
-    let bitmap_record = record_of(&volume, BITMAP_RECORD)?;
+    // A volume whose `$Bitmap` cannot be read is still opened: the files are found and read through `$MFT`,
+    // and only the knowledge of which clusters are free is lost. The copy says so, and holds no bitmap.
+    let (bitmap, unread) = match read_bitmap(&volume, &geometry) {
+        Ok(bitmap) => (bitmap, Vec::new()),
+        Err(error) => (
+            Vec::new(),
+            vec![Unread {
+                region: "bitmap".to_string(),
+                why: format!("{error:#}"),
+            }],
+        ),
+    };
+
+    Ok(StructureCopy {
+        main,
+        backup,
+        fat: Vec::new(),
+        bitmap,
+        root,
+        unread,
+    })
+}
+
+/// `$Bitmap`, one bit for each cluster of the volume, from the volume's own record.
+fn read_bitmap<D: BlockRead>(volume: &NtfsVolume<D>, geometry: &VolumeGeometry) -> Result<Vec<u8>> {
+    let bitmap_record = record_of(volume, BITMAP_RECORD)?;
     let (index, attribute) = data_stream(&bitmap_record).context("$Bitmap has no data stream")?;
     let wanted = u64::from(geometry.cluster_count + FIRST_CLUSTER as u32).div_ceil(8);
     let size = match &attribute.value {
@@ -337,14 +366,7 @@ pub fn read_structures(source: &dyn BlockSource) -> Result<StructureCopy> {
         .read_salvage_stream_at(&bitmap_record, index, geometry.cluster_size, 0, &mut bitmap)
         .map_err(|error| anyhow!("reading $Bitmap: {error}"))?;
     ensure!(count == bitmap.len(), "$Bitmap ended early");
-
-    Ok(StructureCopy {
-        main,
-        backup,
-        fat: Vec::new(),
-        bitmap,
-        root,
-    })
+    Ok(bitmap)
 }
 
 /// Reads the saved structures back into the facts the rest of the app uses.
@@ -359,8 +381,9 @@ pub fn inspect(structures: &StructureCopy) -> Result<NtfsInspected> {
         "saved NTFS structures do not match the boot sector"
     );
     let total_clusters = u64::from(geometry.cluster_count) + FIRST_CLUSTER;
+    let allocation_known = !structures.is_unread("bitmap");
     ensure!(
-        structures.bitmap.len() as u64 >= total_clusters.div_ceil(8),
+        !allocation_known || structures.bitmap.len() as u64 >= total_clusters.div_ceil(8),
         "saved $Bitmap is shorter than the volume needs"
     );
     let backup_boot = match structures.backup.len() {
@@ -394,10 +417,37 @@ pub fn inspect(structures: &StructureCopy) -> Result<NtfsInspected> {
     // The map's bit 0 is cluster 2, so the first two bits of the volume's bitmap are dropped.
     let mut bitmap = vec![0u8; (u64::from(geometry.cluster_count)).div_ceil(8) as usize];
     for index in 0..u64::from(geometry.cluster_count) {
+        if !allocation_known {
+            break;
+        }
         let source = index + FIRST_CLUSTER;
         if structures.bitmap[(source / 8) as usize] >> (source % 8) & 1 == 1 {
             bitmap[(index / 8) as usize] |= 1 << (index % 8);
         }
+    }
+    let mut damage = Vec::new();
+    for (position, number) in SAVED_RECORDS.iter().enumerate() {
+        let raw = structures.root[position * record_size..(position + 1) * record_size].to_vec();
+        if inspect_file_record(*number, raw, boot.bytes_per_sector)
+            .fixed
+            .is_none()
+        {
+            damage.push(match *number {
+                MFT_RECORD => "$MFT record 0 failed its update-sequence check, so where the rest of $MFT lies is not known from it. Files in later parts of $MFT may be missing or listed as damaged, and $MFTMirr is not consulted.".to_string(),
+                VOLUME_RECORD => "$Volume (MFT record 3) failed its update-sequence check, so the volume's label and flags could not be read.".to_string(),
+                _ => "The root directory's record (MFT record 5) failed its update-sequence check.".to_string(),
+            });
+        }
+    }
+    for unread in structures
+        .unread
+        .iter()
+        .filter(|unread| unread.region == "bitmap")
+    {
+        damage.push(format!(
+            "$Bitmap could not be read ({}), so which clusters are free is unknown. Files are still listed and read through $MFT, and no cluster is counted as free.",
+            unread.why
+        ));
     }
     Ok(NtfsInspected {
         boot: NtfsBoot::from(&boot),
@@ -406,6 +456,8 @@ pub fn inspect(structures: &StructureCopy) -> Result<NtfsInspected> {
         bitmap,
         details,
         dirty: information.is_some_and(|value| value.is_dirty()),
+        allocation_known,
+        damage,
     })
 }
 
@@ -413,7 +465,12 @@ pub fn inspect(structures: &StructureCopy) -> Result<NtfsInspected> {
 pub fn comparison_copy(copy: &StructureCopy) -> Result<StructureCopy> {
     let inspected = inspect(copy)?;
     Ok(StructureCopy {
-        bitmap: inspected.bitmap,
+        // A bitmap that was not read stays empty: zeros would say every cluster is free.
+        bitmap: if inspected.allocation_known {
+            inspected.bitmap
+        } else {
+            Vec::new()
+        },
         ..copy.clone()
     })
 }

@@ -69,6 +69,7 @@ export function legendFor(layer: Layer): LegendItem[] {
         { value: 1, label: t("In use by current files"), color: colors.strong },
         { value: 2, label: t("Marked free, FAT chain remains"), color: colors.series[0] },
         { value: 3, label: t("Marked free, no FAT chain"), color: colors.softBlue },
+        { value: 4, label: t("Allocation unknown"), color: colors.neutral },
       ];
     case "content":
       return [

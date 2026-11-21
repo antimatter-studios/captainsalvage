@@ -113,6 +113,13 @@ number is not mounted by macOS, that another disk of the same size and layout (a
 and that the person's click on the checkbox lets the volume mount again. It needs `ntfs.img`, `hdiutil` and `diskutil`,
 touches no real disk, and removes its images.
 
+`ntfs_unknown_allocation_test.py` (issue #167) copies `ntfs.img` twice with one MFT record's update-sequence check broken, record 6
+(`$Bitmap`) and record 0 (`$MFT`). It opens the first as a person does and checks that it is not refused, that the overview says
+"allocation unknown" and why, that every cluster is counted as unknown and none as free, that unexplained space does not count
+them as free, that the window says so, and that the files are listed and a fragmented file is read and copied byte for byte. For the
+second it checks that the torn record is reported in words and that the allocation is still known. It needs `ntfs.img`, never mounts
+or attaches anything, and removes what it copied.
+
 `start_follows_disks_test.py` (issue #250) makes a small synthetic exFAT disk image of its own, starts the app on
 the start screen with a list that names only the one disk the test attached (`SALVAGE_TEST_STARTUP_DISK_FILE`, a
 file holding that disk's identifier, honoured in a test-hooks build with `SALVAGE_TEST_UI`, so no real disk is ever
@@ -153,6 +160,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | `archive_file_test.py` | `arctest.img` | archives |
 | `films_test.py` | `filmtest.img` | films |
 | `mounted_warning_test.py` | `hdiutil` | the mounted warning, on a throwaway image |
+| `ntfs_unknown_allocation_test.py` | `ntfs.img` | an NTFS volume with an unreadable `$Bitmap`, and a torn `$MFT` record 0 |
 | `ntfs_mount_block_test.py` | `ntfs.img`, `hdiutil` | the mount block of an NTFS volume with no UUID, on throwaway images |
 | `browse_probe.py`, `browse_first_probe.py`, `mount_block_probe.py`, `mount_block_race.py` | as above | probes: they print and have no pass count; read their output |
 

@@ -21,7 +21,7 @@ use crate::resolve::{
 use crate::scan::{read_progress, run_scan, ScanOptions, ScanProgress};
 use crate::source::{mount_line, os_denies_writes, BlockSource, FileSource, ReadStats};
 use crate::verify::{verify_stream, VerifyReport};
-use crate::volume::{Volume, ALLOC_ALLOCATED, ALLOC_FREE_FAT, ALLOC_FREE_ZERO};
+use crate::volume::{Volume, ALLOC_ALLOCATED, ALLOC_FREE_FAT, ALLOC_FREE_ZERO, ALLOC_UNKNOWN};
 use crate::workspace::{BaselineCheck, Workspace};
 use anyhow::{anyhow, bail, Context, Result};
 use fs_exfat::primitives::{decode_timestamp, FAT_BAD, FAT_END, FIRST_CLUSTER};
@@ -141,6 +141,9 @@ pub struct ClusterInfo {
     pub offset: u64,
     pub disk_offset: Option<u64>,
     pub allocated: bool,
+    /// True when the volume's allocation bitmap could not be read: `allocated` is then false and says nothing. Left out otherwise.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub allocation_unknown: bool,
     pub fat_value: u32,
     pub fat_meaning: String,
     pub predecessor: Option<u32>,
@@ -1151,6 +1154,18 @@ impl Session {
         if let Some(scan) = &self.scan {
             overview["scan"] = serde_json::to_value(scan).unwrap_or(Value::Null);
         }
+        // These are there only when something is wrong, so every other answer is as it was.
+        if !self.volume.allocation_known {
+            overview["allocationKnown"] = json!(false);
+            overview["allocationNote"] = json!(
+                "Allocation unknown: the volume's bitmap could not be read, so no cluster is called free or in use."
+            );
+            overview["allocationBytes"]["unknown"] =
+                json!(self.volume.stats.unknown * boot.cluster_size());
+        }
+        if !self.volume.damage.is_empty() {
+            overview["structureDamage"] = json!(self.volume.damage);
+        }
         overview
     }
 
@@ -1229,11 +1244,15 @@ impl Session {
             let indexes = (from - FIRST_CLUSTER) as usize..(to - FIRST_CLUSTER) as usize;
             let column: Vec<u8> = match layer {
                 Layer::Allocation => {
-                    let mut counts = [0u32; 3];
+                    let mut counts = [0u32; 4];
                     for cluster in from..to {
                         counts[usize::from(self.volume.allocation_class(cluster)) - 1] += 1;
                     }
-                    stack_column(&counts, &[1, 2, 3], rows)
+                    if self.volume.allocation_known {
+                        stack_column(&counts[..3], &[1, 2, 3], rows)
+                    } else {
+                        stack_column(&counts, &[1, 2, 3, 4], rows)
+                    }
                 }
                 Layer::Content => {
                     let mut counts = [0u32; GROUP_COUNT];
@@ -1283,7 +1302,7 @@ impl Session {
         let size = (to - from) as usize;
         match layer {
             Layer::Allocation => {
-                let mut counts = [0u32; 4];
+                let mut counts = [0u32; 5];
                 for cluster in from..to {
                     counts[usize::from(self.volume.allocation_class(cluster))] += 1;
                 }
@@ -1376,7 +1395,7 @@ impl Session {
         let first = start.max(FIRST_CLUSTER);
         let last = end.min(self.volume.geometry.last_cluster_exclusive());
         let maps = self.cluster_maps();
-        let mut allocation = [0u64; 4];
+        let mut allocation = [0u64; 5];
         let mut groups = [0u64; GROUP_COUNT];
         let mut ownership = [0u64; 7];
         let mut entropy_bins = [0u64; 16];
@@ -1389,15 +1408,19 @@ impl Session {
             entropy_bins[usize::from(maps.entropy[index] >> 4)] += 1;
             confidence_bins[usize::from(maps.confidence[index]) * 10 / 255] += 1;
         }
+        let mut allocation_json = json!({
+            "allocated": allocation[usize::from(ALLOC_ALLOCATED)],
+            "freeWithFat": allocation[usize::from(ALLOC_FREE_FAT)],
+            "freeZeroFat": allocation[usize::from(ALLOC_FREE_ZERO)],
+        });
+        if !self.volume.allocation_known {
+            allocation_json["unknown"] = json!(allocation[usize::from(ALLOC_UNKNOWN)]);
+        }
         json!({
             "startCluster": first,
             "endCluster": last,
             "clusterSize": self.volume.geometry.cluster_size(),
-            "allocation": {
-                "allocated": allocation[usize::from(ALLOC_ALLOCATED)],
-                "freeWithFat": allocation[usize::from(ALLOC_FREE_FAT)],
-                "freeZeroFat": allocation[usize::from(ALLOC_FREE_ZERO)],
-            },
+            "allocation": allocation_json,
             "contentGroups": GROUP_NAMES.iter().zip(groups).map(|(name, count)| json!({"group": name, "clusters": count})).collect::<Vec<_>>(),
             "ownership": {
                 "unexplained": ownership[usize::from(OWNERSHIP_UNEXPLAINED)],
@@ -1507,6 +1530,7 @@ impl Session {
             disk_offset: whole_disk_path(&self.path)
                 .map(|_| self.volume.geometry.partition_offset + offset),
             allocated: self.volume.is_allocated(cluster),
+            allocation_unknown: !self.volume.allocation_known,
             fat_value,
             fat_meaning: self.fat_meaning(fat_value),
             predecessor: self.volume.predecessor(cluster),

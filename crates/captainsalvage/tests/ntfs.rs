@@ -532,6 +532,247 @@ fn a_record_that_fails_its_update_sequence_check_is_kept_as_evidence_and_never_r
         .is_empty());
 }
 
+/// The image with the update-sequence check of one of the first MFT records broken, the way a torn write leaves it.
+fn torn_record(image: &[u8], number: usize) -> Vec<u8> {
+    let mft = u64::from_le_bytes(image[0x30..0x38].try_into().unwrap()) as usize * CLUSTER;
+    let mut bytes = image.to_vec();
+    bytes[mft + number * 1024 + 510] ^= 0xff;
+    bytes
+}
+
+fn damage_of(session: &Session) -> Vec<String> {
+    session.overview()["structureDamage"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .map(|text| text.as_str().unwrap().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_volume_with_an_unreadable_bitmap_opens_with_its_allocation_unknown_and_says_so() {
+    let fixture = fixture();
+    let whole = open(fixture.image.clone(), "bitmap-whole");
+    let session = open(torn_record(&fixture.image, 6), "bitmap-torn");
+    assert_eq!(session.volume.kind, FilesystemKind::Ntfs);
+    assert!(whole.volume.allocation_known && whole.overview().get("allocationKnown").is_none());
+    assert!(
+        damage_of(&whole).is_empty(),
+        "an undamaged volume says nothing of damage"
+    );
+
+    // The window and the tools say it: not refused, and told why.
+    assert!(!session.volume.allocation_known);
+    let overview = session.overview();
+    assert_eq!(overview["allocationKnown"], false);
+    assert!(overview["allocationNote"]
+        .as_str()
+        .unwrap()
+        .starts_with("Allocation unknown"));
+    let damage = damage_of(&session);
+    assert_eq!(damage.len(), 1, "{damage:?}");
+    assert!(
+        damage[0].starts_with("$Bitmap could not be read ("),
+        "{}",
+        damage[0]
+    );
+    assert!(
+        damage[0].contains("no cluster is counted as free"),
+        "{}",
+        damage[0]
+    );
+
+    // Every cluster is neither in use nor free.
+    let clusters = u64::from(session.volume.geometry.cluster_count);
+    assert_eq!(overview["allocation"]["unknown"], clusters);
+    assert_eq!(overview["allocation"]["allocated"], 0);
+    assert_eq!(overview["allocation"]["freeZeroFat"], 0);
+    assert_eq!(
+        overview["allocationBytes"]["unknown"],
+        clusters * CLUSTER as u64
+    );
+    for cluster in [
+        2,
+        7,
+        100,
+        session.volume.geometry.last_cluster_exclusive() - 1,
+    ] {
+        assert!(
+            !session.volume.is_allocated(cluster) && !session.volume.is_free(cluster),
+            "{cluster}"
+        );
+        assert_eq!(session.volume.allocation_class(cluster), 4, "{cluster}");
+    }
+    let stats = session.region_stats(2, session.volume.geometry.last_cluster_exclusive());
+    assert_eq!(stats["allocation"]["unknown"], clusters);
+    assert_eq!(stats["allocation"]["freeZeroFat"], 0);
+    // The map draws it as its own state, which is neither of the others.
+    let raster = session.map_raster(
+        captainsalvage::session::Layer::Allocation,
+        2,
+        session.volume.geometry.last_cluster_exclusive(),
+        16,
+        4,
+        0.0,
+        None,
+    );
+    assert!(raster.iter().all(|&value| value == 4), "{raster:?}");
+    let whole_raster = whole.map_raster(
+        captainsalvage::session::Layer::Allocation,
+        2,
+        whole.volume.geometry.last_cluster_exclusive(),
+        16,
+        4,
+        0.0,
+        None,
+    );
+    assert!(
+        whole_raster.iter().all(|&value| value != 4),
+        "{whole_raster:?}"
+    );
+
+    // Files are found and read as in the undamaged volume, byte for byte, and a copy holds the same bytes.
+    scan(&whole);
+    scan(&session);
+    assert_eq!(
+        listed_files(&session).keys().collect::<Vec<_>>(),
+        listed_files(&whole).keys().collect::<Vec<_>>()
+    );
+    for (path, expected) in &fixture.files {
+        let name = path.rsplit('/').next().unwrap();
+        let engine = Engine::new();
+        engine.set_session(session.clone());
+        let row = find(&engine, name);
+        assert_eq!(
+            row["length"].as_u64().unwrap(),
+            expected.len() as u64,
+            "{path}"
+        );
+        let read = session
+            .read_entry_range(row["id"].as_i64().unwrap(), 0, expected.len() as u64 + 10)
+            .unwrap();
+        assert_eq!(sha(&read.data), sha(expected), "{path}");
+        let undamaged = Engine::new();
+        undamaged.set_session(whole.clone());
+        let same = find(&undamaged, name);
+        assert_eq!(row["inUse"], same["inUse"], "{path}");
+        assert_eq!(
+            row["verdict"], same["verdict"],
+            "{path}: live stays live, and a deleted file's verdict is the one it had"
+        );
+    }
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let gone = find(&engine, "gone.bin");
+    assert!(
+        gone["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bitmap could not be read"),
+        "a deleted file's verdict says its clusters' use is not known: {gone}"
+    );
+    let row = find(&engine, "frag.bin");
+    let destination = session.workspace.dir().join("recovered");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![row["id"].as_i64().unwrap()],
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    wait_for_copy(&session, 1);
+    let copied = std::fs::read(destination.join("Volume root/frag.bin")).unwrap();
+    assert_eq!(sha(&copied), sha(fixture.content("/frag.bin")));
+}
+
+#[test]
+fn unknown_clusters_are_never_counted_as_free_space() {
+    let fixture = fixture();
+    let whole = open(fixture.image.clone(), "unknown-whole");
+    let session = open(torn_record(&fixture.image, 6), "unknown-torn");
+    scan(&whole);
+    scan(&session);
+    let known = whole.resolve().unwrap();
+    assert!(
+        known.unexplained_free_clusters > 0,
+        "an undamaged volume has free space nothing explains"
+    );
+    let summary = session.resolve().unwrap();
+    assert_eq!(summary.unexplained_free_clusters, 0, "unknown is not free");
+    assert_eq!(summary.labelled_free_clusters, 0);
+    assert_eq!(summary.bad_sector_free_clusters, 0);
+    assert!(
+        summary.unexplained_unknown_clusters > 0,
+        "but it is not hidden either"
+    );
+    assert!(
+        session.unexplained_runs(0, 10, 1).is_empty(),
+        "no run of free space is offered when nothing is known to be free"
+    );
+    assert_eq!(known.unexplained_unknown_clusters, 0);
+}
+
+#[test]
+fn a_baseline_of_a_volume_with_an_unreadable_bitmap_says_what_was_not_read() {
+    let fixture = fixture();
+    let session = open(torn_record(&fixture.image, 6), "baseline-unread");
+    let copy = session
+        .workspace
+        .baseline_copy()
+        .expect("the baseline copy was saved");
+    assert!(copy.is_unread("bitmap"));
+    assert!(copy.bitmap.is_empty());
+    let manifest = serde_json::to_string(&copy.manifest()).unwrap();
+    assert!(
+        manifest.contains("\"unread\":[{\"region\":\"bitmap\""),
+        "{manifest}"
+    );
+    let whole = open(fixture.image.clone(), "baseline-read");
+    let whole_copy = whole.workspace.baseline_copy().unwrap();
+    assert!(!whole_copy.is_unread("bitmap"));
+    assert!(
+        !serde_json::to_string(&whole_copy.manifest())
+            .unwrap()
+            .contains("unread"),
+        "a copy of a volume read whole is as it always was"
+    );
+    // Read again, it is the same volume, and nothing is reported as written.
+    assert!(session.verify_unchanged().unwrap().unchanged);
+}
+
+#[test]
+fn a_torn_mft_record_zero_is_reported_as_damage() {
+    let fixture = fixture();
+    let session = open(torn_record(&fixture.image, 0), "mft-torn");
+    let damage = damage_of(&session);
+    assert_eq!(damage.len(), 1, "{damage:?}");
+    assert!(
+        damage[0].starts_with("$MFT record 0 failed its update-sequence check"),
+        "{}",
+        damage[0]
+    );
+    assert!(damage[0].contains("later parts of $MFT"), "{}", damage[0]);
+    // The volume still opens and its allocation is known: only the first record is torn.
+    assert!(session.volume.allocation_known);
+    // Records 3 and 5 are told apart.
+    let volume = open(torn_record(&fixture.image, 3), "volume-torn");
+    assert!(
+        damage_of(&volume)[0].starts_with("$Volume (MFT record 3)"),
+        "{:?}",
+        damage_of(&volume)
+    );
+    let root = open(torn_record(&fixture.image, 5), "root-torn");
+    assert!(
+        damage_of(&root)[0].starts_with("The root directory's record"),
+        "{:?}",
+        damage_of(&root)
+    );
+    // Neither is reported of an undamaged volume.
+    assert!(damage_of(&open(fixture.image.clone(), "mft-whole")).is_empty());
+}
+
 #[test]
 fn a_rebuild_can_replace_an_ntfs_entrys_clusters_and_can_be_withdrawn() {
     let fixture = fixture();

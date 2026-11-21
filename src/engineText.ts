@@ -213,6 +213,13 @@ export const ENGINE_TEXT: string[] = [
   "The agent is still answering.",
   "Stop it first, or wait for it to finish.",
   "starting {name}",
+  // A volume whose bitmap or first records could not be read.
+  "The volume's bitmap could not be read, so whether its clusters are in use now is not known.",
+  "Allocation unknown: the volume's bitmap could not be read, so no cluster is called free or in use.",
+  "$MFT record 0 failed its update-sequence check, so where the rest of $MFT lies is not known from it. Files in later parts of $MFT may be missing or listed as damaged, and $MFTMirr is not consulted.",
+  "$Volume (MFT record 3) failed its update-sequence check, so the volume's label and flags could not be read.",
+  "The root directory's record (MFT record 5) failed its update-sequence check.",
+  "$Bitmap could not be read ({name}), so which clusters are free is unknown. Files are still listed and read through $MFT, and no cluster is counted as free.",
   // Keeping volumes unmounted.
   "Only the person using the app can let a volume mount again.",
   "A volume UUID is needed.",

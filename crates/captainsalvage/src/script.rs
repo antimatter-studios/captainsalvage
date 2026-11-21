@@ -111,6 +111,8 @@ fn register_structures(engine: &mut Engine, session: &Arc<Session>) {
         },
     );
     let s = session.clone();
+    engine.register_fn("allocation_known", move || s.volume.allocation_known);
+    let s = session.clone();
     engine.register_fn(
         "allocated",
         move |cluster: INT| -> Result<bool, Box<EvalAltResult>> {

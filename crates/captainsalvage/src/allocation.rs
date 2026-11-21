@@ -6,6 +6,8 @@ use std::collections::HashSet;
 pub const ALLOC_ALLOCATED: u8 = 1;
 pub const ALLOC_FREE_FAT: u8 = 2;
 pub const ALLOC_FREE_ZERO: u8 = 3;
+/// The volume's allocation bitmap could not be read: the cluster is neither known to be in use nor known to be free.
+pub const ALLOC_UNKNOWN: u8 = 4;
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,12 +17,19 @@ pub struct ChainGroup {
     pub longest: u64,
 }
 
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AllocationStats {
     pub allocated: u64,
     pub free_with_fat: u64,
     pub free_zero_fat: u64,
+    /// Clusters whose allocation is not known, because the volume's bitmap could not be read. Left out when none are.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unknown: u64,
     pub cross_links: u64,
     pub free_chains: ChainGroup,
     pub allocated_chains: ChainGroup,

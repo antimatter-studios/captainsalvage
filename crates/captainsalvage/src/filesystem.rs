@@ -201,9 +201,9 @@ impl FilesystemKind {
                 capability("mount_block", Supported, "macOS is refused a mount of the volume while the app is open."),
             ],
             Self::Ntfs => vec![
-                capability("open", Supported, "The boot sector, $MFT, $Volume, root directory and $Bitmap are read and saved as a baseline. A BitLocker volume is refused by name."),
+                capability("open", Supported, "The boot sector, $MFT, $Volume, root directory and $Bitmap are read and saved as a baseline, and the baseline says which of them could not be read. A BitLocker volume is refused by name. A volume whose $Bitmap cannot be read still opens, with its allocation unknown, and a $MFT, $Volume or root record that fails its update-sequence check is reported as damage."),
                 capability("scan", Supported, "Every cluster is read for FILE records, so deleted files, old copies of the MFT and files whose folders are gone are found. Resumable."),
-                capability("map", Supported, "Allocation comes from $Bitmap. Clusters holding FILE records are shown as directory structure. The first two clusters, the boot area, are not drawn."),
+                capability("map", Supported, "Allocation comes from $Bitmap. Clusters holding FILE records are shown as directory structure. The first two clusters, the boot area, are not drawn. When $Bitmap cannot be read every cluster is drawn as allocation unknown, which is not free and not in use, and unexplained-space totals do not count it as free."),
                 capability("browse", Supported, "The folder tree is rebuilt from each record's parent reference. A folder whose own record was lost is listed unnamed."),
                 capability("preview", Limited, "Resident, fragmented, sparse, deleted and NTFS-compressed (LZNT1) data is read. Encrypted (EFS) and attribute-list streams are listed but cannot be read, and say why. A stretch of a stream held in runs that cannot be read (a damaged or missing run, a run outside the volume, a failed read, a compression unit that does not decode) is marked: the text and byte previews show each of its bytes as ?, and name the range."),
                 capability("resume", Supported, "A paused or interrupted scan continues from its last saved cluster."),

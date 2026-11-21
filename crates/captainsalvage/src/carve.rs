@@ -360,7 +360,7 @@ impl Session {
         let last = self.volume.geometry.last_cluster_exclusive();
         let cluster_size = self.volume.geometry.cluster_size();
         let unexplained = |cluster: u32| {
-            !self.volume.is_allocated(cluster)
+            self.volume.is_free(cluster)
                 && ownership[(cluster - FIRST_CLUSTER) as usize] == OWNERSHIP_UNEXPLAINED
         };
         let class_at = |cluster: u32| classes[(cluster - FIRST_CLUSTER) as usize];
