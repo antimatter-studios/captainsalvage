@@ -186,3 +186,58 @@ fn a_drivers_root_number_is_below_the_numbers_its_candidates_get() {
         assert!(driver.root_record > 0, "{}", driver.format);
     }
 }
+
+#[test]
+fn the_instructions_an_mcp_client_is_given_name_every_filesystem_the_app_reads() {
+    let instructions = captainsalvage::mcp::INSTRUCTIONS;
+    for kind in ["exFAT", "FAT", "NTFS"] {
+        assert!(instructions.contains(kind), "{kind}");
+    }
+    // A driver added to the registry is named too, or this fails and says which.
+    for driver in drivers::registry() {
+        assert!(
+            instructions.contains(&driver.kind.to_string()),
+            "the MCP instructions do not name {}",
+            driver.kind
+        );
+    }
+}
+
+#[test]
+fn the_capabilities_tool_reports_the_derived_table_of_a_driver_volume() {
+    use captainsalvage::engine::{Engine, AUTHOR_USER};
+    use captainsalvage::session::Session;
+    use captainsalvage::workspace::Workspace;
+    let path = std::env::temp_dir().join(format!(
+        "captainsalvage-driver-capabilities-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&path);
+    let session = Session::with_source(
+        std::path::Path::new("/test/squashfs-capabilities"),
+        Arc::new(MemorySource::new(fixture())),
+        Workspace::at(&path).unwrap(),
+    )
+    .unwrap();
+    let engine = Engine::new();
+    engine.set_session(session);
+    let report = engine
+        .call("capabilities", &serde_json::json!({}), AUTHOR_USER)
+        .unwrap();
+    assert_eq!(
+        report["capabilities"],
+        serde_json::to_value(FilesystemKind::Squashfs.capabilities()).unwrap()
+    );
+    // And what it reports is what the driver says: scan is limited by the deleted candidates it lacks.
+    let scan = report["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["feature"] == "scan")
+        .unwrap();
+    assert_eq!(scan["support"], "limited");
+    assert!(scan["note"]
+        .as_str()
+        .unwrap()
+        .contains("deleted-candidates"));
+}
