@@ -147,7 +147,7 @@ pub fn sets(
     let root_start = geometry.fat_offset + geometry.fat_bytes * fat_copies;
     let mut sets = Sets::default();
     for candidate in generic.candidates()? {
-        let view = GenericFat::view(&candidate);
+        let view = generic.view(&candidate);
         let (cluster, offset) = if view.id >= geometry.data_offset {
             let into = view.id - geometry.data_offset;
             (
