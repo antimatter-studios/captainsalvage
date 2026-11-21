@@ -67,14 +67,14 @@ tasks:
           done
 
   test:oracle:
-    desc: "Independent validation: ntfs-3g, mkfs.fat, mkfs.exfat, mksquashfs, mke2fs, mtools and the kernel's ntfs3, vfat, exfat, squashfs and ext4 read what the NTFS, FAT, exFAT, SquashFS and ext2/3/4 flows read, in the Linux test VM"
+    desc: "Independent validation: ntfs-3g, mkfs.fat, mkfs.exfat, mksquashfs, mke2fs, mkfs.erofs, mtools and the kernel's ntfs3, vfat, exfat, squashfs, ext4 and erofs read what the NTFS, FAT, exFAT, SquashFS, ext2/3/4 and EROFS flows read, in the Linux test VM"
     deps: [siblings]
     # `up` boots the shared guest and applies scripts/vm-setup.sh; the session detaches when cargo
     # ends, however it ends, and leaves the guest up for the next user. A missing VM, tool or
     # driver fails the tests that needed it. Nothing skips.
     cmds:
       - ../fs-linux-test-harness/scripts/vm.sh up
-      - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle --test fat_exfat_oracle --test squashfs_oracle --test ext4_oracle
+      - ../fs-linux-test-harness/scripts/vm.sh session cargo test --locked -p captainsalvage --features oracle --test ntfs_oracle --test fat_exfat_oracle --test squashfs_oracle --test ext4_oracle --test erofs_oracle
 
   test:coverage:
     desc: "What the tests run of our own code (Rust engine, Tauri crate, TypeScript), checked against docs/coverage-baseline.json"
