@@ -11,7 +11,8 @@
 #   NAME.img             the image: mke2fs's work, not the app's
 #   NAME.kernel.tsv      what the kernel reports: `d<TAB>path`, `f<TAB>size<TAB>sha256<TAB>path` and
 #                        `l<TAB>target<TAB>path` for a symbolic link
-# One image per flavour and block size that the app is held to (ext2 and ext3 map by indirect blocks, ext4 by extents). A tool that
+# One image per flavour, block size and layout that the app is held to (ext2 and ext3 map by indirect blocks, ext4 by extents;
+# ext4 also with small files stored in their inodes, with the older feature set, and with linear directories). A tool that
 # cannot build one of them fails this script, so the run never quietly checks fewer.
 set -euo pipefail
 
@@ -110,11 +111,12 @@ tree_report() {
     ) | LC_ALL=C sort
 }
 
-# build NAME FLAVOUR BLOCK
+# build NAME FLAVOUR BLOCK [mke2fs options...]
 build() {
     local name="$1" flavour="$2" block="$3" img="$work/$1.img"
+    shift 3
     truncate -s 24M "$img"
-    mke2fs -q -F -t "$flavour" -b "$block" -d "$src" -L "oracle-$name" -U 11111111-2222-3333-4444-555555555555 "$img" >/dev/null
+    mke2fs -q -F -t "$flavour" -b "$block" "$@" -d "$src" -L "oracle-$name" -U 11111111-2222-3333-4444-555555555555 "$img" >/dev/null
     e2fsck -fn "$img" >"$out/$name.e2fsck.txt" 2>&1 || {
         echo "ext4-oracle.sh: the formatter's own checker objects to $name:" >&2
         cat "$out/$name.e2fsck.txt" >&2
@@ -135,4 +137,7 @@ build ext4-1k ext4 1024
 build ext3-4k ext3 4096
 build ext2-4k ext2 4096
 build ext2-1k ext2 1024
+build ext4-inline ext4 4096 -O inline_data
+build ext4-legacy ext4 4096 -O ^64bit,^metadata_csum,^has_journal,^flex_bg,^huge_file
+build ext4-1k-nodirindex ext4 1024 -O ^dir_index
 echo "ext4-oracle: $(wc -l <"$out/cases.tsv") images, $(wc -l <"$out/ext4-4k.kernel.tsv") entries each"

@@ -542,9 +542,10 @@ What was checked against something that is not this app:
   storage its record claims with the kernel's bytes. The app does not open a SquashFS image in a
   window yet: this checks the driver and the adapter it will be opened through.
 - **mke2fs, e2fsck and the Linux kernel's ext4**, in the same VM (from `tests/ext4_oracle.rs` and
-  `validation/ext4-oracle.sh`). `mke2fs -d` makes five images of one tree (ext4 at 4 KiB and 1 KiB
+  `validation/ext4-oracle.sh`). `mke2fs -d` makes eight images of one tree (ext4 at 4 KiB and 1 KiB
   blocks, ext3 at 4 KiB and ext2 at 4 KiB and 1 KiB, the last three mapping files by indirect
-  blocks: files of one block and of several, a file with holes, an empty file, 400 entries in one
+  blocks, and ext4 again with small files stored in their inodes, with the older feature set
+  (no 64-bit, checksums, journal or flex groups) and with linear directories: files of one block and of several, a file with holes, an empty file, 400 entries in one
   folder, non-ASCII and long names and symbolic links), `e2fsck` calls each clean, and the kernel
   mounts them read-only. The app opens each as a person does, scans and browses it, reads every
   file in full and copies it out, and what it shows and copies is exactly the kernel's tree: the

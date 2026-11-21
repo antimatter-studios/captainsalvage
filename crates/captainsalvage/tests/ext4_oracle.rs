@@ -2,7 +2,9 @@
 //!
 //! The app reads these filesystems through the rust-fs-ext4 driver and the generic layers adapter. This file reads images
 //! that nobody here built: `mke2fs` makes them from a tree (`-d`) as ext4 at 4 KiB and 1 KiB blocks, ext3 at 4 KiB and ext2 at
-//! 4 KiB and 1 KiB (the last three map their files by indirect blocks), `e2fsck` must call each clean, and the Linux kernel's
+//! 4 KiB and 1 KiB (the last three map their files by indirect blocks), and ext4 again with small files stored in their inodes
+//! (`inline_data`), with the older feature set (no 64-bit, checksums, journal or flex groups) and with linear directories
+//! (no `dir_index`), `e2fsck` must call each clean, and the Linux kernel's
 //! ext4 driver, mounted read-only on a loop device, reports what is in them as paths, sizes and SHA-256 hashes. They run in the
 //! Linux test VM (`validation/ext4-oracle.sh`, started by `chore test:oracle`). The engine then opens each image as a person
 //! opens it: scanned, browsed from the root, every file read in full by the preview's range reader and copied out, and what is
@@ -22,7 +24,16 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
 /// The images `validation/ext4-oracle.sh` makes. A script that quietly makes fewer fails.
-const IMAGES: [&str; 5] = ["ext4-4k", "ext4-1k", "ext3-4k", "ext2-4k", "ext2-1k"];
+const IMAGES: [&str; 8] = [
+    "ext4-4k",
+    "ext4-1k",
+    "ext3-4k",
+    "ext2-4k",
+    "ext2-1k",
+    "ext4-inline",
+    "ext4-legacy",
+    "ext4-1k-nodirindex",
+];
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
