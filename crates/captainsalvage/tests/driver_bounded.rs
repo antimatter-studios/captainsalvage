@@ -145,6 +145,9 @@ impl DriverAccess for Stand {
             })
             .collect())
     }
+    fn read_node(&self, _path: &str, _start: u64, _length: u64) -> anyhow::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
     fn read(&self, _walk: &ExtentWalk, _start: u64, _length: u64) -> anyhow::Result<DriverRead> {
         Ok(DriverRead {
             data: Vec::new(),

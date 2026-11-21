@@ -359,7 +359,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 | Open | Supported | Supported | Supported | Supported |
 | Scan | Supported | Supported | Supported | Limited |
 | Map | Supported | Supported | Supported | Limited |
-| Browse | Supported | Supported | Supported | Limited |
+| Browse | Supported | Supported | Supported | Supported |
 | Preview | Limited | Limited | Limited | Limited |
 | Resume | Supported | Supported | Supported | Supported |
 | Baseline copy | Supported | Supported | Supported | Supported |
@@ -408,7 +408,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 - Open (Supported): The volume opens for salvage, from a backup of its geometry when the first is damaged.
 - Scan (Limited): Every record is found, live, deleted or damaged, and damaged ones are kept as evidence. The driver lacks deleted-candidates.
 - Map (Limited): The driver gives no allocation, so every cluster of the map is allocation unknown, which is not free and not in use. Content and ownership layers.
-- Browse (Limited): The folder tree is rebuilt from the parent claims of the records. Symbolic links and special files are not listed yet: a link's target is read through the driver's file layer, not through storage it walks.
+- Browse (Supported): The folder tree is rebuilt from the parent claims of the records. A symbolic link is listed as a file that holds its target, and a special file as an empty one.
 - Preview (Limited): Bytes are read through the driver, which decodes compressed blocks and fragment tails. A range that cannot be read is marked, as for the other filesystems.
 - Resume (Supported): A paused or interrupted scan continues from where it was.
 - Baseline copy (Supported): The volume's first structures (its superblock) are hashed and kept; changes are explained.

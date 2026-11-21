@@ -14,7 +14,7 @@ use super::generic::{capability_rows, GenericVolume};
 use super::salvage::{FilesystemBoot, Inspected};
 use super::{
     Capability, DriverFacts, FilesystemDetails, FilesystemKind, RecordEntry, SalvageEntry, Support,
-    VolumeGeometry, STORAGE_DRIVER, STORAGE_DRIVER_PARTIAL,
+    VolumeGeometry, STORAGE_DRIVER, STORAGE_DRIVER_NODE, STORAGE_DRIVER_PARTIAL,
 };
 use crate::changes::StructureCopy;
 use crate::source::BlockSource;
@@ -126,6 +126,10 @@ pub trait DriverAccess: Send + Sync {
         folders: &[DriverRecord],
         files: &[DriverRecord],
     ) -> Result<Vec<Vec<ParentRef>>>;
+    /// `length` bytes of the node at `path` (from the root, `/`-separated), from `start`, through the driver's file layer: a
+    /// file's bytes, a symbolic link's target, nothing for a special file. For a candidate that is not a stream of bytes
+    /// the driver walks.
+    fn read_node(&self, path: &str, start: u64, length: u64) -> Result<Vec<u8>>;
     /// `length` bytes of what the walk rebuilds, from `start`, decoding what the driver stored compressed. A stretch whose
     /// source bytes cannot be read is zeros, and named.
     fn read(&self, walk: &ExtentWalk, start: u64, length: u64) -> Result<DriverRead>;
@@ -227,6 +231,35 @@ where
             .iter()
             .map(|file| claims.get(&file.id).cloned().unwrap_or_default())
             .collect())
+    }
+    fn read_node(&self, path: &str, start: u64, length: u64) -> Result<Vec<u8>> {
+        let volume = self.volume();
+        let node = volume.lookup(path).map_err(|error| anyhow!("{error}"))?;
+        let kind = volume
+            .metadata(&node)
+            .map_err(|error| anyhow!("{error}"))?
+            .kind;
+        let whole = match kind {
+            fs_core_layers::layers::NodeKind::Symlink => volume
+                .read_link(&node)
+                .map_err(|error| anyhow!("{error}"))?,
+            fs_core_layers::layers::NodeKind::File => {
+                let mut bytes = vec![0u8; usize::try_from(length)?];
+                let read = volume
+                    .read_at(&node, start, &mut bytes)
+                    .map_err(|error| anyhow!("{error}"))?;
+                bytes.truncate(read);
+                return Ok(bytes);
+            }
+            _ => Vec::new(),
+        };
+        let from = usize::try_from(start)
+            .unwrap_or(usize::MAX)
+            .min(whole.len());
+        let to = from
+            .saturating_add(usize::try_from(length).unwrap_or(usize::MAX))
+            .min(whole.len());
+        Ok(whole[from..to].to_vec())
     }
     fn read(&self, walk: &ExtentWalk, start: u64, length: u64) -> Result<DriverRead> {
         let adapter = self.volume().adapter()?;
@@ -362,8 +395,8 @@ pub fn capability_table(kind: FilesystemKind) -> Vec<Capability> {
     let (support, note) = row("browse").unwrap_or((Missing, ""));
     add(
         "browse",
-        if support == Supported { Limited } else { support },
-        leak(&format!("{note} Symbolic links and special files are not listed yet: a link's target is read through the driver's file layer, not through storage it walks.")),
+        support,
+        leak(&format!("{note} A symbolic link is listed as a file that holds its target, and a special file as an empty one.")),
     );
     add("preview", Limited, "Bytes are read through the driver, which decodes compressed blocks and fragment tails. A range that cannot be read is marked, as for the other filesystems.");
     add(
@@ -597,13 +630,20 @@ pub fn entries_in_cluster(
     let mut slots: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
     let mut entries = Vec::new();
     for record in records {
-        // A symbolic link or a special file is not a stream of bytes the driver walks: a link's target is read through the
-        // driver's file layer. They are not listed yet.
-        if matches!(record.kind, CandidateKind::Structure | CandidateKind::Other) {
+        if record.kind == CandidateKind::Structure {
             continue;
         }
-        let Ok(walk) = access.walk(&record) else {
-            continue;
+        // A symbolic link or a special file is not a stream of bytes the driver walks: it is read by its path through the
+        // driver's file layer, which gives a link's target and nothing for a device.
+        let node = record.kind == CandidateKind::Other;
+        let walk = match access.walk(&record) {
+            Ok(walk) => walk,
+            Err(_) if node => ExtentWalk {
+                extents: Vec::new(),
+                claimed: 0,
+                end: fs_core_layers::layers::WalkEnd::Complete,
+            },
+            Err(_) => continue,
         };
         let slot = slots.entry(record.location.offset).or_insert(0);
         let name_slot = *slot;
@@ -635,7 +675,9 @@ pub fn entries_in_cluster(
                 sequence: 0,
                 parent_record: None,
                 parent_sequence: None,
-                storage: if complete {
+                storage: if node {
+                    STORAGE_DRIVER_NODE
+                } else if complete {
                     STORAGE_DRIVER
                 } else {
                     STORAGE_DRIVER_PARTIAL

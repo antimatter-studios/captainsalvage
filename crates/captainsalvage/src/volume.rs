@@ -240,6 +240,26 @@ impl Volume {
         self
     }
 
+    /// `length` bytes of a driver's candidate from `start`: what its walk rebuilds, or, for a symbolic link or a special file,
+    /// what the driver's file layer gives at its path.
+    pub fn read_driver(
+        &self,
+        stream: &crate::map::DriverStream,
+        start: u64,
+        length: u64,
+    ) -> Result<drivers::DriverRead> {
+        let driver = self
+            .driver()
+            .context("this volume is not read through a driver")?;
+        match &stream.node {
+            Some(path) => Ok(drivers::DriverRead {
+                data: driver.read_node(path, start, length)?,
+                unreadable: Vec::new(),
+            }),
+            None => driver.read(&stream.walk, start, length),
+        }
+    }
+
     /// The driver's volume, for a filesystem that is read through the registry (`filesystem::drivers`), when it opened.
     pub fn driver(&self) -> Option<&dyn drivers::DriverAccess> {
         self.driver.as_deref()

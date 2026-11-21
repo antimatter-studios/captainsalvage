@@ -684,11 +684,7 @@ impl Session {
         } else if let (Some(driver), true) = (&stream.driver, start < end) {
             // A driver's candidate is read through the driver, which decodes what it stored compressed. A stretch whose
             // source bytes cannot be read is zeros, named; bytes past the valid length are zeros the format defines.
-            let read = self
-                .volume
-                .driver()
-                .context("this volume is not read through a driver")?
-                .read(&driver.walk, start, end - start)?;
+            let read = self.volume.read_driver(driver, start, end - start)?;
             data = read.data;
             for range in &read.unreadable {
                 push_range(

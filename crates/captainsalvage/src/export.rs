@@ -1248,10 +1248,6 @@ impl Session {
         // compressed, in pieces. A stretch whose source bytes cannot be read is zeros in the copy and a range in the manifest,
         // as for an NTFS stream; a stream the driver cannot read at all ends the copy there, partial.
         if let Some(stream) = &driver {
-            let access = self
-                .volume
-                .driver()
-                .context("this volume is not read through a driver")?;
             while written < stream.length {
                 if self.should_stop() {
                     drop(file);
@@ -1259,7 +1255,7 @@ impl Session {
                     return Ok(None);
                 }
                 let wanted = (stream.length - written).min(MAX_RUN_BYTES);
-                let read = match access.read(&stream.walk, written, wanted) {
+                let read = match self.volume.read_driver(stream, written, wanted) {
                     Ok(read) if !read.data.is_empty() => read,
                     Ok(_) => {
                         stream_error = Some("the stream ended early".into());
