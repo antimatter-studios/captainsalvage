@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.15.2 | MIT | captain-salvage |
+| `captainsalvage` | 0.15.3 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1230,6 +1230,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.15.3 — 2026-11-21
+
+**Maintenance**
+
+- A raw scan step through the engine's tools reads a failing drive through the journal without waiting for itself ([#317](https://github.com/antimatter-studios/captainsalvage/pull/317))
+
 ### v0.15.2 — 2026-11-20
 
 **Fixed**
@@ -1298,12 +1304,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **A bridge can be verified by a decoder, and a verified one can be kept.** The `media_check` tool (which has ffmpeg read a file and reports its exact errors) and the `materialize` tool now take a reassembly the way `test_stream` does: an entry (or clusters) plus `appendExtents`, `appendChain` or `appendChains`. ffmpeg then reads the clusters in that order as one file, every byte from the disk (a cluster that cannot be read fails the check, it is not filled in), and the answer says what was joined where. A new `disk_rebuild_place_reassembly` tool keeps one: it completes the file with the appended clusters as a hypothesis the map then reads (which `delete_overlay` undoes) and places the file in a Disk Rebuild, so a copy of the Disk Rebuild holds it whole.
-
-### v0.10.0 — 2026-11-20
-
-**Added**
-
-- **An agent can summarise all the unexplained space in one call.** The new `unexplained_summary` tool samples the free clusters that nothing explains, across every region (or the biggest N), within a sample budget (2048 clusters by default) and a time limit, and gives the totals in one answer: how many regions and bytes, bytes by main content, and what the sample holds (clusters with valid directory entries, clusters that mix older and newer data, file signatures at a cluster's start and inside it, NTFS records, zeros, read errors), as counts, shares and estimates. For clusters that hold valid directory entries and are still unexplained it also says what the scan made of them (for example, it could not read them) and whether the scan had got that far. It gives no names or text unless asked, and an agent is refused them while the person keeps names back.
 
 <!-- changelog:end -->
 
