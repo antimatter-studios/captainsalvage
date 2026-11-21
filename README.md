@@ -1104,7 +1104,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.20.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.20.2 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1241,6 +1241,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.20.2 — 2026-11-21
+
+**Maintenance**
+
+- A saved copy of a volume's structures says where on the volume each region was read from, for FAT, exFAT and NTFS ([#348](https://github.com/antimatter-studios/captainsalvage/pull/348))
+
 ### v0.20.1 — 2026-11-21
 
 **Maintenance**
@@ -1296,12 +1302,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **On an NTFS volume whose allocation is unknown, carving and the unexplained-space tools still work, and say what they are searching.** When a volume's `$Bitmap` cannot be read there is no list of free clusters, so these tools used to find nothing. They now search the whole volume, as if it were free space, and say so in every answer: the Unexplained list in the window shows a warning, and the `unexplained_runs`, `unexplained_summary` and `carve_candidates` answers carry `allocationBasis` and `allocationWarning`. Nothing is called free: the warning says that nothing here is known to be free, and that a file current files use may be listed. The answers for a volume whose allocation is known are unchanged. The search is built to narrow to what the file records leave over once allocation can be rebuilt from them, with that rebuild's limits said alongside.
-
-### v0.16.1 — 2026-11-21
-
-**Maintenance**
-
-- The pull request jobs install ffmpeg so the tests that need it run, and the path without ffmpeg is a test of its own that hides ffmpeg itself ([#327](https://github.com/antimatter-studios/captainsalvage/pull/327))
 
 <!-- changelog:end -->
 
