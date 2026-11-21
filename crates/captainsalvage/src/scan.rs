@@ -188,13 +188,27 @@ fn read_chunk(
 
     let mut failed = vec![false; count as usize];
     let mut chunk_errors: Vec<(u32, String)> = Vec::new();
-    if volume.source().read_exact_at(offset, buffer).is_err() {
+    // The last cluster of a volume whose size is not a whole number of clusters (a driver's volume: its length is what it says
+    // it uses) goes past its end: what is there is read, and the rest of the cluster is zeros, not an error. For the other
+    // filesystems the clusters are inside the volume, and this reads what the whole read did.
+    let volume_size = volume.geometry.volume_size;
+    let read_inside = |at: u64, bytes: &mut [u8]| -> std::io::Result<()> {
+        let inside = volume_size.saturating_sub(at).min(bytes.len() as u64) as usize;
+        if inside < bytes.len() {
+            bytes[inside..].fill(0);
+        }
+        if inside == 0 {
+            return Ok(());
+        }
+        volume.source().read_exact_at(at, &mut bytes[..inside])
+    };
+    if read_inside(offset, buffer).is_err() {
         // Retry one cluster at a time, so one bad spot loses only that cluster.
         buffer.fill(0);
         for (index, cluster_failed) in failed.iter_mut().enumerate() {
             let start = index * cluster_size as usize;
             let slice = &mut buffer[start..start + cluster_size as usize];
-            if let Err(error) = volume.source().read_exact_at(offset + start as u64, slice) {
+            if let Err(error) = read_inside(offset + start as u64, slice) {
                 *cluster_failed = true;
                 chunk_errors.push((first + index as u32, error.to_string()));
             }

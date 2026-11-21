@@ -10,7 +10,8 @@ use crate::content::{
     CLASS_TEXT, CLASS_ZEROS,
 };
 use crate::filesystem::{
-    NtfsRun, STORAGE_COMPRESSED, STORAGE_DAMAGED, STORAGE_RESIDENT, STORAGE_RUNS,
+    NtfsRun, STORAGE_COMPRESSED, STORAGE_DAMAGED, STORAGE_DRIVER, STORAGE_DRIVER_PARTIAL,
+    STORAGE_RESIDENT, STORAGE_RUNS,
 };
 use crate::map::{
     from_extents, Extent, MapDb, MapSummary, Overlay, ResolveParams, OVERLAY_ACCEPT_ENTRY,
@@ -188,6 +189,16 @@ impl LoadedSet {
         !self.is_resident() && (self.ntfs.is_none() || self.first_cluster != 0)
     }
 
+    /// Whether this is a driver's candidate (`filesystem::drivers`), read through the driver.
+    fn is_driver(&self) -> bool {
+        self.ntfs.as_ref().is_some_and(|ntfs| {
+            matches!(
+                ntfs.storage.as_str(),
+                STORAGE_DRIVER | STORAGE_DRIVER_PARTIAL
+            )
+        })
+    }
+
     /// NTFS: the name was linked under a sequence number the parent record no longer has.
     fn parent_was_reused(&self, sequences: &HashMap<u32, u16>) -> bool {
         let Some(ntfs) = &self.ntfs else { return false };
@@ -213,7 +224,11 @@ impl LoadedSet {
             .filter(|storage| {
                 !matches!(
                     *storage,
-                    STORAGE_RESIDENT | STORAGE_RUNS | STORAGE_COMPRESSED
+                    STORAGE_RESIDENT
+                        | STORAGE_RUNS
+                        | STORAGE_COMPRESSED
+                        | STORAGE_DRIVER
+                        | STORAGE_DRIVER_PARTIAL
                 )
             })
     }
@@ -654,6 +669,44 @@ impl Context<'_> {
         )
     }
 
+    /// The verdict for a driver's file, from what the driver said of its record and how far its walk reached.
+    fn assess_driver(&self, set: &LoadedSet, node_kind: Option<&str>) -> Assessment {
+        let whole = set
+            .ntfs
+            .as_ref()
+            .is_some_and(|ntfs| ntfs.storage == STORAGE_DRIVER);
+        if !whole {
+            return Assessment::plain(
+                VERDICT_PARTIAL,
+                CODE_CHAIN_BROKEN,
+                "The driver could not follow all the storage this record claims, so only what it reached can be read.",
+                0.3,
+            );
+        }
+        if set.in_use && matches!(node_kind, Some("root") | Some("live")) {
+            return Assessment::plain(
+                VERDICT_LIVE,
+                CODE_LIVE,
+                "Visible in the current filesystem.",
+                1.0,
+            );
+        }
+        if set.in_use {
+            return Assessment::plain(
+                VERDICT_PLAUSIBLE,
+                CODE_FOLDER_MISSING,
+                "The driver follows its storage whole, but no folder that leads to the root names it.",
+                0.6,
+            );
+        }
+        Assessment::plain(
+            VERDICT_PLAUSIBLE,
+            CODE_CONTENT_UNCONFIRMED,
+            "The driver marks it deleted and follows its storage whole; nothing says the bytes are still what they were.",
+            0.5,
+        )
+    }
+
     fn assess_file(
         &self,
         set: &LoadedSet,
@@ -971,6 +1024,8 @@ impl MapDb {
             .into_iter()
             .map(|test| (test.id, test))
             .collect();
+        // A driver's candidates are placed in their folders from the parent claims the driver finds.
+        self.link_driver_records(volume)?;
         let mut sets = self.load_sets(volume)?;
         let corrections = apply_entry_overlays(&mut sets, &overlays);
         let overrides: HashMap<i64, Vec<u32>> = overlays
@@ -1306,6 +1361,10 @@ impl MapDb {
                 )
             } else if set.length == 0 {
                 Assessment::plain(VERDICT_EMPTY, CODE_EMPTY, "Zero-length file.", trust)
+            } else if set.is_driver() {
+                // What a driver walked is judged by the driver's own account, not by clusters: its storage is not a chain
+                // of clusters, and a block or a fragment may be shared by design.
+                context.assess_driver(set, node_kind)
             } else if !set.in_use
                 && set.checksum_ok
                 && set.ntfs.is_none()

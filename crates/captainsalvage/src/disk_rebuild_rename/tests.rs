@@ -100,6 +100,7 @@ fn old_database(folder: &Folder) -> PathBuf {
 const ADDED_AFTER_THE_RENAME: &[&str] = &[
     "fat_weak",
     "fat_walks",
+    "driver_records",
     "agent_sessions",
     "disk_rebuild_changes",
     "disk_rebuild_agent_marks",

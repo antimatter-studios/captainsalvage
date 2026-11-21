@@ -1885,6 +1885,17 @@ impl Session {
             crate::map::EntrySource::Ntfs(stream) => {
                 self.read_ntfs_stream(&stream, 0, limit.min(max_bytes))?
             }
+            crate::map::EntrySource::Driver(stream) => {
+                let read = self
+                    .volume
+                    .driver()
+                    .context("this volume is not read through a driver")?
+                    .read(&stream.walk, 0, limit.min(max_bytes))?;
+                if !read.unreadable.is_empty() {
+                    bail!("part of this file could not be read");
+                }
+                read.data
+            }
         };
         Ok((row, data))
     }
