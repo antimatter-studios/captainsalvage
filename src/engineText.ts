@@ -228,6 +228,7 @@ export const ENGINE_TEXT: string[] = [
   "The FAT driver did not open this volume ({name}), so the old FAT adapter reads it.",
   "The FAT driver found this entry by its content, as the only entry in its cluster and not through a folder that names it, so it may be file bytes that look like an entry.",
   "The FAT driver found this entry by its content and not through a folder that names it, so it is not verified.",
+  "The FAT cleared this file's chain when it was deleted, so the FAT driver followed its claim as one run from its first cluster: the last {name} clusters are a guess.",
   // Keeping volumes unmounted.
   "Only the person using the app can let a volume mount again.",
   "A volume UUID is needed.",

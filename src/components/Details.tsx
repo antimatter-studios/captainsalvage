@@ -124,7 +124,7 @@ function EntryDetails({ row, extents, macosWroteOn, onCluster, onPreview, onInsi
             {row.clustersAllocated > 0 && <Fact label={t("In current use")}>{t("{count} clusters", { count: count(row.clustersAllocated) })}</Fact>}
             {row.clustersConflict > 0 && <Fact label={t("Shared")}>{t("{count} clusters", { count: count(row.clustersConflict) })}</Fact>}
             <Fact label={t("Pieces")}>{count(extents.length)}</Fact>
-            <Fact label={t("Layout")}>{row.storage === "resident" ? t("Inside its FILE record") : row.storage !== undefined ? t("Run list") : row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
+            <Fact label={t("Layout")}>{row.guessed ? t("A guess: one run from its first cluster") : row.storage === "resident" ? t("Inside its FILE record") : row.storage !== undefined ? t("Run list") : row.noFatChain ? t("Contiguous, no FAT chain") : t("FAT chain")}</Fact>
             {row.weak && <Fact label={t("Found by")}>{row.weak === "lone_entry" ? t("Its content only, a lone entry") : t("Its content only")}</Fact>}
             <Fact label={t("Entry state")}>{row.inUse ? t("In use") : t("Marked deleted")}{row.checksumOk ? "" : row.storage !== undefined ? t(", record damaged") : t(", checksum failed")}</Fact>
           </>

@@ -86,10 +86,13 @@ fn fat12_fat16_and_fat32_sessions_scan_browse_and_read_fragmented_files() {
             .as_i64()
             .expect("deleted entry found beyond end marker");
         assert!(!deleted["rows"][0]["inUse"].as_bool().unwrap());
+        // The FAT cleared the deleted file's chain, so the driver follows its claim as one run from its first cluster: the whole
+        // 520 bytes, where the old adapter read one cluster. The entry says its clusters are a guess.
         assert_eq!(
             session.read_entry_range(deleted_id, 0, 520).unwrap().data,
-            vec![b'D'; 512]
+            [vec![b'D'; 512], vec![b'E'; 8]].concat()
         );
+        assert_eq!(deleted["rows"][0]["guessed"], true);
         call(
             &engine,
             "set_parameters",

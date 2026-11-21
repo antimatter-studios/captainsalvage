@@ -43,6 +43,10 @@ try:
     check('an entry a folder names has no mark', 'weak' in named, False)
     check('and is in use', named['inUse'], True)
 
+    deleted = next(row for row in call('search', query='_OST.TXT')['rows'] if row['name'] == '_OST.TXT')
+    check('a deleted file the FAT cleared the chain of is read whole, as a guess', (deleted['inUse'], deleted.get('guessed'), deleted['clustersFound'], deleted['clustersNeeded']), (False, True, 2, 2))
+    check('and its reason says so', 'are a guess' in deleted['reason'], True)
+
     rows = search('ORPHAN.TXT')
     check('the window marks the weak candidate', [(r['name'], r['weak']) for r in rows if r['name'] == 'ORPHAN.TXT'], [('ORPHAN.TXT', 'Weak')])
     title = next(r['title'] for r in rows if r['name'] == 'ORPHAN.TXT')
@@ -56,5 +60,8 @@ try:
     js("[...document.querySelectorAll('button.row')].find((b) => b.querySelector('.row-name')?.firstChild?.textContent === 'ORPHAN.TXT')?.click()")
     check('the details say how it was found', wait_for("document.body.innerText.includes('Its content only, a lone entry')", 20), True)
     check('and that it is marked deleted', wait_for("document.body.innerText.includes('Marked deleted')", 5), True)
+    search('_OST.TXT')
+    js("[...document.querySelectorAll('button.row')].find((b) => b.querySelector('.row-name')?.firstChild?.textContent === '_OST.TXT')?.click()")
+    check('the details of a guessed file say its layout is a guess', wait_for("document.body.innerText.includes('A guess: one run from its first cluster')", 20), True)
 finally:
     finish()

@@ -113,6 +113,9 @@ pub struct CopyStatus {
     pub files_done: u64,
     pub files_skipped: u64,
     pub files_partial: u64,
+    /// Files copied from a guess: their chain was cleared, so the driver's one-run claim was followed. Left out when none.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub files_guessed: u64,
     pub files_failed: u64,
     pub bytes_total: u64,
     pub bytes_done: u64,
@@ -163,6 +166,10 @@ pub struct ManifestRow {
     pub format_valid_fraction: Option<f64>,
     pub format_breaks: Option<u64>,
     pub copied_at_millis: u64,
+    /// The file's clusters were guessed: its FAT chain was cleared when it was deleted, so the driver followed its claim as one run
+    /// from its first cluster, and the bytes after the first cluster are where that guess put them. Left out for every other file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub extents_guessed: bool,
 }
 
 /// The manifest in a destination: the old name's, when only that one is there.
@@ -1111,6 +1118,9 @@ impl Session {
                         if result.status != "complete" {
                             status.files_partial += 1;
                         }
+                        if result.extents_guessed {
+                            status.files_guessed += 1;
+                        }
                     });
                 }
                 Ok(None) => {
@@ -1380,6 +1390,7 @@ impl Session {
             format_valid_fraction: valid_fraction,
             format_breaks: breaks,
             copied_at_millis: now_millis(),
+            extents_guessed: row.guessed,
         }))
     }
 }

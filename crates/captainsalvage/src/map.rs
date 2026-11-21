@@ -97,6 +97,13 @@ CREATE TABLE IF NOT EXISTS fat_weak (
     mark TEXT NOT NULL,
     PRIMARY KEY (source_cluster, source_offset)
 );
+CREATE TABLE IF NOT EXISTS fat_walks (
+    source_cluster INTEGER NOT NULL,
+    source_offset INTEGER NOT NULL,
+    guessed INTEGER NOT NULL,
+    extents TEXT NOT NULL,
+    PRIMARY KEY (source_cluster, source_offset)
+);
 CREATE TABLE IF NOT EXISTS ntfs_extents (
     source_cluster INTEGER NOT NULL,
     source_offset INTEGER NOT NULL,
@@ -463,6 +470,13 @@ pub struct Row {
     /// (`lone_entry`), so it may be file bytes that look like an entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weak: Option<String>,
+    /// A FAT file whose clusters the driver guessed (its chain was cleared when it was deleted, so its first cluster is known and
+    /// the rest is where the driver's walk put it).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub guessed: bool,
+    /// The runs of `(first cluster, count)` the driver walked for a FAT file. The engine reads the file from these.
+    #[serde(skip)]
+    pub walk: Option<Vec<(u32, u32)>>,
 }
 
 /// What a lost folder's own files mostly are, by type, so the window can suggest a label such
@@ -548,10 +562,12 @@ pub(crate) const FILE_COLUMNS: &str = "id, COALESCE(o_name, name), COALESCE(o_le
     (SELECT record_number FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
     (SELECT sequence FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
     (SELECT storage FROM ntfs_records r WHERE r.source_cluster = sets.source_cluster AND r.source_offset = sets.source_offset), \
-    (SELECT mark FROM fat_weak w WHERE w.source_cluster = sets.source_cluster AND w.source_offset = sets.source_offset)";
+    (SELECT mark FROM fat_weak w WHERE w.source_cluster = sets.source_cluster AND w.source_offset = sets.source_offset), \
+    (SELECT guessed FROM fat_walks k WHERE k.source_cluster = sets.source_cluster AND k.source_offset = sets.source_offset), \
+    (SELECT extents FROM fat_walks k WHERE k.source_cluster = sets.source_cluster AND k.source_offset = sets.source_offset)";
 
 /// Position of `node` when a query appends it to `FILE_COLUMNS`.
-pub(crate) const FILE_NODE_INDEX: usize = 24;
+pub(crate) const FILE_NODE_INDEX: usize = 26;
 
 pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     let is_dir: bool = row.get(18)?;
@@ -584,6 +600,10 @@ pub(crate) fn file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         sequence: row.get::<_, Option<i64>>(21)?.map(|value| value as u16),
         storage: row.get(22)?,
         weak: row.get(23)?,
+        guessed: row.get::<_, Option<bool>>(24)?.unwrap_or(false),
+        walk: row
+            .get::<_, Option<String>>(25)?
+            .and_then(|text| serde_json::from_str(&text).ok()),
         ..Row::default()
     })
 }
@@ -643,6 +663,9 @@ fn write_chunk(
     let mut weak_insert = transaction.prepare_cached(
         "INSERT OR REPLACE INTO fat_weak (source_cluster, source_offset, mark) VALUES (?1, ?2, ?3)",
     )?;
+    let mut walk_insert = transaction.prepare_cached(
+        "INSERT OR REPLACE INTO fat_walks (source_cluster, source_offset, guessed, extents) VALUES (?1, ?2, ?3, ?4)",
+    )?;
     let mut extent_insert = transaction.prepare_cached(
         "INSERT OR IGNORE INTO ntfs_extents (source_cluster, source_offset, vcn, lcn, count) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -670,6 +693,14 @@ fn write_chunk(
         // A weak candidate is told apart in a table of its own, so a map of any other filesystem is as it was.
         if let Some(mark) = &set.weak {
             weak_insert.execute(params![cluster, key, mark])?;
+        }
+        if let Some(walk) = &set.walk {
+            walk_insert.execute(params![
+                cluster,
+                key,
+                walk.guessed,
+                serde_json::to_string(&walk.extents)?
+            ])?;
         }
         if let Some(entry) = ntfs {
             record_insert.execute(params![
@@ -992,6 +1023,10 @@ impl MapDb {
         )?;
         transaction.execute(
             "DELETE FROM fat_weak WHERE source_cluster >= ?1 AND source_cluster < ?2",
+            params![first, end],
+        )?;
+        transaction.execute(
+            "DELETE FROM fat_walks WHERE source_cluster >= ?1 AND source_cluster < ?2",
             params![first, end],
         )?;
         transaction.execute(
@@ -1431,7 +1466,12 @@ impl MapDb {
         let cluster_size = volume.geometry.cluster_size();
         let mut rows = Vec::new();
         for (mut row, node) in found {
-            let contains = if row.no_fat_chain {
+            let contains = if let Some(walk) = &row.walk {
+                volume
+                    .clusters_from_walk(walk, row.length)
+                    .clusters
+                    .contains(&cluster)
+            } else if row.no_fat_chain {
                 u64::from(cluster)
                     < u64::from(row.first_cluster) + row.length.div_ceil(cluster_size)
             } else {
@@ -1654,7 +1694,12 @@ impl MapDb {
             )?;
             return Ok(volume.clusters_from_runs(&runs, entry.length).clusters);
         }
-        let mut stream = volume.clusters_for(entry.first_cluster, entry.length, entry.no_fat_chain);
+        // A FAT file the driver walked is read from its walk, which is the clusters it claims: as the chain, and for a deleted file
+        // (whose chain the FAT cleared) as the one run the driver guessed.
+        let mut stream = match &entry.walk {
+            Some(walk) => volume.clusters_from_walk(walk, entry.length),
+            None => volume.clusters_for(entry.first_cluster, entry.length, entry.no_fat_chain),
+        };
         if self.params()?.chain_fallback_contiguous && !stream.clusters.is_empty() {
             let mut next = stream.clusters[stream.clusters.len() - 1] + 1;
             while (stream.clusters.len() as u64) < stream.needed && volume.valid_cluster(next) {

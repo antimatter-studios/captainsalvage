@@ -392,7 +392,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 **FAT12, FAT16, FAT32**
 
 - Open (Supported): The boot sector, the reserved sectors, the FAT copies and the root directory are read and saved as a baseline. FAT12, FAT16 and FAT32 are told apart by their cluster count. FAT has no allocation bitmap on disk. Checked on synthetic images and by the driver's independent tests, not yet on a real damaged drive. The entries are read through the FAT driver's generic layers adapter, which the driver's own checks cover; the old FAT adapter stays for one release (set SALVAGE_FAT_ADAPTER=legacy) and reads a volume the driver does not open.
-- Scan (Supported): Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable. An entry in a cluster that is free in the FAT is deleted, as the driver reads it. An entry the driver found by its content only, not through a folder that names it, is a weak candidate: marked unchecked, and lone_entry when it is the only entry in its cluster, with half the confidence.
+- Scan (Supported): Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable. An entry in a cluster that is free in the FAT is deleted, as the driver reads it. A file's clusters are the driver's walk of what its entry claims: its FAT chain, and, for a deleted file, whose chain the FAT cleared, one run from its first cluster, which is a guess and is marked as one (the file is copied whole, from the guess, instead of one cluster). An entry the driver found by its content only, not through a folder that names it, is a weak candidate: marked unchecked, and lone_entry when it is the only entry in its cluster, with half the confidence.
 - Map (Supported): A cluster is allocated when its FAT entry is not zero, because there is no bitmap to read. Content, ownership and confidence layers.
 - Browse (Supported): The folder tree is rebuilt from directory clusters and the fixed root of FAT12 and FAT16. A long name is used only when its checksum agrees with its short name.
 - Preview (Limited): Bytes are read through the FAT chain. A deleted file's chain is cleared, so it is partial unless the person turns on the contiguous-fallback hypothesis, which assumes the clusters after the first follow it. A cluster that cannot be read is marked: the text and byte previews show each of its bytes as ?, and name the range; an image or a film shows it as zeros.
@@ -421,6 +421,10 @@ What each was checked against, apart from this app's own synthetic images:
   adopts what it says: an entry in a cluster that is free in the FAT is deleted, and an entry it
   found by its content only (not through a folder that names it) is a weak candidate, marked
   `unchecked`, or `lone_entry` when it is the only entry in its cluster, at half the confidence.
+  A file's clusters come from the driver's walk of what its entry claims: its FAT chain, and for a
+  deleted file, whose chain the FAT cleared, one run from its first cluster, which is a guess: its
+  verdict says so and has the guessed-extent confidence, its copy is whole and marked `extentsGuessed`
+  in the manifest, and the file tests run on it as on any other (the old adapter copies one cluster).
   The app's earlier FAT adapter stays for one release: set `SALVAGE_FAT_ADAPTER=legacy` to read
   with it, and it reads a volume the driver does not open.
 - **NTFS** is checked against ntfs-3g, the Linux kernel's ntfs3 and volumes Windows formatted,

@@ -194,7 +194,7 @@ impl FilesystemKind {
             ],
             Self::Fat12 | Self::Fat16 | Self::Fat32 => vec![
                 capability("open", Supported, "The boot sector, the reserved sectors, the FAT copies and the root directory are read and saved as a baseline. FAT12, FAT16 and FAT32 are told apart by their cluster count. FAT has no allocation bitmap on disk. Checked on synthetic images and by the driver's independent tests, not yet on a real damaged drive. The entries are read through the FAT driver's generic layers adapter, which the driver's own checks cover; the old FAT adapter stays for one release (set SALVAGE_FAT_ADAPTER=legacy) and reads a volume the driver does not open."),
-                capability("scan", Supported, "Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable. An entry in a cluster that is free in the FAT is deleted, as the driver reads it. An entry the driver found by its content only, not through a folder that names it, is a weak candidate: marked unchecked, and lone_entry when it is the only entry in its cluster, with half the confidence."),
+                capability("scan", Supported, "Every cluster is read once for directory entries, deleted ones included; a deleted entry has lost the first character of its name and its chain is cleared. FAT12 and FAT16 keep a fixed-size root directory that is scanned apart from the data clusters; the FAT32 root is a chain. Resumable. An entry in a cluster that is free in the FAT is deleted, as the driver reads it. A file's clusters are the driver's walk of what its entry claims: its FAT chain, and, for a deleted file, whose chain the FAT cleared, one run from its first cluster, which is a guess and is marked as one (the file is copied whole, from the guess, instead of one cluster). An entry the driver found by its content only, not through a folder that names it, is a weak candidate: marked unchecked, and lone_entry when it is the only entry in its cluster, with half the confidence."),
                 capability("map", Supported, "A cluster is allocated when its FAT entry is not zero, because there is no bitmap to read. Content, ownership and confidence layers."),
                 capability("browse", Supported, "The folder tree is rebuilt from directory clusters and the fixed root of FAT12 and FAT16. A long name is used only when its checksum agrees with its short name."),
                 capability("preview", Limited, "Bytes are read through the FAT chain. A deleted file's chain is cleared, so it is partial unless the person turns on the contiguous-fallback hypothesis, which assumes the clusters after the first follow it. A cluster that cannot be read is marked: the text and byte previews show each of its bytes as ?, and name the range; an image or a film shows it as zeros."),
@@ -434,6 +434,19 @@ pub struct SalvageEntry {
     /// is the only entry in its cluster (so it may be file bytes that look like one). Such an entry is a weak candidate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weak: Option<String>,
+    /// A FAT file's clusters as the FAT driver's `walk_extents` gives them, where the generic adapter reads the volume. The engine
+    /// takes the entry's clusters from it, instead of following the FAT chain itself.
+    #[serde(skip)]
+    pub walk: Option<FatWalk>,
+}
+
+/// The clusters a FAT file claims, as the driver walked them: runs of `(first cluster, count)`, in file order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FatWalk {
+    /// The FAT does not say where the file goes on (its chain was cleared when it was deleted), so the driver guessed: only its
+    /// first cluster is known, the rest is where the driver's guess put it.
+    pub guessed: bool,
+    pub extents: Vec<(u32, u32)>,
 }
 
 fn is_first_name(slot: &u32) -> bool {
@@ -477,6 +490,7 @@ impl From<fs_exfat::primitives::EntrySet> for SalvageEntry {
             ranges: crate::ranges::RangeList::default(),
             name_slot: 0,
             weak: None,
+            walk: None,
         }
     }
 }

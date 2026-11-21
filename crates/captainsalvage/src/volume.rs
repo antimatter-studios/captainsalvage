@@ -475,6 +475,23 @@ impl Volume {
         }
     }
 
+    /// The clusters of a file as the FAT driver walked them, as runs of `(first cluster, count)`, cut to what its length needs.
+    pub fn clusters_from_walk(&self, walk: &[(u32, u32)], length: u64) -> StreamClusters {
+        let needed = length.div_ceil(self.geometry.cluster_size());
+        let mut clusters = Vec::new();
+        for &(first, count) in walk {
+            for cluster in first..first.saturating_add(count) {
+                if clusters.len() as u64 >= needed {
+                    break;
+                }
+                if self.valid_cluster(cluster) {
+                    clusters.push(cluster);
+                }
+            }
+        }
+        StreamClusters { clusters, needed }
+    }
+
     /// Reads a stream's bytes, up to `max_bytes`, stopping at its valid length.
     pub fn read_stream(
         &self,
