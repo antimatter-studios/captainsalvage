@@ -103,7 +103,7 @@ fn what_is_found_does_not_depend_on_how_the_scan_was_chunked() {
     let whole = browsed(&scanned("chunk-16", 16));
     assert_eq!(browsed(&scanned("chunk-1", 1)), whole);
     assert_eq!(browsed(&scanned("chunk-2", 2)), whole);
-    assert!(whole.len() >= 6, "{whole:?}");
+    assert!(whole.len() >= 7, "{whole:?}");
 }
 
 /// What the image holds, by path.
@@ -111,6 +111,7 @@ fn contents() -> BTreeMap<&'static str, Vec<u8>> {
     BTreeMap::from([
         ("hello.txt", b"hi\n".to_vec()),
         ("empty.txt", Vec::new()),
+        ("link", b"hello.txt".to_vec()),
         ("sub/note.md", b"# note\nsome words here\n".to_vec()),
         ("sub/deep/big.bin", big()),
     ])
@@ -159,7 +160,7 @@ fn a_copy_writes_the_bytes_the_driver_reads_and_says_it_is_complete() {
         if status.state == "finished" {
             assert_eq!(
                 (status.files_done, status.files_failed, status.files_partial),
-                (4, 0, 0),
+                (5, 0, 0),
                 "{status:?}"
             );
             break;

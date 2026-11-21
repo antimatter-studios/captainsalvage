@@ -403,6 +403,9 @@ pub const STORAGE_DRIVER: &str = "driver";
 /// A driver's candidate whose walk did not reach the end of what the record claims: what it reached is read, and the rest is
 /// named as missing.
 pub const STORAGE_DRIVER_PARTIAL: &str = "driver-partial";
+/// A driver's candidate that is not a stream of bytes the driver walks (a symbolic link, a special file): it is read by its
+/// path through the driver's file layer, which gives a link's target and nothing for a device.
+pub const STORAGE_DRIVER_NODE: &str = "driver-node";
 
 /// What an NTFS FILE record says about an entry, kept beside the common fields. A file
 /// reference names a record and the sequence it had; neither is a cluster.
@@ -430,6 +433,7 @@ impl RecordEntry {
                 | STORAGE_COMPRESSED
                 | STORAGE_DRIVER
                 | STORAGE_DRIVER_PARTIAL
+                | STORAGE_DRIVER_NODE
         )
     }
 }

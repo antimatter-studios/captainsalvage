@@ -109,13 +109,15 @@ fn the_support_table_of_a_driver_comes_from_what_it_lacks() {
         assert!(!row(feature).note.is_empty(), "{feature}");
     }
     // What the driver decides is derived from what it lacks: SquashFS has no deleted candidates, no deleted extents and no
-    // cluster steps, so scanning, copying out and rebuilds are limited by those, and its links are not listed yet.
+    // cluster steps, so scanning, copying out and rebuilds are limited by those.
     assert_eq!(row("open").support, Support::Supported);
     assert_eq!(row("baseline").support, Support::Supported);
     assert_eq!(row("scan").support, Support::Limited);
     assert!(row("scan").note.contains("deleted-candidates"));
-    assert_eq!(row("browse").support, Support::Limited);
-    assert!(row("browse").note.contains("Symbolic links"));
+    assert_eq!(row("browse").support, Support::Supported);
+    assert!(row("browse")
+        .note
+        .contains("symbolic link is listed as a file"));
     assert_eq!(row("export").support, Support::Limited);
     assert!(row("export").note.contains("deleted-extents"));
     assert_eq!(row("rebuilds").support, Support::Limited);
