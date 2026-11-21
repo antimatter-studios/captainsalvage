@@ -86,5 +86,9 @@ name = "ext4_oracle"
 required-features = ["oracle"]
 
 [[test]]
+name = "erofs_oracle"
+required-features = ["oracle"]
+
+[[test]]
 name = "ntfs_windows"
 required-features = ["windows-oracle"]
