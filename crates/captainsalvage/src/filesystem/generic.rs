@@ -266,8 +266,13 @@ fn place<D>(candidates: &[Candidate<D>], ids: &[u64], tree: &Tree) -> Vec<Placed
                     orphan = true;
                     break;
                 };
-                folders.push(name.unwrap_or("").to_string());
-                at = parents.get(&id).copied();
+                let above = parents.get(&id).copied();
+                // A driver whose root is a record of its own (SquashFS's root inode) has no name: it is not a folder in
+                // a path.
+                if name.is_some_and(|name| !name.is_empty()) || above != Some(Parent::Root) {
+                    folders.push(name.unwrap_or("").to_string());
+                }
+                at = above;
                 if at.is_none() {
                     orphan = true;
                 }

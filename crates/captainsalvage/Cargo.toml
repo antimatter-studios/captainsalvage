@@ -76,5 +76,9 @@ name = "fat_exfat_oracle"
 required-features = ["oracle"]
 
 [[test]]
+name = "squashfs_oracle"
+required-features = ["oracle"]
+
+[[test]]
 name = "ntfs_windows"
 required-features = ["windows-oracle"]
