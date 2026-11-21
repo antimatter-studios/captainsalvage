@@ -31,6 +31,20 @@ impl BlockRead for Image {
         self.0.lock().unwrap().len() as u64
     }
 }
+/// The FAT driver reads through the next rust-fs-core's trait, so the adapter's `Driver` asks for both.
+impl fs_core_layers::BlockRead for Image {
+    fn read_at(&self, offset: u64, output: &mut [u8]) -> fs_core_layers::Result<()> {
+        BlockRead::read_at(self, offset, output).map_err(|error| match error {
+            fs_core::Error::OutOfBounds { offset, len, size } => {
+                fs_core_layers::Error::OutOfBounds { offset, len, size }
+            }
+            other => fs_core_layers::Error::Io(std::io::Error::other(other.to_string())),
+        })
+    }
+    fn size_bytes(&self) -> u64 {
+        self.0.lock().unwrap().len() as u64
+    }
+}
 impl BlockDevice for Image {
     fn write_at(&self, offset: u64, input: &[u8]) -> fs_core::Result<()> {
         self.0.lock().unwrap()[offset as usize..offset as usize + input.len()]

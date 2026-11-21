@@ -267,6 +267,7 @@ write` keeps this file current.
 - **rsqlite-vfs** 0.2.0, MIT: no license file shipped
 - **rusqlite** 0.41.1, MIT: [text 135](#text-135)
 - **rust-fs-core** 0.4.3, MIT: [text 172](#text-172)
+- **rust-fs-core** 0.5.0, MIT: [text 172](#text-172)
 - **rust-fs-exfat** 0.1.0, MIT: [text 173](#text-173)
 - **rust-fs-fat32** 0.1.0, MIT: [text 174](#text-174)
 - **rust-fs-ntfs** 0.11.0, MIT OR Apache-2.0: [text 175](#text-175), [text 173](#text-173), [text 176](#text-176)

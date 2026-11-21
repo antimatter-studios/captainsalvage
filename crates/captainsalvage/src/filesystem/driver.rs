@@ -1,4 +1,4 @@
-use super::{FileEntry, FilesystemKind, FilesystemVolume};
+use super::{DriverDevice, FileEntry, FilesystemKind, FilesystemVolume};
 use crate::disk::{RawDisk, RegionSource};
 use anyhow::{bail, Result};
 use fs_core::BlockRead;
@@ -32,6 +32,16 @@ impl BlockRead for RegionDevice {
     }
 }
 
+impl fs_core_layers::BlockRead for RegionDevice {
+    fn read_at(&self, offset: u64, output: &mut [u8]) -> fs_core_layers::Result<()> {
+        crate::source::BlockSource::read_exact_at(&self.source, offset, output)
+            .map_err(fs_core_layers::Error::Io)
+    }
+    fn size_bytes(&self) -> u64 {
+        self.length
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Geometry {
@@ -42,12 +52,12 @@ pub struct Geometry {
     pub serial: String,
 }
 
-enum Implementation<Device: BlockRead> {
+enum Implementation<Device: DriverDevice> {
     FatFamily(FilesystemVolume<Device>),
     Ntfs(Volume<Device>),
 }
 
-pub struct Driver<Device: BlockRead> {
+pub struct Driver<Device: DriverDevice> {
     implementation: Implementation<Device>,
 }
 
@@ -66,10 +76,10 @@ pub struct File {
     entry: Entry,
 }
 
-impl<Device: BlockRead> Driver<Device> {
+impl<Device: DriverDevice> Driver<Device> {
     pub fn open(device: Device) -> Result<Self> {
         let mut boot = [0; 512];
-        device.read_at(0, &mut boot)?;
+        BlockRead::read_at(&device, 0, &mut boot)?;
         let implementation = match FilesystemKind::detect_boot_sector(&boot)? {
             FilesystemKind::Ntfs => Implementation::Ntfs(Volume::open(device)?),
             _ => Implementation::FatFamily(FilesystemVolume::open(device)?),
