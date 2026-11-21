@@ -1128,7 +1128,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.23.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.23.2 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1266,6 +1266,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.23.2 — 2026-11-21
+
+**Fixed**
+
+- **A damaged or truncated SquashFS image now says what is wrong when you open it.** A copy cut short, or one with a zeroed inode or directory table header, used to open as an empty volume with no damage reported. It now lists what it found, and a truncated copy still shows its files.
+
 ### v0.23.1 — 2026-11-21
 
 **Maintenance**
@@ -1323,12 +1329,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - A saved copy of a volume's structures says where on the volume each region was read from, for FAT, exFAT and NTFS ([#348](https://github.com/antimatter-studios/captainsalvage/pull/348))
-
-### v0.20.1 — 2026-11-21
-
-**Maintenance**
-
-- The FAT driver is pinned to its next-free-clusters guess for a deleted file (3bc18be), and a deleted file written around a live one is copied byte for byte ([#345](https://github.com/antimatter-studios/captainsalvage/pull/345))
 
 <!-- changelog:end -->
 
