@@ -1128,7 +1128,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.23.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.23.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1266,6 +1266,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.23.1 — 2026-11-21
+
+**Maintenance**
+
+- A driver's entries have typed ranges, built from the walk its driver made: readable, encoded, sparse and missing, with holes between ([#365](https://github.com/antimatter-studios/captainsalvage/pull/365))
+
 ### v0.23.0 — 2026-11-21
 
 **Added**
@@ -1323,12 +1329,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The FAT driver is pinned to its next-free-clusters guess for a deleted file (3bc18be), and a deleted file written around a live one is copied byte for byte ([#345](https://github.com/antimatter-studios/captainsalvage/pull/345))
-
-### v0.20.0 — 2026-11-21
-
-**Added**
-
-- **A deleted FAT file is now read and copied whole, marked as a guess, where it used to come out as its first cluster alone.** When a FAT file is deleted, the FAT clears its chain, so only its first cluster is known. The FAT driver's walk of what the file's entry claims follows it as one run from that cluster, and that is now what the map, the verdicts, the copy and the file tests use for FAT files, instead of the app following the chain itself. A deleted file is copied in full by default and no longer skipped as partial, its verdict says its clusters are a guess, with the lower confidence a guess gets, and its copy is marked in the manifest (`extentsGuessed`) and counted in the export window. Files the FAT chains are read as before. The earlier FAT adapter stays for one release: set `SALVAGE_FAT_ADAPTER=legacy`.
 
 <!-- changelog:end -->
 
