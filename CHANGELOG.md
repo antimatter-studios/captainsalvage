@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.20.4] — 2026-11-21
+
+### Maintenance
+
+- The copy of an exFAT file whose valid length is short writes zeros past it, and an unreadable cluster there does not make the copy partial ([#352](https://github.com/antimatter-studios/captainsalvage/pull/352))
+
 ## [0.20.3] — 2026-11-21
 
 ### Maintenance
