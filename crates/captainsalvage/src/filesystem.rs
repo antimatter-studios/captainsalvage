@@ -218,7 +218,7 @@ impl FilesystemKind {
                 capability("compression", Supported, "A file NTFS compressed (LZNT1) is read: each compression unit is mapped to its clusters here and decoded by the driver. Checked on synthetic images and on volumes Windows formatted and compressed files on (512, 1024 and 4096-byte clusters), where every file has the SHA-256 Windows reports. Another compression method, or a stream whose runs continue in another record, is listed and refused."),
                 capability("encryption", Missing, "EFS-encrypted files are listed and marked unreadable. BitLocker volumes are refused."),
                 capability("journal", Missing, "$LogFile and $UsnJrnl are not interpreted, and nothing is replayed onto the volume."),
-                capability("large_volumes", Limited, "Volumes of up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters."),
+                capability("large_volumes", Limited, "Volumes of up to 4,294,967,294 clusters (2^32 - 2), which is 16 TiB with 4 KiB clusters. Windows itself does not create or mount a volume with more, so this app refuses one at open, before it reads anything else."),
             ],
         }
     }

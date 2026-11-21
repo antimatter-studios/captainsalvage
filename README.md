@@ -447,7 +447,7 @@ one place, so none of them can claim more than the adapter does.
 | Attribute lists, journal | Missing | A file whose attributes continue in extension records is listed but not read ([rust-fs-ntfs#1379](https://github.com/antimatter-studios/rust-fs-ntfs/issues/1379)). `$LogFile` and `$UsnJrnl` are not interpreted. |
 | Compression | Supported | An LZNT1-compressed file is read: each compression unit is mapped to its clusters here and decoded by the driver. Checked on synthetic images (the units laid out as NTFS does, read back whole, in pieces and copied, and a unit that does not decode marked) and on volumes Windows compressed files on (512, 1024 and 4096-byte clusters), each file with the SHA-256 Windows reports. |
 | Encryption | Missing | EFS files are listed and marked unreadable. BitLocker volumes are refused. |
-| Very large volumes | Limited | Up to 4,294,967,294 clusters, which is 16 TiB with 4 KiB clusters. |
+| Very large volumes | Limited | Up to 4,294,967,294 clusters (2^32 - 2), which is 16 TiB with 4 KiB clusters. Windows itself does not create or mount a volume with more, so a boot sector that states more is refused at open, with that reason, before anything else is read. |
 
 A live deleted file keeps its bytes only while its clusters are untouched: a surviving FILE
 record is evidence, not proof, that the clusters were not reused, and the verdicts say so. A

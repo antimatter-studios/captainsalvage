@@ -206,6 +206,10 @@ pub struct NtfsInspected {
     pub dirty: bool,
 }
 
+/// The most clusters an NTFS volume has: a cluster number is 32 bits, and the last two numbers are never given.
+/// Windows creates and mounts no volume with more, so this app refuses one at open, before it reads anything else.
+pub const MAX_CLUSTERS: u64 = u32::MAX as u64 - 1;
+
 fn geometry_of(boot: &BootParams) -> Result<VolumeGeometry> {
     let sector = u64::from(boot.bytes_per_sector);
     let volume_size = boot
@@ -218,9 +222,8 @@ fn geometry_of(boot: &BootParams) -> Result<VolumeGeometry> {
         "the NTFS volume is smaller than three clusters"
     );
     ensure!(
-        total_clusters <= u64::from(u32::MAX),
-        "the NTFS volume has more clusters than the map can number; that is {} bytes at this cluster size",
-        u64::from(u32::MAX) * boot.cluster_size
+        total_clusters <= MAX_CLUSTERS,
+        "the NTFS volume has {total_clusters} clusters, more than the {MAX_CLUSTERS} (2^32 - 2) there can be. Windows itself does not create or mount such a volume (a bigger one uses bigger clusters), so this app does not open it"
     );
     ensure!(
         boot.file_record_size >= 48 && boot.file_record_size.is_multiple_of(sector),
@@ -1142,4 +1145,112 @@ pub struct RecordDetails {
     pub issues: Vec<String>,
     pub names: Vec<NameDetails>,
     pub streams: Vec<StreamDetails>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::BlockSource;
+    use std::io;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A boot sector that says it is an NTFS volume of `clusters` clusters of 4096 bytes (512-byte sectors).
+    fn boot_sector(clusters: u64) -> Vec<u8> {
+        let mut boot = vec![0u8; 512];
+        boot[3..11].copy_from_slice(b"NTFS    ");
+        boot[0x0B..0x0D].copy_from_slice(&512u16.to_le_bytes());
+        boot[0x0D] = 8;
+        boot[0x28..0x30].copy_from_slice(&(clusters * 8).to_le_bytes());
+        boot[0x30..0x38].copy_from_slice(&4u64.to_le_bytes());
+        boot[0x38..0x40].copy_from_slice(&2u64.to_le_bytes());
+        boot[0x40] = 0xF6;
+        boot[0x44] = 1;
+        boot[0x48..0x50].copy_from_slice(&0x1234_5678_9ABC_DEF0u64.to_le_bytes());
+        boot[510..512].copy_from_slice(&[0x55, 0xAA]);
+        boot
+    }
+
+    /// Only the boot sector exists, and every read is counted.
+    struct BootOnly {
+        boot: Vec<u8>,
+        reads: AtomicU64,
+    }
+
+    impl BlockSource for BootOnly {
+        fn read_exact_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<()> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let end = offset as usize + buffer.len();
+            match self.boot.get(offset as usize..end) {
+                Some(bytes) => {
+                    buffer.copy_from_slice(bytes);
+                    Ok(())
+                }
+                None => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+            }
+        }
+
+        fn read_stats(&self) -> crate::source::ReadStats {
+            crate::source::ReadStats::default()
+        }
+    }
+
+    fn geometry(clusters: u64) -> Result<VolumeGeometry> {
+        geometry_of(&parse_main(&boot_sector(clusters))?)
+    }
+
+    #[test]
+    fn a_volume_with_2_to_the_32_clusters_is_refused_with_the_reason_and_so_is_one_below_it() {
+        for clusters in [1u64 << 32, (1u64 << 32) - 1, (1u64 << 32) + 12345] {
+            let message = format!("{:#}", geometry(clusters).unwrap_err());
+            assert!(
+                message.contains("Windows itself does not create or mount such a volume"),
+                "{clusters}: {message}"
+            );
+            assert!(message.contains(&clusters.to_string()), "{message}");
+            assert!(message.contains("4294967294"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_volume_with_exactly_4294967294_clusters_is_not_refused_at_the_count_check() {
+        let found = geometry(4_294_967_294).expect("the largest volume Windows makes");
+        assert_eq!(
+            found.cluster_count, 4_294_967_292,
+            "the two reserved clusters are not counted"
+        );
+        // The numbers still fit: the last cluster number, one past, does not overflow.
+        assert_eq!(found.last_cluster_exclusive(), 4_294_967_294);
+        // And the refusal is by the limit and nothing else: a volume one cluster bigger says so.
+        assert!(geometry(4_294_967_295).is_err());
+        assert_eq!(MAX_CLUSTERS, 4_294_967_294);
+    }
+
+    #[test]
+    fn opening_such_a_volume_reads_nothing_but_its_boot_sector() {
+        let refused = BootOnly {
+            boot: boot_sector(1 << 32),
+            reads: AtomicU64::new(0),
+        };
+        let error = read_structures(&refused).expect_err("refused at open");
+        assert!(
+            format!("{error:#}").contains("Windows itself does not create or mount"),
+            "{error:#}"
+        );
+        assert_eq!(
+            refused.reads.load(Ordering::Relaxed),
+            1,
+            "only the boot sector was read"
+        );
+        // The largest allowed volume is past the count check, and fails later for what it lacks (everything but the boot sector).
+        let allowed = BootOnly {
+            boot: boot_sector(4_294_967_294),
+            reads: AtomicU64::new(0),
+        };
+        let error = format!(
+            "{:#}",
+            read_structures(&allowed).expect_err("a boot sector alone is not a volume")
+        );
+        assert!(!error.contains("Windows itself"), "{error}");
+        assert!(allowed.reads.load(Ordering::Relaxed) > 1);
+    }
 }
