@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.23.2] — 2026-11-21
+
+### Fixed
+
+- **A damaged or truncated SquashFS image now says what is wrong when you open it.** A copy cut short, or one with a zeroed inode or directory table header, used to open as an empty volume with no damage reported. It now lists what it found, and a truncated copy still shows its files.
+
 ## [0.23.1] — 2026-11-21
 
 ### Maintenance
