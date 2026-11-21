@@ -2,6 +2,7 @@
 
 use crate::allocation as primitives;
 use crate::changes::StructureCopy;
+use crate::filesystem::drivers;
 use crate::filesystem::fat_generic::{self, FatBackend, GenericFat};
 use crate::filesystem::ntfs_salvage;
 use crate::filesystem::{
@@ -49,6 +50,8 @@ pub struct Volume {
     source: Arc<dyn BlockSource>,
     /// The FAT driver's volume, through the generic layers adapter, when that is the one in use.
     generic_fat: Option<GenericFat>,
+    /// The driver's volume, through the registry's generic access, when this is a filesystem that is read that way.
+    driver: Option<Box<dyn drivers::DriverAccess>>,
     /// What the generic adapter finds, worked out once, the first time the scan asks. `None` once it has failed.
     generic_sets: std::sync::OnceLock<Option<fat_generic::Sets>>,
     pub boot: FilesystemBoot,
@@ -152,8 +155,24 @@ impl Volume {
                 },
             }
         }
+        // A driver's volume is read through the registry's access, over the saved structures. When the driver does not open
+        // it, the volume is still opened (it says what it is and what is wrong), and nothing is listed.
+        let mut driver = None;
+        if let Some(registered) = drivers::of_kind(kind) {
+            match drivers::open(&source, &geometry, &structures, registered) {
+                Ok(opened) => {
+                    damage.extend(drivers::findings(opened.as_ref()));
+                    driver = Some(opened);
+                }
+                Err(error) => damage.push(format!(
+                    "The {} driver did not open this volume ({error:#}), so nothing in it is listed.",
+                    registered.format
+                )),
+            }
+        }
         let mut volume = Self {
             source,
+            driver,
             generic_fat,
             generic_sets: std::sync::OnceLock::new(),
             boot,
@@ -185,6 +204,10 @@ impl Volume {
     pub fn workspace_name(&self) -> String {
         match &self.filesystem {
             FilesystemDetails::Ntfs { serial, .. } => format!("ntfs-{serial}"),
+            // A driver's volume has no serial of ours: it is known by what its saved structures hash to.
+            FilesystemDetails::Driver { format, .. } => {
+                format!("{format}-{}", &self.structure_hash[..16])
+            }
             _ => format!("vol-{:08x}", self.geometry.volume_serial),
         }
     }
@@ -198,6 +221,9 @@ impl Volume {
     pub fn serial_text(&self) -> String {
         match &self.filesystem {
             FilesystemDetails::Ntfs { serial, .. } => serial.clone(),
+            FilesystemDetails::Driver { serial, .. } => serial
+                .clone()
+                .unwrap_or_else(|| self.structure_hash[..8].to_string()),
             _ => format!("{:08x}", self.geometry.volume_serial),
         }
     }
@@ -205,6 +231,11 @@ impl Volume {
     /// How this volume's entries say which clusters they hold.
     pub fn claims(&self) -> Claims {
         self.kind.claims()
+    }
+
+    /// The driver's volume, for a filesystem that is read through the registry (`filesystem::drivers`), when it opened.
+    pub fn driver(&self) -> Option<&dyn drivers::DriverAccess> {
+        self.driver.as_deref()
     }
 
     pub fn source(&self) -> &Arc<dyn BlockSource> {
