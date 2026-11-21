@@ -1094,7 +1094,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.17.2 | MIT | captain-salvage |
+| `captainsalvage` | 0.17.3 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1231,6 +1231,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.17.3 — 2026-11-21
+
+**Maintenance**
+
+- The FAT driver is pinned to rust-fs-fat's content discovery of orphaned directory clusters and lone entries (2272fa2), and the generic-versus-app FAT comparison asserts what it now finds ([#335](https://github.com/antimatter-studios/captainsalvage/pull/335))
+
 ### v0.17.2 — 2026-11-21
 
 **Maintenance**
@@ -1285,16 +1291,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - A raw scan step through the engine's tools reads a failing drive through the journal without waiting for itself ([#317](https://github.com/antimatter-studios/captainsalvage/pull/317))
-
-### v0.15.2 — 2026-11-20
-
-**Fixed**
-
-- **Opening a source no longer fails with "database is locked" when the catalog is busy for a moment.** The health records of a source (its link to the disk, its reset count and its map) are written again after a short lock clears, instead of the open failing or the record being lost. A read of the device still never waits on the catalog.
-
-**Maintenance**
-
-- Every job takes its runner from a gate job on the runner gate ([#312](https://github.com/antimatter-studios/captainsalvage/pull/312))
 
 <!-- changelog:end -->
 
