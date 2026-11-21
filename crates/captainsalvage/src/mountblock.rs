@@ -1241,6 +1241,9 @@ mod tests {
     #[test]
     fn a_place_is_blocked_by_naming_its_device_and_never_by_a_made_up_key() {
         let (_turn, folder) = folder();
+        // The flags in force are one list for the process: start from this folder's, which holds none,
+        // not from whatever the test before left in it.
+        start(&folder.0).unwrap();
         let error = set(&folder.0, "PLACE:ABC@0+1", "x", true, true).unwrap_err();
         assert!(error.to_string().contains("naming its device"), "{error}");
         assert!(set_by_device(&folder.0, "/dev/sda1", "x", true, true, None).is_err());
