@@ -1104,7 +1104,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.19.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.20.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1241,6 +1241,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.20.0 — 2026-11-21
+
+**Added**
+
+- **A deleted FAT file is now read and copied whole, marked as a guess, where it used to come out as its first cluster alone.** When a FAT file is deleted, the FAT clears its chain, so only its first cluster is known. The FAT driver's walk of what the file's entry claims follows it as one run from that cluster, and that is now what the map, the verdicts, the copy and the file tests use for FAT files, instead of the app following the chain itself. A deleted file is copied in full by default and no longer skipped as partial, its verdict says its clusters are a guess, with the lower confidence a guess gets, and its copy is marked in the manifest (`extentsGuessed`) and counted in the export window. Files the FAT chains are read as before. The earlier FAT adapter stays for one release: set `SALVAGE_FAT_ADAPTER=legacy`.
+
 ### v0.19.0 — 2026-11-21
 
 **Added**
@@ -1297,12 +1303,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 - **An NTFS volume whose `$Bitmap` cannot be read now opens, with its allocation unknown.** It used to be refused ("`$Bitmap has no data stream`"), although the files are found and read through `$MFT` and only the knowledge of which clusters are free is lost. Now the volume opens, the overview (the window and the tools) says "Allocation unknown" and why, and every cluster is drawn in a state of its own on the map, which is neither free nor in use. No cluster is called free: unexplained-space totals do not count unknown clusters as free (they are counted apart, so they are not hidden), and a deleted file's verdict says that whether its clusters are in use now is not known. Files are listed, read and copied byte for byte as in the undamaged volume. The saved baseline now says which of its parts could not be read.
 - **A damaged NTFS system record is reported, not hidden.** A `$MFT` record 0, `$Volume` record or root directory record that fails its update-sequence check is now named in the overview, with what it means: for `$MFT` record 0, that files in later parts of `$MFT` may be missing or listed as damaged. It used to show only as one more damaged file, with no message. `$MFTMirr` is not consulted yet.
-
-### v0.15.6 — 2026-11-21
-
-**Fixed**
-
-- **Block mount works for an NTFS volume that macOS gives no volume UUID.** The mount block named a volume by its UUID, so a volume macOS reports none for (a synthetic NTFS image, a disk image) got no Block mount checkbox and nothing kept it unmounted. Such a volume is now blocked by where it is: the identity of the disk it is on (the device's own GUID, or for a disk with none a fingerprint of the first 4 KiB) with the partition's offset and length. The checkbox appears for it, a block set while it is mounted shows the Unmount warning, and macOS is refused the mount, also when the disk is attached again under another disk number, while a different disk of the same size mounts as usual. A volume that has a UUID, which a real NTFS volume on a drive does, is blocked by it as before. The support table now says NTFS mount blocking is limited, with the reason; an agent names a volume without a UUID by its device and the key `startup_disks` gives it.
 
 <!-- changelog:end -->
 

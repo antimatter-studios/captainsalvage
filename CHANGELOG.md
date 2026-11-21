@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-11-21
+
+### Added
+
+- **A deleted FAT file is now read and copied whole, marked as a guess, where it used to come out as its first cluster alone.** When a FAT file is deleted, the FAT clears its chain, so only its first cluster is known. The FAT driver's walk of what the file's entry claims follows it as one run from that cluster, and that is now what the map, the verdicts, the copy and the file tests use for FAT files, instead of the app following the chain itself. A deleted file is copied in full by default and no longer skipped as partial, its verdict says its clusters are a guess, with the lower confidence a guess gets, and its copy is marked in the manifest (`extentsGuessed`) and counted in the export window. Files the FAT chains are read as before. The earlier FAT adapter stays for one release: set `SALVAGE_FAT_ADAPTER=legacy`.
+
 ## [0.19.0] — 2026-11-21
 
 ### Added
