@@ -91,6 +91,13 @@ jobs:
         run: cargo fmt --all --check
       - name: lint the engine
         run: cargo clippy -p captainsalvage --all-targets --locked -- -D warnings
+      # ffmpeg is a tool the tests run, never linked or shipped: the app uses the one a person installed. Without it
+      # every test that needs a real ffmpeg skips itself and only the path of a Mac without one runs. That path has
+      # a test of its own that hides ffmpeg explicitly, so both paths run here.
+      - name: install ffmpeg, so the tests that need it run instead of being skipped
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
       - name: test the engine
         run: cargo test -p captainsalvage --locked
       - name: lint and test the engine with the test hooks, which only the window tests' build has
@@ -240,6 +247,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The tests that need a real ffmpeg run here too, as in the engine job, so they are in the numbers.
+      - name: install ffmpeg, so the tests that need it run instead of being skipped
+        run: brew install ffmpeg
       # The app embeds the built window, so it is built before the Tauri crate is.
       - name: build the window
         run: npm run build

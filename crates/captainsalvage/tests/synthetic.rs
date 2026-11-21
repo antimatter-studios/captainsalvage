@@ -2211,9 +2211,19 @@ fn thumbnails_are_decoded_from_real_bytes_and_damage_fails_plainly() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The ffmpeg the tests that need a real one use, or `None` where it is not installed. With `SALVAGE_TEST_NO_FFMPEG` set
+/// it is `None` on any machine, so a machine that has ffmpeg can run these tests as one that has not (the
+/// folders ffmpeg is looked for in include /usr/bin, so taking it off the PATH is not enough).
+fn installed_tools() -> Option<captainsalvage::media::Tools> {
+    if std::env::var_os("SALVAGE_TEST_NO_FFMPEG").is_some() {
+        return None;
+    }
+    captainsalvage::media::detect_tools()
+}
+
 /// A short real video made by ffmpeg, or `None` where ffmpeg is not installed.
 fn sample_video(label: &str) -> Option<(captainsalvage::media::Tools, PathBuf)> {
-    let tools = captainsalvage::media::detect_tools()?;
+    let tools = installed_tools()?;
     let path = std::env::temp_dir().join(format!("salvage-{}-{label}.avi", std::process::id()));
     let made = std::process::Command::new(&tools.ffmpeg)
         .args([
@@ -7482,7 +7492,7 @@ fn unexplained_summary_leaves_out_names_and_text_unless_asked_and_allowed() {
 
 /// A real MP3 made by ffmpeg, or None where it, or its MP3 encoder, is not installed.
 fn sample_mp3(frequency: u32) -> Option<Vec<u8>> {
-    let tools = captainsalvage::media::detect_tools()?;
+    let tools = installed_tools()?;
     let path = std::env::temp_dir().join(format!("salvage-{}-{frequency}.mp3", std::process::id()));
     let made = std::process::Command::new(&tools.ffmpeg)
         .args([
@@ -7608,20 +7618,69 @@ fn a_reassembly_is_read_from_the_disk_byte_for_byte_and_an_unreadable_cluster_fa
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The path of a Mac with no ffmpeg, run on every machine: the media port looks for ffmpeg nowhere, so the test does not
+/// depend on whether the machine it runs on has it. CI installs ffmpeg for the other tests, and this one still runs.
+#[test]
+fn without_ffmpeg_a_check_says_so_plainly_and_does_not_pretend_to_have_checked() {
+    use captainsalvage::media::{detect_tools_in, MediaServer};
+    assert!(detect_tools_in(&[]).is_none());
+    let (engine, _session, dir) = engine_with_image("no-ffmpeg", build_volume());
+    let media = MediaServer::start_searching(engine.clone(), Some(Vec::new())).expect("start");
+    engine.set_media(media.clone());
+    assert!(
+        !media.info().available,
+        "no ffmpeg is found where none is looked for"
+    );
+    assert!(media.tools().is_none());
+    // A file, and a file with a chain appended, are both answered plainly, and neither says it was decoded.
+    for args in [
+        json!({"entryId": 1}),
+        json!({"entryId": 1, "appendExtents": [{"first": 100, "count": 1}]}),
+    ] {
+        let answer = call(&engine, "media_check", args);
+        assert_eq!(answer["ffmpeg"], false, "{answer}");
+        assert_eq!(
+            answer["errors"],
+            json!(["ffmpeg is not installed"]),
+            "{answer}"
+        );
+        assert!(
+            answer["outputBytes"].is_null() || answer["outputBytes"] == 0,
+            "{answer}"
+        );
+    }
+    assert!(media
+        .frame(1)
+        .unwrap_err()
+        .to_string()
+        .contains("ffmpeg is not installed"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The other side: where ffmpeg is installed it is found through the folders given, so the two paths are both run in CI.
+#[test]
+fn ffmpeg_is_found_through_the_folders_the_media_port_is_given() {
+    use captainsalvage::media::MediaServer;
+    let Some(tools) = installed_tools() else {
+        eprintln!("ffmpeg is not installed, so this test has nothing to check");
+        return;
+    };
+    let (engine, _session, dir) = engine_with_image("with-ffmpeg", build_volume());
+    let folder = tools.ffmpeg.parent().expect("a folder").to_path_buf();
+    let media = MediaServer::start_searching(engine.clone(), Some(vec![folder])).expect("start");
+    assert!(media.info().available);
+    assert_eq!(media.tools().expect("found").ffmpeg, tools.ffmpeg);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn a_decoder_checks_a_reassembly_and_a_verified_one_can_be_kept_in_a_disk_rebuild() {
     use captainsalvage::media::MediaServer;
     let (Some(song), Some(other)) = (sample_mp3(440), sample_mp3(880)) else {
-        // Without ffmpeg the tool says so plainly, and does not pretend to have checked.
-        let (engine, _session, dir) = engine_with_image("reassembly-nofmpeg", build_volume());
-        engine.set_media(MediaServer::start(engine.clone()).expect("start"));
-        let answer = call(
-            &engine,
-            "media_check",
-            json!({"entryId": 1, "appendExtents": [{"first": 100, "count": 1}]}),
+        // The path of a machine without ffmpeg has a test of its own, which hides ffmpeg itself.
+        eprintln!(
+            "ffmpeg, with its MP3 encoder, is not installed, so this test has nothing to check"
         );
-        assert!(answer["errors"][0].as_str().is_some(), "{answer}");
-        let _ = std::fs::remove_dir_all(dir);
         return;
     };
     let (image, rest_head, half) = reassembly_volume(&song, &other);

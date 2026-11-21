@@ -72,9 +72,14 @@ fn tool_dirs() -> Vec<PathBuf> {
 }
 
 pub fn detect_tools() -> Option<Tools> {
-    let dirs = tool_dirs();
-    let ffmpeg = find_tool("ffmpeg", &dirs)?;
-    let ffprobe = find_tool("ffprobe", &dirs)?;
+    detect_tools_in(&tool_dirs())
+}
+
+/// As `detect_tools`, looking only in `dirs`. An empty list finds nothing, so a test can say that ffmpeg is not
+/// installed whatever the machine it runs on has.
+pub fn detect_tools_in(dirs: &[PathBuf]) -> Option<Tools> {
+    let ffmpeg = find_tool("ffmpeg", dirs)?;
+    let ffprobe = find_tool("ffprobe", dirs)?;
     let output = Command::new(&ffmpeg)
         .args(["-hide_banner", "-encoders"])
         .stdin(Stdio::null())
@@ -373,6 +378,8 @@ pub struct MediaServer {
     token: String,
     port: u16,
     tools: Mutex<Option<Tools>>,
+    /// Where ffmpeg is looked for. None means the usual places and the PATH, which is every real use.
+    tool_dirs: Option<Vec<PathBuf>>,
     probes: Mutex<HashMap<i64, Probe>>,
     cache: Arc<Mutex<ChunkCache>>,
     file_requests: AtomicU64,
@@ -440,6 +447,15 @@ fn text_answer(status: u16, text: &str) -> Answer {
 
 impl MediaServer {
     pub fn start(engine: Arc<Engine>) -> Result<Arc<Self>> {
+        Self::start_searching(engine, None)
+    }
+
+    /// As `start`, but ffmpeg is looked for only in `dirs`. A test gives an empty list to run the path of a Mac
+    /// without ffmpeg, and a list with one folder to run the path of one that has it, whatever the machine has.
+    pub fn start_searching(
+        engine: Arc<Engine>,
+        tool_dirs: Option<Vec<PathBuf>>,
+    ) -> Result<Arc<Self>> {
         let server = Server::http(("127.0.0.1", 0))
             .map_err(|error| anyhow!("cannot start the media port: {error}"))?;
         let port = server
@@ -452,6 +468,7 @@ impl MediaServer {
             token: new_token()?,
             port,
             tools: Mutex::new(None),
+            tool_dirs,
             probes: Mutex::new(HashMap::new()),
             cache: Arc::new(Mutex::new(ChunkCache::default())),
             file_requests: AtomicU64::new(0),
@@ -478,7 +495,10 @@ impl MediaServer {
             .as_ref()
             .is_none_or(|tools| !Path::new(&tools.ffmpeg).is_file())
         {
-            *slot = detect_tools();
+            *slot = match &self.tool_dirs {
+                Some(dirs) => detect_tools_in(dirs),
+                None => detect_tools(),
+            };
         }
         slot.clone()
     }
