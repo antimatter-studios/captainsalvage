@@ -161,6 +161,7 @@ impl Volume {
         if let Some(registered) = drivers::of_kind(kind) {
             match drivers::open(&source, &geometry, &structures, registered) {
                 Ok(opened) => {
+                    damage.extend(drivers::length_findings(source.as_ref(), &geometry));
                     damage.extend(drivers::findings(opened.as_ref()));
                     driver = Some(opened);
                 }

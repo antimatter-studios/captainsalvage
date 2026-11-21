@@ -75,7 +75,7 @@ impl DriverAccess for Stand {
     fn structures(&self) -> anyhow::Result<Vec<Structure>> {
         Ok(Vec::new())
     }
-    fn damage(&self) -> anyhow::Result<Vec<Damage>> {
+    fn damage(&self, _limit: usize) -> anyhow::Result<Vec<Damage>> {
         Ok(Vec::new())
     }
     fn find(
