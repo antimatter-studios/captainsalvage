@@ -109,7 +109,9 @@ pub trait DriverAccess: Send + Sync {
     fn support(&self) -> Result<VolumeSupport>;
     fn health(&self) -> Result<VolumeHealth>;
     fn structures(&self) -> Result<Vec<Structure>>;
-    fn damage(&self) -> Result<Vec<Damage>>;
+    /// The first `limit` things the driver finds wrong in the volume's own structures (its salvage audit, which reads the
+    /// metadata tables the quick verdict of `health` does not). A volume can have millions: none are held past the limit.
+    fn damage(&self, limit: usize) -> Result<Vec<Damage>>;
     /// Hands every candidate whose record starts inside `range` to `sink`, as the scan reads the source a cluster at a
     /// time. Nothing is held: the engine keeps a cluster's records, never the volume's.
     fn find(
@@ -172,8 +174,19 @@ where
     fn structures(&self) -> Result<Vec<Structure>> {
         GenericVolume::structures(self)
     }
-    fn damage(&self) -> Result<Vec<Damage>> {
-        Ok(GenericVolume::damage(self)?.0)
+    fn damage(&self, limit: usize) -> Result<Vec<Damage>> {
+        let mut found: Vec<Damage> = Vec::new();
+        self.volume()
+            .salvage()?
+            .report_damage(&mut |damage: Damage| {
+                found.push(damage);
+                if found.len() >= limit {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })?;
+        Ok(found)
     }
     fn find(
         &self,
@@ -588,15 +601,31 @@ pub fn inspect(structures: &StructureCopy, driver: &'static RegisteredDriver) ->
 /// What is wrong with a driver's volume, in words for the person: the driver's own findings about its structures, the
 /// first few.
 pub fn findings(access: &dyn DriverAccess) -> Vec<String> {
+    const SHOWN: usize = 20;
+    let mut said: Vec<String> = Vec::new();
     match access.health() {
-        Ok(health) => health
-            .findings
-            .iter()
-            .take(20)
-            .map(|finding| format!("{}: {}", finding.structure, finding.detail))
-            .collect(),
-        Err(error) => vec![format!("The driver could not judge the volume: {error:#}")],
+        Ok(health) => said.extend(
+            health
+                .findings
+                .iter()
+                .map(|finding| format!("{}: {}", finding.structure, finding.detail)),
+        ),
+        Err(error) => said.push(format!("The driver could not judge the volume: {error:#}")),
     }
+    // The audit of the metadata tables, which the quick verdict leaves out: a volume whose inode or directory table is
+    // damaged says so, instead of opening as an empty one.
+    if said.len() < SHOWN {
+        if let Ok(found) = access.damage(SHOWN) {
+            for finding in found {
+                let line = format!("{}: {}", finding.structure, finding.detail);
+                if !said.contains(&line) {
+                    said.push(line);
+                }
+            }
+        }
+    }
+    said.truncate(SHOWN);
+    said
 }
 
 /// The entries whose records start in the cluster `cluster` of the scan, as the app's entries: what the driver says of each
@@ -693,6 +722,23 @@ pub fn entries_in_cluster(
         });
     }
     entries
+}
+
+/// What is wrong with a driver's volume that its own structures cannot say, because the driver is lent a source as long as the
+/// volume says it is: the source ends before the volume does (a truncated image, a partial copy). The last byte of the volume
+/// is read, and a source that has none says so.
+pub fn length_findings(source: &dyn BlockSource, geometry: &VolumeGeometry) -> Option<String> {
+    let last = geometry.volume_size.checked_sub(1)?;
+    let mut byte = [0u8; 1];
+    match source.read_exact_at(last, &mut byte) {
+        Ok(()) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Some(format!(
+            "The source ends before the volume does: the volume says it is {} bytes long, and nothing is there at byte {last}.",
+            geometry.volume_size
+        )),
+        // A read that failed otherwise is a bad spot, which the health map and the scan report, not a short source.
+        Err(_) => None,
+    }
 }
 
 /// Opens the volume through its driver, over the source with the saved structures read in place of the disk's own.
