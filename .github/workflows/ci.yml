@@ -2,10 +2,14 @@ name: CI
 
 # The engine and the window build run on Linux, where minutes cost a tenth of macOS's on a
 # private repository. Only what needs macOS runs there: the app itself, which links macOS
-# frameworks, the Finder extension and the release tools. The job named CI waits for all four,
-# so branch protection keeps one required check. The third job runs the independent NTFS, FAT and exFAT
-# oracles in a Linux VM, and the fourth checks what the tests run of our code against its baseline.
-# Documentation-only changes skip all of it.
+# frameworks, the Finder extension and the release tools. The job named CI waits for all of them,
+# so branch protection keeps one required check. The engine and the window are four jobs that run side by side, each
+# well under the time the self-hosted runner lets a job live (it was lost at about 18 to 28 minutes, and left no log,
+# while engine and window were one job of about 20): the window, the engine's lint and checks, the engine's tests, and
+# the tests with the test hooks and the doc tests. Each takes at most two compile jobs and two test threads, and has a
+# 90 minute timeout, because one slow run that finishes beats a fast one that is lost. Another job runs the
+# independent NTFS, FAT and exFAT oracles in a Linux VM, and one checks what the tests run of our code against its
+# baseline. Documentation-only changes skip all of it.
 #
 # Every job takes its runner from a gate job of its own, `<job>-gate`, which runs on the runner gate
 # (`runs-on: antimatter-vps-gate`) and says which runner the job gets. The gate never fails a job, and a
@@ -29,7 +33,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  engine-gate:
+  window-gate:
     runs-on: antimatter-vps-gate
     timeout-minutes: 1
     outputs:
@@ -38,10 +42,64 @@ jobs:
       - id: pick
         run: runner-gate pick linux-x64
 
-  engine:
-    name: engine and window
-    needs: engine-gate
-    runs-on: ${{ needs.engine-gate.outputs.runner }}
+  window:
+    # The window and nothing of the engine's Rust: the type check and build, the translation checks and the window's own
+    # tests. No Rust toolchain is needed, and the app job builds the window again where it embeds it.
+    name: window
+    needs: window-gate
+    runs-on: ${{ needs.window-gate.outputs.runner }}
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: install Python when missing
+        run: |
+          if ! command -v python3 >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y python3
+          fi
+      - name: every window string is translated
+        run: python3 scripts/check_translations.py
+      - name: engine text is translated sentence by sentence
+        run: bash scripts/test_translations.sh
+      - name: type check and build the window
+        run: npm run build
+      - name: the window's logic and its raw-disk speed budget
+        run: node --test tests/*.mjs
+
+  engine-lint-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
+  engine-lint:
+    # What the engine and the repository are checked for without running the engine's tests: the fragments, the one version,
+    # the release notes' words, the licences, formatting and the lint. npm packages are installed because the licence list
+    # reads the ones the window bundles.
+    name: engine lint
+    needs: engine-lint-gate
+    runs-on: ${{ needs.engine-lint-gate.outputs.runner }}
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,20 +122,12 @@ jobs:
           fi
       - name: unreleased changes are fragments
         run: bash scripts/changelog-check.sh
-      - name: every window string is translated
-        run: python3 scripts/check_translations.py
       - name: every file carries the one version in VERSION
         run: python3 scripts/release.py check
       # Only warns. A fragment or the release's notes that use a retired word are fixed in the pull
       # request that wrote them, and the cut stage of scripts/create-release is what refuses them.
       - name: release notes avoid the retired words (warning only)
         run: python3 scripts/release.py notes-check
-      - name: engine text is translated sentence by sentence
-        run: bash scripts/test_translations.sh
-      - name: type check and build the window
-        run: npm run build
-      - name: the window's logic and its raw-disk speed budget
-        run: node --test tests/*.mjs
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-deny@0.20.2
@@ -91,6 +141,43 @@ jobs:
         run: cargo fmt --all --check
       - name: lint the engine
         run: cargo clippy -p captainsalvage --all-targets --locked -- -D warnings
+
+  engine-tests-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
+  engine-tests:
+    # `cargo test -p captainsalvage --locked` is these targets and the doc tests of the job after this one: the library, the
+    # binaries and every integration test.
+    name: engine tests
+    needs: engine-tests-gate
+    runs-on: ${{ needs.engine-tests-gate.outputs.runner }}
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
+        with:
+          toolchain: 1.95.0
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: install Python when missing
+        run: |
+          if ! command -v python3 >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y python3
+          fi
       # ffmpeg is a tool the tests run, never linked or shipped: the app uses the one a person installed. Without it
       # every test that needs a real ffmpeg skips itself and only the path of a Mac without one runs. That path has
       # a test of its own that hides ffmpeg explicitly, so both paths run here.
@@ -99,12 +186,59 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
       - name: test the engine
-        run: cargo test -p captainsalvage --locked
-      - name: lint and test the engine with the test hooks, which only the window tests' build has
+        run: cargo test -p captainsalvage --locked --lib --bins --tests
+
+  engine-hooks-gate:
+    runs-on: antimatter-vps-gate
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: runner-gate pick linux-x64
+
+  engine-hooks:
+    # The doc tests of the engine, and the engine with the test hooks, which only the window tests' build has: one step per
+    # command, so a job that is lost says which command it was running.
+    name: engine tests with the test hooks
+    needs: engine-hooks-gate
+    runs-on: ${{ needs.engine-hooks-gate.outputs.runner }}
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-27
+        with:
+          toolchain: 1.95.0
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: install Python when missing
         run: |
-          cargo clippy -p captainsalvage --all-targets --locked --features test-hooks -- -D warnings
-          cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
-          cargo test -p captainsalvage --locked --features test-hooks --lib
+          if ! command -v python3 >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y python3
+          fi
+      # ffmpeg is a tool the tests run, never linked or shipped: the app uses the one a person installed. Without it
+      # every test that needs a real ffmpeg skips itself and only the path of a Mac without one runs. That path has
+      # a test of its own that hides ffmpeg explicitly, so both paths run here.
+      - name: install ffmpeg, so the tests that need it run instead of being skipped
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: test the engine's doc tests
+        run: cargo test -p captainsalvage --locked --doc
+      - name: lint the engine with the test hooks
+        run: cargo clippy -p captainsalvage --all-targets --locked --features test-hooks -- -D warnings
+      - name: test the test hooks
+        run: cargo test -p captainsalvage --locked --features test-hooks --test test_hooks
+      - name: test the engine's own tests with the test hooks
+        run: cargo test -p captainsalvage --locked --features test-hooks --lib
 
   oracle-gate:
     runs-on: antimatter-vps-gate
@@ -259,7 +393,7 @@ jobs:
         run: python3 scripts/coverage.py check
 
   ci-gate:
-    needs: [engine, app, oracle, coverage]
+    needs: [window, engine-lint, engine-tests, engine-hooks, app, oracle, coverage]
     if: always()
     runs-on: antimatter-vps-gate
     timeout-minutes: 1
@@ -271,12 +405,12 @@ jobs:
 
   ci:
     name: CI
-    needs: [engine, app, oracle, coverage, ci-gate]
+    needs: [window, engine-lint, engine-tests, engine-hooks, app, oracle, coverage, ci-gate]
     if: always()
     runs-on: ${{ needs.ci-gate.outputs.runner || 'ubuntu-latest' }}
     steps:
       - name: all passed
         run: |
-          for result in '${{ needs.engine.result }}' '${{ needs.app.result }}' '${{ needs.oracle.result }}' '${{ needs.coverage.result }}'; do
+          for result in '${{ needs.window.result }}' '${{ needs.engine-lint.result }}' '${{ needs.engine-tests.result }}' '${{ needs.engine-hooks.result }}' '${{ needs.app.result }}' '${{ needs.oracle.result }}' '${{ needs.coverage.result }}'; do
             case "$result" in success) ;; *) echo "::error::a job ended with $result"; exit 1 ;; esac
           done
