@@ -591,12 +591,11 @@ What was checked against something that is not this app:
   - **Not written.** The image's hash is the same afterwards and the baseline check agrees.
 
   What the app does not do, as these volumes show it, is pinned in the test by an issue each, and
-  the test fails if one of them stops being true: a volume on
-  **4096-byte sectors** is refused at open, because the pinned driver expects a record of at
-  least that size and Windows makes one of 1024 bytes
-  ([#177](https://github.com/antimatter-studios/captainsalvage/issues/177)), so that volume is
-  checked only for how Windows made it. Content of alternate streams is not read by the app, so
-  only their names and lengths are compared.
+  the test fails if one of them stops being true: content of alternate streams is not read by the
+  app, so only their names and lengths are compared. A volume on **4096-byte sectors**, whose file
+  records Windows makes 1024 bytes long
+  ([#177](https://github.com/antimatter-studios/captainsalvage/issues/177)), is opened and compared
+  like the others.
 - **The independent [`ntfs`](https://crates.io/crates/ntfs) reader**, a dev-only dependency
   never linked into the app, for every live file of the driver's images (`tests/ntfs.rs`).
 
