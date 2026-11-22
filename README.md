@@ -1126,7 +1126,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.23.4 | MIT | captain-salvage |
+| `captainsalvage` | 0.24.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1264,6 +1264,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.24.0 — 2026-11-22
+
+**Added**
+
+- **An exFAT volume with 1024, 2048 or 4096-byte sectors opens.** It was refused with `unsupported sector size 4096`, which left drives with 4096-byte sectors (4Kn disks, some SD cards and flash media) formatted exFAT showing nothing. The app now lists their files and folders and copies them out, with the same SHA-256 as the Linux kernel reports for a volume `mkfs.exfat` made on a 4096-byte-sector device.
+
 ### v0.23.4 — 2026-11-22
 
 **Maintenance**
@@ -1323,12 +1329,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - SquashFS is pinned to rust-fs-squashfs's three layers (ef405d4), which brings rust-fs-core 0.5.1, and the generic adapter names a candidate by the driver's own id ([#354](https://github.com/antimatter-studios/captainsalvage/pull/354))
-
-### v0.20.4 — 2026-11-21
-
-**Maintenance**
-
-- The copy of an exFAT file whose valid length is short writes zeros past it, and an unreadable cluster there does not make the copy partial ([#352](https://github.com/antimatter-studios/captainsalvage/pull/352))
 
 <!-- changelog:end -->
 
