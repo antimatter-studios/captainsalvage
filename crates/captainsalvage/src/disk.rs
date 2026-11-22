@@ -720,8 +720,8 @@ impl RawDisk {
             );
             source.prefix = self.read(region.boot_offset, boot_region_length)?;
         }
-        let mut boot = [0; 512];
-        source.read_exact_at(0, &mut boot)?;
+        let boot =
+            crate::filesystem::read_head(|offset, buffer| source.read_exact_at(offset, buffer))?;
         let detected = crate::filesystem::FilesystemKind::detect_boot_sector(&boot)?;
         ensure!(
             detected.to_string().eq_ignore_ascii_case(&region.format),

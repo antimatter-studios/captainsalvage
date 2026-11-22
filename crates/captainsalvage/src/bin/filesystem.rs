@@ -73,9 +73,10 @@ pub fn run(arguments: &[String]) -> Result<()> {
     let start = number("--start", 0)?;
     let length = number("--length", disk.length.saturating_sub(start))?;
     if command == "capabilities" {
-        let mut boot = [0u8; 512];
         let device = RegionDevice::open(&disk, start, length)?;
-        fs_core::BlockRead::read_at(&device, 0, &mut boot)?;
+        let boot = captainsalvage::filesystem::read_head(|offset, buffer| {
+            fs_core::BlockRead::read_at(&device, offset, buffer)
+        })?;
         let kind = FilesystemKind::detect_boot_sector(&boot)?;
         println!(
             "{}",

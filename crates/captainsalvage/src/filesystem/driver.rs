@@ -78,8 +78,7 @@ pub struct File {
 
 impl<Device: DriverDevice> Driver<Device> {
     pub fn open(device: Device) -> Result<Self> {
-        let mut boot = [0; 512];
-        BlockRead::read_at(&device, 0, &mut boot)?;
+        let boot = super::read_head(|offset, buffer| BlockRead::read_at(&device, offset, buffer))?;
         let implementation = match FilesystemKind::detect_boot_sector(&boot)? {
             FilesystemKind::Ntfs => Implementation::Ntfs(Volume::open(device)?),
             _ => Implementation::FatFamily(FilesystemVolume::open(device)?),

@@ -38,7 +38,7 @@ pub struct RegisteredDriver {
     pub kind: FilesystemKind,
     /// The name the driver gives its format (`VolumeAPI::format`).
     pub format: &'static str,
-    /// Bytes every volume of the format has, as `(offset, bytes)` in its first 512: enough to tell it from the others
+    /// Bytes every volume of the format has, as `(offset, bytes)` in its first 2048: enough to tell it from the others
     /// without opening it. The driver's own `probe` then says whether it is intact.
     pub magic: &'static [(usize, &'static [u8])],
     pub probe: fn(&dyn BlockRead) -> Result<Probe>,
@@ -323,13 +323,46 @@ const SQUASHFS: RegisteredDriver = RegisteredDriver {
     root_record: 2,
 };
 
-/// Every driver the engine reads through the layers.
-pub fn registry() -> &'static [RegisteredDriver] {
-    &[SQUASHFS]
+/// ext2, ext3 and ext4: one driver, which names the flavour of each volume. The superblock is at byte 1024 and its magic
+/// at 1080, so a volume is recognised from the first 2048 bytes, not the first 512.
+const EXT4: RegisteredDriver = RegisteredDriver {
+    kind: FilesystemKind::Ext4,
+    format: "ext4",
+    magic: &[(EXT4_MAGIC_OFFSET, &[0x53, 0xEF])],
+    probe: probe_as::<fs_ext4::layers::Ext4Volume<Arc<dyn BlockRead>>>,
+    open: open_as::<fs_ext4::layers::Ext4Volume<Arc<dyn BlockRead>>>,
+    capabilities: || {
+        fs_ext4::layers::Ext4Adapter::new(placeholder_ext4_superblock()).capabilities()
+    },
+    root_record: 2,
+};
+
+/// Where an ext2/3/4 superblock's magic (`0xEF53`, little-endian) is: 1024 bytes in, and 0x38 into the superblock.
+const EXT4_MAGIC_OFFSET: usize = 1024 + 0x38;
+
+/// A superblock that parses and says nothing, for asking the adapter what it lacks (`capabilities` does not read it).
+fn placeholder_ext4_superblock() -> fs_ext4::Superblock {
+    let mut raw = vec![0u8; 1024];
+    raw[0x00..0x04].copy_from_slice(&8u32.to_le_bytes()); // inodes
+    raw[0x04..0x08].copy_from_slice(&8192u32.to_le_bytes()); // blocks
+    raw[0x14..0x18].copy_from_slice(&1u32.to_le_bytes()); // first data block
+    raw[0x20..0x24].copy_from_slice(&8192u32.to_le_bytes()); // blocks per group
+    raw[0x28..0x2C].copy_from_slice(&8u32.to_le_bytes()); // inodes per group
+    raw[0x38..0x3A].copy_from_slice(&[0x53, 0xEF]);
+    fs_ext4::Superblock::parse(raw).expect("a minimal superblock parses")
 }
 
-/// The driver whose volumes begin with these bytes (the first 512 of a source).
+/// Every driver the engine reads through the layers.
+pub fn registry() -> &'static [RegisteredDriver] {
+    &[SQUASHFS, EXT4]
+}
+
+/// The driver whose volumes begin with these bytes (the first 2048 of a source, or what a saved copy holds of them).
 pub fn recognise(head: &[u8]) -> Option<&'static RegisteredDriver> {
+    // A boot sector that names another filesystem is that filesystem's, whatever lies at the offsets a driver tests.
+    if matches!(head.get(3..11), Some(b"EXFAT   " | b"NTFS    ")) {
+        return None;
+    }
     registry().iter().find(|driver| {
         driver
             .magic

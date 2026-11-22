@@ -117,10 +117,11 @@ const BOOT_CONFIDENCE: f64 = 0.9;
 /// still opens, as it always did). The same open the window would make is tried, so a candidate is
 /// only offered when it opens. Whatever starts with a recognised boot sector is a partition.
 fn lenient_boot(view: &RawDisk, detection: &mut Detection) {
-    let mut boot = [0u8; 512];
-    if view.source.read_exact_at(0, &mut boot).is_err() {
+    let Ok(boot) =
+        crate::filesystem::read_head(|offset, buffer| view.source.read_exact_at(offset, buffer))
+    else {
         return;
-    }
+    };
     // A first sector that names a volume but cannot be opened is still a partition, unless the same
     // sector holds a partition table: then it is a disk whose first sector is part boot sector.
     let has_table = || !view.overview().partitions.is_empty();
