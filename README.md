@@ -1163,7 +1163,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.25.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.26.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1303,6 +1303,18 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.26.0 — 2026-11-22
+
+**Added**
+
+- **An EROFS image opens, scans and shows its files.** The app reads it through the filesystem's own driver, as it does SquashFS and ext2/3/4: it finds the image by its superblock (at byte 1024), keeps the superblock so the image still opens if the disk's own is written over, lists its folders and files, previews a file and copies it out. The support table has an EROFS column, and the instructions an MCP client is given name it.
+
+**Maintenance**
+
+- Add the Captain Salvage constellation overview and repository roster ([#384](https://github.com/antimatter-studios/captainsalvage/pull/384))
+- The engine and window job is four jobs that run side by side, each well under the time the runner lets a job live ([#382](https://github.com/antimatter-studios/captainsalvage/pull/382))
+- The app opens, scans, browses, reads and copies ext2, ext3 and ext4 images made by mke2fs exactly as the Linux kernel lists them, with the same SHA-256 for every file and a link as a file that holds its target ([#380](https://github.com/antimatter-studios/captainsalvage/pull/380))
+
 ### v0.25.0 — 2026-11-22
 
 **Added**
@@ -1366,12 +1378,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **A SquashFS image now opens instead of being refused.** The app says what it is, from its driver (its block size, label and serial number), keeps its superblock as the baseline, and shows a SquashFS column in the support table. It does not list the image's files yet.
-
-### v0.20.6 — 2026-11-21
-
-**Maintenance**
-
-- SquashFS images are listed and copied through the generic layers adapter, and a kernel-made image of each compressor is checked against the kernel's own listing ([#356](https://github.com/antimatter-studios/captainsalvage/pull/356))
 
 <!-- changelog:end -->
 
