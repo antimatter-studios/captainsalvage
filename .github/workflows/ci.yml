@@ -6,7 +6,8 @@ name: CI
 # so branch protection keeps one required check. The engine's work is three jobs that run side by side, each
 # well under the time the self-hosted runner lets a job live (it was lost at about 18 to 28 minutes, and left no
 # log, while this was one job of about 20): the window and the lints, the engine's tests, and the tests with the
-# test hooks and the doc tests. Another job runs the independent NTFS, FAT and exFAT oracles in a Linux VM,
+# test hooks and the doc tests. Each takes at most two compile jobs and two test threads, and has a 90 minute timeout,
+# because one slow run that finishes beats a fast one that is lost. Another job runs the independent NTFS, FAT and exFAT oracles in a Linux VM,
 # and one checks what the tests run of our code against its baseline. Documentation-only changes skip all of it.
 #
 # Every job takes its runner from a gate job of its own, `<job>-gate`, which runs on the runner gate
@@ -44,7 +45,12 @@ jobs:
     name: engine and window
     needs: engine-gate
     runs-on: ${{ needs.engine-gate.outputs.runner }}
-    timeout-minutes: 20
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,7 +116,12 @@ jobs:
     name: engine tests
     needs: engine-tests-gate
     runs-on: ${{ needs.engine-tests-gate.outputs.runner }}
-    timeout-minutes: 20
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -151,7 +162,12 @@ jobs:
     name: engine tests with the test hooks
     needs: engine-hooks-gate
     runs-on: ${{ needs.engine-hooks-gate.outputs.runner }}
-    timeout-minutes: 20
+    # The self-hosted runner is small and was lost under a full load: two compile jobs and two test threads at most.
+    # One slow run that finishes beats a fast one that is lost, so the timeout is long.
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
