@@ -25,7 +25,7 @@ fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-stu
 fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/antimatter-studios/rust-fs-erofs", rev = "0204627bb5f70a3552ee2bce0d29f94cb56cfa11" }
 fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/antimatter-studios/rust-fs-ext4", rev = "4c70f07b311a87792b5b3efc8694c56f77301da1" }
 fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "0159f5c72a0b23359a5963ff452c83ad80001a36" }
-fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "6be01d961d4b3e61faeb2454e7f37b5af661c970" }
+fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "30686898c90701ef302eeb3143cbd65bcd75bd78" }
 fs-squashfs = { package = "rust-fs-squashfs", git = "https://github.com/antimatter-studios/rust-fs-squashfs", rev = "d17048f55aded8c23cb78f19f01c807bc027d30a" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
