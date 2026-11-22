@@ -1128,7 +1128,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.23.2 | MIT | captain-salvage |
+| `captainsalvage` | 0.23.3 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1266,6 +1266,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.23.3 — 2026-11-21
+
+**Fixed**
+
+- **The instructions an MCP client is given name SquashFS.** They said the app reads a damaged exFAT, FAT or NTFS volume and left SquashFS out, so an agent was told the app could not open an image it does open. They now name every filesystem the app reads.
+
 ### v0.23.2 — 2026-11-21
 
 **Fixed**
@@ -1323,12 +1329,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The copy of a FAT or exFAT file reads its typed ranges, as its preview does, instead of its cluster list ([#350](https://github.com/antimatter-studios/captainsalvage/pull/350))
-
-### v0.20.2 — 2026-11-21
-
-**Maintenance**
-
-- A saved copy of a volume's structures says where on the volume each region was read from, for FAT, exFAT and NTFS ([#348](https://github.com/antimatter-studios/captainsalvage/pull/348))
 
 <!-- changelog:end -->
 
