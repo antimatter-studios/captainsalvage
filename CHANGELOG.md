@@ -8,6 +8,14 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.23.4] — 2026-11-22
+
+### Maintenance
+
+- One damaged compressed data block of a kernel-made SquashFS image costs only that file: every entry is listed, its copy is partial and names the block, the damage report names the data block, and every other file copies with the kernel's SHA-256 ([#373](https://github.com/antimatter-studios/captainsalvage/pull/373))
+- SquashFS is pinned to rust-fs-squashfs main (d17048f), which keeps the earlier layer APIs with deprecation notices and reports damage to file data blocks ([#372](https://github.com/antimatter-studios/captainsalvage/pull/372))
+- A Disk Rebuild gathers, names and copies out the files of a damaged SquashFS image that lost its directory table, and a driver candidate keeps the record number it was given through a rescan ([#371](https://github.com/antimatter-studios/captainsalvage/pull/371))
+
 ## [0.23.3] — 2026-11-21
 
 ### Fixed
