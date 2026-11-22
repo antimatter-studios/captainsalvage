@@ -413,7 +413,7 @@ not the same as **Missing**, which exists but is not done yet. NTFS has its own 
 - Resume (Supported): A paused or interrupted scan continues from where it was.
 - Baseline copy (Supported): The volume's first structures (its superblock) are hashed and kept; changes are explained.
 - File tests (Supported): File formats are walked through the bytes the driver reads.
-- Disk Rebuilds (Limited): A rebuild is a plan of ranges of the source. The driver lacks cluster-steps.
+- Disk Rebuilds (Limited): A rebuild is a plan of ranges of the source. The driver lacks cluster-steps. A Disk Rebuild gathers the folders and files the scan found (a file the disk lost the name of can be named by an accepted entry) and copies them out at their rebuilt paths. A file's storage is the driver's walk of it, so a Disk Rebuild cannot replace it with a list of clusters. A link is read by its path in the volume's own namespace, so one whose folders are lost cannot be copied.
 - Copy out (Limited): A file is rebuilt from the storage it claims, and a range that cannot be read is zeros, marked in the report. The driver lacks deleted-extents.
 - Mount block (Missing): macOS does not mount this filesystem, so there is nothing to block.
 <!-- capabilities:end -->
