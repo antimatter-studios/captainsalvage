@@ -17,11 +17,11 @@ path = "src/bin/captainsalvage.rs"
 anyhow = "1.0.104"
 bzip2-rs = "0.1.2"
 flate2 = "1.1.10"
-fs-core = { package = "rust-fs-core", version = "=0.4.3" }
-# The FAT and SquashFS drivers are built on the next rust-fs-core, whose BlockRead is another trait than 0.4.3's, which the exFAT and
+fs-core = { package = "rust-fs-core", version = "=0.4.5" }
+# The FAT and SquashFS drivers are built on the next rust-fs-core, whose BlockRead is another trait than 0.4.5's, which the exFAT and
 # NTFS drivers still use. A device implements both until every driver is on this one. The drivers must agree on its exact version.
 fs-core-layers = { package = "rust-fs-core", version = "=0.5.1", features = ["layers"] }
-fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f" }
+fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "84956aaf3317ef98767425cf4c2a2ab528ae1b02" }
 fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "0159f5c72a0b23359a5963ff452c83ad80001a36" }
 fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }
 fs-squashfs = { package = "rust-fs-squashfs", git = "https://github.com/antimatter-studios/rust-fs-squashfs", rev = "d17048f55aded8c23cb78f19f01c807bc027d30a" }
@@ -43,7 +43,7 @@ zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2
 [dev-dependencies]
 # An independent NTFS reader, only to check the app against: it is never linked into the app.
 ntfs = { version = "0.4", default-features = false, features = ["std"] }
-fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f", features = ["test-support"] }
+fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "84956aaf3317ef98767425cf4c2a2ab528ae1b02", features = ["test-support"] }
 # Only to build archives for the tests: the app itself never writes one.
 bzip2 = "0.6.1"
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }

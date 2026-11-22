@@ -372,7 +372,7 @@ dependencies = [
  "rars",
  "rhai",
  "rusqlite",
- "rust-fs-core 0.4.3",
+ "rust-fs-core 0.4.5",
  "rust-fs-core 0.5.1",
  "rust-fs-exfat",
  "rust-fs-fat32",
@@ -3214,8 +3214,9 @@ dependencies = [
 
 [[package]]
 name = "rust-fs-core"
-version = "0.4.3"
-source = "git+https://github.com/antimatter-studios/rust-fs-core?rev=9271095beb76dda54729b517e85179883ad851b4#9271095beb76dda54729b517e85179883ad851b4"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "098237625d671fe7541c1d2453880185b3ccda81f7170a2e0d371cf5bc0972b6"
 
 [[package]]
 name = "rust-fs-core"
@@ -3229,11 +3230,12 @@ dependencies = [
 
 [[package]]
 name = "rust-fs-exfat"
-version = "0.1.0"
-source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=1dae694062229316371956e5ae8b1067a7e9ce9f#1dae694062229316371956e5ae8b1067a7e9ce9f"
+version = "0.4.0"
+source = "git+https://github.com/antimatter-studios/rust-fs-exfat?rev=84956aaf3317ef98767425cf4c2a2ab528ae1b02#84956aaf3317ef98767425cf4c2a2ab528ae1b02"
 dependencies = [
- "rust-fs-core 0.4.3",
+ "rust-fs-core 0.4.5",
  "serde",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3252,7 +3254,7 @@ source = "git+https://github.com/antimatter-studios/rust-fs-ntfs?rev=9a4f404f29d
 dependencies = [
  "libc",
  "log",
- "rust-fs-core 0.4.3",
+ "rust-fs-core 0.4.5",
  "sha2 0.10.9",
 ]
 
