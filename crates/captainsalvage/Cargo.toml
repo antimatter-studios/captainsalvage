@@ -24,7 +24,7 @@ fs-core-layers = { package = "rust-fs-core", version = "=0.5.1", features = ["la
 fs-exfat = { package = "rust-fs-exfat", git = "https://github.com/antimatter-studios/rust-fs-exfat", rev = "1dae694062229316371956e5ae8b1067a7e9ce9f" }
 fs-fat32 = { package = "rust-fs-fat32", git = "https://github.com/antimatter-studios/rust-fs-fat", rev = "0159f5c72a0b23359a5963ff452c83ad80001a36" }
 fs-ntfs = { package = "rust-fs-ntfs", git = "https://github.com/antimatter-studios/rust-fs-ntfs", rev = "9a4f404f29d5bd2b1ac68caed3a75baaede0eb34" }
-fs-squashfs = { package = "rust-fs-squashfs", git = "https://github.com/antimatter-studios/rust-fs-squashfs", rev = "ef405d42b94cb0c26c5cc63dd82ebd7186fac664" }
+fs-squashfs = { package = "rust-fs-squashfs", git = "https://github.com/antimatter-studios/rust-fs-squashfs", rev = "d17048f55aded8c23cb78f19f01c807bc027d30a" }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 libc = "0.2.191"
 rars = { version = "0.12.4", default-features = false }
