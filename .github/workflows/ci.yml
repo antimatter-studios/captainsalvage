@@ -75,8 +75,8 @@ jobs:
         run: bash scripts/test_translations.sh
       - name: type check and build the window
         run: npm run build
-      - name: the window's logic and its raw-disk speed budget
-        run: node --test tests/*.mjs
+      - name: test the window serially to avoid contention in the raw-disk benchmark
+        run: node --test --test-concurrency=1 tests/*.mjs
 
   engine-lint-gate:
     runs-on: antimatter-vps-gate
