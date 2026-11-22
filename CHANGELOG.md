@@ -8,6 +8,16 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-11-22
+
+### Added
+
+- **An ext2, ext3 or ext4 volume opens and says what it is.** The app reads it through the filesystem's own driver, as it does SquashFS: it finds the volume by its superblock (at byte 1024, past the first sector), keeps the superblock so the volume still opens if the disk's own is written over, and shows its block size, label and serial number. The support table has an ext2/3/4 column, and the instructions an MCP client is given name it.
+
+### Maintenance
+
+- The place-blocking test starts from its own empty folder, so it no longer sees a place flagged by the test before it ([#377](https://github.com/antimatter-studios/captainsalvage/pull/377))
+
 ## [0.24.0] — 2026-11-22
 
 ### Added
