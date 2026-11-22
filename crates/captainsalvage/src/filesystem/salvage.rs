@@ -417,7 +417,9 @@ pub fn find_entries(
         FilesystemKind::Fat32 => FatKind::Fat32,
         FilesystemKind::Ntfs => return ntfs_salvage::find_entries(geometry, data, start_limit),
         // A driver's entries are the driver's candidates, found once by `Volume`, not in the clusters.
-        FilesystemKind::Squashfs | FilesystemKind::Ext4 => return Vec::new(),
+        FilesystemKind::Squashfs | FilesystemKind::Ext4 | FilesystemKind::Erofs => {
+            return Vec::new()
+        }
     };
     let aligned = &data[..data.len() / 32 * 32];
     fs_fat32::directory::scan_directory(aligned, fat_kind)

@@ -1150,7 +1150,11 @@ impl MapDb {
                 .iter()
                 .map(|stored| DriverRecord::stored(stored.id, stored.candidate.clone()))
                 .collect();
-            let claims = driver.parents(&folder_records, &records)?;
+            let named = driver.claims(&folder_records, &records)?;
+            let claims: Vec<Vec<ParentRef>> = named
+                .iter()
+                .map(|claims| claims.iter().map(|(parent, _)| *parent).collect())
+                .collect();
             let transaction = this.connection.transaction()?;
             // The root first, so a folder of the same batch that names it finds the root's number.
             for (stored, claims) in batch.iter().zip(&claims) {
@@ -1166,6 +1170,16 @@ impl MapDb {
                         params![stored.id as i64, root_record],
                     )?;
                     number_of.insert(stored.id, root_record);
+                }
+            }
+            // A candidate the driver gave no name takes the one its first claim gives it: that is where a format whose names
+            // are in its directory entries keeps them.
+            for (stored, claims) in batch.iter().zip(&named) {
+                if let Some((_, Some(name))) = claims.first() {
+                    transaction.execute(
+                        "UPDATE sets SET name = ?3 WHERE source_cluster = ?1 AND source_offset = ?2 AND name = ''",
+                        params![stored.cluster, stored.offset, String::from_utf8_lossy(name)],
+                    )?;
                 }
             }
             for (stored, claims) in batch.iter().zip(&claims) {
