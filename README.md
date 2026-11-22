@@ -1140,7 +1140,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.24.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.25.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1279,6 +1279,16 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.25.0 — 2026-11-22
+
+**Added**
+
+- **An ext2, ext3 or ext4 volume opens and says what it is.** The app reads it through the filesystem's own driver, as it does SquashFS: it finds the volume by its superblock (at byte 1024, past the first sector), keeps the superblock so the volume still opens if the disk's own is written over, and shows its block size, label and serial number. The support table has an ext2/3/4 column, and the instructions an MCP client is given name it.
+
+**Maintenance**
+
+- The place-blocking test starts from its own empty folder, so it no longer sees a place flagged by the test before it ([#377](https://github.com/antimatter-studios/captainsalvage/pull/377))
+
 ### v0.24.0 — 2026-11-22
 
 **Added**
@@ -1338,12 +1348,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - SquashFS images are listed and copied through the generic layers adapter, and a kernel-made image of each compressor is checked against the kernel's own listing ([#356](https://github.com/antimatter-studios/captainsalvage/pull/356))
-
-### v0.20.5 — 2026-11-21
-
-**Maintenance**
-
-- SquashFS is pinned to rust-fs-squashfs's three layers (ef405d4), which brings rust-fs-core 0.5.1, and the generic adapter names a candidate by the driver's own id ([#354](https://github.com/antimatter-studios/captainsalvage/pull/354))
 
 <!-- changelog:end -->
 
