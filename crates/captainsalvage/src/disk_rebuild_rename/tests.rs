@@ -354,6 +354,7 @@ fn openers_at_the_same_moment_wait_for_each_other_and_see_the_finished_rename() 
     let folder = Folder::new();
     let path = old_database(&folder);
     let before = rows(&Connection::open(&path).unwrap());
+    let _burst = crate::test_burst::permit();
     let barrier = Arc::new(Barrier::new(6));
     let workers: Vec<_> = (0..6)
         .map(|_| {
