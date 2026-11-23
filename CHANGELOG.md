@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.28.2] — 2026-11-23
+
+### Maintenance
+
+- Tests that release a burst of worker threads share one permit, so two bursts never add together ([#402](https://github.com/antimatter-studios/captainsalvage/pull/402))
+
 ## [0.28.1] — 2026-11-23
 
 ### Maintenance

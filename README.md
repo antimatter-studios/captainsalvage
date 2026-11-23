@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.28.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.28.2 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.28.2 — 2026-11-23
+
+**Maintenance**
+
+- Tests that release a burst of worker threads share one permit, so two bursts never add together ([#402](https://github.com/antimatter-studios/captainsalvage/pull/402))
+
 ### v0.28.1 — 2026-11-23
 
 **Maintenance**
@@ -1387,12 +1393,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Fixed**
 
 - **The instructions an MCP client is given name SquashFS.** They said the app reads a damaged exFAT, FAT or NTFS volume and left SquashFS out, so an agent was told the app could not open an image it does open. They now name every filesystem the app reads.
-
-### v0.23.2 — 2026-11-21
-
-**Fixed**
-
-- **A damaged or truncated SquashFS image now says what is wrong when you open it.** A copy cut short, or one with a zeroed inode or directory table header, used to open as an empty volume with no damage reported. It now lists what it found, and a truncated copy still shows its files.
 
 <!-- changelog:end -->
 
