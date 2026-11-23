@@ -370,11 +370,8 @@ fn diff(path: &str, what: impl Into<String>) -> Diff {
 /// What the app does not do yet, as these volumes show it. Each is found by Windows' volumes, has
 /// an issue, and is pinned here: the test fails for any other difference, and it fails too when a
 /// gap that must show on a volume no longer does, so that fixing one means removing it here and
-/// from the README. Compression (issue #174) and hard links (#175) were gaps and are not now; the
-/// 4096-byte-sector volume (#177) is refused at open, which is checked apart.
-const SECTOR_4096: &str =
-    "a volume on 4096-byte sectors with 1024-byte records is refused at open (issue #177)";
-
+/// from the README. Compression (issue #174), hard links (#175) and the 4096-byte-sector volume with
+/// 1024-byte records (#177) were gaps and are not now.
 fn known_gap(_want: &Manifest, _difference: &Diff) -> Option<&'static str> {
     None
 }
@@ -636,18 +633,15 @@ fn volume_matches_windows(name: &str) {
     );
     let before = sha(&std::fs::read(&image).unwrap());
 
+    // Windows' own volume on 4096-byte sectors has 1024-byte file records, held together by three words of update sequence
+    // array, one per 512 bytes of the record (issue #177): it is opened and compared like every other volume.
     let scanned = match open_image(name) {
         Ok(scanned) => scanned,
-        Err(error) if sector > record => {
-            // Windows' own volume: 4096-byte sectors, and 1024-byte file records, which are held
-            // together by three words of update sequence array, one per 512 bytes of the record.
-            assert!(error.contains("no fixup stride fits"), "{name}: {error}");
-            assert_eq!((sector, record, words), (4096, 1024, 3), "{name}");
-            eprintln!("{name}: known gap, {SECTOR_4096}\n  {error}");
-            return;
-        }
         Err(error) => panic!("{name}: the app does not open the volume: {error}"),
     };
+    if sector > record {
+        assert_eq!((sector, record, words), (4096, 1024, 3), "{name}");
+    }
 
     let app = app_tree(&scanned, &want.owned);
     let mut differences = listing_differences(&want, &app);

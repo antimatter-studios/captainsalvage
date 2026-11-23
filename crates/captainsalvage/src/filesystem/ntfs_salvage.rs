@@ -212,6 +212,18 @@ pub fn mft_runs(structures: &StructureCopy, geometry: &VolumeGeometry) -> Vec<Nt
     }
 }
 
+/// The span NTFS keeps one update sequence word for inside a FILE record. It is the sector on a volume of 512-byte sectors
+/// and 512 bytes inside a larger sector: Windows formats a disk that presents 4096-byte sectors with 1024-byte records, two
+/// strides of one record's own array (issue #177).
+const USA_STRIDE: usize = 512;
+
+/// Whether a file record of this size can sit on a volume of this sector size: it holds at least its header, and it is whole
+/// strides, which is a whole sector for a sector of 512 bytes or less and may be less than one for a larger sector.
+fn record_fits_sector(record_size: u64, sector: u64) -> bool {
+    let stride = sector.min(USA_STRIDE as u64);
+    record_size >= 48 && stride != 0 && record_size.is_multiple_of(stride)
+}
+
 /// What `Inspected` needs from the boot sector and the saved records.
 pub struct NtfsInspected {
     pub boot: NtfsBoot,
@@ -246,7 +258,7 @@ fn geometry_of(boot: &BootParams) -> Result<VolumeGeometry> {
         "the NTFS volume has {total_clusters} clusters, more than the {MAX_CLUSTERS} (2^32 - 2) there can be. Windows itself does not create or mount such a volume (a bigger one uses bigger clusters), so this app does not open it"
     );
     ensure!(
-        boot.file_record_size >= 48 && boot.file_record_size.is_multiple_of(sector),
+        record_fits_sector(boot.file_record_size, sector),
         "the NTFS file record size does not fit its sector size"
     );
     Ok(VolumeGeometry {
@@ -794,7 +806,7 @@ pub fn find_entries(
 ) -> Vec<SalvageEntry> {
     let record_size = geometry.record_size as usize;
     let sector = geometry.bytes_per_sector as usize;
-    if record_size < 48 || sector == 0 || !record_size.is_multiple_of(sector) {
+    if sector == 0 || !record_fits_sector(record_size as u64, sector as u64) {
         return Vec::new();
     }
     let mut found = Vec::new();
@@ -821,7 +833,7 @@ pub fn find_entries(
                 continue;
             }
         }
-        offset += sector;
+        offset += sector.min(USA_STRIDE);
     }
     found
 }
@@ -1235,14 +1247,21 @@ mod tests {
 
     /// A boot sector that says it is an NTFS volume of `clusters` clusters of 4096 bytes (512-byte sectors).
     fn boot_sector(clusters: u64) -> Vec<u8> {
+        boot_sector_of(clusters, 512, 0xF6)
+    }
+
+    /// The same with sectors of `sector` bytes, and file records of the size the byte `record` says: a negative one is two to
+    /// the power of its absolute value (0xF6 is 1024 bytes).
+    fn boot_sector_of(clusters: u64, sector: u16, record: u8) -> Vec<u8> {
+        let per_cluster = 4096 / u64::from(sector);
         let mut boot = vec![0u8; 512];
         boot[3..11].copy_from_slice(b"NTFS    ");
-        boot[0x0B..0x0D].copy_from_slice(&512u16.to_le_bytes());
-        boot[0x0D] = 8;
-        boot[0x28..0x30].copy_from_slice(&(clusters * 8).to_le_bytes());
+        boot[0x0B..0x0D].copy_from_slice(&sector.to_le_bytes());
+        boot[0x0D] = per_cluster as u8;
+        boot[0x28..0x30].copy_from_slice(&(clusters * per_cluster).to_le_bytes());
         boot[0x30..0x38].copy_from_slice(&4u64.to_le_bytes());
         boot[0x38..0x40].copy_from_slice(&2u64.to_le_bytes());
-        boot[0x40] = 0xF6;
+        boot[0x40] = record;
         boot[0x44] = 1;
         boot[0x48..0x50].copy_from_slice(&0x1234_5678_9ABC_DEF0u64.to_le_bytes());
         boot[510..512].copy_from_slice(&[0x55, 0xAA]);
@@ -1275,6 +1294,97 @@ mod tests {
 
     fn geometry(clusters: u64) -> Result<VolumeGeometry> {
         geometry_of(&parse_main(&boot_sector(clusters))?)
+    }
+
+    /// A FILE record of `size` bytes in use, named `name`, whose update sequence array has one word per 512 bytes: the array
+    /// Windows writes inside a 4096-byte sector (a record of 1024 bytes has the check word and two saved words).
+    fn file_record(size: usize, name: &str) -> Vec<u8> {
+        let mut record = vec![0u8; size];
+        let strides = size / 512;
+        record[0..4].copy_from_slice(b"FILE");
+        record[4..6].copy_from_slice(&0x30u16.to_le_bytes());
+        record[6..8].copy_from_slice(&(strides as u16 + 1).to_le_bytes());
+        record[0x10..0x12].copy_from_slice(&1u16.to_le_bytes());
+        record[0x12..0x14].copy_from_slice(&1u16.to_le_bytes());
+        let attributes = (0x30 + 2 * (strides + 1)).next_multiple_of(8);
+        record[0x14..0x16].copy_from_slice(&(attributes as u16).to_le_bytes());
+        record[0x16..0x18].copy_from_slice(&1u16.to_le_bytes());
+        record[0x1C..0x20].copy_from_slice(&(size as u32).to_le_bytes());
+        let units: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let value_length = 0x42 + units.len();
+        let attribute_length = (0x18 + value_length).next_multiple_of(8);
+        let at = attributes;
+        record[at..at + 4].copy_from_slice(&0x30u32.to_le_bytes());
+        record[at + 4..at + 8].copy_from_slice(&(attribute_length as u32).to_le_bytes());
+        record[at + 0x10..at + 0x14].copy_from_slice(&(value_length as u32).to_le_bytes());
+        record[at + 0x14..at + 0x16].copy_from_slice(&0x18u16.to_le_bytes());
+        let value = at + 0x18;
+        record[value..value + 8].copy_from_slice(&((1u64 << 48) | 5).to_le_bytes());
+        record[value + 0x40] = name.encode_utf16().count() as u8;
+        record[value + 0x41] = 1;
+        record[value + 0x42..value + 0x42 + units.len()].copy_from_slice(&units);
+        let end = at + attribute_length;
+        record[end..end + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        record[0x18..0x1C].copy_from_slice(&((end + 8) as u32).to_le_bytes());
+        // The array: the check word, then what each stride's last two bytes held, which now hold the check word.
+        let check = 0xBEEFu16.to_le_bytes();
+        record[0x30..0x32].copy_from_slice(&check);
+        for stride in 0..strides {
+            let last = (stride + 1) * 512 - 2;
+            let saved = [record[last], record[last + 1]];
+            record[0x32 + 2 * stride..0x34 + 2 * stride].copy_from_slice(&saved);
+            record[last..last + 2].copy_from_slice(&check);
+        }
+        record
+    }
+
+    #[test]
+    fn a_volume_with_4096_byte_sectors_and_1024_byte_records_has_a_geometry() {
+        // Windows' own format of a disk that presents 4096-byte sectors (issue #177): the record is smaller than the sector.
+        let found = geometry_of(&parse_main(&boot_sector_of(1000, 4096, 0xF6)).unwrap())
+            .expect("a record of two 512-byte strides on a 4096-byte sector");
+        assert_eq!((found.bytes_per_sector, found.record_size), (4096, 1024));
+        assert_eq!(found.cluster_size, 4096);
+        // The same record on 512-byte sectors, as before, and the whole sector's worth of record on a large sector.
+        assert!(geometry(1000).is_ok());
+        assert!(geometry_of(&parse_main(&boot_sector_of(1000, 4096, 0xF4)).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn a_record_that_is_not_whole_strides_is_refused_on_any_sector() {
+        // 256 bytes (0xF8) is not a multiple of 512, on a 512-byte sector or a 4096-byte one: the driver's boot parse refuses it.
+        for sector in [512u16, 4096] {
+            let message = format!(
+                "{:#}",
+                parse_main(&boot_sector_of(1000, sector, 0xF8)).unwrap_err()
+            );
+            assert!(
+                message.contains("file_record_size 256"),
+                "{sector}: {message}"
+            );
+        }
+        // And the app's own check, which the driver's parse leaves to it: whole strides, and at least a header.
+        assert!(record_fits_sector(1024, 4096) && record_fits_sector(1024, 512));
+        assert!(record_fits_sector(4096, 4096) && record_fits_sector(512, 512));
+        assert!(!record_fits_sector(256, 4096) && !record_fits_sector(700, 4096));
+        assert!(!record_fits_sector(0, 512) && !record_fits_sector(1024, 0));
+    }
+
+    #[test]
+    fn a_record_of_two_strides_is_found_on_a_volume_of_4096_byte_sectors() {
+        let geometry =
+            geometry_of(&parse_main(&boot_sector_of(1000, 4096, 0xF6)).unwrap()).unwrap();
+        // Two records, the second at the next 1024 bytes, which is not a sector boundary.
+        let mut data = vec![0u8; 8192];
+        data[..1024].copy_from_slice(&file_record(1024, "first.txt"));
+        data[1024..2048].copy_from_slice(&file_record(1024, "second.txt"));
+        let probe = inspect_file_record(0, data[..1024].to_vec(), 4096);
+        assert!(probe.issues.is_empty(), "{:?}", probe.issues);
+        let names: Vec<String> = find_entries(&geometry, &data, data.len())
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(names, ["first.txt", "second.txt"], "{names:?}");
     }
 
     #[test]
