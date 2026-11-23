@@ -8,6 +8,22 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-11-23
+
+### Added
+
+- **An NTFS volume on 4096-byte sectors opens.** Windows formats a disk that presents 4096-byte sectors with file records of 1024 bytes, smaller than a sector, and the app refused such a volume at open. It now reads those records, which are protected by one check word for every 512 bytes of the record, and lists and copies the volume's files like any other NTFS volume.
+
+### Maintenance
+
+- The exFAT driver is pinned to rust-fs-exfat main on rust-fs-core 0.5.1, with the salvage adapter from core (671fa20: #241, #242, #243) ([#394](https://github.com/antimatter-studios/captainsalvage/pull/394))
+- The app reads ext4 images with small files stored in their inodes, with the older feature set and with linear directories exactly as the Linux kernel lists them ([#393](https://github.com/antimatter-studios/captainsalvage/pull/393))
+- The NTFS driver is pinned to rust-fs-ntfs main that reads Windows 4Kn volumes with 1 KiB records (3068689: #1406, #1407, #1408) ([#391](https://github.com/antimatter-studios/captainsalvage/pull/391))
+- The NTFS driver is pinned to rust-fs-ntfs main with stream salvage from salvaged records (6be01d9: #1404, #1405) ([#389](https://github.com/antimatter-studios/captainsalvage/pull/389))
+- The NTFS driver is pinned to rust-fs-ntfs main with its three layers and salvaged-record decoding (826f6c0: #1376, #1377, #1380) ([#388](https://github.com/antimatter-studios/captainsalvage/pull/388))
+- The app opens, scans, browses, reads and copies EROFS images made by mkfs.erofs exactly as the Linux kernel lists them, with the same SHA-256 for every file and a link as a file that holds its target ([#387](https://github.com/antimatter-studios/captainsalvage/pull/387))
+- Adopt harness v0.11.0 resource limits ([#386](https://github.com/antimatter-studios/captainsalvage/pull/386))
+
 ## [0.26.0] — 2026-11-22
 
 ### Added
