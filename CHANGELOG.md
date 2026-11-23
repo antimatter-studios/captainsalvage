@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.28.1] — 2026-11-23
+
+### Maintenance
+
+- The exFAT driver is pinned to rust-fs-exfat main with its three shared layers (eb1c1f7: #244, #245) ([#400](https://github.com/antimatter-studios/captainsalvage/pull/400))
+
 ## [0.28.0] — 2026-11-23
 
 ### Added
