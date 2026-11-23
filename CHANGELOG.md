@@ -8,6 +8,15 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.26.1] — 2026-11-23
+
+### Maintenance
+
+- The NTFS driver is pinned to rust-fs-ntfs main with stream salvage from salvaged records (6be01d9: #1404, #1405) ([#389](https://github.com/antimatter-studios/captainsalvage/pull/389))
+- The NTFS driver is pinned to rust-fs-ntfs main with its three layers and salvaged-record decoding (826f6c0: #1376, #1377, #1380) ([#388](https://github.com/antimatter-studios/captainsalvage/pull/388))
+- The app opens, scans, browses, reads and copies EROFS images made by mkfs.erofs exactly as the Linux kernel lists them, with the same SHA-256 for every file and a link as a file that holds its target ([#387](https://github.com/antimatter-studios/captainsalvage/pull/387))
+- Adopt harness v0.11.0 resource limits ([#386](https://github.com/antimatter-studios/captainsalvage/pull/386))
+
 ## [0.26.0] — 2026-11-22
 
 ### Added
