@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.28.3] — 2026-11-23
+
+### Maintenance
+
+- A session never runs two of the same background operation, which bounds the threads the engine's tests start ([#404](https://github.com/antimatter-studios/captainsalvage/pull/404))
+
 ## [0.28.2] — 2026-11-23
 
 ### Maintenance
