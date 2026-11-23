@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.26.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.27.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1311,6 +1311,22 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.27.0 — 2026-11-23
+
+**Added**
+
+- **An NTFS volume on 4096-byte sectors opens.** Windows formats a disk that presents 4096-byte sectors with file records of 1024 bytes, smaller than a sector, and the app refused such a volume at open. It now reads those records, which are protected by one check word for every 512 bytes of the record, and lists and copies the volume's files like any other NTFS volume.
+
+**Maintenance**
+
+- The exFAT driver is pinned to rust-fs-exfat main on rust-fs-core 0.5.1, with the salvage adapter from core (671fa20: #241, #242, #243) ([#394](https://github.com/antimatter-studios/captainsalvage/pull/394))
+- The app reads ext4 images with small files stored in their inodes, with the older feature set and with linear directories exactly as the Linux kernel lists them ([#393](https://github.com/antimatter-studios/captainsalvage/pull/393))
+- The NTFS driver is pinned to rust-fs-ntfs main that reads Windows 4Kn volumes with 1 KiB records (3068689: #1406, #1407, #1408) ([#391](https://github.com/antimatter-studios/captainsalvage/pull/391))
+- The NTFS driver is pinned to rust-fs-ntfs main with stream salvage from salvaged records (6be01d9: #1404, #1405) ([#389](https://github.com/antimatter-studios/captainsalvage/pull/389))
+- The NTFS driver is pinned to rust-fs-ntfs main with its three layers and salvaged-record decoding (826f6c0: #1376, #1377, #1380) ([#388](https://github.com/antimatter-studios/captainsalvage/pull/388))
+- The app opens, scans, browses, reads and copies EROFS images made by mkfs.erofs exactly as the Linux kernel lists them, with the same SHA-256 for every file and a link as a file that holds its target ([#387](https://github.com/antimatter-studios/captainsalvage/pull/387))
+- Adopt harness v0.11.0 resource limits ([#386](https://github.com/antimatter-studios/captainsalvage/pull/386))
+
 ### v0.26.0 — 2026-11-22
 
 **Added**
@@ -1380,12 +1396,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **A SquashFS image opens, scans and shows its files.** The app reads it through the filesystem's own driver: its folders and files are listed, a file is previewed from any place in it, and a copy writes the bytes the driver decodes (every compressor SquashFS has: gzip, xz, lzo, lz4 and zstd), with each copy hashed and marked complete or partial as for the other filesystems. Symbolic links and special files are not listed yet, and no allocation is read from the image, so its map shows every cluster as unknown rather than free. The support table has a SquashFS column.
-
-### v0.21.0 — 2026-11-21
-
-**Added**
-
-- **A SquashFS image now opens instead of being refused.** The app says what it is, from its driver (its block size, label and serial number), keeps its superblock as the baseline, and shows a SquashFS column in the support table. It does not list the image's files yet.
 
 <!-- changelog:end -->
 
