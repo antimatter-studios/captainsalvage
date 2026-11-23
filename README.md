@@ -550,6 +550,14 @@ What was checked against something that is not this app:
   file in full and copies it out, and what it shows and copies is exactly the kernel's tree: the
   same folders and files, the same SHA-256 for every file, and a link as a file that holds its
   target.
+- **mkfs.erofs and the Linux kernel's erofs**, in the same VM (from `tests/erofs_oracle.rs` and
+  `validation/erofs-oracle.sh`). `mkfs.erofs` makes five images of one tree (uncompressed, chunk-based
+  files, LZ4 and LZ4HC compressed, and LZ4HC with the tail of a file packed into its inode: files of
+  one block and of several, a file with holes, an empty file, 400 entries in one folder, non-ASCII
+  and long names and symbolic links), and the kernel mounts them read-only. The app opens each as a
+  person does, scans and browses it, reads every file in full and copies it out, and what it shows
+  and copies is exactly the kernel's tree: the same folders and files, the same SHA-256 for every
+  file, and a link as a file that holds its target.
 - **Windows itself**, in the Windows 11 guest of
   [fs-windows-test-harness](https://github.com/antimatter-studios/fs-windows-test-harness)
   (`chore test:windows-oracle`, from `tests/ntfs_windows.rs` and `validation/windows/`), or on a
@@ -1049,15 +1057,15 @@ The older `open_volume` door does not use the guard.
 
 ```sh
 cargo test -p captainsalvage
-chore test:oracle     # NTFS, FAT, exFAT, SquashFS and ext2/3/4 against ntfs-3g, dosfstools, exfatprogs, mtools, squashfs-tools, e2fsprogs and the kernel, in the Linux test VM
+chore test:oracle     # NTFS, FAT, exFAT, SquashFS, ext2/3/4 and EROFS against ntfs-3g, dosfstools, exfatprogs, mtools, squashfs-tools, e2fsprogs, erofs-utils and the kernel, in the Linux test VM
 chore test:windows-oracle   # NTFS against volumes Windows formatted and filled, in the Windows guest
 ```
 
 `chore test:oracle` needs the sibling checkouts `chore siblings` makes, and boots the shared
 guest of [fs-linux-test-harness](https://github.com/antimatter-studios/fs-linux-test-harness)
 with the `ntfs3` run profile in `run-profiles/`. Nothing is mounted on the Mac. A missing VM, tool
-or kernel driver fails the oracle tests, naming this task; they never skip. The FAT, exFAT, SquashFS and ext2/3/4
-tests (`tests/fat_exfat_oracle.rs`, `tests/squashfs_oracle.rs`, `tests/ext4_oracle.rs` and their scripts in `validation/`)
+or kernel driver fails the oracle tests, naming this task; they never skip. The FAT, exFAT, SquashFS, ext2/3/4 and EROFS
+tests (`tests/fat_exfat_oracle.rs`, `tests/squashfs_oracle.rs`, `tests/ext4_oracle.rs`, `tests/erofs_oracle.rs` and their scripts in `validation/`)
 list in their header what they do not check.
 
 `chore test:windows-oracle` starts the Windows guest of
