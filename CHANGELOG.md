@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-11-23
+
+### Added
+
+- **An NTFS volume's change journal and `$LogFile` can be read, without writing the volume.** A new tool and command, `ntfs_journal_evidence` for an AI agent and `captainsalvage filesystem journal SOURCE` on the command line, return what the volume recorded of what recently happened to it, as a separate labelled interpretation that is never mixed into the files the scan finds. The change journal lists by name and time what was created, renamed, changed and deleted, each record with its USN, which is where it is in the journal, and the names of its reasons. The log says whether it is empty, clean or holds work a replay would redo, and lists its records with where each is in `$LogFile` and on the volume. It is evidence of what the volume recorded, not proof that it reached the disk, and nothing is ever replayed onto the source. Long journals are read a page at a time. The window does not show it yet, and the support table still lists the journal as missing.
+
 ## [0.27.1] — 2026-11-23
 
 ### Maintenance
