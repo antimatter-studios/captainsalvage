@@ -1917,6 +1917,20 @@ impl Session {
         )
     }
 
+    /// What the volume's change journal and `$LogFile` say, as a separate interpretation read through the volume's own source,
+    /// which can only be read.
+    pub fn ntfs_journal_evidence(
+        &self,
+        request: &crate::ntfs_journal::Request,
+    ) -> Result<crate::ntfs_journal::JournalEvidence> {
+        anyhow::ensure!(self.volume.ntfs.is_some(), "this volume is not NTFS");
+        let device = crate::filesystem::ntfs_salvage::SourceDevice::new(
+            Arc::clone(self.volume.source()),
+            self.volume.geometry.volume_size,
+        );
+        Ok(crate::ntfs_journal::read(&device, request))
+    }
+
     /// Reads part of an NTFS stream through the driver. A failed read is an error: nothing
     /// that could not be read is returned as zeros, and only the zeros NTFS defines are.
     pub fn read_ntfs_stream(
@@ -2173,7 +2187,7 @@ fn decode_field(kind: &str, data: &[u8]) -> Value {
 }
 
 /// Converts a Windows FILETIME, as NTFS uses, to a UTC date and time.
-fn filetime_to_iso(value: u64) -> Option<String> {
+pub(crate) fn filetime_to_iso(value: u64) -> Option<String> {
     const TICKS_PER_SECOND: u64 = 10_000_000;
     const SECONDS_TO_UNIX_EPOCH: u64 = 11_644_473_600;
     let seconds = (value / TICKS_PER_SECOND).checked_sub(SECONDS_TO_UNIX_EPOCH)?;
