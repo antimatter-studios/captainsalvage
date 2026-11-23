@@ -7,11 +7,12 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
-const USAGE: &str = "usage: captainsalvage filesystem <list|cat|capabilities|ntfs-record|ntfs-stream> SOURCE [--start BYTES --length BYTES]\n\
+const USAGE: &str = "usage: captainsalvage filesystem <list|cat|capabilities|ntfs-record|ntfs-stream|journal> SOURCE [--start BYTES --length BYTES]\n\
 capabilities: what is supported, limited or missing for the filesystem the boot sector names\n\
 cat: --name ROOT_FILENAME\n\
 ntfs-record and ntfs-stream: --record-offset BYTES [--record-size 1024 --sector-size 512]\n\
 ntfs-stream: --attribute INDEX --cluster-size BYTES\n\
+journal: NTFS change journal and $LogFile evidence, read only, as JSON: [--from-usn USN --usn-bytes BYTES --from-lsn LSN --log-records COUNT]\n\
 Offsets are relative to the selected source region. cat and ntfs-stream write binary data to stdout.\n\
 Recovery is a hypothesis: surviving records do not prove their data clusters were not reused.";
 
@@ -27,7 +28,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
     ensure!(
         matches!(
             command,
-            "list" | "cat" | "capabilities" | "ntfs-record" | "ntfs-stream"
+            "list" | "cat" | "capabilities" | "ntfs-record" | "ntfs-stream" | "journal"
         ),
         "{USAGE}"
     );
@@ -38,6 +39,10 @@ pub fn run(arguments: &[String]) -> Result<()> {
         let allowed = matches!(option.as_str(), "--start" | "--length")
             || match command {
                 "cat" => option == "--name",
+                "journal" => matches!(
+                    option.as_str(),
+                    "--from-usn" | "--usn-bytes" | "--from-lsn" | "--log-records"
+                ),
                 "ntfs-record" => matches!(
                     option.as_str(),
                     "--record-offset" | "--record-size" | "--sector-size"
@@ -84,6 +89,29 @@ pub fn run(arguments: &[String]) -> Result<()> {
                 "filesystem": kind.to_string(),
                 "capabilities": kind.capabilities(),
             }))?
+        );
+        return Ok(());
+    }
+    if command == "journal" {
+        let device = RegionDevice::open(&disk, start, length)?;
+        let optional = |name: &str| -> Result<Option<u64>> {
+            values
+                .get(name)
+                .map(|value| value.parse().map_err(Into::into))
+                .transpose()
+        };
+        let request = captainsalvage::ntfs_journal::Request {
+            from_usn: values
+                .get("--from-usn")
+                .map(|value| value.parse())
+                .transpose()?,
+            usn_bytes: optional("--usn-bytes")?.map(|bytes| bytes as usize),
+            from_lsn: optional("--from-lsn")?,
+            log_records: optional("--log-records")?.map(|records| records as usize),
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&captainsalvage::ntfs_journal::read(&device, &request))?
         );
         return Ok(());
     }

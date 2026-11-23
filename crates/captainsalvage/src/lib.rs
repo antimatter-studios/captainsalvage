@@ -31,6 +31,7 @@ pub mod media;
 pub mod mount;
 pub mod mountblock;
 pub mod mounttable;
+pub mod ntfs_journal;
 pub mod opening;
 pub mod privacy;
 pub mod proc;

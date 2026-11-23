@@ -919,6 +919,14 @@ impl Engine {
             "ntfs_entry" => Ok(serde_json::to_value(
                 session.ntfs_record(need_i64(args, "id")?)?,
             )?),
+            "ntfs_journal_evidence" => Ok(serde_json::to_value(session.ntfs_journal_evidence(
+                &crate::ntfs_journal::Request {
+                    from_usn: args.get("fromUsn").and_then(Value::as_i64),
+                    usn_bytes: u64_of(args, "maxUsnBytes").map(|bytes| bytes as usize),
+                    from_lsn: u64_of(args, "fromLsn"),
+                    log_records: u64_of(args, "maxLogRecords").map(|records| records as usize),
+                },
+            )?)?),
             "verify_unchanged" => Ok(serde_json::to_value(session.verify_unchanged()?)?),
             "structure_changes" => Ok(serde_json::to_value(session.structure_changes()?)?),
 
