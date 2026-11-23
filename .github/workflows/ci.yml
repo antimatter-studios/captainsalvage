@@ -257,7 +257,10 @@ jobs:
     name: independent oracles (NTFS, FAT and exFAT, harness VM)
     needs: oracle-gate
     runs-on: ${{ needs.oracle-gate.outputs.runner }}
-    timeout-minutes: 60
+    env:
+      FLTH_RESOURCE_PROFILE: low
+      FLTH_TEST_JOBS: "1"
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -277,6 +280,7 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/antimatter-studios/chore/releases/download/v0.11.0/chore-0.11.0-linux-x86_64.tar.gz" \
             | sudo tar xz -C /usr/local/bin chore
           chore siblings
+      - uses: antimatter-studios/fs-linux-test-harness/.github/actions/install-virtiofsd@852c1b5407fe861bdf3e7336132877797a3fa91f # v0.11.0
       - name: KVM, QEMU, virtiofsd and Vagrant
         id: vm-host
         run: ../fs-linux-test-harness/scripts/ci-setup-linux.sh
