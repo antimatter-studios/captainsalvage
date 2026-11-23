@@ -54,7 +54,12 @@ put() { prng "$2" "$3" >"$1"; }
 
 # text SEED BYTES: bytes that compress well, so the compressed blocks are smaller than the data.
 text() {
+    # `head` closes its pipe once it has its bytes, and a stage that is still writing then dies of SIGPIPE (status 141), which
+    # pipefail makes the status of the whole pipeline and `set -e` makes the end of the script. That depends on timing, and is not
+    # a failure here: the bytes are what matter, so the pipeline is run without pipefail, as prng's is.
+    set +o pipefail
     prng "$1" 4096 | base64 -w 76 | head -c 4096 | sed 's/[+\/=]/ /g' | tr -d '\n' | head -c 4096 >"$work/text.unit"
+    set -o pipefail
     : >"$2"
     local written=0 want="$3"
     while [ "$written" -lt "$want" ]; do
