@@ -127,6 +127,43 @@ fn a_fragmented_file_is_read_from_its_runs_and_copied_with_its_hash() {
 }
 
 #[test]
+fn a_named_data_stream_is_its_own_readable_and_copyable_entry() {
+    let fixture = fixture();
+    let mut device = Image(Arc::new(Mutex::new(fixture.image.clone())));
+    let expected = b"alternate stream bytes";
+    fs_ntfs::write::write_named_stream_io(&mut device, "/docs/note.txt", "metadata", expected)
+        .unwrap();
+    let image = device.0.lock().unwrap().clone();
+    let session = open(image, "named-stream");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let stream = find(&engine, "note.txt:metadata");
+    assert_eq!(stream["length"], expected.len());
+    let id = stream["id"].as_i64().unwrap();
+    assert_eq!(
+        session
+            .read_entry_range(id, 0, expected.len() as u64)
+            .unwrap()
+            .data,
+        expected
+    );
+    let destination = session.workspace.dir().join("recovered");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: vec![id],
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    wait_for_copy(&session, 1);
+    assert_eq!(
+        std::fs::read(destination.join("Volume root/docs/note.txt_metadata")).unwrap(),
+        expected
+    );
+}
+
+#[test]
 fn deleted_files_keep_their_bytes_and_say_how_they_are_held() {
     let fixture = fixture();
     let session = open(fixture.image.clone(), "deleted");

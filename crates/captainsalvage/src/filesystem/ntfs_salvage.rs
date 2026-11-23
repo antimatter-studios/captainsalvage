@@ -617,6 +617,15 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
             runs: Vec::new(),
         };
     };
+    describe_attribute(record, attribute, fallback_length, encrypted)
+}
+
+fn describe_attribute(
+    record: &RecordEvidence,
+    attribute: &AttributeEvidence,
+    _fallback_length: u64,
+    encrypted: bool,
+) -> Data {
     let transformed = |fallback: &'static str, compressible: bool| {
         if encrypted || attribute.flags & attr_flags::ENCRYPTED != 0 {
             STORAGE_ENCRYPTED
@@ -672,6 +681,51 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
             }
         }
     }
+}
+
+/// One entry for each named `$DATA` attribute. Slots 1024 onward are reserved for streams;
+/// hard-link names occupy the lower slots.
+fn named_stream_entries(
+    record: &RecordEvidence,
+    primary: &SalvageEntry,
+    geometry: &VolumeGeometry,
+) -> Vec<SalvageEntry> {
+    if primary.is_dir {
+        return Vec::new();
+    }
+    record
+        .attributes
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.type_code == DATA && !a.name.is_empty())
+        .take(1024)
+        .filter_map(|(index, attribute)| {
+            let mut entry = primary.clone();
+            let data = describe_attribute(
+                record,
+                attribute,
+                primary.length,
+                primary.attributes & FILE_ATTRIBUTE_ENCRYPTED as u16 != 0,
+            );
+            entry.name = format!("{}:{}", primary.name, attribute.name);
+            entry.length = data.length;
+            entry.valid_length = data.valid_length;
+            entry.first_cluster = data
+                .runs
+                .iter()
+                .find_map(|r| r.lcn)
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(0);
+            if let Some(ntfs) = entry.record.as_mut() {
+                ntfs.storage = data.storage.to_string();
+                ntfs.runs = data.runs;
+            }
+            entry.name_slot = 1024 + index as u32;
+            let ntfs = entry.record.as_ref()?;
+            entry.ranges = RangeList::for_ntfs(ntfs, geometry, entry.length, entry.valid_length);
+            Some(entry)
+        })
+        .collect()
 }
 
 /// The entry one FILE record describes, or none when it is not a base record that
@@ -820,8 +874,10 @@ pub fn find_entries(
             );
             if let Some(entry) = entry_from_record(&record, offset, geometry) {
                 let further = further_name_entries(&record, &entry);
+                let streams = named_stream_entries(&record, &entry, geometry);
                 found.push(entry);
                 found.extend(further);
+                found.extend(streams);
                 offset += record_size;
                 continue;
             }
@@ -845,6 +901,8 @@ pub struct StreamReference {
     pub record_offset: u64,
     pub record_number: Option<u64>,
     pub sequence: u16,
+    /// The index of this entry's `$DATA` attribute in the record (named streams only).
+    pub attribute_index: Option<usize>,
     pub storage: String,
     pub length: u64,
     pub valid_length: u64,
@@ -948,8 +1006,17 @@ impl Access {
     /// returned as the zeros NTFS defines them to be; any other failure is an error, never zeros.
     pub fn read(&self, entry: &StreamReference, offset: u64, output: &mut [u8]) -> Result<usize> {
         let record = self.checked_record(entry)?;
-        let (index, attribute) =
-            data_stream(&record).context("the FILE record has no data stream")?;
+        let (index, attribute) = match entry.attribute_index {
+            Some(index) => (
+                index,
+                record
+                    .attributes
+                    .get(index)
+                    .filter(|attribute| attribute.type_code == DATA)
+                    .context("the FILE record no longer has this data stream")?,
+            ),
+            None => data_stream(&record).context("the FILE record has no data stream")?,
+        };
         let available = entry.length.saturating_sub(offset).min(output.len() as u64) as usize;
         if available == 0 {
             return Ok(0);
@@ -995,7 +1062,16 @@ impl Access {
             return None;
         }
         let record = self.checked_record(entry).ok()?;
-        let (_, attribute) = data_stream(&record)?;
+        let (_, attribute) = match entry.attribute_index {
+            Some(index) => (
+                index,
+                record
+                    .attributes
+                    .get(index)
+                    .filter(|attribute| attribute.type_code == DATA)?,
+            ),
+            None => data_stream(&record)?,
+        };
         let AttributeValue::NonResident { runs, .. } = &attribute.value else {
             return None;
         };
