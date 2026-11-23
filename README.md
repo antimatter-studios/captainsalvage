@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.27.0 | MIT | captain-salvage |
+| `captainsalvage` | 0.27.1 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1311,6 +1311,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.27.1 — 2026-11-23
+
+**Maintenance**
+
+- The exFAT driver is pinned to rust-fs-exfat main with its three shared layers (eb1c1f7: #244, #245) ([#396](https://github.com/antimatter-studios/captainsalvage/pull/396))
+
 ### v0.27.0 — 2026-11-23
 
 **Added**
@@ -1390,12 +1396,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The map's table and structs of records are named for what they hold, not for NTFS, and a driver's registry entry gives its volume's root number, so the record path is the same for every filesystem that has records ([#362](https://github.com/antimatter-studios/captainsalvage/pull/362))
-
-### v0.22.0 — 2026-11-21
-
-**Added**
-
-- **A SquashFS image opens, scans and shows its files.** The app reads it through the filesystem's own driver: its folders and files are listed, a file is previewed from any place in it, and a copy writes the bytes the driver decodes (every compressor SquashFS has: gzip, xz, lzo, lz4 and zstd), with each copy hashed and marked complete or partial as for the other filesystems. Symbolic links and special files are not listed yet, and no allocation is read from the image, so its map shows every cluster as unknown rather than free. The support table has a SquashFS column.
 
 <!-- changelog:end -->
 
