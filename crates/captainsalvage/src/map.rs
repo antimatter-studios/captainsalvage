@@ -1999,6 +1999,14 @@ impl MapDb {
                             + u64::from(crate::filesystem::record_offset(offset)),
                         record_number: entry.record_number,
                         sequence: entry.sequence.unwrap_or(0),
+                        attribute_index: entry.source_offset.and_then(|source_offset| {
+                            let slot = source_offset >> crate::filesystem::NAME_SLOT_SHIFT;
+                            if slot >= 1024 {
+                                Some((slot - 1024) as usize)
+                            } else {
+                                None
+                            }
+                        }),
                         storage: storage.clone(),
                         length: entry.length,
                         valid_length: entry.valid_length.min(entry.length),
