@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.27.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.28.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.28.0 — 2026-11-23
+
+**Added**
+
+- **An NTFS volume's change journal and `$LogFile` can be read, without writing the volume.** A new tool and command, `ntfs_journal_evidence` for an AI agent and `captainsalvage filesystem journal SOURCE` on the command line, return what the volume recorded of what recently happened to it, as a separate labelled interpretation that is never mixed into the files the scan finds. The change journal lists by name and time what was created, renamed, changed and deleted, each record with its USN, which is where it is in the journal, and the names of its reasons. The log says whether it is empty, clean or holds work a replay would redo, and lists its records with where each is in `$LogFile` and on the volume. It is evidence of what the volume recorded, not proof that it reached the disk, and nothing is ever replayed onto the source. Long journals are read a page at a time. The window does not show it yet, and the support table still lists the journal as missing.
+
 ### v0.27.1 — 2026-11-23
 
 **Maintenance**
@@ -1387,16 +1393,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - A driver's entries have typed ranges, built from the walk its driver made: readable, encoded, sparse and missing, with holes between ([#365](https://github.com/antimatter-studios/captainsalvage/pull/365))
-
-### v0.23.0 — 2026-11-21
-
-**Added**
-
-- **A SquashFS image's symbolic links and special files are listed.** A symbolic link shows as a file that holds its target, so it previews and copies out as that text, and a device or other special file shows as an empty file. The support table's browse note says so.
-
-**Maintenance**
-
-- The map's table and structs of records are named for what they hold, not for NTFS, and a driver's registry entry gives its volume's root number, so the record path is the same for every filesystem that has records ([#362](https://github.com/antimatter-studios/captainsalvage/pull/362))
 
 <!-- changelog:end -->
 
