@@ -19,7 +19,7 @@ vars:
   # The harness and the core checkout its scripts expect, as siblings of this repository.
   # They are tools this repository runs, not cargo dependencies, so these two lines are the only
   # thing that decides which versions run, and CI reads them here too.
-  LINUX_HARNESS_REF: v0.7.1
+  LINUX_HARNESS_REF: v0.11.0
   FS_CORE_REF: v0.4.2
   # The Windows guest's harness, a sibling that only `windows:up` and the Windows oracle use.
   WINDOWS_HARNESS_REF: v4.6.0
