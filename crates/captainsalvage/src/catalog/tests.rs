@@ -634,6 +634,7 @@ fn two_apps_migrating_together_register_each_scan_once() {
     let root = Root::new();
     old_layout(&root.0);
     let path = root.0.clone();
+    let _burst = crate::test_burst::permit();
     let workers: Vec<_> = (0..4)
         .map(|_| {
             let path = path.clone();
@@ -797,6 +798,7 @@ fn two_apps_meeting_a_new_drive_together_make_it_one_source() {
     root.catalog();
     let path = root.0.clone();
     let data = patterned(SIZE, 21);
+    let _burst = crate::test_burst::permit();
     let workers: Vec<_> = (0..4)
         .map(|_| {
             let (path, data) = (path.clone(), data.clone());

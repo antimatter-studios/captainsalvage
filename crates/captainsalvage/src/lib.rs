@@ -53,6 +53,8 @@ pub mod stale_flags;
 pub mod startup;
 pub mod stream_walk;
 pub mod summaries;
+#[cfg(test)]
+mod test_burst;
 pub mod verify;
 pub mod volume;
 pub mod workspace;
