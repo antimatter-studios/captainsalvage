@@ -39,9 +39,10 @@ fail() {
 python="$(command -v python3 || command -v python || true)"
 [ -n "$python" ] || fail "python 3 is needed to read volumes.json"
 
-# What the specs say, as `name sizeMB clusterBytes sectorBytes style scale` lines.
+# What the specs say, as `name sizeMB clusterBytes sectorBytes style scale` lines. Python on Windows ends its lines with CRLF,
+# and the carriage return would stay on the last field (`small\r` is not in make-volume.ps1's ValidateSet), so it is dropped.
 specs() {
-    "$python" -I - "$here/volumes.json" "$@" <<'PY'
+    "$python" -I - "$here/volumes.json" "$@" <<'PY' | tr -d '\r'
 import json, sys
 wanted = set(sys.argv[2:])
 rows = json.load(open(sys.argv[1]))
