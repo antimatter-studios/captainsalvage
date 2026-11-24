@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.30.2] — 2026-11-24
+
+### Maintenance
+
+- The Windows oracle compares each named data stream of a file, listed as an entry of its own, with the size and SHA-256 Windows reports ([#416](https://github.com/antimatter-studios/captainsalvage/pull/416))
+
 ## [0.30.1] — 2026-11-24
 
 ### Fixed
