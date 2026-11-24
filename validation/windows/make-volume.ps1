@@ -37,9 +37,10 @@ param(
     [Parameter(Mandatory)][int]$ClusterBytes,
     [int]$SectorBytes = 512,
     [ValidateSet('MBR', 'GPT')][string]$PartitionStyle = 'MBR',
-    [ValidateSet('small', 'large')][string]$Scale = 'small',
+    [ValidateScript({ $_.TrimEnd([char]13) -in @('small', 'large') })][string]$Scale = 'small',
     [Parameter(Mandatory)][string]$Out
 )
+$Scale = $Scale.TrimEnd([char]13)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
