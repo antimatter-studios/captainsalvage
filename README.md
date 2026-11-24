@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.28.3 | MIT | captain-salvage |
+| `captainsalvage` | 0.28.4 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.28.4 — 2026-11-24
+
+**Maintenance**
+
+- The oracle scripts' text() no longer ends the script when head closes its pipe before the last stage has finished writing ([#406](https://github.com/antimatter-studios/captainsalvage/pull/406))
+
 ### v0.28.3 — 2026-11-23
 
 **Maintenance**
@@ -1385,14 +1391,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Added**
 
 - **An exFAT volume with 1024, 2048 or 4096-byte sectors opens.** It was refused with `unsupported sector size 4096`, which left drives with 4096-byte sectors (4Kn disks, some SD cards and flash media) formatted exFAT showing nothing. The app now lists their files and folders and copies them out, with the same SHA-256 as the Linux kernel reports for a volume `mkfs.exfat` made on a 4096-byte-sector device.
-
-### v0.23.4 — 2026-11-22
-
-**Maintenance**
-
-- One damaged compressed data block of a kernel-made SquashFS image costs only that file: every entry is listed, its copy is partial and names the block, the damage report names the data block, and every other file copies with the kernel's SHA-256 ([#373](https://github.com/antimatter-studios/captainsalvage/pull/373))
-- SquashFS is pinned to rust-fs-squashfs main (d17048f), which keeps the earlier layer APIs with deprecation notices and reports damage to file data blocks ([#372](https://github.com/antimatter-studios/captainsalvage/pull/372))
-- A Disk Rebuild gathers, names and copies out the files of a damaged SquashFS image that lost its directory table, and a driver candidate keeps the record number it was given through a rescan ([#371](https://github.com/antimatter-studios/captainsalvage/pull/371))
 
 <!-- changelog:end -->
 
