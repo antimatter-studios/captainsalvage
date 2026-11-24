@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.30.3 | MIT | captain-salvage |
+| `captainsalvage` | 0.30.4 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.30.4 — 2026-11-24
+
+**Maintenance**
+
+- Windows creates the change journal of its oracle volumes, makes known changes in it and reads every record back, and the Windows oracle compares each with what the app reads ([#421](https://github.com/antimatter-studios/captainsalvage/pull/421))
+
 ### v0.30.3 — 2026-11-24
 
 **Maintenance**
@@ -1369,12 +1375,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - Tests that release a burst of worker threads share one permit, so two bursts never add together ([#402](https://github.com/antimatter-studios/captainsalvage/pull/402))
-
-### v0.28.1 — 2026-11-23
-
-**Maintenance**
-
-- The exFAT driver is pinned to rust-fs-exfat main with its three shared layers (eb1c1f7: #244, #245) ([#400](https://github.com/antimatter-studios/captainsalvage/pull/400))
 
 <!-- changelog:end -->
 

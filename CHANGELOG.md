@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.30.4] — 2026-11-24
+
+### Maintenance
+
+- Windows creates the change journal of its oracle volumes, makes known changes in it and reads every record back, and the Windows oracle compares each with what the app reads ([#421](https://github.com/antimatter-studios/captainsalvage/pull/421))
+
 ## [0.30.3] — 2026-11-24
 
 ### Maintenance
