@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.28.2 | MIT | captain-salvage |
+| `captainsalvage` | 0.28.3 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.28.3 — 2026-11-23
+
+**Maintenance**
+
+- A session never runs two of the same background operation, which bounds the threads the engine's tests start ([#404](https://github.com/antimatter-studios/captainsalvage/pull/404))
+
 ### v0.28.2 — 2026-11-23
 
 **Maintenance**
@@ -1387,12 +1393,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 - One damaged compressed data block of a kernel-made SquashFS image costs only that file: every entry is listed, its copy is partial and names the block, the damage report names the data block, and every other file copies with the kernel's SHA-256 ([#373](https://github.com/antimatter-studios/captainsalvage/pull/373))
 - SquashFS is pinned to rust-fs-squashfs main (d17048f), which keeps the earlier layer APIs with deprecation notices and reports damage to file data blocks ([#372](https://github.com/antimatter-studios/captainsalvage/pull/372))
 - A Disk Rebuild gathers, names and copies out the files of a damaged SquashFS image that lost its directory table, and a driver candidate keeps the record number it was given through a rescan ([#371](https://github.com/antimatter-studios/captainsalvage/pull/371))
-
-### v0.23.3 — 2026-11-21
-
-**Fixed**
-
-- **The instructions an MCP client is given name SquashFS.** They said the app reads a damaged exFAT, FAT or NTFS volume and left SquashFS out, so an agent was told the app could not open an image it does open. They now name every filesystem the app reads.
 
 <!-- changelog:end -->
 
