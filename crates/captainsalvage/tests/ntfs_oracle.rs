@@ -208,7 +208,8 @@ fn app_tree(session: &Arc<Session>) -> Tree {
     let system = |path: &str| path.split('/').any(|part| part.starts_with('$'));
     for id in ids("SELECT id FROM sets WHERE is_dir = 0 AND in_use = 1 AND checksum_ok = 1") {
         let (row, path) = entry(id);
-        if system(&path) {
+        // NTFS named streams are reported separately by the oracles, not as ordinary files.
+        if system(&path) || row.name.contains(':') {
             continue;
         }
         let data = session
@@ -390,12 +391,14 @@ fn what_the_app_copies_is_what_the_oracles_read() {
         let row = session
             .with_database(|database| Ok(database.entry(id)?.unwrap()))
             .unwrap();
-        if !row
-            .path
-            .clone()
-            .unwrap_or_default()
-            .split('/')
-            .any(|part| part.starts_with('$'))
+        // This comparison is for ordinary files; the oracle reports named streams separately.
+        if !row.name.contains(':')
+            && !row
+                .path
+                .clone()
+                .unwrap_or_default()
+                .split('/')
+                .any(|part| part.starts_with('$'))
             && !row.name.starts_with('$')
         {
             wanted.push(id);

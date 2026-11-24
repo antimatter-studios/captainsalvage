@@ -330,8 +330,42 @@ impl Volume {
         }
         match self.generic_sets() {
             Some(sets) => self.marked_bad(sets.in_cluster(cluster)),
-            None => self.find_sets(data, start_limit),
+            None => self.with_extension_streams(cluster, self.find_sets(data, start_limit)),
         }
+    }
+
+    /// Adds to what was found in `cluster` the named streams of its NTFS records that have an `$ATTRIBUTE_LIST`, which only the
+    /// volume can work out, by following the list to the records that hold them.
+    fn with_extension_streams(
+        &self,
+        cluster: u32,
+        mut entries: Vec<SalvageEntry>,
+    ) -> Vec<SalvageEntry> {
+        let Some(access) = self.ntfs.as_ref() else {
+            return entries;
+        };
+        let record_start = self.cluster_offset(cluster);
+        let mut streams = Vec::new();
+        for entry in &entries {
+            if entry.name_slot == 0
+                && entry
+                    .record
+                    .as_ref()
+                    .is_some_and(|record| record.attribute_list)
+            {
+                streams.extend(
+                    access.extension_stream_entries(entry, record_start + entry.offset as u64),
+                );
+            }
+        }
+        let bad = self.bad_sectors();
+        if !bad.is_empty() {
+            for stream in &mut streams {
+                stream.ranges.mark_bad(&bad);
+            }
+        }
+        entries.extend(streams);
+        entries
     }
 
     fn marked_bad(&self, mut entries: Vec<SalvageEntry>) -> Vec<SalvageEntry> {

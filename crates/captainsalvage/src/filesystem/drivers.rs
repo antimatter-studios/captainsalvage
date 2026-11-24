@@ -784,6 +784,7 @@ pub fn entries_in_cluster(
             accessed: None,
             slots: 1,
             record: Some(RecordEntry {
+                attribute_list: false,
                 record_number: None,
                 sequence: 0,
                 parent_record: None,

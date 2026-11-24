@@ -22,10 +22,11 @@ use crate::source::BlockSource;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use fs_core::BlockRead;
 use fs_ntfs::attr_io::attr_flags;
+use fs_ntfs::data_runs::DataRun;
 use fs_ntfs::mft_io::{parse_boot_sector, BootParams};
 use fs_ntfs::primitives::{
-    inspect_file_record, AttributeEvidence, AttributeValue, FileNameEvidence, PrimitiveAPI,
-    RecordEvidence,
+    inspect_file_record, AttributeEvidence, AttributeValue, FileNameEvidence, MftMap, PrimitiveAPI,
+    RecordEvidence, ResolvedRecord, SalvageStream,
 };
 use fs_ntfs::volume::{RawVolume, Volume as NtfsVolume, VolumeAPI};
 use serde::Serialize;
@@ -617,6 +618,15 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
             runs: Vec::new(),
         };
     };
+    describe_attribute(record, attribute, fallback_length, encrypted)
+}
+
+fn describe_attribute(
+    record: &RecordEvidence,
+    attribute: &AttributeEvidence,
+    _fallback_length: u64,
+    encrypted: bool,
+) -> Data {
     let transformed = |fallback: &'static str, compressible: bool| {
         if encrypted || attribute.flags & attr_flags::ENCRYPTED != 0 {
             STORAGE_ENCRYPTED
@@ -674,6 +684,106 @@ fn describe_data(record: &RecordEvidence, fallback_length: u64, encrypted: bool)
     }
 }
 
+/// Where the name slots of an entry's streams begin. A slot shares 32 bits with the record's offset (`NAME_SLOT_SHIFT`), so
+/// there are 2048 of them: the lower 1024 are the further names of a hard-linked file, and the upper 1024 are halved between
+/// the named streams of a record that has no `$ATTRIBUTE_LIST` (its attribute's index in the record is the place within the
+/// first half) and those of a record that has one (their place among its joined streams is the place within the second).
+pub const STREAM_SLOT: u32 = 1024;
+/// The first slot of the named streams of a record that has an `$ATTRIBUTE_LIST`.
+pub const EXTENSION_STREAM_SLOT: u32 = 1536;
+/// The most named streams of a record that are listed.
+const MAX_LISTED_STREAMS: usize = 512;
+
+/// How a stream joined from its extents is held, and its lengths.
+fn describe_stream(stream: &SalvageStream) -> Data {
+    let storage = if !stream.is_complete() {
+        STORAGE_INCOMPLETE
+    } else if stream.is_encrypted() {
+        STORAGE_ENCRYPTED
+    } else if stream.resident.is_some() {
+        STORAGE_RESIDENT
+    } else if stream.is_compressed() {
+        if stream.flags & attr_flags::COMPRESSION_MASK == attr_flags::COMPRESSED
+            && (1..=MAX_COMPRESSION_UNIT_EXPONENT).contains(&u16::from(stream.compression_unit))
+        {
+            STORAGE_COMPRESSED
+        } else {
+            STORAGE_COMPRESSION_UNSUPPORTED
+        }
+    } else {
+        STORAGE_RUNS
+    };
+    let (length, valid_length) = match &stream.resident {
+        Some(bytes) => (bytes.len() as u64, bytes.len() as u64),
+        None => (
+            stream.data_size,
+            stream.initialized_size.min(stream.data_size),
+        ),
+    };
+    Data {
+        storage,
+        length,
+        valid_length,
+        runs: stream
+            .runs
+            .iter()
+            .map(|run| NtfsRun {
+                vcn: run.starting_vcn,
+                lcn: run.lcn,
+                count: run.length,
+            })
+            .collect(),
+    }
+}
+
+/// One entry for each named `$DATA` attribute of a record with no `$ATTRIBUTE_LIST`, from slot `STREAM_SLOT`;
+/// hard-link names occupy the lower slots.
+fn named_stream_entries(
+    record: &RecordEvidence,
+    primary: &SalvageEntry,
+    geometry: &VolumeGeometry,
+) -> Vec<SalvageEntry> {
+    // A record with an `$ATTRIBUTE_LIST` has its streams worked out by following the list, which needs the volume
+    // (`Access::extension_stream_entries`): the streams in its own attributes are not told apart from the rest here.
+    if primary.is_dir || record.has_attribute_list() {
+        return Vec::new();
+    }
+    record
+        .attributes
+        .iter()
+        .enumerate()
+        .filter(|(index, a)| {
+            *index < MAX_LISTED_STREAMS && a.type_code == DATA && !a.name.is_empty()
+        })
+        .filter_map(|(index, attribute)| {
+            let mut entry = primary.clone();
+            let data = describe_attribute(
+                record,
+                attribute,
+                primary.length,
+                primary.attributes & FILE_ATTRIBUTE_ENCRYPTED as u16 != 0,
+            );
+            entry.name = format!("{}:{}", primary.name, attribute.name);
+            entry.length = data.length;
+            entry.valid_length = data.valid_length;
+            entry.first_cluster = data
+                .runs
+                .iter()
+                .find_map(|r| r.lcn)
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(0);
+            if let Some(ntfs) = entry.record.as_mut() {
+                ntfs.storage = data.storage.to_string();
+                ntfs.runs = data.runs;
+            }
+            entry.name_slot = STREAM_SLOT + index as u32;
+            let ntfs = entry.record.as_ref()?;
+            entry.ranges = RangeList::for_ntfs(ntfs, geometry, entry.length, entry.valid_length);
+            Some(entry)
+        })
+        .collect()
+}
+
 /// The entry one FILE record describes, or none when it is not a base record that
 /// survived its fixups well enough to say anything.
 pub fn entry_from_record(
@@ -724,6 +834,7 @@ pub fn entry_from_record(
             data.storage.to_string()
         },
         runs: if is_dir { Vec::new() } else { data.runs },
+        attribute_list: record.has_attribute_list(),
     };
     let ranges = RangeList::for_ntfs(&ntfs, geometry, length, valid_length);
     // A record that fixes up and has a name is intact. Its number may be unknown, which only
@@ -787,6 +898,7 @@ fn damaged_placeholder(offset: usize) -> SalvageEntry {
             parent_sequence: None,
             storage: STORAGE_DAMAGED.to_string(),
             runs: Vec::new(),
+            attribute_list: false,
         }),
         ranges: RangeList::default(),
         name_slot: 0,
@@ -820,8 +932,10 @@ pub fn find_entries(
             );
             if let Some(entry) = entry_from_record(&record, offset, geometry) {
                 let further = further_name_entries(&record, &entry);
+                let streams = named_stream_entries(&record, &entry, geometry);
                 found.push(entry);
                 found.extend(further);
+                found.extend(streams);
                 offset += record_size;
                 continue;
             }
@@ -845,6 +959,11 @@ pub struct StreamReference {
     pub record_offset: u64,
     pub record_number: Option<u64>,
     pub sequence: u16,
+    /// The index of this entry's `$DATA` attribute in the record (a named stream of a record with no attribute list).
+    pub attribute_index: Option<usize>,
+    /// For a named stream of a record with an `$ATTRIBUTE_LIST`: its place among the record's named streams once the
+    /// list is followed, in the order the driver joins them (`ResolvedRecord::streams`, without the unnamed one).
+    pub extension_stream: Option<usize>,
     pub storage: String,
     pub length: u64,
     pub valid_length: u64,
@@ -859,6 +978,8 @@ pub struct Access {
     volume: RawVolume<SourceDevice<Arc<dyn BlockSource>>>,
     geometry: VolumeGeometry,
     last: Mutex<Option<(u64, Arc<RecordEvidence>)>>,
+    /// The last record whose attribute list was followed, with every attribute it names.
+    resolved: Mutex<Option<(u64, Arc<ResolvedRecord>)>>,
 }
 
 impl Access {
@@ -871,6 +992,7 @@ impl Access {
             )),
             geometry: *geometry,
             last: Mutex::new(None),
+            resolved: Mutex::new(None),
         }
     }
 
@@ -915,6 +1037,133 @@ impl Access {
         Ok(record)
     }
 
+    /// `$MFT`'s own run list, as the driver follows an `$ATTRIBUTE_LIST` through it.
+    fn mft_map(&self) -> Result<MftMap> {
+        let runs: Vec<DataRun> = self
+            .mft
+            .iter()
+            .map(|run| DataRun {
+                starting_vcn: run.vcn,
+                length: run.count,
+                lcn: run.lcn,
+            })
+            .collect();
+        let mapped = runs.iter().map(|run| run.length).sum::<u64>() * self.geometry.cluster_size;
+        MftMap::from_runs(
+            runs,
+            mapped,
+            self.geometry.record_size as usize,
+            self.geometry.bytes_per_sector as u16,
+            self.geometry.cluster_size,
+        )
+        .map_err(|error| anyhow!("reading $MFT's run list: {error}"))
+    }
+
+    /// The base record at `offset` with every attribute its `$ATTRIBUTE_LIST` names, from whichever record holds it. An
+    /// extension record that cannot be read, or does not name this base record and its sequence, leaves the streams it held a
+    /// part of incomplete, which the driver says and this never reads short.
+    fn resolved(&self, offset: u64) -> Result<Arc<ResolvedRecord>> {
+        let mut last = self
+            .resolved
+            .lock()
+            .map_err(|_| anyhow!("record cache poisoned"))?;
+        if let Some((at, resolved)) = last.as_ref() {
+            if *at == offset {
+                return Ok(resolved.clone());
+            }
+        }
+        let base = self.record(offset)?;
+        ensure!(
+            base.fixed.is_some() && base.base_reference == 0,
+            "the FILE record is not a base record that fixes up"
+        );
+        let resolved = Arc::new(
+            self.volume
+                .resolve_salvage_record(&base, &self.mft_map()?)
+                .map_err(|error| anyhow!("following the attribute list: {error}"))?,
+        );
+        *last = Some((offset, resolved.clone()));
+        Ok(resolved)
+    }
+
+    /// The named streams of a record, once its attribute list is followed, in the order the driver joins them.
+    fn named_streams(resolved: &ResolvedRecord) -> Vec<SalvageStream> {
+        resolved
+            .streams()
+            .into_iter()
+            .filter(|stream| !stream.name.is_empty())
+            .collect()
+    }
+
+    /// One entry for each named stream of a record that has an `$ATTRIBUTE_LIST`, whether its attribute is in the base record
+    /// or in an extension record, and so with the length and runs the whole stream has. `record_offset` is the base record's
+    /// offset on the volume. A record whose list cannot be followed gives none: nothing is listed that was not read.
+    /// Slots 2048 onward are for these, so a rescan finds the same entries (slots 1024 to 2047 are the named streams of a
+    /// record with no list, hard-link names the lower ones).
+    pub fn extension_stream_entries(
+        &self,
+        primary: &SalvageEntry,
+        record_offset: u64,
+    ) -> Vec<SalvageEntry> {
+        if primary.is_dir {
+            return Vec::new();
+        }
+        let Ok(resolved) = self.resolved(record_offset) else {
+            return Vec::new();
+        };
+        Self::named_streams(&resolved)
+            .iter()
+            .enumerate()
+            .take(MAX_LISTED_STREAMS)
+            .filter_map(|(index, stream)| {
+                let data = describe_stream(stream);
+                let mut entry = primary.clone();
+                entry.name = format!("{}:{}", primary.name, stream.name);
+                entry.length = data.length;
+                entry.valid_length = data.valid_length;
+                entry.first_cluster = data
+                    .runs
+                    .iter()
+                    .find_map(|run| run.lcn)
+                    .and_then(|lcn| u32::try_from(lcn).ok())
+                    .unwrap_or(0);
+                if let Some(ntfs) = entry.record.as_mut() {
+                    ntfs.storage = data.storage.to_string();
+                    ntfs.runs = data.runs;
+                }
+                entry.name_slot = EXTENSION_STREAM_SLOT + index as u32;
+                let ntfs = entry.record.as_ref()?;
+                entry.ranges =
+                    RangeList::for_ntfs(ntfs, &self.geometry, entry.length, entry.valid_length);
+                Some(entry)
+            })
+            .collect()
+    }
+
+    /// Reads a named stream of a record with an attribute list, through the joined stream, so a stream in an extension record
+    /// is read as the whole it is. A stream that is incomplete is an error, never zeros or a short read.
+    fn read_extension_stream(
+        &self,
+        entry: &StreamReference,
+        index: usize,
+        offset: u64,
+        output: &mut [u8],
+    ) -> Result<usize> {
+        let resolved = self.resolved(entry.record_offset)?;
+        let stream = Self::named_streams(&resolved)
+            .into_iter()
+            .nth(index)
+            .context("the FILE record no longer has this data stream")?;
+        ensure!(
+            stream.is_complete(),
+            "this NTFS stream cannot be read: {}",
+            stream.limitations.join("; ")
+        );
+        self.volume
+            .read_resolved_stream_at(&stream, self.geometry.cluster_size, offset, output)
+            .map_err(|error| anyhow!("{error}"))
+    }
+
     /// Whether the entry's bytes can be read at all, and the record they are in is still the one the
     /// scan found. A stream NTFS compresses, encrypts or keeps in other records is refused here
     /// by name, and so is a record that changed or cannot be read: those are the whole entry's, not
@@ -948,8 +1197,24 @@ impl Access {
     /// returned as the zeros NTFS defines them to be; any other failure is an error, never zeros.
     pub fn read(&self, entry: &StreamReference, offset: u64, output: &mut [u8]) -> Result<usize> {
         let record = self.checked_record(entry)?;
-        let (index, attribute) =
-            data_stream(&record).context("the FILE record has no data stream")?;
+        if let Some(stream) = entry.extension_stream {
+            let available = entry.length.saturating_sub(offset).min(output.len() as u64) as usize;
+            if available == 0 {
+                return Ok(0);
+            }
+            return self.read_extension_stream(entry, stream, offset, &mut output[..available]);
+        }
+        let (index, attribute) = match entry.attribute_index {
+            Some(index) => (
+                index,
+                record
+                    .attributes
+                    .get(index)
+                    .filter(|attribute| attribute.type_code == DATA)
+                    .context("the FILE record no longer has this data stream")?,
+            ),
+            None => data_stream(&record).context("the FILE record has no data stream")?,
+        };
         let available = entry.length.saturating_sub(offset).min(output.len() as u64) as usize;
         if available == 0 {
             return Ok(0);
@@ -991,11 +1256,21 @@ impl Access {
         offset: u64,
         length: u64,
     ) -> Option<Vec<(u64, u64)>> {
-        if entry.storage != STORAGE_RUNS {
+        // A stream joined from several records has no one run list to place, so no place to be bad is claimed for it.
+        if entry.storage != STORAGE_RUNS || entry.extension_stream.is_some() {
             return None;
         }
         let record = self.checked_record(entry).ok()?;
-        let (_, attribute) = data_stream(&record)?;
+        let (_, attribute) = match entry.attribute_index {
+            Some(index) => (
+                index,
+                record
+                    .attributes
+                    .get(index)
+                    .filter(|attribute| attribute.type_code == DATA)?,
+            ),
+            None => data_stream(&record)?,
+        };
         let AttributeValue::NonResident { runs, .. } = &attribute.value else {
             return None;
         };
