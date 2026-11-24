@@ -833,6 +833,13 @@ fn volume_matches_windows(name: &str) {
         }
         match scanned.session.read_entry_range(*id, 0, size + 8) {
             Ok(read) if sha(&read.data) == *sum => {}
+            // Windows scrubbed this file: none of its first bytes is anywhere in the volume (`p 0` in the manifest), as on the
+            // 4096-byte-sector volume, where its clusters were zeroed on delete. Its record is still there, so the app finds it
+            // with its size, and what it reads can only be those zeros, never bytes it made up.
+            Ok(read)
+                if want.kept.get(path) == Some(&false)
+                    && read.data.len() as u64 == *size
+                    && read.data.iter().all(|byte| *byte == 0) => {}
             Ok(read) => differences.push(diff(
                 path,
                 format!(
