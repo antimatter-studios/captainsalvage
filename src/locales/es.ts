@@ -1110,7 +1110,7 @@ const strings: Record<string, string> = {
   "Record sequence": "Secuencia del registro",
   "Run list": "Lista de extensiones",
   "Serial number": "Número de serie",
-  "Some of its attributes are in other records, which are not followed.": "Algunos de sus atributos están en otros registros, que no se siguen.",
+  "Named data streams in other records are followed; other attributes may not be.": "Se siguen los flujos de datos con nombre de otros registros; es posible que no se sigan otros atributos.",
   "Supported": "Admitido",
   "Volume label": "Etiqueta del volumen",
   "What works for this filesystem": "Qué funciona para este sistema de archivos",

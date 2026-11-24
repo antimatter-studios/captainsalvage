@@ -26,7 +26,7 @@ export function NtfsRecordPanel({ id }: { id: number }) {
       <dl className="facts">
         {record.recordNumber !== null && <><dt>{t("Record number")}</dt><dd className="mono">{count(record.recordNumber)}</dd></>}
         <dt>{t("Record sequence")}</dt><dd className="mono">{record.sequence}</dd>
-        {record.hasAttributeList && <><dt>{t("Attribute list")}</dt><dd>{t("Some of its attributes are in other records, which are not followed.")}</dd></>}
+        {record.hasAttributeList && <><dt>{t("Attribute list")}</dt><dd>{t("Named data streams in other records are followed; other attributes may not be.")}</dd></>}
       </dl>
       {record.issues.length > 0 && (
         <>
