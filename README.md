@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.29.1 | MIT | captain-salvage |
+| `captainsalvage` | 0.30.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,12 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.30.0 — 2026-11-24
+
+**Added**
+
+- **The overview of an NTFS volume can show its change journal and `$LogFile`.** Press "Read the journal" to see what the volume recorded: each change-journal record with its time, name and what happened (created, renamed, deleted, and so on), and whether `$LogFile` is empty, has nothing to replay or may hold transactions Windows would redo. It is read only evidence, kept apart from the files the scan finds, and nothing is ever written or replayed.
+
 ### v0.29.1 — 2026-11-24
 
 **Maintenance**
@@ -1379,18 +1385,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 - The NTFS driver is pinned to rust-fs-ntfs main with its three layers and salvaged-record decoding (826f6c0: #1376, #1377, #1380) ([#388](https://github.com/antimatter-studios/captainsalvage/pull/388))
 - The app opens, scans, browses, reads and copies EROFS images made by mkfs.erofs exactly as the Linux kernel lists them, with the same SHA-256 for every file and a link as a file that holds its target ([#387](https://github.com/antimatter-studios/captainsalvage/pull/387))
 - Adopt harness v0.11.0 resource limits ([#386](https://github.com/antimatter-studios/captainsalvage/pull/386))
-
-### v0.26.0 — 2026-11-22
-
-**Added**
-
-- **An EROFS image opens, scans and shows its files.** The app reads it through the filesystem's own driver, as it does SquashFS and ext2/3/4: it finds the image by its superblock (at byte 1024), keeps the superblock so the image still opens if the disk's own is written over, lists its folders and files, previews a file and copies it out. The support table has an EROFS column, and the instructions an MCP client is given name it.
-
-**Maintenance**
-
-- Add the Captain Salvage constellation overview and repository roster ([#384](https://github.com/antimatter-studios/captainsalvage/pull/384))
-- The engine and window job is four jobs that run side by side, each well under the time the runner lets a job live ([#382](https://github.com/antimatter-studios/captainsalvage/pull/382))
-- The app opens, scans, browses, reads and copies ext2, ext3 and ext4 images made by mke2fs exactly as the Linux kernel lists them, with the same SHA-256 for every file and a link as a file that holds its target ([#380](https://github.com/antimatter-studios/captainsalvage/pull/380))
 
 <!-- changelog:end -->
 
