@@ -11,9 +11,10 @@
 //!
 //! This is the first slice of issue #212. The model is filled in by the FAT, exFAT and NTFS
 //! adapters for every entry they describe, from the same data the cluster lists come from. The second
-//! slice moved the preview of a FAT or exFAT entry to read them (`RangeList::from_clusters` and
-//! `RangeList::read`); `map::EntrySource::Clusters` and NTFS's `StreamReference` are still what the
-//! export, the map and the Disk Rebuilds read. It is never serialised and never stored, so saved scans
+//! slice moved the preview and the copy of a FAT or exFAT entry, and `Session::read_entry` (the whole file for any
+//! entry), to read them (`RangeList::from_clusters` and `RangeList::read`); `map::EntrySource::Clusters` and NTFS's
+//! `StreamReference` are still what the map and the Disk Rebuilds read, and a reassembly someone proposes (`read_clusters`)
+//! is a list of clusters by definition. It is never serialised and never stored, so saved scans
 //! and the frozen parity references do not change.
 //!
 //! Reading a range, once something does: only `Sparse` reads as zeros. `BadSector` is never read: it is

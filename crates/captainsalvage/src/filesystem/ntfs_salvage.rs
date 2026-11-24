@@ -1098,8 +1098,8 @@ impl Access {
     /// One entry for each named stream of a record that has an `$ATTRIBUTE_LIST`, whether its attribute is in the base record
     /// or in an extension record, and so with the length and runs the whole stream has. `record_offset` is the base record's
     /// offset on the volume. A record whose list cannot be followed gives none: nothing is listed that was not read.
-    /// Slots 2048 onward are for these, so a rescan finds the same entries (slots 1024 to 2047 are the named streams of a
-    /// record with no list, hard-link names the lower ones).
+    /// Slots `EXTENSION_STREAM_SLOT` to 2047 are for these, so a rescan finds the same entries (`STREAM_SLOT` up to there
+    /// are the named streams of a record with no list, and hard-link names the lower ones).
     pub fn extension_stream_entries(
         &self,
         primary: &SalvageEntry,

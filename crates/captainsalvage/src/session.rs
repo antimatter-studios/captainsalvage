@@ -1869,31 +1869,25 @@ impl Session {
         self.scan_stop.store(true, Ordering::Relaxed);
     }
 
-    /// Reads an entry's stream through any overlay, capped at `max_bytes`.
+    /// Reads an entry's stream through any overlay, capped at `max_bytes` and at the file's valid length. The bytes come from
+    /// the entry's typed ranges, as the preview and a copy read them, so a FAT, exFAT, NTFS and driver entry are read by one
+    /// rule. A stretch that cannot be read is an error here, never zeros: a caller that wants the bytes around it asks
+    /// `read_entry_range`, which names the stretch.
     pub fn read_entry(&self, id: i64, max_bytes: u64) -> Result<(Row, Vec<u8>)> {
-        let database = self.lock_database()?;
-        let row = database
+        let row = self
+            .lock_database()?
             .entry(id)?
             .with_context(|| format!("no entry with id {id}"))?;
-        let source = database.entry_source(&self.volume, &row)?;
-        drop(database);
-        let limit = row.valid_length.min(row.length);
-        let data = match source {
-            crate::map::EntrySource::Clusters(clusters) => {
-                self.read_clusters(&clusters, limit, max_bytes)?
-            }
-            crate::map::EntrySource::Ntfs(stream) => {
-                self.read_ntfs_stream(&stream, 0, limit.min(max_bytes))?
-            }
-            crate::map::EntrySource::Driver(stream) => {
-                let read = self.volume.read_driver(&stream, 0, limit.min(max_bytes))?;
-                if !read.unreadable.is_empty() {
-                    bail!("part of this file could not be read");
-                }
-                read.data
-            }
-        };
-        Ok((row, data))
+        let limit = row.valid_length.min(row.length).min(max_bytes);
+        let range = self.read_entry_range(id, 0, limit)?;
+        if let Some(unreadable) = range.unreadable.first() {
+            bail!(
+                "bytes {} to {} of this file could not be read",
+                unreadable.start,
+                unreadable.end
+            );
+        }
+        Ok((row, range.data))
     }
 
     /// What an NTFS entry's FILE record says: every name and where it was linked, every stream
