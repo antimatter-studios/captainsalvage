@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-11-24
+
+### Maintenance
+
+- Read entries through typed ranges ([#410](https://github.com/antimatter-studios/captainsalvage/pull/410))
+
 ## [0.29.0] — 2026-11-24
 
 ### Added
