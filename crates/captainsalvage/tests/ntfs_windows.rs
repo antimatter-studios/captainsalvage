@@ -369,6 +369,26 @@ fn unnamed_stream(details: &Value) -> Option<&Value> {
         .find(|stream| stream["name"] == "")
 }
 
+/// What the image holds at the runs of an entry's unnamed data stream, as its record details name them, cut to `size`: a
+/// sparse run is zeros. Read from the image file itself, not through the app.
+fn raw_bytes_of_runs(image: &Path, cluster: u64, details: &Value, size: u64) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let runs = unnamed_stream(details)?["runs"].as_array()?;
+    let mut file = std::fs::File::open(image).ok()?;
+    let mut out = Vec::new();
+    for run in runs {
+        let bytes = run["count"].as_u64()? * cluster;
+        let mut chunk = vec![0u8; bytes as usize];
+        if let Some(lcn) = run["lcn"].as_u64() {
+            file.seek(SeekFrom::Start(lcn * cluster)).ok()?;
+            file.read_exact(&mut chunk).ok()?;
+        }
+        out.extend_from_slice(&chunk);
+    }
+    out.truncate(size as usize);
+    (out.len() as u64 == size).then_some(out)
+}
+
 // ------------------------------------------------------------ the comparisons
 
 /// One way the app's report differs from Windows': the path, and what is different.
@@ -833,13 +853,16 @@ fn volume_matches_windows(name: &str) {
         }
         match scanned.session.read_entry_range(*id, 0, size + 8) {
             Ok(read) if sha(&read.data) == *sum => {}
-            // Windows scrubbed this file: none of its first bytes is anywhere in the volume (`p 0` in the manifest), as on the
-            // 4096-byte-sector volume, where its clusters were zeroed on delete. Its record is still there, so the app finds it
-            // with its size, and what it reads can only be those zeros, never bytes it made up.
+            // Windows scrubbed this file, or let NTFS use its clusters again: none of its first bytes is anywhere in the volume
+            // (`p 0` in the manifest). Its record is still there, so the app finds it with its size, and what it can read is
+            // whatever the volume holds at the clusters the record names now: zeros on the 4096-byte-sector volume, where
+            // Windows zeroed them on delete, and `RSTR` restart pages of `$LogFile` on a 320 MiB one, which took them. What is
+            // checked is that the app reads exactly the bytes of the image at those runs, never others.
             Ok(read)
                 if want.kept.get(path) == Some(&false)
                     && read.data.len() as u64 == *size
-                    && read.data.iter().all(|byte| *byte == 0) => {}
+                    && raw_bytes_of_runs(&image, cluster, &details(&scanned, *id), *size)
+                        .is_some_and(|raw| raw == read.data) => {}
             Ok(read) => differences.push(diff(
                 path,
                 format!(
