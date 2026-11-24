@@ -103,6 +103,12 @@ range across the join of the runs), reads a file in a folder whole, and exports 
 the right-click menu, checking the copy byte for byte. It needs `ntfs.img`, never mounts or attaches
 anything, copies only into this folder and removes what it copied.
 
+`ntfs_journal_test.py` (issue #169) opens a synthetic NTFS image whose change journal holds 28 records, scans it, finds
+the Change journal and $LogFile panel among the volume's facts, checks nothing is listed until its button is pressed, then
+that the evidence is labelled as read only, lists the records with their reasons by name (made, renamed with both names,
+deleted), says the log has nothing to replay, and that the image's hash is the same afterwards. It needs `ntfs-journal.img`, never
+mounts or attaches anything.
+
 `ntfs_mount_block_test.py` (issue #171) checks the mount block of an NTFS volume that macOS gives no volume UUID. For an
 MBR layout and a GPT layout, it makes a throwaway image with `hdiutil create`, writes `ntfs.img` into the attached
 image's partition 1 with `dd` (on the node `attach` printed, nothing else), and lists only that one disk
@@ -167,6 +173,7 @@ each. **Before a release candidate is built, run all of them, one at a time, on 
 | `films_test.py` | `filmtest.img` | films |
 | `mounted_warning_test.py` | `hdiutil` | the mounted warning, on a throwaway image |
 | `fat_weak_candidates_test.py` | `fat.img` | FAT entries found by their content only, marked weak |
+| `ntfs_journal_test.py` | `ntfs-journal.img` | the NTFS change journal and `$LogFile` shown in the window, labelled, read only |
 | `ntfs_unknown_allocation_test.py` | `ntfs.img` | an NTFS volume with an unreadable `$Bitmap`, and a torn `$MFT` record 0 |
 | `ntfs_mount_block_test.py` | `ntfs.img`, `hdiutil` | the mount block of an NTFS volume with no UUID, on throwaway images |
 | `browse_probe.py`, `browse_first_probe.py`, `mount_block_probe.py`, `mount_block_race.py` | as above | probes: they print and have no pass count; read their output |
@@ -187,6 +194,7 @@ Make the ones a test needs before running it:
 | `emptyfiles.img` | `SALVAGE_EMPTY_IMAGE=$PWD/tests/window/emptyfiles.img cargo test -p captainsalvage --test synthetic write_the_empty` |
 | `fat.img` | `SALVAGE_FAT_IMAGE=$PWD/tests/window/fat.img cargo test -p captainsalvage --test fat_backends write_the_fat` |
 | `ntfs.img` | `SALVAGE_NTFS_IMAGE=$PWD/tests/window/ntfs.img cargo test -p captainsalvage --test ntfs write_the_ntfs` |
+| `ntfs-journal.img` | `SALVAGE_NTFS_JOURNAL_IMAGE=$PWD/tests/window/ntfs-journal.img cargo test -p captainsalvage --test ntfs_journal write_the_ntfs_journal` |
 | `macos.img` | `SALVAGE_MACOS_IMAGE=$PWD/tests/window/macos.img cargo test -p captainsalvage --test synthetic write_the_macos_visited` |
 | `arctest.img` | `tests/window/make_arctest.sh` (archives) |
 | `filmtest.img` | `tests/window/make_filmtest.sh` (two 70 MB films) |

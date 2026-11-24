@@ -345,6 +345,12 @@ export const ENGINE_TEXT: string[] = [
   // Scanning the changed regions of a scan again.
   "Only the person using the app scans the changed regions again.",
   "The rescan was stopped.",
+  // The NTFS change journal and $LogFile evidence.
+  "NTFS change journal and $LogFile evidence",
+  "Read only, from the volume as it is.",
+  "This is evidence of what the volume recorded, not proof that it reached the disk, and it is not part of the files the scan finds.",
+  "The log is never replayed onto the volume.",
+  "A name here is the name at the time of the record.",
 ];
 
 /** Errors from macOS and filesystem drivers, passed on without app-owned Rust definitions. */

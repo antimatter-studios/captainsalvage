@@ -660,6 +660,35 @@ export interface NtfsRecord {
   streams: { name: string; resident: boolean; length: number; initializedLength: number; compressed: boolean; encrypted: boolean; sparse: boolean; runs: { vcn: number; lcn: number | null; count: number }[] }[];
 }
 
+/** What the NTFS change journal and `$LogFile` say. A separate, labelled interpretation, read only, never part of the entries. */
+export interface JournalEvidence {
+  interpretation: string;
+  readOnly: boolean;
+  caution: string;
+  usnJournal: {
+    state: "absent" | "deleting" | "active" | "unreadable";
+    detail: string | null;
+    journal: { record: number; journalId: number; firstUsn: number; nextUsn: number; lowestValidUsn: number; maximumSize: number; allocationDelta: number } | null;
+    provenance: string;
+    records: { usn: number; streamOffset: number; name: string; fileSegment: number; fileSequence: number; parentSegment: number; parentSequence: number; reasons: string[]; isoTime: string | null }[];
+    nextUsn: number | null;
+    finished: boolean;
+    stopped: string | null;
+  };
+  logFile: {
+    state: "empty" | "clean" | "pending" | "unreadable";
+    detail: string;
+    needsReplay: boolean;
+    volumeOffset: number | null;
+    length: number | null;
+    provenance: string;
+    records: { lsn: number; logOffset: number; volumeOffset: number; transactionId: number; redoOperation: number; undoOperation: number; clientDataLength: number }[];
+    nextLsn: number | null;
+    finished: boolean;
+    stopped: string | null;
+  };
+}
+
 export interface ResolvePreview {
   changes: { from: string; to: string; files: number; bytes: number; sampleIds: number[] }[];
   filesChanged: number;

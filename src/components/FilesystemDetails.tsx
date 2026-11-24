@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { call, type Capability, type FilesystemDetails } from "../api";
 import { t } from "../i18n";
+import { NtfsJournalPanel } from "./NtfsJournal";
 
 function Fact({ label, value }: { label: string; value: string | number }) {
   return (
@@ -111,6 +112,7 @@ export function FilesystemDetailsPanel({ details }: { details: FilesystemDetails
           {details.variant === "FAT32" && <Fact label={t("Root cluster")} value={details.rootCluster} />}
         </dl>
       )}
+      {details.kind === "ntfs" && <NtfsJournalPanel />}
       <CapabilityList />
     </>
   );
