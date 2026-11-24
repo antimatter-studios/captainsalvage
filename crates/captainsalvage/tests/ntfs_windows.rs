@@ -120,6 +120,20 @@ struct Manifest {
     /// deleted files whose first bytes Windows left somewhere in the volume
     kept: BTreeMap<String, bool>,
     owned: BTreeSet<String>,
+    /// every record of the change journal, as Windows read it, in USN order
+    journal: Vec<WindowsUsn>,
+}
+
+/// One record of the change journal as Windows' own FSCTL_READ_USN_JOURNAL gave it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsUsn {
+    usn: i64,
+    reason: u32,
+    file: u64,
+    parent: u64,
+    attributes: u32,
+    time: i64,
+    name: String,
 }
 
 fn parse_manifest(text: &str) -> Manifest {
@@ -181,6 +195,24 @@ fn parse_manifest(text: &str) -> Manifest {
             }
             "x" => {
                 manifest.owned.insert(fields[1].to_string());
+            }
+            "u" => {
+                let parts: Vec<&str> = line.splitn(8, '\t').collect();
+                assert_eq!(
+                    parts.len(),
+                    8,
+                    "a journal line with {} fields: {line}",
+                    parts.len()
+                );
+                manifest.journal.push(WindowsUsn {
+                    usn: parts[1].parse().unwrap(),
+                    reason: parts[2].parse().unwrap(),
+                    file: parts[3].parse().unwrap(),
+                    parent: parts[4].parse().unwrap(),
+                    attributes: parts[5].parse().unwrap(),
+                    time: parts[6].parse().unwrap(),
+                    name: parts[7].to_string(),
+                });
             }
             other => panic!("unexpected manifest line {other:?}: {line}"),
         }
@@ -485,9 +517,81 @@ fn listing_differences(want: &Manifest, app: &AppTree) -> Vec<Diff> {
     out
 }
 
+/// The change journal Windows read, against the records the app reads from the same volume (issue #169): each of Windows'
+/// records is the app's record at the same place, with the same USN, reasons, file and parent references, attributes, time
+/// and name. The app may hold more at the end: what Windows wrote after it read the journal (the dismount).
+fn journal_differences(
+    want: &[WindowsUsn],
+    app: &[captainsalvage::ntfs_journal::UsnRecord],
+) -> Vec<Diff> {
+    let mut out = Vec::new();
+    if app.len() < want.len() {
+        out.push(diff(
+            "$UsnJrnl",
+            format!("Windows read {} records, the app {}", want.len(), app.len()),
+        ));
+    }
+    for (index, windows) in want.iter().enumerate() {
+        let Some(record) = app.get(index) else {
+            break;
+        };
+        let file = (u64::from(record.file_sequence) << 48) | record.file_segment;
+        let parent = (u64::from(record.parent_sequence) << 48) | record.parent_segment;
+        let same = record.usn == windows.usn
+            && record.reason == windows.reason
+            && file == windows.file
+            && parent == windows.parent
+            && record.file_attributes == windows.attributes
+            && record.time == windows.time
+            && record.name == windows.name;
+        if !same {
+            out.push(diff(
+                &format!("$UsnJrnl record {index}"),
+                format!(
+                    "Windows {windows:?}, the app usn {} reason {:#x} file {file} parent {parent} attributes {:#x} time {} name {:?}",
+                    record.usn, record.reason, record.file_attributes, record.time, record.name
+                ),
+            ));
+            if out.len() >= 10 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// What Windows did in `journal-scenario/` on purpose (make-volume.ps1) is in its own journal, with the reasons the file
+/// system gives: a file made and written, one renamed, one made and deleted at once.
+fn scenario_differences(want: &[WindowsUsn]) -> Vec<Diff> {
+    const CREATE: u32 = 0x100;
+    const DELETE: u32 = 0x200;
+    const RENAME_OLD: u32 = 0x1000;
+    const RENAME_NEW: u32 = 0x2000;
+    let mut out = Vec::new();
+    for (name, reason) in [
+        ("made.txt", CREATE),
+        ("before-rename.txt", RENAME_OLD),
+        ("after-rename.txt", RENAME_NEW),
+        ("deleted-at-once.txt", CREATE),
+        ("deleted-at-once.txt", DELETE),
+    ] {
+        if !want
+            .iter()
+            .any(|record| record.name == name && record.reason & reason != 0)
+        {
+            out.push(diff(
+                name,
+                format!("Windows' journal has no record with reason {reason:#x}"),
+            ));
+        }
+    }
+    out
+}
+
 /// How many of each thing was compared, so a comparison that checked nothing cannot pass.
 #[derive(Debug, Default)]
 struct Checked {
+    journal: usize,
     streams: usize,
     stream_entries: usize,
     short_names: usize,
@@ -796,6 +900,28 @@ fn volume_matches_windows(name: &str) {
     let mut checked = Checked::default();
     differences.extend(record_differences(&scanned, &want, &app, &mut checked));
     differences.extend(stream_entry_differences(&want, &app, &mut checked));
+
+    // The change journal: Windows made it for this volume and read it back, and the app reads the same records.
+    differences.extend(scenario_differences(&want.journal));
+    let evidence = scanned
+        .session
+        .ntfs_journal_evidence(&captainsalvage::ntfs_journal::Request {
+            usn_bytes: Some(captainsalvage::ntfs_journal::MAX_USN_BYTES),
+            log_records: Some(1),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(evidence.usn_journal.state, "active", "{name}");
+    assert!(
+        evidence.usn_journal.finished && evidence.usn_journal.stopped.is_none(),
+        "{name}: the app stopped reading the journal: {:?}",
+        evidence.usn_journal.stopped
+    );
+    differences.extend(journal_differences(
+        &want.journal,
+        &evidence.usn_journal.records,
+    ));
+    checked.journal = want.journal.len();
     eprintln!(
         "{name}: compared {} files, {} folders, {checked:?}, {} deleted files",
         want.files.len(),
@@ -817,6 +943,11 @@ fn volume_matches_windows(name: &str) {
         .count();
     assert_eq!(checked.stream_entries, file_streams, "{name}");
     assert!(file_streams > 0, "{name}: Windows made no stream of a file");
+    assert!(
+        checked.journal > 20,
+        "{name}: Windows' change journal held {} records",
+        checked.journal
+    );
     assert!(
         checked.extents > 100 && checked.flags >= 4,
         "{name}: {checked:?}"
@@ -1132,4 +1263,75 @@ fn a_missing_stream_entry_or_a_changed_stream_hash_or_an_invented_stream_fails_t
     app.streams.insert("invented.txt:extra".into(), 1);
     let found = stream_entry_differences(&want, &app, &mut Checked::default());
     assert!(found.iter().any(|line| line.path == "invented.txt:extra"));
+}
+
+#[test]
+fn a_journal_record_that_differs_or_is_missing_fails_the_comparison() {
+    use captainsalvage::ntfs_journal::UsnRecord;
+    let windows = |usn: i64, reason: u32, name: &str| WindowsUsn {
+        usn,
+        reason,
+        file: (2 << 48) | 64,
+        parent: (5 << 48) | 5,
+        attributes: 0x20,
+        time: 1000 + usn,
+        name: name.to_string(),
+    };
+    let app = |record: &WindowsUsn| UsnRecord {
+        usn: record.usn,
+        stream_offset: record.usn,
+        record_length: 80,
+        name: record.name.clone(),
+        file_segment: record.file & 0xFFFF_FFFF_FFFF,
+        file_sequence: (record.file >> 48) as u16,
+        parent_segment: record.parent & 0xFFFF_FFFF_FFFF,
+        parent_sequence: (record.parent >> 48) as u16,
+        reason: record.reason,
+        reasons: Vec::new(),
+        source_info: 0,
+        security_id: 0,
+        file_attributes: record.attributes,
+        time: record.time,
+        iso_time: None,
+    };
+    let want = vec![
+        windows(0, 0x100, "a.txt"),
+        windows(80, 0x8000_0100, "a.txt"),
+    ];
+    let same: Vec<UsnRecord> = want.iter().map(app).collect();
+    assert!(journal_differences(&want, &same).is_empty());
+    // Records Windows wrote after it read the journal are the app's to have.
+    let mut longer = same.clone();
+    longer.push(app(&windows(160, 0x200, "a.txt")));
+    assert!(journal_differences(&want, &longer).is_empty());
+    // Every field is compared.
+    for change in 0..7 {
+        let mut other = same.clone();
+        match change {
+            0 => other[1].usn += 1,
+            1 => other[1].reason ^= 1,
+            2 => other[1].file_segment += 1,
+            3 => other[1].parent_sequence += 1,
+            4 => other[1].file_attributes ^= 2,
+            5 => other[1].time += 1,
+            _ => other[1].name.push('x'),
+        }
+        assert_eq!(
+            journal_differences(&want, &other).len(),
+            1,
+            "field {change}"
+        );
+    }
+    assert!(!journal_differences(&want, &same[..1]).is_empty());
+    // The scenario is looked for in what Windows says.
+    assert_eq!(scenario_differences(&want).len(), 5);
+    let scenario = vec![
+        windows(0, 0x100, "made.txt"),
+        windows(80, 0x1000, "before-rename.txt"),
+        windows(160, 0x2000, "after-rename.txt"),
+        windows(240, 0x100, "deleted-at-once.txt"),
+        windows(320, 0x200, "deleted-at-once.txt"),
+    ];
+    assert!(scenario_differences(&scenario).is_empty());
+    assert_eq!(scenario_differences(&scenario[..4]).len(), 1);
 }
