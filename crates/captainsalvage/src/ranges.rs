@@ -832,6 +832,7 @@ mod tests {
 
     fn ntfs(storage: &str, runs: Vec<crate::filesystem::NtfsRun>) -> RecordEntry {
         RecordEntry {
+            attribute_list: false,
             record_number: Some(42),
             sequence: 1,
             parent_record: None,

@@ -484,8 +484,9 @@ fn a_small_file_stored_in_its_record_is_read_whatever_its_compression_flag_says(
     assert_eq!(read.data, fixture.content("/docs/note.txt"));
 }
 
-#[test]
-fn a_file_with_an_attribute_list_is_listed_with_its_streams_and_never_guessed_at() {
+/// A file with ten named streams of 120 bytes each, so many that its record has an `$ATTRIBUTE_LIST` and some of the streams
+/// are held in extension records, and the image that has it.
+fn listed_streams_volume() -> Vec<u8> {
     let fixture = fixture();
     let mut device = Image(Arc::new(Mutex::new(fixture.image.clone())));
     {
@@ -501,28 +502,132 @@ fn a_file_with_an_attribute_list_is_listed_with_its_streams_and_never_guessed_at
             &mut device,
             "/listed.bin",
             &format!("stream{index}"),
-            &[b'a' + index as u8; 120],
+            &stream_bytes(index),
         )
         .unwrap();
     }
     let image = device.0.lock().unwrap().clone();
-    let session = open(image, "listed");
+    image
+}
+
+fn stream_bytes(index: u8) -> Vec<u8> {
+    vec![b'a' + index; 120]
+}
+
+#[test]
+fn a_file_with_an_attribute_list_is_listed_with_its_streams_and_never_guessed_at() {
+    let session = open(listed_streams_volume(), "listed");
     scan(&session);
     let engine = Engine::new();
     engine.set_session(session.clone());
     let row = find(&engine, "listed.bin");
     let details = call(&engine, "ntfs_entry", json!({"id": row["id"]}));
     assert_eq!(details["hasAttributeList"], true);
-    // Only this record's own streams are listed: the rest are in records that are not followed.
+    // Only this record's own streams are in the record's details: the rest are in records the details do not follow.
     let streams = details["streams"].as_array().unwrap();
     assert!(!streams.is_empty() && streams.len() < 11, "{streams:?}");
-    // The alternate streams are not entries of their own, and the data is not guessed at.
-    let search = call(&engine, "search", json!({"query": "stream3"}));
-    assert_eq!(search["rows"].as_array().unwrap().len(), 0);
+    // The file's own bytes are in storage the list points at, which is not read, and nothing stands in for them.
     assert_eq!(row["storage"], "attribute-list");
     assert!(session
         .read_entry_range(row["id"].as_i64().unwrap(), 0, 10)
         .is_err());
+    // But every named stream is its own entry, those in extension records as well as those in the base record, each with
+    // its own bytes and length: the list is followed to find them.
+    for index in 0..10u8 {
+        let name = format!("listed.bin:stream{index}");
+        let entry = find(&engine, &name);
+        assert_eq!(entry["name"], name, "{entry}");
+        assert_eq!(entry["length"], 120, "{name}");
+        let read = session
+            .read_entry_range(entry["id"].as_i64().unwrap(), 0, 200)
+            .unwrap();
+        assert_eq!(read.data, stream_bytes(index), "{name}");
+    }
+}
+
+#[test]
+fn rescanning_a_file_with_streams_in_extension_records_lists_each_stream_once() {
+    let session = open(listed_streams_volume(), "listed-rescan");
+    scan(&session);
+    let streams = |session: &Arc<Session>| -> BTreeMap<String, (i64, u64)> {
+        listed_files(session)
+            .into_iter()
+            .filter(|(path, _)| path.contains("listed.bin:"))
+            .collect()
+    };
+    let first = streams(&session);
+    // Ten streams, one entry each, whichever record each is held in.
+    assert_eq!(
+        first.keys().cloned().collect::<Vec<_>>(),
+        (0..10)
+            .map(|index| format!("listed.bin:stream{index}"))
+            .collect::<Vec<_>>()
+    );
+    // A rescan finds the same entries, with the same ids, and adds none.
+    scan(&session);
+    assert_eq!(streams(&session), first);
+    // The scan's results for every cluster are stored again, as a rescan of the regions that may be out of date does: the
+    // entries still there keep their ids, and none is added.
+    let last = session.volume.geometry.last_cluster_exclusive();
+    let cluster_bytes = session.volume.geometry.cluster_size as usize;
+    let mut found = Vec::new();
+    for cluster in 2..last {
+        let data = session
+            .volume
+            .read_bytes(session.volume.cluster_offset(cluster), cluster_bytes)
+            .unwrap();
+        for entry in session
+            .volume
+            .sets_in_cluster(cluster, &data, cluster_bytes)
+        {
+            found.push((cluster, entry));
+        }
+    }
+    assert!(
+        found
+            .iter()
+            .filter(|(_, entry)| entry.name.starts_with("listed.bin:"))
+            .count()
+            == 10,
+        "the rescan finds each stream once"
+    );
+    captainsalvage::map::MapDb::open(&session.workspace.database())
+        .unwrap()
+        .replace_chunk(2, last, &found, &[])
+        .unwrap();
+    assert_eq!(streams(&session), first);
+}
+
+#[test]
+fn a_stream_in_an_extension_record_is_copied_as_exactly_its_bytes() {
+    let session = open(listed_streams_volume(), "listed-copy");
+    scan(&session);
+    let engine = Engine::new();
+    engine.set_session(session.clone());
+    let ids: Vec<i64> = (0..10)
+        .map(|index| {
+            find(&engine, &format!("listed.bin:stream{index}"))["id"]
+                .as_i64()
+                .unwrap()
+        })
+        .collect();
+    let destination = session.workspace.dir().join("recovered");
+    session
+        .copy_start(CopyRequest {
+            destination: destination.to_string_lossy().into_owned(),
+            entry_ids: ids,
+            ..CopyRequest::default()
+        })
+        .unwrap();
+    wait_for_copy(&session, 10);
+    for index in 0..10u8 {
+        assert_eq!(
+            std::fs::read(destination.join(format!("Volume root/listed.bin_stream{index}")))
+                .unwrap(),
+            stream_bytes(index),
+            "stream{index}"
+        );
+    }
 }
 
 #[test]

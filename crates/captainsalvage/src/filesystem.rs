@@ -449,6 +449,9 @@ pub struct RecordEntry {
     pub storage: String,
     /// The unnamed `$DATA` stream's runs, in virtual-cluster order. Empty when resident.
     pub runs: Vec<NtfsRun>,
+    /// The record has an `$ATTRIBUTE_LIST`: some of its attributes are in extension records, and a stream that is in one is
+    /// found by following the list (`ntfs_salvage::Access::extension_stream_entries`), not by this record alone.
+    pub attribute_list: bool,
 }
 
 impl RecordEntry {

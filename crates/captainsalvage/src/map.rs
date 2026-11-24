@@ -1235,7 +1235,13 @@ impl MapDb {
         let transaction = self.connection.transaction()?;
         let kept: std::collections::HashSet<(u32, u32)> = found
             .iter()
-            .map(|(cluster, set)| (*cluster, set.offset as u32))
+            .map(|(cluster, set)| {
+                // The key is the stored one: a further name or stream of the same record has its own slot, so its row keeps its id too.
+                (
+                    *cluster,
+                    crate::filesystem::source_key(set.offset, set.name_slot) as u32,
+                )
+            })
             .collect();
         let existing: Vec<(u32, u32)> = {
             let mut statement = transaction.prepare(
@@ -2001,11 +2007,21 @@ impl MapDb {
                         sequence: entry.sequence.unwrap_or(0),
                         attribute_index: entry.source_offset.and_then(|source_offset| {
                             let slot = source_offset >> crate::filesystem::NAME_SLOT_SHIFT;
-                            if slot >= 1024 {
-                                Some((slot - 1024) as usize)
-                            } else {
-                                None
-                            }
+                            (crate::filesystem::ntfs_salvage::STREAM_SLOT
+                                ..crate::filesystem::ntfs_salvage::EXTENSION_STREAM_SLOT)
+                                .contains(&slot)
+                                .then(|| {
+                                    (slot - crate::filesystem::ntfs_salvage::STREAM_SLOT) as usize
+                                })
+                        }),
+                        extension_stream: entry.source_offset.and_then(|source_offset| {
+                            let slot = source_offset >> crate::filesystem::NAME_SLOT_SHIFT;
+                            (slot >= crate::filesystem::ntfs_salvage::EXTENSION_STREAM_SLOT).then(
+                                || {
+                                    (slot - crate::filesystem::ntfs_salvage::EXTENSION_STREAM_SLOT)
+                                        as usize
+                                },
+                            )
                         }),
                         storage: storage.clone(),
                         length: entry.length,
