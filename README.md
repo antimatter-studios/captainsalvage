@@ -1171,7 +1171,7 @@ The libraries the app names itself:
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | captain-salvage, captainsalvage |
 | `block2` | 0.6.2 | MIT | captain-salvage |
 | `bzip2-rs` | 0.1.2 | MIT/Apache-2.0 | captainsalvage |
-| `captainsalvage` | 0.28.4 | MIT | captain-salvage |
+| `captainsalvage` | 0.29.0 | MIT | captain-salvage |
 | `flate2` | 1.1.10 | MIT OR Apache-2.0 | captainsalvage |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | captainsalvage |
 | `libc` | 0.2.191 | MIT OR Apache-2.0 | captainsalvage |
@@ -1312,6 +1312,16 @@ full scan, tree and rebuild workflow described under [NTFS volumes](#ntfs-volume
 
 The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
+### v0.29.0 — 2026-11-24
+
+**Added**
+
+- **Each named data stream of an NTFS file is listed as an entry of its own, named `file:stream`, and can be read and copied.** A copy holds exactly the stream's bytes. This includes streams of a file whose attributes continue in extension records, which were not listed before. A stream that is encrypted, compressed in a way that is not decoded, or incomplete is listed but fails to copy, and is never filled with zeros.
+
+**Fixed**
+
+- **Scanning a range again no longer gives a further name or stream of the same file a new entry.** Entries that were already there keep their ids.
+
 ### v0.28.4 — 2026-11-24
 
 **Maintenance**
@@ -1385,12 +1395,6 @@ The latest versions. [CHANGELOG.md](CHANGELOG.md) has the full history.
 **Maintenance**
 
 - The place-blocking test starts from its own empty folder, so it no longer sees a place flagged by the test before it ([#377](https://github.com/antimatter-studios/captainsalvage/pull/377))
-
-### v0.24.0 — 2026-11-22
-
-**Added**
-
-- **An exFAT volume with 1024, 2048 or 4096-byte sectors opens.** It was refused with `unsupported sector size 4096`, which left drives with 4096-byte sectors (4Kn disks, some SD cards and flash media) formatted exFAT showing nothing. The app now lists their files and folders and copies them out, with the same SHA-256 as the Linux kernel reports for a volume `mkfs.exfat` made on a 4096-byte-sector device.
 
 <!-- changelog:end -->
 
