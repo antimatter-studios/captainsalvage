@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.30.3] — 2026-11-24
+
+### Maintenance
+
+- A deleted file Windows scrubbed or whose clusters NTFS used again is read as exactly the bytes the image holds at its runs, which the Windows oracle checks against the image file ([#419](https://github.com/antimatter-studios/captainsalvage/pull/419))
+
 ## [0.30.2] — 2026-11-24
 
 ### Maintenance
