@@ -87,15 +87,10 @@ struct Copied {
     partial: u64,
 }
 
-/// Scans the volume, makes `cluster` of the file unreadable (when given), copies the file and returns what was written.
-fn copy_with_a_bad_cluster(label: &str, bad_cluster: Option<u32>) -> Copied {
-    let image = volume();
-    let bad = bad_cluster.map(|cluster| {
-        let at = Builder::cluster_position(cluster) as u64;
-        at..at + CLUSTER as u64
-    });
+/// A scanned session over the volume, its source (every read works until a stretch is told to fail), and the file's entry id.
+fn scanned(label: &str) -> (Arc<Session>, Arc<Flaky>, i64) {
     let source = Arc::new(Flaky {
-        source: MemorySource::new(image),
+        source: MemorySource::new(volume()),
         bad: Mutex::new(None),
     });
     let workspace = Workspace::at(std::env::temp_dir().join(format!(
@@ -121,7 +116,19 @@ fn copy_with_a_bad_cluster(label: &str, bad_cluster: Option<u32>) -> Copied {
         .call("search", &json!({"query": NAME}), AUTHOR_USER)
         .unwrap();
     let id = found["rows"][0]["id"].as_i64().unwrap();
-    *source.bad.lock().unwrap() = bad;
+    (session, source, id)
+}
+
+/// The cluster's bytes on the source, as a stretch to fail.
+fn stretch(cluster: u32) -> Range<u64> {
+    let at = Builder::cluster_position(cluster) as u64;
+    at..at + CLUSTER as u64
+}
+
+/// Scans the volume, makes `cluster` of the file unreadable (when given), copies the file and returns what was written.
+fn copy_with_a_bad_cluster(label: &str, bad_cluster: Option<u32>) -> Copied {
+    let (session, source, id) = scanned(label);
+    *source.bad.lock().unwrap() = bad_cluster.map(stretch);
 
     let destination = session.workspace.dir().join("copy");
     session
@@ -233,4 +240,36 @@ fn an_unreadable_cluster_that_holds_the_valid_length_names_only_the_bytes_writte
         "{}",
         copied.row
     );
+}
+
+#[test]
+fn reading_the_whole_file_gives_exactly_the_bytes_written_and_never_the_tail_the_clusters_hold() {
+    let (session, _source, id) = scanned("read-whole");
+    let (_, bytes) = session.read_entry(id, u64::MAX).unwrap();
+    assert_eq!(bytes, on_disk()[..VALID as usize]);
+    let (_, capped) = session.read_entry(id, 10).unwrap();
+    assert_eq!(capped, on_disk()[..10]);
+}
+
+#[test]
+fn reading_the_whole_file_fails_on_an_unreadable_cluster_and_never_returns_zeros_for_it() {
+    let (session, source, id) = scanned("read-bad");
+    *source.bad.lock().unwrap() = Some(stretch(FIRST));
+    let error = session.read_entry(id, u64::MAX).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("could not be read"),
+        "{error:#}"
+    );
+    // The part before the bad cluster is still readable, so the failure is the cluster's and not the file's.
+    *source.bad.lock().unwrap() = Some(stretch(FIRST + 1));
+    assert!(session.read_entry(id, CLUSTER as u64).is_ok());
+    assert!(session.read_entry(id, u64::MAX).is_err());
+}
+
+#[test]
+fn reading_the_whole_file_ignores_a_bad_cluster_wholly_past_the_valid_length() {
+    let (session, source, id) = scanned("read-tail-bad");
+    *source.bad.lock().unwrap() = Some(stretch(FIRST + 2));
+    let (_, bytes) = session.read_entry(id, u64::MAX).unwrap();
+    assert_eq!(bytes, on_disk()[..VALID as usize]);
 }
