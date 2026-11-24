@@ -24,6 +24,10 @@
 #   n <short name> <path>            the 8.3 name Windows made for an entry
 #   l <kind> <path>                  a reparse point (junction, symlink): listed, not followed
 #   h <path> <path>                  the second path is a hard link to the same file as the first
+#   u <usn> <reason> <file> <parent> <attributes> <time> <name>
+#                                    a record of the change journal, read by Windows (FSCTL_READ_USN_JOURNAL): the USN, the
+#                                    reason flags as a number, the file and parent references as numbers (sequence in the top
+#                                    16 bits), the attributes, the FILETIME and the name; every record, in USN order
 #   x <path>                         a folder Windows owns (System Volume Information): the folder
 #                                    is expected, what is inside it is not part of the check
 #
@@ -113,6 +117,73 @@ public static class ShortName {
         if (n == 0 || n >= buffer.Capacity) { return null; }
         var result = buffer.ToString();
         return result.Substring(result.LastIndexOf('\\') + 1);
+    }
+}
+
+public static class Usn {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle handle, uint code, byte[] input, uint inputSize,
+        byte[] output, uint outputSize, out uint returned, IntPtr overlapped);
+
+    const uint FSCTL_QUERY_USN_JOURNAL = 0x000900F4, FSCTL_READ_USN_JOURNAL = 0x000900BB;
+
+    // Every record the change journal of a volume (`\\.\X:`) holds, as Windows itself reads them, one line each:
+    // usn, reason flags, file reference, parent reference, file attributes, FILETIME and name, tab separated.
+    public static string[] Read(string volume) {
+        const uint GENERIC_READ = 0x80000000, SHARE_RW = 3, OPEN_EXISTING = 3;
+        var handle = CreateFile(volume, GENERIC_READ, SHARE_RW, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+        if (handle.IsInvalid) { throw new IOException("open " + volume + ": " + Marshal.GetLastWin32Error()); }
+        var lines = new System.Collections.Generic.List<string>();
+        using (handle) {
+            var state = new byte[64];
+            uint returned;
+            if (!DeviceIoControl(handle, FSCTL_QUERY_USN_JOURNAL, null, 0, state, (uint)state.Length, out returned, IntPtr.Zero)) {
+                throw new IOException("query the change journal: " + Marshal.GetLastWin32Error());
+            }
+            ulong journalId = BitConverter.ToUInt64(state, 0);
+            long first = BitConverter.ToInt64(state, 8);
+            long next = BitConverter.ToInt64(state, 16);
+            long cursor = first;
+            var buffer = new byte[64 * 1024];
+            while (cursor < next) {
+                var request = new byte[40];
+                BitConverter.GetBytes(cursor).CopyTo(request, 0);
+                BitConverter.GetBytes(0xFFFFFFFFu).CopyTo(request, 8);   // every reason
+                BitConverter.GetBytes(0u).CopyTo(request, 12);           // not only on close
+                BitConverter.GetBytes(0UL).CopyTo(request, 16);          // no timeout
+                BitConverter.GetBytes(0UL).CopyTo(request, 24);          // no bytes to wait for
+                BitConverter.GetBytes(journalId).CopyTo(request, 32);
+                if (!DeviceIoControl(handle, FSCTL_READ_USN_JOURNAL, request, (uint)request.Length, buffer, (uint)buffer.Length, out returned, IntPtr.Zero)) {
+                    throw new IOException("read the change journal at " + cursor + ": " + Marshal.GetLastWin32Error());
+                }
+                if (returned <= 8) { break; }
+                long following = BitConverter.ToInt64(buffer, 0);
+                int at = 8;
+                while (at + 60 <= returned) {
+                    int length = BitConverter.ToInt32(buffer, at);
+                    if (length < 60 || at + length > returned) { break; }
+                    if (BitConverter.ToUInt16(buffer, at + 4) == 2) {
+                        int nameLength = BitConverter.ToUInt16(buffer, at + 56), nameOffset = BitConverter.ToUInt16(buffer, at + 58);
+                        lines.Add(string.Join("\t", new string[] {
+                            BitConverter.ToInt64(buffer, at + 24).ToString(),
+                            BitConverter.ToUInt32(buffer, at + 40).ToString(),
+                            BitConverter.ToUInt64(buffer, at + 8).ToString(),
+                            BitConverter.ToUInt64(buffer, at + 16).ToString(),
+                            BitConverter.ToUInt32(buffer, at + 52).ToString(),
+                            BitConverter.ToInt64(buffer, at + 32).ToString(),
+                            Encoding.Unicode.GetString(buffer, at + nameOffset, nameLength)
+                        }));
+                    }
+                    at += length;
+                }
+                if (following <= cursor) { break; }
+                cursor = following;
+            }
+        }
+        return lines.ToArray();
     }
 }
 
@@ -260,6 +331,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'fsutil 8dot3name set failed' }
     $root = "\\?\${letter}:\"
     $drive = "${letter}:\"
+
+    # The change journal, and then a few operations whose records are known: a file made and written, a file renamed, a
+    # file made and deleted at once. The tree below makes the rest, and every record Windows ends up with is read back
+    # before the volume is dismounted (`u` lines).
+    & fsutil.exe usn createjournal m=4194304 a=1048576 "${letter}:" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'fsutil usn createjournal failed' }
+    $scenario = $root + 'journal-scenario'
+    $null = [IO.Directory]::CreateDirectory($scenario)
+    [IO.File]::WriteAllText("$scenario\made.txt", "made by Windows`r`n", $utf8)
+    [IO.File]::WriteAllText("$scenario\before-rename.txt", "to be renamed`r`n", $utf8)
+    [IO.File]::Move("$scenario\before-rename.txt", "$scenario\after-rename.txt")
+    [IO.File]::WriteAllText("$scenario\deleted-at-once.txt", "short lived`r`n", $utf8)
+    [IO.File]::Delete("$scenario\deleted-at-once.txt")
 
     # ------------------------------------------------------------ the tree
     $manifest = New-Object System.Collections.Generic.List[string]
@@ -524,6 +608,8 @@ try {
         '--- fsutil fsinfo ntfsinfo ---', $ntfsinfo, '--- chkdsk (read only) ---', $chk, '--- dir /x names ---', $dir)
     [IO.File]::WriteAllText((Join-Path $Out "$Name.info.txt"), ($info -join "`r`n"), $utf8)
 
+    # Every record of the change journal, as Windows reads it, before the volume goes away.
+    foreach ($line in [Usn]::Read("\\.\${letter}:")) { $manifest.Add("u`t$line") }
     & fsutil.exe volume dismount "${letter}:" | Out-Null
     $kept = [RawDisk]::Dump("\\.\PhysicalDrive$number", [long]$partitionNow.Offset, [long]$partitionNow.Size,
         (Join-Path $Out "$Name.img.gz"), $probes.ToArray())
