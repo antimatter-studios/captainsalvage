@@ -385,3 +385,19 @@ fn the_command_line_prints_the_same_interpretation_and_leaves_the_image_as_it_wa
     assert_eq!(sha(&std::fs::read(&path).unwrap()), before);
     let _ = std::fs::remove_file(&path);
 }
+
+/// Writes the volume with the journal to the file named by `SALVAGE_NTFS_JOURNAL_IMAGE`, for the window test
+/// (`tests/window/ntfs_journal_test.py`). Run with:
+/// SALVAGE_NTFS_JOURNAL_IMAGE=$PWD/tests/window/ntfs-journal.img cargo test -p captainsalvage --test ntfs_journal write_the_ntfs_journal
+#[test]
+fn write_the_ntfs_journal_volume_for_window_tests() {
+    let (image, usns) = with_journal();
+    let bytes = image.0.lock().unwrap().clone();
+    // What is written is a volume whose journal this app reads back whole.
+    let found = ntfs_journal::read(&read_only(&image), &Request::default());
+    assert_eq!(found.usn_journal.state, "active");
+    assert_eq!(found.usn_journal.records.len(), usns.len());
+    if let Some(destination) = std::env::var_os("SALVAGE_NTFS_JOURNAL_IMAGE") {
+        std::fs::write(destination, bytes).expect("exported window fixture");
+    }
+}
