@@ -391,14 +391,15 @@ fn what_the_app_copies_is_what_the_oracles_read() {
         let row = session
             .with_database(|database| Ok(database.entry(id)?.unwrap()))
             .unwrap();
-        if row.name.contains(':')
-            || !row
+        // This comparison is for ordinary files; the oracle reports named streams separately.
+        if !row.name.contains(':')
+            && !row
                 .path
                 .clone()
                 .unwrap_or_default()
                 .split('/')
                 .any(|part| part.starts_with('$'))
-                && !row.name.starts_with('$')
+            && !row.name.starts_with('$')
         {
             wanted.push(id);
         }
