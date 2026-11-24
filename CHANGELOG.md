@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.30.1] — 2026-11-24
+
+### Fixed
+
+- **The NTFS record details describe attribute lists accurately.** Named data streams in extension records are followed, while other attributes may not be.
+
 ## [0.30.0] — 2026-11-24
 
 ### Added
