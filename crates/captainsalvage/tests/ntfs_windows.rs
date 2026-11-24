@@ -207,6 +207,12 @@ struct AppTree {
     content: BTreeMap<String, (u64, String)>,
     /// files the app could not read, and why
     unreadable: BTreeMap<String, String>,
+    /// `path:stream` -> id, for the named data streams the app lists as entries of their own (issue #168)
+    streams: BTreeMap<String, i64>,
+    /// `path:stream` -> (size, sha256) of what read_entry_range returned for that entry
+    stream_content: BTreeMap<String, (u64, String)>,
+    /// stream entries the app could not read, and why
+    stream_unreadable: BTreeMap<String, String>,
 }
 
 struct Scanned {
@@ -305,19 +311,37 @@ fn app_tree(scanned: &Scanned, owned: &BTreeSet<String>) -> AppTree {
         if is_system(&path, owned) {
             continue;
         }
-        tree.files.insert(path.clone(), id);
+        // A name NTFS allows has no colon, so `file:stream` is a named data stream listed as an entry of its own, which is
+        // compared with Windows' list of streams, never with its list of files.
+        let stream_entry = row.name.contains(':');
+        if stream_entry {
+            tree.streams.insert(path.clone(), id);
+        } else {
+            tree.files.insert(path.clone(), id);
+        }
         match session.read_entry_range(id, 0, row.length + 8) {
             Ok(read) if read.data.len() as u64 == row.length => {
-                tree.content.insert(path, (row.length, sha(&read.data)));
+                let content = (row.length, sha(&read.data));
+                if stream_entry {
+                    tree.stream_content.insert(path, content);
+                } else {
+                    tree.content.insert(path, content);
+                }
             }
             Ok(read) => {
-                tree.unreadable.insert(
-                    path,
-                    format!("read {} bytes of {}", read.data.len(), row.length),
-                );
+                let why = format!("read {} bytes of {}", read.data.len(), row.length);
+                if stream_entry {
+                    tree.stream_unreadable.insert(path, why);
+                } else {
+                    tree.unreadable.insert(path, why);
+                }
             }
             Err(error) => {
-                tree.unreadable.insert(path, format!("{error:#}"));
+                if stream_entry {
+                    tree.stream_unreadable.insert(path, format!("{error:#}"));
+                } else {
+                    tree.unreadable.insert(path, format!("{error:#}"));
+                }
             }
         }
     }
@@ -445,9 +469,64 @@ fn listing_differences(want: &Manifest, app: &AppTree) -> Vec<Diff> {
 #[derive(Debug, Default)]
 struct Checked {
     streams: usize,
+    stream_entries: usize,
     short_names: usize,
     extents: usize,
     flags: usize,
+}
+
+/// Each named data stream Windows lists for a file is an entry of its own, `file:stream`, with Windows' size and bytes, and
+/// every such entry the app lists is a stream Windows lists (issue #168). A folder's streams are not entries: they are
+/// compared in the record's details by `record_differences`.
+fn stream_entry_differences(want: &Manifest, app: &AppTree, checked: &mut Checked) -> Vec<Diff> {
+    let mut out = Vec::new();
+    for (key, (size, sum)) in &want.streams {
+        let Some((owner, _)) = key.rsplit_once(':') else {
+            continue;
+        };
+        if want.dirs.contains(owner) {
+            continue;
+        }
+        checked.stream_entries += 1;
+        match (app.streams.get(key), app.stream_content.get(key)) {
+            (None, _) => out.push(diff(
+                key,
+                "Windows lists this stream of a file, the app lists no entry for it",
+            )),
+            (Some(_), None) => out.push(diff(
+                key,
+                format!(
+                    "stream could not be read: {}",
+                    app.stream_unreadable
+                        .get(key)
+                        .map(String::as_str)
+                        .unwrap_or("?")
+                ),
+            )),
+            (Some(_), Some((have_size, have_sum))) => {
+                if have_size != size {
+                    out.push(diff(
+                        key,
+                        format!("stream size Windows {size}, the app {have_size}"),
+                    ));
+                } else if have_sum != sum {
+                    out.push(diff(
+                        key,
+                        format!("stream SHA-256 Windows {sum}, the app {have_sum}"),
+                    ));
+                }
+            }
+        }
+    }
+    for key in app.streams.keys() {
+        if !want.streams.contains_key(key) {
+            out.push(diff(
+                key,
+                "the app lists this stream as an entry, Windows lists no such stream",
+            ));
+        }
+    }
+    out
 }
 
 /// What Windows' manifest says about streams, extents, flags and short names, against what the
@@ -696,6 +775,7 @@ fn volume_matches_windows(name: &str) {
 
     let mut checked = Checked::default();
     differences.extend(record_differences(&scanned, &want, &app, &mut checked));
+    differences.extend(stream_entry_differences(&want, &app, &mut checked));
     eprintln!(
         "{name}: compared {} files, {} folders, {checked:?}, {} deleted files",
         want.files.len(),
@@ -705,6 +785,18 @@ fn volume_matches_windows(name: &str) {
     // Every stream and short name Windows reported was found in the app's record of its entry.
     assert_eq!(checked.streams, want.streams.len(), "{name}");
     assert_eq!(checked.short_names, want.short_names.len(), "{name}");
+    // Every stream of a file Windows reported is an entry of its own with Windows' size and bytes, and one comparison
+    // that found none cannot pass.
+    let file_streams = want
+        .streams
+        .keys()
+        .filter(|key| {
+            key.rsplit_once(':')
+                .is_some_and(|(owner, _)| !want.dirs.contains(owner))
+        })
+        .count();
+    assert_eq!(checked.stream_entries, file_streams, "{name}");
+    assert!(file_streams > 0, "{name}: Windows made no stream of a file");
     assert!(
         checked.extents > 100 && checked.flags >= 4,
         "{name}: {checked:?}"
@@ -964,4 +1056,50 @@ fn a_changed_hash_or_a_missing_file_in_what_the_app_reports_fails_the_comparison
     // A name of a hard link the app does not list is not a known gap: every name is listed (#175).
     let second = &want.hard_links[0].1;
     assert!(known_gap(&want, &diff(second, "Windows lists it, the app does not")).is_none());
+}
+
+#[test]
+fn a_missing_stream_entry_or_a_changed_stream_hash_or_an_invented_stream_fails_the_comparison() {
+    let want = manifest("win-small-c4096");
+    let mut app = AppTree::default();
+    for (key, content) in &want.streams {
+        let owner = key.rsplit_once(':').unwrap().0;
+        if want.dirs.contains(owner) {
+            continue;
+        }
+        app.streams.insert(key.clone(), 1);
+        app.stream_content.insert(key.clone(), content.clone());
+    }
+    assert!(!app.streams.is_empty());
+    let mut checked = Checked::default();
+    assert!(stream_entry_differences(&want, &app, &mut checked).is_empty());
+    assert_eq!(checked.stream_entries, app.streams.len());
+
+    let first = app.streams.keys().next().unwrap().clone();
+    app.stream_content
+        .get_mut(&first)
+        .unwrap()
+        .1
+        .replace_range(0..1, "x");
+    let found = stream_entry_differences(&want, &app, &mut Checked::default());
+    assert!(found
+        .iter()
+        .any(|line| line.path == first && line.what.contains("SHA-256")));
+
+    app.stream_content.get_mut(&first).unwrap().0 += 1;
+    let found = stream_entry_differences(&want, &app, &mut Checked::default());
+    assert!(found
+        .iter()
+        .any(|line| line.path == first && line.what.contains("size")));
+
+    app.streams.remove(&first);
+    app.stream_content.remove(&first);
+    let found = stream_entry_differences(&want, &app, &mut Checked::default());
+    assert!(found
+        .iter()
+        .any(|line| line.path == first && line.what.contains("no entry")));
+
+    app.streams.insert("invented.txt:extra".into(), 1);
+    let found = stream_entry_differences(&want, &app, &mut Checked::default());
+    assert!(found.iter().any(|line| line.path == "invented.txt:extra"));
 }
