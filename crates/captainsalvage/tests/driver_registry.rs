@@ -188,6 +188,38 @@ fn a_drivers_root_number_is_below_the_numbers_its_candidates_get() {
 }
 
 #[test]
+fn every_registered_driver_has_a_derived_capability_table() {
+    let expected_features = [
+        "open",
+        "scan",
+        "map",
+        "browse",
+        "preview",
+        "resume",
+        "baseline",
+        "rebuilds",
+        "export",
+        "mount_block",
+    ];
+    for driver in drivers::registry() {
+        let rows = drivers::capability_table(driver.kind);
+        assert!(
+            !rows.is_empty(),
+            "{} has no capability table",
+            driver.format
+        );
+        let features: Vec<_> = rows.iter().map(|row| row.feature).collect();
+        for feature in expected_features {
+            assert!(
+                features.contains(&feature),
+                "{} capability table omits {feature}",
+                driver.format
+            );
+        }
+    }
+}
+
+#[test]
 fn the_instructions_an_mcp_client_is_given_name_every_filesystem_the_app_reads() {
     let instructions = captainsalvage::mcp::INSTRUCTIONS;
     for kind in ["exFAT", "FAT", "NTFS"] {
