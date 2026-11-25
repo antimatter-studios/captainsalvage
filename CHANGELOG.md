@@ -8,6 +8,12 @@ Changes not yet released are fragments in [`changelog.d/`](changelog.d/), one pe
 
 ## [Unreleased]
 
+## [0.30.5] — 2026-11-25
+
+### Maintenance
+
+- Require capability rows for every registered filesystem driver ([#423](https://github.com/antimatter-studios/captainsalvage/pull/423))
+
 ## [0.30.4] — 2026-11-24
 
 ### Maintenance
